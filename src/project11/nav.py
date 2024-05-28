@@ -242,10 +242,11 @@ class RobotNavigation(EarthTransforms):
         EarthTransforms.__init__(self, tfBuffer)
         self.odometry = None
 
+        self.base_frame = None
         self.odom_sub = rospy.Subscriber('odom', Odometry, self.odometryCallback, queue_size = 1)
 
 
-    def odometryCallback(self, msg):
+    def odometryCallback(self, msg: Odometry):
         """ Stores navigation Odometry as class attribute.
 
         Args:
@@ -254,6 +255,8 @@ class RobotNavigation(EarthTransforms):
         self.odometry = msg
         if self.map_frame is None:
             self.map_frame = msg.header.frame_id
+        if self.base_frame is None:
+            self.base_frame = msg.child_frame_id
 
     def positionLatLon(self):
         """ Return last known position lat/lon of the vehicle.
@@ -270,7 +273,7 @@ class RobotNavigation(EarthTransforms):
           Lat/Long in radians and altitude in meters.
         """
         if self.odometry is None:
-            rospy.logwarn_throttle(2, "There is no current odomentry, "
+            rospy.logwarn_throttle(2, "There is no current odometry, "
                           "so can't determine position!")
             return None
         
