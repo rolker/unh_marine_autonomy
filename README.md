@@ -48,9 +48,9 @@ The [CCOM Autonomous Mission Planner](../../../camp), also known as CAMP, displa
 
 The [UDP Bridge](../../../udp_bridge) sends select ROS topics between ROS cores. It allows control and monitoring over wireless unreliable networks.
 
-### Mission Manager - mission_manager
+### Mission Manager - mission_manager and project11_navigation
 
-The [Mission Manager](../../../mission_manager) receives missions from CAMP and executes them. It also handles requests such as hover.
+The [Mission Manager](../../../mission_manager) receives missions from CAMP and sends them to the [Project11 Navigator]../../../project11_navigation as a list of tasks to  execute.
 
 ### Helm Manager - helm_manager
 
