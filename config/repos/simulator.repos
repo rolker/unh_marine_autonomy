@@ -46,6 +46,9 @@ repositories:
   marine_ais:
     type: git
     url: https://github.com/CCOMJHC/marine_ais.git
+  mbes_sim:
+    type: git
+    url: https://github.com/CCOMJHC/mbes_sim.git
   mission_manager:
     type: git
     url: https://github.com/CCOMJHC/mission_manager.git
