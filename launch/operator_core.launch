@@ -5,6 +5,7 @@
   <arg name="operatorJoystick" default="true"/>
   <arg name="enableBridge" default="true"/>
   <arg name="robotBridgeName" default="$(arg robotNamespace)"/>
+  <arg name="operatorBridgeName" default="operator_$(arg robotBridgeName)"/>
   <arg name="enableSound" default="false"/>
   
   <rosparam command="load" file="$(find project11)/config/operator.yaml" ns="$(arg namespace)"/>
@@ -14,6 +15,7 @@
     <param name="port" value="$(arg localPort)"/>
   </node>
   <rosparam param="udp_bridge/remotes/robot/name" ns="$(arg namespace)" subst_value="True">"$(arg robotBridgeName)"</rosparam>
+  <rosparam param="udp_bridge/name" ns="$(arg namespace)" subst_value="True">"$(arg operatorBridgeName)"</rosparam>
   <rosparam param="udp_bridge/remotes/robot/connections/default/topics" ns="$(arg namespace)" subst_value="True">{project11_command: {source: /$(arg robotNamespace)/project11/command}, piloting_mode_manual_helm: {source: /$(arg robotNamespace)/project11/piloting_mode/manual/helm}}</rosparam>
 
   <!-- Command bridge is used to robustly send operator commands over an unreliable connection. -->
