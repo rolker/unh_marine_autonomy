@@ -4,6 +4,7 @@
   <arg name="localPort" default="4200"/>
   <arg name="default_nav_stack" default="true"/>
   <arg name="bridge_name" default="$(arg namespace)"/>
+  <arg name="operator_bridge_name" default="operator_$(arg bridge_name)"/>
 
   <arg name="tf_prefix" default="$(arg namespace)"/>
   <arg name="base_frame" value="$(arg tf_prefix)/base_link"/>
@@ -21,6 +22,8 @@
       <param name="name" value="$(arg bridge_name)"/>
     </node>
       
+    <rosparam param="udp_bridge/remotes/operator/name" subst_value="True">"$(arg operator_bridge_name)"</rosparam>
+
     <!-- Command bridge is used to robustly send operator commands over an unreliable connection. -->
     <node pkg="command_bridge" type="command_bridge_receiver_node.py" name="command_bridge_receiver"/>
 
