@@ -1,0 +1,16 @@
+# goal
+
+geometry_msgs/PolygonStamped survey_area 
+---
+# result
+
+bool success # true if completed succefully
+string status # more details if necessary
+
+---
+# feedback
+
+nav_msgs/Path current_line
+int16         line_number
+float32       percent_complete
+

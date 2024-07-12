@@ -8,10 +8,12 @@ find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(project11_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
 set(MSG_FILES
+  action/MultibeamCoverage.action
   action/RunTasks.action
   msg/BoundingBox.msg
   msg/Curve.msg
@@ -33,6 +35,7 @@ rosidl_generate_interfaces(
   DEPENDENCIES
   builtin_interfaces
   geometry_msgs
+  nav_msgs
   project11_msgs
   std_msgs
 )
