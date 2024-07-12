@@ -269,8 +269,8 @@ class CampInterface:
             parent_task.behaviors.append(behavior)
         
         elif item['type'] == 'SurveyPattern' or item['type'] == 'SearchPattern':
-          task.type = 'survey_area'
-          id = 'area' + task_number_str
+          task.type = 'survey_line_set'
+          id = 'line_set' + task_number_str
 
         elif item['type'] == 'TrackLine':
           task.type = 'survey_line'
