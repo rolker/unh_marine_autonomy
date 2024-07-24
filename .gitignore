@@ -4,3 +4,5 @@
 .kdev4/
 *.kdev4
 logs
+log
+.vscode
