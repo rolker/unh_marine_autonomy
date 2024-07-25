@@ -43,6 +43,9 @@ repositories:
     type: git
     url: https://github.com/CCOMJHC/joy_to_helm.git
     version: noetic
+  manda_coverage:
+    type: git
+    url: https://github.com/CCOMJHC/manda_coverage.git
   marine_ais:
     type: git
     url: https://github.com/CCOMJHC/marine_ais.git
