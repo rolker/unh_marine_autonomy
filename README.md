@@ -33,7 +33,7 @@ If you have an available ROS Noetic system, you can quickly install and run Proj
     
     source devel/setup.bash
     roslaunch project11_simulation sim_local.launch
-    
+
 ## Major components and concepts
 
 A typical setup has a ROS core running on the robot with some key nodes including the `mission_manager`, the `helm_manager` and the `udp_bridge`. The operator station runs a separate ROS core that also runs a `udp_bridge` node as well as `camp`, the CCOM Autonomous Mission Planner which provide a planning and monitoring interface.
@@ -50,7 +50,7 @@ The [UDP Bridge](../../../udp_bridge) sends select ROS topics between ROS cores.
 
 ### Mission Manager - mission_manager and project11_navigation
 
-The [Mission Manager](../../../mission_manager) receives missions from CAMP and sends them to the [Project11 Navigator]../../../project11_navigation as a list of tasks to  execute.
+The [Mission Manager](../../../mission_manager) receives missions from CAMP and sends them to the [Project11 Navigator](../../../project11_navigation) as a list of tasks to  execute.
 
 ### Helm Manager - helm_manager
 
@@ -58,7 +58,7 @@ The [Helm Manager](../../../helm_manager) controls which commands get sent to th
 
 ### Piloting modes
 
-Project11 operates in 3 major piloting modes: "manual", "autonomous" and "standby". 
+Project11 operates in 3 major piloting modes: "manual", "autonomous" and "standby".
 
 In "manual" mode, the vehicle responds to commands sent from a device such as a joystick or a gamepad. The commands are converted to "helm" messages by the `joy_to_helm` node and are sent from the operator station to the vehicle via the `udp_bridge`.
 
@@ -66,9 +66,6 @@ In "autonomous" mode, the `mission_manager` sends mission items to the navigatio
 
 The "standby" mode is used to when no control commands are to be sent by Project11.
 
-
-
 ### Navigation Stack
 
-The `mission_manager` receives and executes the higher level missions. Depending on the task, track lines may be sent to the `path_follower` or another node will receive a higher level directive, such as "survey this area", and generate and send out track lines or other navigation segments to lower level planners or controllers.
-Eventually, a "helm" or "cmd_velocity" message gets sent to the autonomous/helm or autonomous/cmd_vel topic reaching the `helm_manager`. 
+The `mission_manager` receives the higher level missions and turns them into task lists. The task list is sent to the navigator which eventually generates a Twist message to send to the `helm_manager`.
