@@ -17,134 +17,134 @@
 
 namespace gz4d
 {
-    /// Weighted interpolation between two values.
-    /// @param start First value.
-    /// @param end Second value.
-    /// @param p Proportion of b relative to a.
-    /// @return Weighted interpolated value.
-    template <typename T> inline T interpolate(T const &start, T const &end, double p)
-    {
-        return (1.0-p)*start + p*end;
-    }
+  /// Weighted interpolation between two values.
+  /// @param start First value.
+  /// @param end Second value.
+  /// @param p Proportion of b relative to a.
+  /// @return Weighted interpolated value.
+  template <typename T> inline T interpolate(T const &start, T const &end, double p)
+  {
+      return (1.0-p)*start + p*end;
+  }
 
-    /// Interpolates two angles, using the shorter distance between them.
-    /// With a weight of 0, degree1 is essentialy returned. degree2 is returned when weight is 1.
-    /// A weight of 0.5 returns the average of the two angles, or the mid point between them.
-    /// @param a First angle.
-    /// @param b Second angle.
-    /// @param p Proportion of b relative to a.
-    /// @return Weighted interpolated value.
-    template <typename T> inline T InterpolateDegrees(T a, T b, T p = .5)
-    {
-        while(a < b-180.0)
-            a+=360.0;
-        while(a > b+180.0)
-            a-=360.0;
+  /// Interpolates two angles, using the shorter distance between them.
+  /// With a weight of 0, degree1 is essentialy returned. degree2 is returned when weight is 1.
+  /// A weight of 0.5 returns the average of the two angles, or the mid point between them.
+  /// @param a First angle.
+  /// @param b Second angle.
+  /// @param p Proportion of b relative to a.
+  /// @return Weighted interpolated value.
+  template <typename T> inline T InterpolateDegrees(T a, T b, T p = .5)
+  {
+      while(a < b-180.0)
+          a+=360.0;
+      while(a > b+180.0)
+          a-=360.0;
 
-        return interpolate(a,b,p);
-    }
+      return interpolate(a,b,p);
+  }
 
-    template <typename T> inline double ratio(T const &a, T const &b) {return a/b;}
+  template <typename T> inline double ratio(T const &a, T const &b) {return a/b;}
 
-    template <typename T> inline bool IsEven(T i)
-    {
-        return !(i%2);
-    }
+  template <typename T> inline bool IsEven(T i)
+  {
+      return !(i%2);
+  }
 
-    /// Used by std::shared_ptr's to hold pointers it shouldn't auto-delete.
-    struct NullDeleter
-    {
-        void operator()(void const *) const {}
-    };
+  /// Used by std::shared_ptr's to hold pointers it shouldn't auto-delete.
+  struct NullDeleter
+  {
+      void operator()(void const *) const {}
+  };
 
-    template <typename T> inline T Radians(T degrees) {return degrees*0.01745329251994329577;}
-    template <typename T> inline T Degrees(T radians) {return radians*57.2957795130823208768;}
+  template <typename T> inline T Radians(T degrees) {return degrees*0.01745329251994329577;}
+  template <typename T> inline T Degrees(T radians) {return radians*57.2957795130823208768;}
     
-    /// Use with lexical_cast to convert hex string to integer type.
-    /// From: http://stackoverflow.com/questions/1070497/c-convert-hex-string-to-signed-integer
-    /// Example: uint32_t value = boost::lexical_cast<HexTo<uint32_t> >("0x2a");
-    template <typename ElemT>
-    struct HexTo {
-        ElemT value;
-        operator ElemT() const {return value;}
-        friend std::istream& operator>>(std::istream& in, HexTo& out) {
-            in >> std::hex >> out.value;
-            return in;
-        }
-    };
+  /// Use with lexical_cast to convert hex string to integer type.
+  /// From: http://stackoverflow.com/questions/1070497/c-convert-hex-string-to-signed-integer
+  /// Example: uint32_t value = boost::lexical_cast<HexTo<uint32_t> >("0x2a");
+  template <typename ElemT>
+  struct HexTo {
+      ElemT value;
+      operator ElemT() const {return value;}
+      friend std::istream& operator>>(std::istream& in, HexTo& out) {
+          in >> std::hex >> out.value;
+          return in;
+      }
+  };
 
 
-    /// Base type for n-dimensional vectors.
-    /// \ingroup base
-    template <typename T, std::size_t N>
-    class Vector
-    {
-        public:
-            static const std::size_t _size = N;
-        protected:
-            T values[N];
-        public:
-            Vector();
-            Vector(Vector<T,N> const &v);
-            template<typename OT> Vector(Vector<OT,N> const &v);
-            template<typename OT, std::size_t ON> Vector(Vector<OT,ON> const &v, std::size_t i);
-            explicit Vector(T val);
-            Vector(T v1, T v2);
-            Vector(T v1, T v2, T v3);
-            Vector(T v1, T v2, T v3, T v4);
-            Vector(const T v[N]);
-            
-            template <typename VI> Vector(const std::pair<VI,VI> &iterators)
-            {
-                T* vp = values;
-                for(VI v = iterators.first; v != iterators.second; ++v)
-                    *vp++ = *v;
-            }
+  /// Base type for n-dimensional vectors.
+  /// \ingroup base
+  template <typename T, std::size_t N>
+  class Vector
+  {
+      public:
+          static const std::size_t _size = N;
+      protected:
+          T values[N];
+      public:
+          Vector();
+          Vector(Vector<T,N> const &v);
+          template<typename OT> Vector(Vector<OT,N> const &v);
+          template<typename OT, std::size_t ON> Vector(Vector<OT,ON> const &v, std::size_t i);
+          explicit Vector(T val);
+          Vector(T v1, T v2);
+          Vector(T v1, T v2, T v3);
+          Vector(T v1, T v2, T v3, T v4);
+          Vector(const T v[N]);
+          
+          template <typename VI> Vector(const std::pair<VI,VI> &iterators)
+          {
+              T* vp = values;
+              for(VI v = iterators.first; v != iterators.second; ++v)
+                  *vp++ = *v;
+          }
 
-            Vector<T,N> &operator=(Vector<T,N> const &rvalue);
+          Vector<T,N> &operator=(Vector<T,N> const &rvalue);
 
-            bool operator==(Vector<T,N> const &rvalue) const;
-            bool operator!=(Vector<T,N> const &rvalue) const {return !(*this == rvalue);}
+          bool operator==(Vector<T,N> const &rvalue) const;
+          bool operator!=(Vector<T,N> const &rvalue) const {return !(*this == rvalue);}
 
-            Vector<T,N> const &operator+=(Vector<T,N> const &rvalue);
-            Vector<T,N> const &operator+=(T rvalue);
-            Vector<T,N> const &operator-=(Vector<T,N> const &rvalue);
-            Vector<T,N> const &operator-=(T rvalue);
-            Vector<T,N> const &operator*=(Vector<T,N> const &rvalue);
-            Vector<T,N> const &operator*=(T rvalue);
-            Vector<T,N> const &operator/=(Vector<T,N> const &rvalue);
-            Vector<T,N> const &operator/=(T rvalue);
+          Vector<T,N> const &operator+=(Vector<T,N> const &rvalue);
+          Vector<T,N> const &operator+=(T rvalue);
+          Vector<T,N> const &operator-=(Vector<T,N> const &rvalue);
+          Vector<T,N> const &operator-=(T rvalue);
+          Vector<T,N> const &operator*=(Vector<T,N> const &rvalue);
+          Vector<T,N> const &operator*=(T rvalue);
+          Vector<T,N> const &operator/=(Vector<T,N> const &rvalue);
+          Vector<T,N> const &operator/=(T rvalue);
 
-            Vector<T,N> operator-() const;
+          Vector<T,N> operator-() const;
 
-            template <typename RT> Vector<T,N> operator+(RT const &rvalue) const {return Vector<T,N>(*this) += rvalue;}
-            template <typename RT> Vector<T,N> operator-(RT const &rvalue) const {return Vector<T,N>(*this) -= rvalue;}
-            template <typename RT> Vector<T,N> operator*(RT const &rvalue) const {return Vector<T,N>(*this) *= rvalue;}
-            template <typename RT> Vector<T,N> operator/(RT const &rvalue) const {return Vector<T,N>(*this) /= rvalue;}
+          template <typename RT> Vector<T,N> operator+(RT const &rvalue) const {return Vector<T,N>(*this) += rvalue;}
+          template <typename RT> Vector<T,N> operator-(RT const &rvalue) const {return Vector<T,N>(*this) -= rvalue;}
+          template <typename RT> Vector<T,N> operator*(RT const &rvalue) const {return Vector<T,N>(*this) *= rvalue;}
+          template <typename RT> Vector<T,N> operator/(RT const &rvalue) const {return Vector<T,N>(*this) /= rvalue;}
 
-            /// Dot product
-            /// theta = acos((a.b)/(|a||b|)) where |a| means norm(a)
-            T dot(Vector<T,N> const &rvalue) const;
-            
-            /// Returns length(1D), area(2D), volume(3D) or higher dim equivalent.
-            T volume() const
-            {
-                T ret = values[0];
-                for(int i = 1; i < N; ++i)
-                    ret *= values[i];
-                return ret;
-            }
+          /// Dot product
+          /// theta = acos((a.b)/(|a||b|)) where |a| means norm(a)
+          T dot(Vector<T,N> const &rvalue) const;
+          
+          /// Returns length(1D), area(2D), volume(3D) or higher dim equivalent.
+          T volume() const
+          {
+              T ret = values[0];
+              for(int i = 1; i < N; ++i)
+                  ret *= values[i];
+              return ret;
+          }
 
-            T &operator[](std::size_t index){return values[index];}
-            T const &operator[](std::size_t index) const{return values[index];}
+          T &operator[](std::size_t index){return values[index];}
+          T const &operator[](std::size_t index) const{return values[index];}
 
-            T &front() {return *values;}
-            T const &front() const {return *values;}
+          T &front() {return *values;}
+          T const &front() const {return *values;}
 
-            static std::size_t size() {return N;}
+          static std::size_t size() {return N;}
 
-            typedef T value_type;
-    };
+          typedef T value_type;
+  };
 
     template <typename T, std::size_t N> inline Vector<T,N>::Vector()
     {
@@ -349,19 +349,19 @@ namespace gz4d
     public:
         typedef T value_type;
     private:
-        value_type _min;
-        value_type _max;
+        value_type min_;
+        value_type max_;
     public:
-        Box(Box const &b):_min(b._min),_max(b._max){}
-        Box(){_min +=1;}
+        Box(Box const &b):min_(b.min_),max_(b.max_){}
+        Box(){min_ +=1;}
         //:min(T(typename T::value_type(1))),max(typename T::value_type(0)){}
 
         Box(T const &min, T const &max)
-        :_min(min),_max(max){}
+        :min_(min),max_(max){}
 
         bool operator!=(Box<T> const &other) const
         {
-            return _min != other._min || _max != other._max;
+            return min_ != other.min_ || max_ != other.max_;
         }
         
         bool operator==(Box<T> const &other) const
@@ -369,24 +369,24 @@ namespace gz4d
             return !((*this)==other);
         }
         
-        T const &getMin() const {return _min;}
-        T const &getMax() const {return _max;}
+        T const &getMin() const {return min_;}
+        T const &getMax() const {return max_;}
 
-        void setMin(T const &m) {_min = m;}
-        void setMax(T const &m) {_max = m;}
+        void setMin(T const &m) {min_ = m;}
+        void setMax(T const &m) {max_ = m;}
 
         bool empty() const
         {
-            return std::isnan(_min[0]) || _min[0] > _max[0];
+            return std::isnan(min_[0]) || min_[0] > max_[0];
         }
 
         T getCenter() const
         {
             if(empty())
-                return _min;
+                return min_;
             T ret;
             for(std::size_t i = 0; i < T::size(); ++i)
-                ret[i] = _min[i] + (_max[i] - _min[i]) *0.5;
+                ret[i] = min_[i] + (max_[i] - min_[i]) *0.5;
             return ret;
         }
 
@@ -397,7 +397,7 @@ namespace gz4d
 
             T ret;
             for(std::size_t i = 0; i < T::size(); ++i)
-                ret[i] = _max[i] - _min[i];
+                ret[i] = max_[i] - min_[i];
             return ret;
         }
 
@@ -406,9 +406,9 @@ namespace gz4d
             //if(empty())
             //    throw(Exception("Empty box doesn't have a length"));
 
-            typename T::value_type ret = _max[0]-_min[0];
+            typename T::value_type ret = max_[0]-min_[0];
             for(std::size_t i = 1; i < T::size(); ++i)
-                ret = std::max(ret,_max[i] - _min[i]);
+                ret = std::max(ret,max_[i] - min_[i]);
             return ret;
         }
 
@@ -417,9 +417,9 @@ namespace gz4d
             //if(empty())
             //    throw(Exception("Empty box doesn't have a length"));
 
-            typename T::value_type ret = _max[0]-_min[0];
+            typename T::value_type ret = max_[0]-min_[0];
             for(std::size_t i = 1; i < T::size(); ++i)
-                ret = std::min(ret,_max[i] - _min[i]);
+                ret = std::min(ret,max_[i] - min_[i]);
             return ret;
         }
         
@@ -435,34 +435,34 @@ namespace gz4d
         {
             if(empty())
             {
-                _min = p;
-                _max = p;
+                min_ = p;
+                max_ = p;
             }
             else
                 for(std::size_t i = 0; i < T::size(); ++i)
                 {
-                    if(p[i] < _min[i])
+                    if(p[i] < min_[i])
                     {
-                        if(p[i] > _max[i])  // for types that can wrap, such as Angles
+                        if(p[i] > max_[i])  // for types that can wrap, such as Angles
                         {
-                            if(_min[i]-p[i]<p[i]-_min[i])
-                                _min[i] = p[i];
+                            if(min_[i]-p[i]<p[i]-min_[i])
+                                min_[i] = p[i];
                             else
-                                _max[i] = p[i];
+                                max_[i] = p[i];
                         }
                         else
-                            _min[i] = p[i];
+                            min_[i] = p[i];
                     }
-                    else if(p[i] > _max[i])
-                        _max[i] = p[i];
+                    else if(p[i] > max_[i])
+                        max_[i] = p[i];
                 }
             return *this;
         }
 
         Box &expand(Box<T> const &other)
         {
-            expand(other._min);
-            expand(other._max);
+            expand(other.min_);
+            expand(other.max_);
         }
 
         typename T::value_type distance(T const &p) const
@@ -472,10 +472,10 @@ namespace gz4d
             typename T::value_type d2 = 0;
             for(std::size_t i = 0; i < T::size(); ++i)
             {
-                if(p[i] > _max[i])
-                    d2 += (p[i]-_max[i])*(p[i]-_max[i]);
-                else if (p[i] < _min[i])
-                    d2 += (_min[i]-p[i])*(_min[i]-p[i]);
+                if(p[i] > max_[i])
+                    d2 += (p[i]-max_[i])*(p[i]-max_[i]);
+                else if (p[i] < min_[i])
+                    d2 += (min_[i]-p[i])*(min_[i]-p[i]);
             }
             return sqrt(d2);
         }
@@ -486,7 +486,7 @@ namespace gz4d
             if(empty())
                 return false;
             for(std::size_t i = 0; i < T::size(); ++i)
-                if(p[i] < _min[i] || p[i] > _max[i])
+                if(p[i] < min_[i] || p[i] > max_[i])
                     return false;
             return true;
         }
@@ -495,13 +495,13 @@ namespace gz4d
         {
             if(other.empty())
                 return false;
-            return contains(other._min) && contains(other._max);
+            return contains(other.min_) && contains(other.max_);
         }
 
         bool intersects(Box<T> const &other) const
         {
             for(std::size_t i = 0; i < T::size(); ++i)
-                if(_min[i] > other._max[i] || _max[i] < other._min[i])
+                if(min_[i] > other.max_[i] || max_[i] < other.min_[i])
                     return false;
             return true;
         }
@@ -509,15 +509,15 @@ namespace gz4d
         void setSizesFromCenter(T const &s)
         {
             T c = getCenter();
-            _min = c-s/2.0;
-            _max = c+s/2.0;
+            min_ = c-s/2.0;
+            max_ = c+s/2.0;
         }
 
         void setSizesFromMin(T const &s)
         {
             if(empty())
-                _min = T(0);
-            _max = _min + s;
+                min_ = T(0);
+            max_ = min_ + s;
         }
         
         Box operator&(Box const &o) const
@@ -527,8 +527,8 @@ namespace gz4d
                 T newMin, newMax;
                 for(std::size_t i = 0; i < T::size(); ++i)
                 {
-                    newMin[i] = std::max(_min[i],o._min[i]);
-                    newMax[i] = std::min(_max[i],o._max[i]);
+                    newMin[i] = std::max(min_[i],o.min_[i]);
+                    newMax[i] = std::min(max_[i],o.max_[i]);
                 }
                 return Box(newMin,newMax);
             }
@@ -542,8 +542,8 @@ namespace gz4d
         
         Box &operator+=(const value_type &v)
         {
-            _min += v;
-            _max += v;
+            min_ += v;
+            max_ += v;
             return *this;
         }
         
@@ -841,19 +841,27 @@ namespace gz4d
         return ret;
     }
     
+    
+    ////////// Angles
+
+
     // period units: ranges for periodic types, such as angles
     namespace pu
     {
       struct Degree
       {
-          template <typename T> static T period(){return 360.0;}
-          template <typename T> static T half_period(){return 180.0;}
+        static constexpr double period = 360.0;
+        static constexpr double half_period = 180.0;
+          // template <typename T> static T period(){return 360.0;}
+          // template <typename T> static T half_period(){return 180.0;}
       };
 
       struct Radian
       {
-          template<typename T> static T half_period(){return 3.14159265358979323846;}
-          template<typename T> static T period(){return half_period<T>()*2.0;}
+        static constexpr double half_period = M_PI;
+        static constexpr double period = half_period*2.0;
+          // template<typename T> static T half_period(){return 3.14159265358979323846;}
+          // template<typename T> static T period(){return half_period<T>()*2.0;}
       };
     }
 
@@ -865,11 +873,11 @@ namespace gz4d
       {
           template<typename T, typename PU> static T fix(T v)
           {
-              if(v >= 0.0 && v < PU::template period<T>())
+              if(v >= 0.0 && v < PU::period)
                   return v;
-              T ret = fmod(v,PU::template period<T>());
+              T ret = fmod(v,PU::period);
               if(ret < 0)
-                  ret += PU::template period<T>();
+                  ret += PU::period;
               return ret;
           }
       };
@@ -879,10 +887,10 @@ namespace gz4d
       {
           template<typename T, typename PU> static T fix(T v)
           {
-              T half_period = PU::template half_period<T>();
+              T half_period = PU::half_period;
               if(v <= half_period && v > -half_period)
                   return v;
-              T period = PU::template period<T>();
+              T period = PU::period;
               T ret = fmod(v,period);
               if(ret > half_period)
                   return ret-period;
@@ -900,6 +908,23 @@ namespace gz4d
             return v;
           }
       };
+
+      /// cover half a circle, such as latitudes
+      /// Throws out_of_range if necessary
+      struct ZeroCenteredHalfPeriodChecked
+      {
+        template<typename T, typename PU> static T fix(T v)
+        {
+          static constexpr T quarter_period = PU::half_period/2.0;
+          if(v < -quarter_period || v > quarter_period)
+          {
+            std::stringstream ss;
+            ss << "Angle " << v << " out of range (" << -quarter_period << " to " << quarter_period << ")";
+            throw(std::range_error(ss.str()));
+          }
+          return v;
+        }
+      };
     }
     
     // Angle class aware of its units and range so it automatically rolls over
@@ -916,14 +941,14 @@ namespace gz4d
         typedef RT range_type;
 
         Angle():_value(RT::template fix<T, PU>(0.0)){}
-        Angle(T v):_value(RT::template fix<T, PU>(v)){}
+        explicit Angle(T v):_value(RT::template fix<T, PU>(v)){}
         Angle(Angle<T,PU,RT> const &a):_value(a._value){}
         template <typename ORT> Angle(Angle<T,PU,ORT> const &a):_value(RT::template fix<T, PU>(a.value())){}
-        template <typename OPU, typename ORT> Angle(Angle<T,OPU,ORT> const &a):_value(RT::template fix<T, PU>(a.normalized()*PU::template period<T>())){}
+        template <typename OPU, typename ORT> Angle(Angle<T,OPU,ORT> const &a):_value(RT::template fix<T, PU>(a.normalized()*PU::period)){}
 
-        T normalized() const{return _value/PU::template period<T>();}
+        T normalized() const{return _value/PU::period;}
         
-        explicit operator T() const {return _value;}
+        operator T() const {return _value;}
         T value() const {return _value;}
 
         // period aware operators, if the other value is more than half a period away, consider wrapping
@@ -946,12 +971,25 @@ namespace gz4d
         
         Angle<T,PU,RT> operator-() const {return Angle<T,PU,RT>(-_value);}
 
+        friend Angle<T, PU, RT> min(const Angle<T, PU, RT>& a1, const Angle<T, PU, RT>& a2)
+        {
+          if(a1 < a2)
+            return a1;
+          return a2;
+        }
+
+        friend Angle<T, PU, RT> max(const Angle<T, PU, RT>& a1, const Angle<T, PU, RT>& a2)
+        {
+          if(a1 > a2)
+            return a1;
+          return a2;
+        }
     };
 
     // period aware < operator, if the other value is more than half a period away, consider wrapping
     template<typename T, typename PU, typename RT> bool operator<(Angle<T,PU,RT> l, Angle<T,PU,RT> r)
     {
-      return (r._value-l._value > 0.0 && r._value-l._value < PU::template half_period<T>()) || r._value-l._value < -PU::template half_period<T>();
+      return (r.value()-l.value() > 0.0 && r.value()-l.value() < PU::half_period || r.value()-l.value() < -PU::half_period);
     }
 
     template<typename T, typename LPU, typename LRT, typename RPU, typename RRT> bool operator<(Angle<T,LPU,LRT> l, Angle<T,RPU,RRT> r)
@@ -1026,9 +1064,37 @@ namespace gz4d
     {
         return ::sin(val);
     }
-    
+
+
+    //////////// geo
+
     namespace geo
     {
+
+      template<typename PU>
+      using LatitudeType = Angle<double, PU, rt::ZeroCenteredHalfPeriodChecked>;
+
+      using LatitudeDegrees = LatitudeType<pu::Degree>;
+      using LatitudeRadians = LatitudeType<pu::Radian>;
+
+      template<typename PU>
+      using LatitudeSpan = Angle<double, PU, rt::Unclamped>;
+
+      using LatitudeSpanDegrees = LatitudeSpan<pu::Degree>;
+      using LatitudeSpanRadians = LatitudeSpan<pu::Radian>;
+
+      template<typename PU>
+      using LongitudeType = Angle<double, PU, rt::ZeroCenteredPeriod>;
+
+      using LongitudeDegrees = LongitudeType<pu::Degree>;
+      using LongitudeRadians = LongitudeType<pu::Radian>;
+
+      template<typename PU>
+      using LongitudeSpan = Angle<double, PU, rt::Unclamped>;
+
+      using LongitudeSpanDegrees = LongitudeSpan<pu::Degree>;
+      using LongitudeSpanRadians = LongitudeSpan<pu::Radian>;
+
       // coordinate formats, defines order of components
       namespace cf 
       {
@@ -1057,9 +1123,10 @@ namespace gz4d
         };
       }
 
-      // geographic point
-      // T is numeric type of components
-      // RF is the reference frame
+
+      /// 3D geographic point
+      /// T is numeric type of components
+      /// RF is the reference frame
       template<typename T, typename RF> class Point: public gz4d::Point<T>
       {
           public:
@@ -1093,10 +1160,6 @@ namespace gz4d
 
       };
       
-
-      
-
-
       // define a reference frame
       // CT is coordinate type
       // ET is ellipsoid type
@@ -1133,8 +1196,8 @@ namespace gz4d
             template <typename T, typename OCF, typename OPU, typename ET> Point<T, ReferenceFrame<Geodetic<CF,PU>,ET> > operator()(Point<T, ReferenceFrame<Geodetic<OCF,OPU>,ET> > const &p)
             {
                 Point<T, ReferenceFrame<Geodetic<CF,PU>,ET> > ret;
-                ret[CF::Latitude] = p[OCF::Latitude]*PU::template period<T>()/OPU::template period<T>();
-                ret[CF::Longitude] = p[OCF::Longitude]*PU::template period<T>()/OPU::template period<T>();
+                ret[CF::Latitude] = p[OCF::Latitude]*PU::period/OPU::period;
+                ret[CF::Longitude] = p[OCF::Longitude]*PU::period/OPU::period;
                 ret[CF::Height] = p[OCF::Height];
                 return ret;
             }
@@ -1163,18 +1226,153 @@ namespace gz4d
         };
       }
 
-      // Static ellipsoid class, does not need to be instanciated to be used.
+
+      /// 2D geographic position
+      /// PU is period units, degrees, radians or other
+      /// ET is ellipsoid type
+      template<typename PU, typename ET>
+      struct Position
+      {
+        using ellipsoid = ET;
+        LatitudeType<PU> latitude;
+        LongitudeType<PU> longitude;
+
+        Position():
+          latitude(std::nan("")), longitude(std::nan(""))
+        {}
+
+        Position(double latitude, double longitude):
+          latitude(latitude), longitude(longitude)
+        {}
+
+        template <typename OPU>
+        Position(const Position<OPU, ET>& other):
+          latitude(other.latitude), longitude(other.longitude)
+        {}
+
+        Position(const Point<double, ReferenceFrame<ct::Geodetic<cf::LatLon, PU>, ET> > &point):
+          latitude(point.latitude()), longitude(point.longitude())
+        {}
+
+
+        double distanceFrom(Position<PU, ET> other)
+        {
+          auto ad = ellipsoid::inverse(*this, other);
+          return ad.second;
+        }
+
+        friend std::ostream& operator<< (std::ostream& stream, const Position<PU, ET>& p)
+        {
+          stream << "lat: " << p.latitude << " lon: " << p.longitude;
+          return stream;
+        }
+
+        friend bool valid(const Position<PU, ET>& p)
+        {
+          return !std::isnan(p.latitude) && !std::isnan(p.longitude);
+        }
+
+        friend Position<PU, ET> min(const Position<PU, ET>& p1, const Position<PU, ET>& p2)
+        {
+          return Position<PU, ET>(min(p1.latitude, p2.latitude), min(p1.longitude, p2.longitude));
+        }
+
+        friend Position<PU, ET> max(const Position<PU, ET>& p1, const Position<PU, ET>& p2)
+        {
+          return Position<PU, ET>(max(p1.latitude, p2.latitude), max(p1.longitude, p2.longitude));
+        }
+
+      };
+
+
+      /// @brief 2D bounding box for geographic coordinates
+      /// @tparam T Position type
+      template<typename T>
+      class Bounds
+      {
+      public:
+        Bounds(){}
+
+        Bounds(const T& p):
+          min_(p), max_(p)
+        {}
+
+        Bounds(const T& p1, const T& p2):
+          min_(p1), max_(p1)
+        {
+          expand(p2);
+        }
+
+        const T& minimum() const
+        {
+          return min_;
+        }
+
+        const T& maximum() const
+        {
+          return max_;
+        }
+
+        void expand(const T& position)
+        {
+          if(valid(position))
+          {
+            if(valid(*this))
+            {
+              min_ = min(min_, position);
+              max_ = max(max_, position);
+            }
+            else
+            {
+              min_ = position;
+              max_ = position;
+            }
+          }
+        }
+
+        static Bounds<T> radiusFromCenter(const T& center, double radius)
+        {
+          auto delta_lat = T::ellipsoid::latitudinalSpan(center.latitude, radius);
+          auto delta_lon = T::ellipsoid::longitudinalSpan(center.latitude, radius);
+          return Bounds<T>(T(center.latitude-delta_lat, center.longitude-delta_lon), T(center.latitude+delta_lat, center.longitude+delta_lon));
+        }
+
+        friend bool valid(const Bounds<T>& bounds)
+        {
+          return valid(bounds.min_) && valid(bounds.max_);
+        }
+
+        friend std::ostream& operator<< (std::ostream& stream, const Bounds<T>& bounds)
+        {
+          stream << "min: " << bounds.getMin() << " max: " << bounds.getMax();
+          return stream;
+        }
+      private:
+        T min_;
+        T max_;
+
+      };
+      
+
+
+
+
+      // Static ellipsoid class, does not need to be instantiated to be used.
       // S determines the specs
       template<typename S> class Ellipsoid
       {
         public:
+          using specs = S;
+
+          using azimuth_type = Angle<double,pu::Radian,rt::PositivePeriod>;
+          using azimuth_distance_type = std::pair<azimuth_type, double>;
 
           /// Meridional radius of curvature.
           /// Radius of curvature in north-south direction.
           /// @param latitude Latitude in radians.
           static double M(double latitude)
           {
-              return S::a()*(1.0-S::e2())/pow((1.0-S::e2())*pow(sin(latitude),2.0),3.0/2.0);
+              return S::a*(1.0-S::e2)/pow((1.0-S::e2)*pow(sin(latitude),2.0),3.0/2.0);
           }
           
           template<typename RT> static double M(Angle<double,pu::Radian,RT> latitude){return M(latitude.value());}
@@ -1185,14 +1383,46 @@ namespace gz4d
           /// @param latitude Latitude in radians.
           static double N(double latitude)
           {
-              if(S::e2() == 0.0)
-                  return S::a();
-              return S::a()/sqrt(1-S::e2()*pow(sin(latitude),2.0));
+              if(S::e2 == 0.0)
+                  return S::a;
+              return S::a/sqrt(1-S::e2*pow(sin(latitude),2.0));
           }
           
           template<typename RT> static double N(Angle<double,pu::Radian,RT> latitude){return N(latitude.value());}
           template<typename RT> static double N(Angle<double,pu::Degree,RT> latitude){return N(Radians(latitude.value()));}
           
+          /// Calculate angle of longitude covered by distance in meters at given latitude in radians.
+          /// From https://en.wikipedia.org/wiki/Longitude#Length_of_a_degree_of_longitude
+          /// delta 1 long = (pi/180)a*cos(B) where tan(B) = (b/a)tan(phi) where B is reduced latitude
+          static inline LongitudeSpanRadians longitudinalSpan(double latitude, double distance)
+          {
+            //U is 'reduced latitude'
+            double tanU1 = (1.0-S::f)*tan(latitude);
+            double cosU1 = 1/sqrt(1+tanU1*tanU1);
+            return LongitudeSpanRadians(distance/(S::a*cosU1));
+          }
+
+          template<typename RT>
+          static inline LongitudeSpanRadians longitudinalSpan(LatitudeRadians latitude, double distance)
+          {
+            return longitudinalSpan(latitude.value(), distance);
+          }
+
+          template<typename RT>
+          static inline LongitudeSpanRadians longitudinalSpan(LatitudeDegrees latitude, double distance)
+          {
+            return longitudinalSpan(LatitudeRadians(latitude), distance);
+          }
+
+          /// Calculates approximate angle of latitude covered by distance in meters 
+          /// along longitudinal lines at given latitude.
+          /// https://en.wikipedia.org/wiki/Latitude#Length_of_a_degree_of_latitude
+          /// The length of a small meridian arc is given by:
+          /// delta m(phi) = M(phi)*delta phi = a(1-e2)((1-e2*sin(phi)^2)^(-3/2)) *delta phi
+          static inline LatitudeSpanRadians latitudinalSpan(LatitudeRadians latitude, double distance)
+          {
+            return LatitudeSpanRadians(distance*pow(1.0-S::e2*pow(sin(latitude),2),3.0/2.0)/(S::a*(1-S::e2)));
+          }
 
           template<typename T, typename CF> static Point<double,ReferenceFrame<ct::ECEF<>, Ellipsoid<S> > > ToEarthCenteredEarthFixed( Point<T,ReferenceFrame<ct::Geodetic<CF, pu::Radian>, Ellipsoid<S> > > const &p)
           {
@@ -1200,7 +1430,7 @@ namespace gz4d
               double lonr = p[CF::Longitude];
               double height = p[CF::Height];
               double n = N(latr);
-              return Point<double,ReferenceFrame<ct::ECEF<>, Ellipsoid<S> > >((n+height)*cos(latr)*cos(lonr),(n+height)*cos(latr)*sin(lonr),(n*(1.0-S::e2())+height)*sin(latr));
+              return Point<double,ReferenceFrame<ct::ECEF<>, Ellipsoid<S> > >((n+height)*cos(latr)*cos(lonr),(n+height)*cos(latr)*sin(lonr),(n*(1.0-S::e2)+height)*sin(latr));
           }
 
           template<typename T, typename CF, typename PU> static Point<double,ReferenceFrame<ct::ECEF<>, Ellipsoid<S> > > ToEarthCenteredEarthFixed( Point<T,ReferenceFrame<ct::Geodetic<CF, PU>, Ellipsoid<S> > > const &p)
@@ -1217,21 +1447,21 @@ namespace gz4d
 
           template <typename CF> static void ToGeodetic(Point<double,ReferenceFrame<ct::ECEF<>, Ellipsoid<S> > > const &p, Point<double,ReferenceFrame<ct::Geodetic<CF, pu::Radian>, Ellipsoid<S> > > &ret)
           {
-              double ep2 = (S::a()*S::a())/(S::b()*S::b())-1.0;
+              double ep2 = (S::a*S::a)/(S::b*S::b)-1.0;
               double r = sqrt(p[0]*p[0]+p[1]*p[1]);
-              double E2 = S::a()*S::a()-S::b()*S::b();
-              double F = 54*S::b()*S::b()*p[2]*p[2];
-              double G = r*r +(1.0-S::e2())*p[2]*p[2]-S::e2()*E2;
-              double C = (S::e2()*S::e2()*F*r*r)/(G*G*G);
+              double E2 = S::a*S::a-S::b*S::b;
+              double F = 54*S::b*S::b*p[2]*p[2];
+              double G = r*r +(1.0-S::e2)*p[2]*p[2]-S::e2*E2;
+              double C = (S::e2*S::e2*F*r*r)/(G*G*G);
               double s = pow(1.0+C+sqrt(C*C+2*C),1/3.0);
               double P = F/(3.0*pow((s+(1.0/s)+1.0),2.0)*G*G);
-              double Q = sqrt(1.0+2.0*S::e2()*S::e2()*P);
-              double r0 = (-(P*S::e2()*r)/(1.0+Q))+sqrt((1.0/2.0)*S::a()*S::a()*(1.0+1.0/Q)-((P*(1-S::e2())*p[2]*p[2])/(Q*(1.0+Q)))-(1.0/2.0)*P*r*r);
-              double U = sqrt(pow(r-S::e2()*r0,2.0)+p[2]*p[2]);
-              double V = sqrt(pow(r-S::e2()*r0,2.0)+(1.0-S::e2())*p[2]*p[2]);
-              double Z0 = S::b()*S::b()*p[2]/(S::a()*V);
+              double Q = sqrt(1.0+2.0*S::e2*S::e2*P);
+              double r0 = (-(P*S::e2*r)/(1.0+Q))+sqrt((1.0/2.0)*S::a*S::a*(1.0+1.0/Q)-((P*(1-S::e2)*p[2]*p[2])/(Q*(1.0+Q)))-(1.0/2.0)*P*r*r);
+              double U = sqrt(pow(r-S::e2*r0,2.0)+p[2]*p[2]);
+              double V = sqrt(pow(r-S::e2*r0,2.0)+(1.0-S::e2)*p[2]*p[2]);
+              double Z0 = S::b*S::b*p[2]/(S::a*V);
 
-              ret[CF::Height] = U*(1.0-(S::b()*S::b())/(S::a()*V));
+              ret[CF::Height] = U*(1.0-(S::b*S::b)/(S::a*V));
               ret[CF::Latitude] = atan((p[2]+ep2*Z0)/r);
               ret[CF::Longitude] =atan2(p[1],p[0]);
           }
@@ -1240,7 +1470,8 @@ namespace gz4d
           /// @param p1 starting point
           /// @param azimuth clockwise angle in radians relative to north.
           /// @param distance distance in meters.
-          template <typename CF> static Point<double,ReferenceFrame<ct::Geodetic<CF, pu::Radian>, Ellipsoid<S> > > direct(Point<double,ReferenceFrame<ct::Geodetic<CF, pu::Radian>, Ellipsoid<S> > > const &p1, Angle<double,pu::Radian,rt::Unclamped> azimuth, double distance)
+          template <typename CF>
+          static Point<double,ReferenceFrame<ct::Geodetic<CF, pu::Radian>, Ellipsoid<S> > > direct(Point<double,ReferenceFrame<ct::Geodetic<CF, pu::Radian>, Ellipsoid<S> > > const &p1, Angle<double,pu::Radian,rt::Unclamped> azimuth, double distance)
           {
               double phi1 = p1[CF::Latitude];
               double alpha1 = static_cast<double>(azimuth);
@@ -1248,7 +1479,7 @@ namespace gz4d
               double epsilon = 1e-12;
               
               //U is 'reduced latitude'
-              double tanU1 = (1.0-S::f())*tan(phi1);
+              double tanU1 = (1.0-S::f)*tan(phi1);
               double cosU1 = 1/sqrt(1+tanU1*tanU1);
               double sinU1 = tanU1*cosU1;
 
@@ -1259,9 +1490,9 @@ namespace gz4d
               double sinAlpha = cosU1*sinAlpha1;
               double cos2Alpha = 1.0-sinAlpha*sinAlpha;
               
-              double a = S::a();
-              double b = S::b();
-              double f = S::f();
+              double a = S::a;
+              double b = S::b;
+              double f = S::f;
 
               double u2 = cos2Alpha*(a*a-b*b)/(b*b);
 
@@ -1302,24 +1533,27 @@ namespace gz4d
               return ret;
           }
 
-          template <typename CF, typename PU> static Point<double,ReferenceFrame<ct::Geodetic<CF, PU>, Ellipsoid<S> > > direct(Point<double,ReferenceFrame<ct::Geodetic<CF, PU>, Ellipsoid<S> > > const &p1, Angle<double,pu::Radian,rt::Unclamped> azimuth, double distance)
+          template <typename CF, typename PU>
+          static Point<double,ReferenceFrame<ct::Geodetic<CF, PU>, Ellipsoid<S> > > direct(Point<double,ReferenceFrame<ct::Geodetic<CF, PU>, Ellipsoid<S> > > const &p1, Angle<double,pu::Radian,rt::Unclamped> azimuth, double distance)
           {
             return direct(Point<double,ReferenceFrame<ct::Geodetic<CF, pu::Radian>, Ellipsoid<S> > >(p1), azimuth, distance);
           }
 
           
+
           /// Calculates the azimuth and distance from P1 to P2 on the WGS84 ellipsoid.
           /// @param p1: Position P1 in radians
           /// @param p2: Position P2 in radians
           /// @return: azimuth in radians, distance in meters
-          template <typename CF> static std::pair<Angle<double,pu::Radian,rt::PositivePeriod>,double> inverse(Point<double,ReferenceFrame<ct::Geodetic<CF, pu::Radian>, Ellipsoid<S> > > const &p1,Point<double,ReferenceFrame<ct::Geodetic<CF, pu::Radian>, Ellipsoid<S> > > const &p2)
+          template <typename CF>
+          static azimuth_distance_type inverse(Point<double,ReferenceFrame<ct::Geodetic<CF, pu::Radian>, Ellipsoid<S> > > const &p1,Point<double,ReferenceFrame<ct::Geodetic<CF, pu::Radian>, Ellipsoid<S> > > const &p2)
           {
               if(p1 == p2)
-                  return std::pair<double,double>(0.0,0.0);
+                  return std::pair<Angle<double,pu::Radian,rt::PositivePeriod>,double>(0.0,0.0);
               
-              double a = S::a();
-              double b = S::b();
-              double f = S::f();
+              double a = S::a;
+              double b = S::b;
+              double f = S::f;
               
               double epsilon = 1e-12;   
               
@@ -1386,31 +1620,37 @@ namespace gz4d
           /// @param p1: Position P1
           /// @param p2: Position P2
           /// @return: azimuth in radians, distance in meters
-          template <typename CF, typename PU> static std::pair<Angle<double,pu::Radian,rt::PositivePeriod>,double> inverse(Point<double,ReferenceFrame<ct::Geodetic<CF, PU>, Ellipsoid<S> > > const &p1,Point<double,ReferenceFrame<ct::Geodetic<CF, PU>, Ellipsoid<S> > > const &p2)
+          template <typename CF, typename PU>
+          static azimuth_distance_type inverse(Point<double,ReferenceFrame<ct::Geodetic<CF, PU>, Ellipsoid<S> > > const &p1,Point<double,ReferenceFrame<ct::Geodetic<CF, PU>, Ellipsoid<S> > > const &p2)
           {
             return inverse(Point<double,ReferenceFrame<ct::Geodetic<CF, pu::Radian>, Ellipsoid<S> > >(p1), Point<double,ReferenceFrame<ct::Geodetic<CF, pu::Radian>, Ellipsoid<S> > >(p2));
+          }
+
+          static azimuth_distance_type inverse(const Position<pu::Radian, Ellipsoid<S> > &p1, const Position<pu::Radian, Ellipsoid<S> > &p2)
+          {
+            return inverse(Point<double,ReferenceFrame<ct::Geodetic<cf::LatLon, pu::Radian>, Ellipsoid<S> > >(p1.latitude, p1.longitude), Point<double,ReferenceFrame<ct::Geodetic<cf::LatLon, pu::Radian>, Ellipsoid<S> > >(p2.latitude, p2.longitude));
           }
 
         };
 
         namespace WGS84
         {
-            struct EllipsoidSpecs
-            {
-                static double a() {return 6378137.0;}
-                static double b() {return 6356752.3142;}
-                static double f() {return 1.0/298.257223563;}
-                static double w() {return 7292115e-11;}
-                static double e2() { return 1.0-( 6356752.3142* 6356752.3142)/(6378137.0*6378137.0);}
-            };
+          struct EllipsoidSpecs
+          {
+            static constexpr double a = 6378137.0;
+            static constexpr double b = 6356752.3142;
+            static constexpr double f = 1.0/298.257223563;
+            static constexpr double w = 7292115e-11;
+            static constexpr double e2 = 1.0-(b*b)/(a*a);
+          };
 
-            typedef geo::Ellipsoid<EllipsoidSpecs> Ellipsoid;
+          typedef geo::Ellipsoid<EllipsoidSpecs> Ellipsoid;
 
-            typedef ReferenceFrame<ct::Geodetic<cf::LatLon, pu::Radian>, Ellipsoid> LatLonRadians;
-            typedef ReferenceFrame<ct::Geodetic<cf::LonLat, pu::Radian>, Ellipsoid> LonLatRadians;
-            typedef ReferenceFrame<ct::Geodetic<cf::LatLon, pu::Degree>, Ellipsoid> LatLonDegrees;
-            typedef ReferenceFrame<ct::Geodetic<cf::LonLat, pu::Degree>, Ellipsoid> LonLatDegrees;
-            typedef ReferenceFrame<ct::ECEF<>, Ellipsoid> ECEF;
+          typedef ReferenceFrame<ct::Geodetic<cf::LatLon, pu::Radian>, Ellipsoid> LatLonRadians;
+          typedef ReferenceFrame<ct::Geodetic<cf::LonLat, pu::Radian>, Ellipsoid> LonLatRadians;
+          typedef ReferenceFrame<ct::Geodetic<cf::LatLon, pu::Degree>, Ellipsoid> LatLonDegrees;
+          typedef ReferenceFrame<ct::Geodetic<cf::LonLat, pu::Degree>, Ellipsoid> LonLatDegrees;
+          typedef ReferenceFrame<ct::ECEF<>, Ellipsoid> ECEF;
         }
 
         
@@ -1509,7 +1749,8 @@ namespace gz4d
                 }
         };
         
-        
+
+
 
     }
     
@@ -1517,7 +1758,11 @@ namespace gz4d
     typedef geo::Point<double,gz4d::geo::WGS84::LatLonRadians> GeoPointLatLongRadians;
     typedef geo::Point<double, gz4d::geo::WGS84::ECEF> GeoPointECEF;
     typedef geo::LocalENU<> LocalENU;
-    
+
+    using PositionDegrees = geo::Position<pu::Degree, geo::WGS84::Ellipsoid>;
+    using PositionRadians = geo::Position<pu::Radian, geo::WGS84::Ellipsoid>;
+    using BoundsDegrees = geo::Bounds<PositionDegrees>;
+
     template <typename T, std::size_t N> T norm2(Vector<T, N> const &v)
     {
         T ret = v[0]*v[0];
