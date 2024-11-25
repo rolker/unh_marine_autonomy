@@ -12,6 +12,7 @@ find_package(project11_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
 set(MSG_FILES
+  action/RunTasks.action
   msg/BoundingBox.msg
   msg/Curve.msg
   msg/CurvedTrajectory.msg
@@ -36,7 +37,9 @@ rosidl_generate_interfaces(
   std_msgs
 )
 
-ament_export_dependencies(rosidl_default_runtime)
+ament_export_dependencies(
+  rosidl_default_runtime
+)
 
 ament_package()
 

@@ -1,0 +1,8 @@
+#goal
+project11_nav_msgs/TaskInformation[] tasks
+---
+#result
+project11_nav_msgs/TaskInformation[] tasks
+---
+# feedback
+project11_nav_msgs/TaskFeedback feedback
