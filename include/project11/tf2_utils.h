@@ -3,6 +3,8 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "tf2_ros/transform_listener.h"
+#include "tf2_ros/buffer.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "geographic_msgs/msg/geo_point.hpp"
 #include "geometry_msgs/msg/point.hpp"
 #include "project11/utils.h"
@@ -13,33 +15,31 @@ namespace project11
   class Transformations
   {
   public:
-      Transformations(std::shared_ptr<tf2_ros::Buffer> external_buffer = {}):tf_buffer_(external_buffer)
+      Transformations(rclcpp::Node::SharedPtr node):
+        node_(node)
       {
-        if(!tf_buffer_)
-        {
-          tf_buffer_ = std::make_shared<tf2_ros::Buffer>();
-          tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-        }
+        tf_buffer_ = std::make_unique<tf2_ros::Buffer>(node_->get_clock());
+        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
       }
-      
-      bool canTransform(std::string map_frame="map", ros::Time target_time = ros::Time(0), ros::Duration timeout = ros::Duration(0.5))
+
+      bool canTransform(std::string map_frame="map", rclcpp::Time target_time = rclcpp::Time(), tf2::Duration timeout = tf2::durationFromSec(0.5))
       {
         return buffer()->canTransform("earth", map_frame, target_time, timeout);
       }
 
-      geometry_msgs::Point wgs84_to_map(geographic_msgs::GeoPoint const &position, std::string map_frame="map", ros::Time target_time = ros::Time(0))
+      geometry_msgs::msg::Point wgs84_to_map(geographic_msgs::msg::GeoPoint const &position, std::string map_frame="map", rclcpp::Time target_time = rclcpp::Time())
       {
-        geometry_msgs::Point ret;
+        geometry_msgs::msg::Point ret;
         try
         {
-          geometry_msgs::TransformStamped t = buffer()->lookupTransform(map_frame,"earth",target_time);
+          geometry_msgs::msg::TransformStamped t = buffer()->lookupTransform(map_frame,"earth",target_time);
           LatLongDegrees p_ll;
           fromMsg(position, p_ll);
           bool alt_is_nan = std::isnan(position.altitude);
           if(alt_is_nan)
             p_ll.altitude() = 0.0;
           ECEF p_ecef = p_ll;
-          geometry_msgs::Point in;
+          geometry_msgs::msg::Point in;
           toMsg(p_ecef, in);
           tf2::doTransform(in,ret,t);
           if(alt_is_nan)
@@ -47,18 +47,18 @@ namespace project11
         }
         catch (tf2::TransformException &ex)
         {
-          ROS_WARN_STREAM("Transformations: " << ex.what());
+          RCLCPP_WARN_STREAM(node_->get_logger(), "Transformations: " << ex.what());
         }
         return ret;
       }
       
-      geographic_msgs::GeoPoint map_to_wgs84(geometry_msgs::Point const &point, std::string map_frame="map", ros::Time target_time = ros::Time(0))
+      geographic_msgs::msg::GeoPoint map_to_wgs84(geometry_msgs::msg::Point const &point, std::string map_frame="map", rclcpp::Time target_time = rclcpp::Time())
       {
-          geographic_msgs::GeoPoint ret;
+          geographic_msgs::msg::GeoPoint ret;
           try
           {
-            geometry_msgs::TransformStamped t = buffer()->lookupTransform("earth",map_frame, target_time);
-            geometry_msgs::Point out;
+            geometry_msgs::msg::TransformStamped t = buffer()->lookupTransform("earth",map_frame, target_time);
+            geometry_msgs::msg::Point out;
             tf2::doTransform(point,out,t);
             ECEF out_ecef;
             fromMsg(out,out_ecef);
@@ -67,23 +67,25 @@ namespace project11
           }
           catch (tf2::TransformException &ex)
           {
-            ROS_WARN_STREAM("Transformations: " << ex.what());
+            RCLCPP_WARN_STREAM(node_->get_logger(), "Transformations: " << ex.what());
           }
           return ret;
       }
       
-      std::shared_ptr<tf2_ros::Buffer> operator()() const
+      const std::unique_ptr<tf2_ros::Buffer> &operator()() const
       {
         return buffer();
       }
       
     private:
-      std::shared_ptr<tf2_ros::Buffer> buffer() const
+      const std::unique_ptr<tf2_ros::Buffer> &buffer() const
       {
         return tf_buffer_;
       }
 
-      std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+      rclcpp::Node::SharedPtr node_;
+
+      std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
       std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     };
 }

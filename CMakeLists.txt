@@ -14,9 +14,9 @@ find_package(geographic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(project11_msgs REQUIRED)
 find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(rclcpp REQUIRED)
-
 
 ament_python_install_package(${PROJECT_NAME})
 
@@ -28,10 +28,11 @@ target_include_directories(${PROJECT_NAME}
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>"
 )
-
-target_link_libraries(${PROJECT_NAME} PRIVATE
+target_link_libraries(${PROJECT_NAME} PUBLIC
   rclcpp::rclcpp
   tf2::tf2
+  tf2_ros::tf2_ros
+  tf2_geometry_msgs::tf2_geometry_msgs
 )
 
 install(
@@ -47,8 +48,13 @@ install(
   RUNTIME DESTINATION bin
 )
 
+install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
+
+install(PROGRAMS scripts/platform_send.py DESTINATION lib/${PROJECT_NAME})
+
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(geographic_msgs geometry_msgs project11_msgs tf2_ros)
+ament_export_dependencies(geographic_msgs geometry_msgs project11_msgs tf2_geometry_msgs tf2_ros)
 ament_export_include_directories("include/${PROJECT_NAME}")
 
 ament_package()
