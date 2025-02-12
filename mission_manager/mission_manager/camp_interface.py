@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
 
-import rospy
+from typing import Optional
+
+import rclpy
+from rclpy.lifecycle import Node
+from rclpy.lifecycle import Publisher
+from rclpy.subscription import Subscription
+
 import project11
 import datetime
 
+import rclpy.constants
+import rclpy.time_source
 from std_msgs.msg import String
 from geometry_msgs.msg import PoseStamped, Quaternion
-from project11_msgs.msg import Heartbeat, KeyValue
+
+from project11 import nav
+from project11_msgs.msg import Heartbeat
+from project11_msgs.msg import KeyValue
 from project11_msgs.msg import BehaviorInformation
 from project11_nav_msgs.msg import TaskInformation
 
@@ -15,7 +26,7 @@ import yaml
 import math
 
 
-def parseLatLong(args):
+def parseLatLong(args, node: Node):
   """ Splits a string into latitude and longitude.
 
   Splits a string in two and creates a dictionary with 
@@ -35,12 +46,12 @@ def parseLatLong(args):
       lon = float(latlon[1])
       return {'latitude':lat, 'longitude':lon}
     except ValueError:
-      rospy.logerr("mission_manager: Cannot convert the command "
-                      "arguments <%s> into two floats!"%args)
+      node.get_logger().error(f"mission_manager: Cannot convert the command "
+                      "arguments <{args}> into two floats!")
       return None
   else:
-    rospy.logerr("mission_manager: Cannot split the command "
-                "arguments <%s> into exactly two elements!"%args)
+    node.get_logger().info(f"mission_manager: Cannot split the command "
+                "arguments <{args}> into exactly two elements!")
 
   return None
 
@@ -68,34 +79,48 @@ class CampInterface:
   and provides Heartbeat feedback.
   """
 
-  def __init__(self, mission_manager) -> None:
+  def __init__(self, mission_manager: Node) -> None:
     self.mission_manager = mission_manager
-    self.command_subscriber = rospy.Subscriber('project11/mission_manager/command', 
-                                                String,
-                                                self.commandCallback,
-                                                  queue_size = 1)
+    self.command_subscriber: Optional[Subscription] = None
+    self.status_publisher: Optional[Publisher] = None
+    self.earth: Optional[nav.EarthTransforms] = None
 
-    self.status_publisher = rospy.Publisher('project11/status/mission_manager', 
-                                                Heartbeat, queue_size = 10)
+
+  def on_configure(self):
+    self.command_subscriber = self.mission_manager.create_subscription(
+      String, 'project11/mission_manager/command', self.commandCallback, 1)
+
+    self.status_publisher = self.mission_manager.create_lifecycle_publisher(
+      Heartbeat, 'project11/status/mission_manager', 10)
     
-    self.earth = project11.nav.EarthTransforms()
+    self.earth = nav.EarthTransforms(self.mission_manager)
 
-  def navigatorFeedback(self, feedback):
+  def on_activate(self):
+    pass
+
+
+  def on_deactivate(self):
+    self.mission_manager.get_logger().info("CampInterface: on_deactivate().")
+    pass
+
+  def navigatorFeedback(self, feedback_msg):
+    
     hb = Heartbeat()
-    now = datetime.datetime.utcfromtimestamp(rospy.Time.now().to_sec())
-    hb.values.append(KeyValue("T", now.isoformat(timespec='milliseconds')))
-    hb.values.append(KeyValue("Navigator","active"))
-    if feedback is not None:
-      hb.values.append(KeyValue("Current Nav Task", feedback.feedback.current_navigation_task))
-    listTasks(feedback.feedback.tasks, hb)
+    now = datetime.datetime.fromtimestamp(self.mission_manager.get_clock().now().nanoseconds/1e9, tz=datetime.timezone.utc)
+    hb.values.append(KeyValue(key="T", value=now.isoformat(timespec='milliseconds')))
+    hb.values.append(KeyValue(key="Navigator", value="active"))
+    if feedback_msg is not None:
+      task_feedback = feedback_msg.feedback.feedback
+      hb.values.append(KeyValue(key="Current Nav Task", value=task_feedback.current_navigation_task))
+      listTasks(task_feedback.tasks, hb)
     self.status_publisher.publish(hb)
 
 
   def navigatorDone(self, state, result):
     hb = Heartbeat()
-    now = datetime.datetime.utcfromtimestamp(rospy.Time.now().to_sec())
-    hb.values.append(KeyValue("T", now.isoformat(timespec='milliseconds')))
-    hb.values.append(KeyValue("Navigator","done"))
+    now = datetime.datetime.fromtimestamp(self.mission_manager.get_clock().now().nanoseconds/1e9, tz=datetime.timezone.utc)
+    hb.values.append(KeyValue(key="T", value=now.isoformat(timespec='milliseconds')))
+    hb.values.append(KeyValue(key="Navigator", value="done"))
     if(result is None):
       listTasks(None, hb)
     else:
@@ -137,7 +162,7 @@ class CampInterface:
     elif cmd == 'cancel_override':
       self.mission_manager.setOverrideTask()
     elif cmd == 'override':
-      rospy.loginfo(args)
+      self.mission_manager.get_logger().info(args)
       parts = args.split(None,1)
       if len(parts) == 2:
         task_type = parts[0]   
@@ -146,17 +171,17 @@ class CampInterface:
           task.type = "goto"
           task.id = "goto_override"
           task.priority = -1
-          ll = parseLatLong(parts[1])
+          ll = parseLatLong(parts[1], self.mission_manager)
           if ll is not None:
               task.poses.append(self.earth.geoToPose(ll['latitude'], ll['longitude']))
               self.mission_manager.setOverrideTask(task)
         elif task_type == 'hover':
-          rospy.logdebug('mission_manager: hover.')
+          self.mission_manager.get_logger().debug('mission_manager: hover.')
           task = TaskInformation()
           task.type = "hover"
           task.id = "hover_override"
           task.priority = -1
-          ll = parseLatLong(parts[1])
+          ll = parseLatLong(parts[1], self.mission_manager)
           if ll is not None:
             task.poses.append(self.earth.geoToPose(ll['latitude'], ll['longitude']))
           self.mission_manager.setOverrideTask(task)
@@ -167,7 +192,7 @@ class CampInterface:
         task.priority = -1
         self.mission_manager.setOverrideTask(task)
     else:
-      rospy.logerr("mission_manager: No defined action for the "
+      self.mission_manager.get_logger().err("mission_manager: No defined action for the "
                     "received command <%s> - ignoring!"%msg.data)
       
 
@@ -187,14 +212,14 @@ class CampInterface:
       prepend: A bool to prepend (true) or append (false).
     """
     parts = args.split(None,1)
-    rospy.logdebug("mission_manager: Adding task with arguments: %s"%parts)
+    self.mission_manager.get_logger().debug("mission_manager: Adding task with arguments: %s"%parts)
     if len(parts) == 2:
       task_type = parts[0]
       task_list = []
       if task_type == 'mission_plan':
         task_list = self.parseMission(json.loads(parts[1]))
       else:
-        rospy.logerr("mission_manager: No defined task of type <%s> "
+        self.mission_manager.get_logger().error("mission_manager: No defined task of type <%s> "
                       "from task string <%s>"%(task_type, args))
           
       if len(task_list): 
@@ -203,11 +228,9 @@ class CampInterface:
         else:
           self.mission_manager.appendTasks(task_list)
       else:
-        rospy.logerr("mission_manager: The task string <%s> was "
-                      "not successfully parsed. No task added!"% args)
+        self.mission_manager.get_logger().error("mission_manager: The task string <%s> was not successfully parsed. No task added!"% args)
     else:
-      rospy.logerr("mission_manager: Task string <%s> was not "
-                    "split into exactly two parts.  No task added!")
+      self.mission_manager.get_logger().error("mission_manager: Task string <%s> was not split into exactly two parts.  No task added!")
         
   def alignPoses(self, poses):
     q = Quaternion()
@@ -223,7 +246,7 @@ class CampInterface:
       
 
   def parseMission(self, plan, parent_task = None):
-    rospy.logdebug("parsing mission: " + str(plan))
+    self.mission_manager.get_logger().debug("parsing mission: " + str(plan))
     task_list = []
     if parent_task is None:
       parent_id = ''

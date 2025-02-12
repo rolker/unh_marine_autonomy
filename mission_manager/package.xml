@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>mission_manager</name>
+  <version>0.0.0</version>
+  <description>The mission_manager package</description>
+
+  <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
+  <license>BSD</license>
+
+  <depend>geometry_msgs</depend>
+  <depend>mission_manager_interfaces</depend>
+  <depend>nav_msgs</depend>
+  <depend>project11</depend>
+  <depend>project11_nav_msgs</depend>
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <exec_depend>python3-yaml</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+    <rosdoc2>rosdoc2.yaml</rosdoc2>
+  </export>
+</package>
