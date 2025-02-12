@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 
-import rospy
-import tf2_ros
+import rclpy
+
+import rclpy.duration
+import rclpy.node
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
 
 from geographic_msgs.msg import GeoPose
 from geographic_msgs.msg import GeoPointStamped
@@ -13,10 +17,11 @@ from nav_msgs.msg import Odometry
 import project11.wgs84
 import project11.geodesic
 
-from tf2_geometry_msgs import do_transform_pose
+from tf2_geometry_msgs import do_transform_pose_stamped
 from tf2_geometry_msgs import do_transform_point
-from tf.transformations import quaternion_about_axis
-from tf.transformations import euler_from_quaternion
+
+from tf_transformations import quaternion_about_axis
+from tf_transformations import euler_from_quaternion
 
 import math
 import copy
@@ -122,22 +127,24 @@ def transformPoseToGeoPose(pose, transform):
 
 class EarthTransforms(object):
     """Help transform coordinates between Lat/Lon and map space"""
-    def __init__(self, tfBuffer = None, map_frame = None):
+    def __init__(self, node: rclpy.node.Node, tf_buffer: Buffer = None, map_frame = None):
 
-        if tfBuffer is None:
-            self.tfBuffer = tf2_ros.Buffer()
-            self.listener = tf2_ros.TransformListener(self.tfBuffer)
+        if tf_buffer is None:
+            self.tf_buffer = Buffer()
+            self.listener = TransformListener(self.tf_buffer, node)
         else:
-            self.tfBuffer = tfBuffer
+            self.tf_buffer = tf_buffer
 
         if map_frame is None:
-            self.map_frame = rospy.get_param("~map_frame", "map")
+            node.declare_parameter("map_frame", "map")
+            self.map_frame = node.get_parameter("map_frame").get_parameter_value().string_value
         else:
             self.map_frame = map_frame
+        self.node = node
 
         
 
-    def geoToPose(self, lat, lon, heading=None, frame_id=None, time=rospy.Time(), timeout=rospy.Duration(0)):
+    def geoToPose(self, lat, lon, heading=None, frame_id=None, time=rclpy.time.Time(), timeout=rclpy.duration.Duration()):
         """ Returns a PoseStamped in given frame from given geographic position.
         
         Args:
@@ -152,10 +159,10 @@ class EarthTransforms(object):
             frame_id = self.map_frame
 
         try:
-            earth_to_frame = self.tfBuffer.lookup_transform(frame_id, "earth", time, timeout)
+            earth_to_frame = self.tf_buffer.lookup_transform(frame_id, "earth", time, timeout)
         except Exception as e:
-            rospy.logerr("mission_manager: Cannot lookup transform from {} to <earth>".format(frame_id))
-            rospy.logerr(e)
+            self.node.get_logger().error("mission_manager: Cannot lookup transform from <earth> to {}".format(frame_id))
+            self.node.get_logger().error(str(e))
             return None
 
         ecef = project11.wgs84.toECEFfromDegrees(lat, lon)
@@ -163,22 +170,22 @@ class EarthTransforms(object):
         ecef_pose.pose.position.x = ecef[0]
         ecef_pose.pose.position.y = ecef[1]
         ecef_pose.pose.position.z = ecef[2]
-        ret = do_transform_pose(ecef_pose, earth_to_frame)
+        ret = do_transform_pose_stamped(ecef_pose, earth_to_frame)
 
         if heading is not None:
             ret.pose.orientation = headingToQuaternionMsg(heading)
 
         return ret
 
-    def mapToEarthTransform(self, map_frame = None, timestamp=rospy.Time()):
+    def mapToEarthTransform(self, map_frame = None, timestamp=rclpy.time.Time()):
         if map_frame is None:
             map_frame = self.map_frame
 
         try:
-            return self.tfBuffer.lookup_transform("earth", map_frame, timestamp)
+            return self.tf_buffer.lookup_transform("earth", map_frame, timestamp)
         except Exception as e:
-            rospy.logerr("Cannot lookup transform from <earth> to {}".format(map_frame))
-            rospy.logerr(e)
+            self.node.get_logger().error("Cannot lookup transform from <earth> to {}".format(map_frame))
+            self.node.get_logger().error(e)
 
     def poseListToGeoPoseList(self, poses, map_frame = None):
         map_to_earth = self.mapToEarthTransform(map_frame)
@@ -197,7 +204,7 @@ class EarthTransforms(object):
         """
         transforms = {}
         ret = []
-        default_time = rospy.Time()
+        default_time = rclpy.time.Time()
         for p in points:
             if hasattr(p, 'header'):
                 transform_key = (p.header.frame_id, p.header.stamp)
@@ -216,10 +223,10 @@ class EarthTransforms(object):
 
     def pointToGeoPoint(self, point):
         try:
-            map_to_earth = self.tfBuffer.lookup_transform("earth", point.header.frame_id, rospy.Time())
+            map_to_earth = self.tfBuffer.lookup_transform("earth", point.header.frame_id, rclpy.time.Time())
         except Exception as e:
-            rospy.logerr("Cannot lookup transform from <earth> to {}".format(point.header.frame_id))
-            rospy.logerr(e)
+            self.node.get_logger().error("Cannot lookup transform from <earth> to {}".format(point.header.frame_id))
+            self.node.get_logger().error(e)
             return None
         ecef = do_transform_point(point, map_to_earth)
         latlon = project11.wgs84.fromECEFtoLatLong(ecef.point.x, ecef.point.y, ecef.point.z)
@@ -238,14 +245,14 @@ class EarthTransforms(object):
 class RobotNavigation(EarthTransforms):
     """Keeps track of robot's navigation state"""
 
-    def __init__(self, tfBuffer = None):
-        EarthTransforms.__init__(self, tfBuffer)
-        self.odometry = None
+    def __init__(self, node: rclpy.node.Node, tfBuffer = None):
+        EarthTransforms.__init__(self, node, tfBuffer)
+        self.odometry: Odometry = None
 
-        self.odom_sub = rospy.Subscriber('odom', Odometry, self.odometryCallback, queue_size = 1)
+        self.odom_sub = node.create_subscription(Odometry, 'odom', self.odometryCallback, 1)
 
 
-    def odometryCallback(self, msg):
+    def odometryCallback(self, msg: Odometry):
         """ Stores navigation Odometry as class attribute.
 
         Args:
@@ -270,19 +277,17 @@ class RobotNavigation(EarthTransforms):
           Lat/Long in radians and altitude in meters.
         """
         if self.odometry is None:
-            rospy.logwarn_throttle(2, "There is no current odomentry, "
-                          "so can't determine position!")
+            self.node.get_logger().warning("There is no current odometry, so can't determine position!", skip_first=True, throttle_duration_sec=2.0)
             return None
         
         try:
-            odom_to_earth = self.tfBuffer.lookup_transform("earth", self.odometry.header.frame_id, rospy.Time())
+            odom_to_earth = self.tf_buffer.lookup_transform("earth", self.odometry.header.frame_id, rclpy.time.Time())
         except Exception as e:
-            rospy.logerr("Cannot lookup transform from <earth>"
-                         " to odometry frame_id")
-            rospy.logerr(e)
+            self.node.get_logger().error("Cannot lookup transform from <earth> to odometry frame_id")
+            self.node.get_logger().error(e)
             return None
         # Function from tf2_geoemetry_msgs
-        ecef = do_transform_pose(self.odometry.pose, odom_to_earth).pose.position
+        ecef = do_transform_pose_stamped(self.odometry.pose, odom_to_earth).pose.position
         return project11.wgs84.fromECEFtoLatLong(ecef.x, ecef.y, ecef.z)
 
     def heading(self):

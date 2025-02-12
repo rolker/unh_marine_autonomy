@@ -23,7 +23,7 @@ def generate_launch_description():
         "background_chart",
          default_value=PathJoinSubstitution([
               FindPackageShare('camp'),
-               '/workspace/13283/13283_2.KAP'
+               'workspace/13283/13283_2.KAP'
          ])
     )
     rqt_arg = DeclareLaunchArgument(
@@ -45,10 +45,12 @@ def generate_launch_description():
         executable='CCOMAutonomousMissionPlanner',
         name='camp',
         arguments=[
-           PathJoinSubstitution([ FindPackageShare('camp'), '/workspace/']),
+           PathJoinSubstitution([ FindPackageShare('camp'), 'workspace/']),
            background_chart],
         namespace=namespace,
         parameters=[{'robot_namespace': robot_namespace}],
+        respawn=True,
+        respawn_delay=5,
     )
 
     camp2_node = Node(

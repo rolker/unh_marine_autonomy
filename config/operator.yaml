@@ -1,8 +1,9 @@
 udp_bridge:
-  name: operator
-  remotes:
-    robot:
-      connections:
-        default:
-#          host: localhost
-          port: 4200
+  ros__parameters:
+    name: operator
+    remotes:
+      robot:
+        connections:
+          default:
+  #          host: localhost
+            port: 4200
