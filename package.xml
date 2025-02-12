@@ -12,6 +12,7 @@
   <depend>geometry_msgs</depend>
   <depend>project11_msgs</depend>
   <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

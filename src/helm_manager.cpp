@@ -9,30 +9,34 @@
 namespace helm_manager
 {
 
-HelmManager::HelmManager()
-  : Node("helm_manager")
+HelmManager::HelmManager(const std::string &node_name):
+  rclcpp_lifecycle::LifecycleNode(node_name)
 {
-  declare_parameter<std::string>("output_type", "helm");
 
-  auto output_type_ = get_parameter("output_type").as_string();
+}
 
-  declare_parameter<std::string>("piloting_mode_prefix", "piloting_mode/");
-  mode_prefix_ = get_parameter("piloting_mode_prefix").as_string();
+CallbackReturn HelmManager::on_configure(const rclcpp_lifecycle::State& state)
+{
+  rclcpp_lifecycle::LifecycleNode::on_configure(state);
 
   addPilotingMode("standby",false);
   addPilotingMode("manual");
   addPilotingMode("autonomous");
 
-  piloting_mode_subscription_ = create_subscription<std_msgs::msg::String>("piloting_mode", 1, std::bind(&HelmManager::pilotingModeCallback, this, std::placeholders::_1));
+  update_parameters_callback_ = add_post_set_parameters_callback(std::bind(&HelmManager::updateParameters, this, std::placeholders::_1));
+
+  declare_parameter<std::string>("output_type", "helm");
 
   heartbeat_publisher_ = create_publisher<project11_msgs::msg::Heartbeat>("heartbeat", 1);
+  piloting_mode_subscription_ = create_subscription<std_msgs::msg::String>("piloting_mode", 1, std::bind(&HelmManager::pilotingModeCallback, this, std::placeholders::_1));
+  declare_parameter<double>("max_speed", 1.0);
+  declare_parameter<double>("max_yaw_speed", 1.0);
+
 
   helm_status_subscription_ = create_subscription<project11_msgs::msg::Heartbeat>("status/helm", 1, std::bind(&HelmManager::helmStatusCallback, this, std::placeholders::_1));
 
-  update_parameters_callback_ = add_post_set_parameters_callback(std::bind(&HelmManager::updateParameters, this, std::placeholders::_1));
+  output_type_ = get_parameter("output_type").as_string();
 
-  declare_parameter<double>("max_speed", 1.0);
-  declare_parameter<double>("max_yaw_speed", 1.0);
 
   if(output_type_ == "helm" || output_type_ == "dual")
     helm_publisher_ = create_publisher<project11_msgs::msg::Helm>("out/helm", 1);
@@ -40,6 +44,43 @@ HelmManager::HelmManager()
   if(output_type_ == "twist" || output_type_ == "dual")
     twist_publisher_ = create_publisher<geometry_msgs::msg::TwistStamped>("out/cmd_vel", 1);
 
+
+  return CallbackReturn::SUCCESS;
+}
+
+CallbackReturn HelmManager::on_activate(const rclcpp_lifecycle::State& state)
+{
+  return rclcpp_lifecycle::LifecycleNode::on_activate(state);
+}
+
+CallbackReturn HelmManager::on_deactivate(const rclcpp_lifecycle::State& state)
+{
+  return rclcpp_lifecycle::LifecycleNode::on_deactivate(state);
+}
+
+CallbackReturn HelmManager::on_cleanup(const rclcpp_lifecycle::State& state)
+{
+  piloting_modes_.clear();
+  update_parameters_callback_.reset();
+  heartbeat_publisher_.reset();
+  piloting_mode_subscription_.reset();
+  helm_status_subscription_.reset();
+  helm_publisher_.reset();
+  twist_publisher_.reset();
+
+  return rclcpp_lifecycle::LifecycleNode::on_cleanup(state);
+}
+
+CallbackReturn HelmManager::on_shutdown(const rclcpp_lifecycle::State& state)
+{
+  piloting_modes_.clear();
+  update_parameters_callback_.reset();
+  heartbeat_publisher_.reset();
+  piloting_mode_subscription_.reset();
+  helm_status_subscription_.reset();
+  helm_publisher_.reset();
+  twist_publisher_.reset();
+  return rclcpp_lifecycle::LifecycleNode::on_shutdown(state);
 }
 
 void HelmManager::updateParameters(const std::vector<rclcpp::Parameter> & parameters)
@@ -128,7 +169,7 @@ void HelmManager::update(const std::string & mode, const geometry_msgs::msg::Twi
 
 void HelmManager::addPilotingMode(const std::string& mode, bool enable_output)
 {
-  piloting_modes_.push_back(std::make_shared<PilotingMode>(mode, mode_prefix_, *this, enable_output));
+  piloting_modes_.push_back(std::make_shared<PilotingMode>(mode, *this, enable_output));
 }
 
 void HelmManager::pilotingModeCallback(const std_msgs::msg::String& msg)

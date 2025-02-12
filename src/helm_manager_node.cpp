@@ -9,7 +9,8 @@
 int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<helm_manager::HelmManager>());
-  rclcpp::shutdown();
+
+  auto node = std::make_shared<helm_manager::HelmManager>("helm_manager");
+  rclcpp::spin(node->get_node_base_interface());
   return 0;
 }

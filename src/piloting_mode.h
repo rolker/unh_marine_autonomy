@@ -11,7 +11,7 @@ namespace helm_manager
 class PilotingMode
 {
 public:
-  PilotingMode(std::string mode, std::string mode_prefix, HelmManager &helm_manager, bool enable=true);
+  PilotingMode(std::string mode, HelmManager &helm_manager, bool enable=true);
   
   void activeMode(std::string const &mode);
   
