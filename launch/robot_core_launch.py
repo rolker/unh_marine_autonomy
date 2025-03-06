@@ -83,14 +83,14 @@ def generate_launch_description():
                 }.items()
             ),
             # project11_navigation is the plugin based navigation stack that uses a list of tasks to plan trajectories and generate commands to drive the robot.
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(
-                    PathJoinSubstitution([FindPackageShare('project11_navigation'), 'launch', 'navigator_launch.py'])
-                ),
-                launch_arguments={
-                    'map_frame': map_frame
-                }.items()
-            ),
+            # IncludeLaunchDescription(
+            #     PythonLaunchDescriptionSource(
+            #         PathJoinSubstitution([FindPackageShare('project11_navigation'), 'launch', 'navigator_launch.py'])
+            #     ),
+            #     launch_arguments={
+            #         'map_frame': map_frame
+            #     }.items()
+            # ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     PathJoinSubstitution([

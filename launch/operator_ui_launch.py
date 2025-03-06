@@ -11,6 +11,8 @@ def generate_launch_description():
     robot_namespace = LaunchConfiguration('robot_namespace')
     background_chart = LaunchConfiguration('background_chart')
     rqt = LaunchConfiguration('rqt')
+    rviz = LaunchConfiguration('rviz')
+    rviz_configuration = LaunchConfiguration('rviz_configuration')
     dual_camp = LaunchConfiguration('dual_camp')
 
     namespace_arg = DeclareLaunchArgument(
@@ -29,6 +31,15 @@ def generate_launch_description():
     rqt_arg = DeclareLaunchArgument(
         "rqt", default_value="false"
     )
+
+    rviz_arg = DeclareLaunchArgument(
+        "rviz", default_value="false"
+    )
+
+    rviz_configuration_arg = DeclareLaunchArgument(
+        "rqt_configuration", default_value=""
+    )
+
     dual_camp_arg = DeclareLaunchArgument(
         "dual_camp", default_value="false"
     )
@@ -39,6 +50,18 @@ def generate_launch_description():
         name='rqt',
         condition=IfCondition(rqt),
     )
+
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        namespace=robot_namespace,
+        condition=IfCondition(rviz),
+        arguments=['-d', rviz_configuration],
+        remappings=[
+            ('/tf', 'tf'),
+            ('/tf_static', 'tf_static')
+        ]
+    )   
 
     camp_node = Node(
         package='camp',
@@ -70,8 +93,11 @@ def generate_launch_description():
         robot_namespace_arg,
         background_chart_arg,
         rqt_arg,
+        rviz_arg,
+        rviz_configuration_arg,
         dual_camp_arg,
         rqt_node,
+        rviz_node,
         camp_node,
         camp2_node,
     ])

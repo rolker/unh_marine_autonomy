@@ -2,6 +2,7 @@
 #define PROJECT11_PID_H
 
 #include <rclcpp/rclcpp.hpp>
+#include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include <project11_msgs/msg/pid_parameters.hpp>
 #include <project11_msgs/msg/pid_debug.hpp>
 
@@ -12,7 +13,7 @@ class PID
 {
 public:  
 
-  PID(rclcpp::Node::SharedPtr node, std::string prefix = "pid")
+  PID(rclcpp_lifecycle::LifecycleNode::SharedPtr node, std::string prefix = "pid")
   {
     node_ = node;
     update_parameters_callback_ = node->add_post_set_parameters_callback(std::bind(&PID::updateParameters, this, std::placeholders::_1));
@@ -57,7 +58,7 @@ public:
   double update(double process_variable, rclcpp::Time timestamp=rclcpp::Time())
   {
     if(timestamp.nanoseconds() == 0)
-      timestamp = node_->get_clock()->now();
+      timestamp = node_.lock()->get_clock()->now();
 
     double error = set_point_ - process_variable;
     double derivative = 0.0;
@@ -156,7 +157,7 @@ private:
         if(param.as_bool())
         {
           if(!debug_publisher_)
-            debug_publisher_ = node_->create_publisher<project11_msgs::msg::PIDDebug>(topic_prefix_+"debug", 10);
+            debug_publisher_ = node_.lock()->create_publisher<project11_msgs::msg::PIDDebug>(topic_prefix_+"debug", 10);
         }
         else
           debug_publisher_.reset();
@@ -187,7 +188,8 @@ private:
   /// Prepended to topic names
   std::string topic_prefix_;
 
-  rclcpp::Node::SharedPtr node_;
+  //rclcpp::Node::SharedPtr node_;
+  rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
   rclcpp::node_interfaces::PostSetParametersCallbackHandle::SharedPtr update_parameters_callback_;
   rclcpp::Publisher<project11_msgs::msg::PIDDebug>::SharedPtr debug_publisher_;
 

@@ -13,6 +13,7 @@
   <depend>project11_msgs</depend>
   <depend>rclpy</depend>
   <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
   <depend>tf2</depend>
   <depend>tf2_geometry_msgs</depend>
   <depend>tf_transformations</depend>

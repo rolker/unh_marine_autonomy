@@ -1,6 +1,7 @@
 #ifndef P11_UTILS_H
 #define P11_UTILS_H
 
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include <tf2/utils.h>
 #include "gz4d_geo.h"
 

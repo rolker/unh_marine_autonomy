@@ -17,6 +17,7 @@ find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
 
 ament_python_install_package(${PROJECT_NAME})
 
@@ -30,6 +31,7 @@ target_include_directories(${PROJECT_NAME}
 )
 target_link_libraries(${PROJECT_NAME} PUBLIC
   rclcpp::rclcpp
+  rclcpp_lifecycle::rclcpp_lifecycle
   tf2::tf2
   tf2_ros::tf2_ros
   tf2_geometry_msgs::tf2_geometry_msgs
@@ -54,7 +56,7 @@ install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 install(PROGRAMS scripts/platform_send.py DESTINATION lib/${PROJECT_NAME})
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(geographic_msgs geometry_msgs project11_msgs tf2_geometry_msgs tf2_ros)
+ament_export_dependencies(geographic_msgs geometry_msgs project11_msgs tf2_geometry_msgs tf2_ros rclcpp_lifecycle)
 ament_export_include_directories("include/${PROJECT_NAME}")
 
 ament_package()
