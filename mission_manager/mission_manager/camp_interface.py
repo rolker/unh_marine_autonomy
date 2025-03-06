@@ -59,10 +59,10 @@ def parseLatLong(args, node: Node):
 def listTasks(tasks, hb):
   """Lists tasks as key value pairs"""
   if tasks is None:
-    hb.values.append(KeyValue("tasks","none"))
+    hb.values.append(KeyValue(key="tasks", value="none"))
     return
   if len(tasks) == 0:
-    hb.values.append(KeyValue("tasks","empty"))
+    hb.values.append(KeyValue(key="tasks", value="empty"))
   for task in tasks:
     kv = KeyValue()
     kv.key = task.id

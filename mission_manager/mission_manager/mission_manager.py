@@ -62,7 +62,7 @@ class MissionManager(Node):
         self.behavior_info_publishers: Dict[str, Publisher] = {}
         self.behavior_feedback_subscribers: Dict[str, Subscription] = {}
 
-        self.navigator_client = ActionClient(self, RunTasks, 'navigator/run_tasks')
+        self.navigator_client = ActionClient(self, RunTasks, 'run_tasks')
         self.goal_future = None
         self.camp.on_configure()
         return TransitionCallbackReturn.SUCCESS
@@ -143,6 +143,8 @@ class MissionManager(Node):
 
 
     def navigator_feedback_callback(self, feedback_msg):
+
+        self.get_logger().debug('navigator feedback: ' + str(feedback_msg))
 
         # This block updates our local list of tasks with the status from the navigator.
         needUpdate = False

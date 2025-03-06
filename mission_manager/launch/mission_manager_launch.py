@@ -8,6 +8,7 @@ from launch_ros.actions import LifecycleTransition
 from lifecycle_msgs.msg import Transition
 
 def generate_launch_description():
+
     return LaunchDescription([
         DeclareLaunchArgument("map_frame", default_value="map"),
         LifecycleNode(
@@ -20,6 +21,7 @@ def generate_launch_description():
             }],
             respawn=True,
             respawn_delay=5,
+            remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
         ),
         LifecycleTransition(
             lifecycle_node_names=(
