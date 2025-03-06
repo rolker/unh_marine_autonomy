@@ -13,6 +13,7 @@ find_package(project11_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
 set(MSG_FILES
+  action/Hover.action
   action/MultibeamCoverage.action
   action/RunTasks.action
   msg/BoundingBox.msg

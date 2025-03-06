@@ -3,6 +3,13 @@ project11_nav_msgs/TaskInformation[] tasks
 ---
 #result
 project11_nav_msgs/TaskInformation[] tasks
+
+# Error codes (copied from nav2_msgs)
+# Note: The expected priority order of the errors should match the message order
+uint16 NONE=0
+
+uint16 error_code
+string error_msg
 ---
 # feedback
 project11_nav_msgs/TaskFeedback feedback

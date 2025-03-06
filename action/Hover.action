@@ -1,0 +1,23 @@
+# distance within which speed is zero
+float32 minimum_radius
+
+# distance at which maximum speed is used to approach the target
+float32 maximum_radius
+
+# maximum speed used to approach the target
+float32 maximum_speed
+---
+#result definition
+
+uint16 NONE=0
+uint16 UNKNOWN=1020
+uint16 TF_ERROR=1022
+uint16 COLLISION_AHEAD=1023
+uint16 INVALID_INPUT=1024
+
+builtin_interfaces/Duration total_elapsed_time
+uint16 error_code
+string error_msg
+---
+#feedback definition
+geometry_msgs/Vector3 estimated_external_forcing_velocity
