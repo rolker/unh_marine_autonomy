@@ -24,7 +24,7 @@ def generate_launch_description():
       "namespace", default_value=TextSubstitution(text="ben")
     )
     enable_bridge_arg = DeclareLaunchArgument(
-      "enable_bridge", default_value=TextSubstitution(text="true")
+      "enable_bridge", default_value=TextSubstitution(text="false")
     )
     local_port_arg = DeclareLaunchArgument(
       "local_port", default_value=TextSubstitution(text="4200")
