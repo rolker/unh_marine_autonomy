@@ -36,7 +36,7 @@ def generate_launch_description():
         "operator_joystick", default_value="true"
     )
     enable_bridge_arg = DeclareLaunchArgument(
-        "enable_bridge", default_value="true"
+        "enable_bridge", default_value="false"
     )
     robot_bridge_name_arg = DeclareLaunchArgument(
         "robot_bridge_name", default_value=robot_namespace
