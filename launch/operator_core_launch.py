@@ -17,10 +17,8 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     operator_namespace = LaunchConfiguration('operator_namespace')
     robot_namespace = LaunchConfiguration('robot_namespace')
-    local_port = LaunchConfiguration('local_port')
     operator_joystick = LaunchConfiguration('operator_joystick')
     enable_bridge = LaunchConfiguration('enable_bridge')
-    robot_bridge_name = LaunchConfiguration('robot_bridge_name')
     enable_sound = LaunchConfiguration('enable_sound')
 
     operator_namespace_arg = DeclareLaunchArgument(
@@ -45,26 +43,22 @@ def generate_launch_description():
         "enable_sound", default_value="false"
     )
 
-    load_operator_yaml = GroupAction(
-        actions=[
-            PushROSNamespace(operator_namespace),
-            SetParametersFromFile(filename=PathJoinSubstitution([FindPackageShare('project11'), 'config', 'operator.yaml'])),
-
-        ]
-    )
-
     # The udp_bridge_node is what sends and receives messages from select topics to the robot.
 
-  # <rosparam param="udp_bridge/remotes/robot/name" ns="$(arg namespace)" subst_value="True">"$(arg robotBridgeName)"</rosparam>
-  # <rosparam param="udp_bridge/remotes/robot/connections/default/topics" ns="$(arg namespace)" subst_value="True">{project11_command: {source: /$(arg robotNamespace)/project11/command}, piloting_mode_manual_helm: {source: /$(arg robotNamespace)/project11/piloting_mode/manual/helm}}</rosparam>
-
-    udp_bridge_node = Node(
-        package='udp_bridge',
-        executable='udp_bridge_node',
-        name='udp_bridge',
-        namespace=operator_namespace,
-        parameters=[{'port': local_port}],
-        condition=IfCondition(enable_bridge)
+    udp_bridge_include = GroupAction(
+        actions=[
+            PushROSNamespace(operator_namespace),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    PathJoinSubstitution([
+                        FindPackageShare('udp_bridge'),
+                    'launch',
+                    'udp_bridge_launch.py'
+                   ])
+                ),
+                condition = IfCondition(enable_bridge)
+            )
+        ]
     )
 
     # Command bridge is used to robustly send operator commands over an unreliable connection.
@@ -118,8 +112,7 @@ def generate_launch_description():
         enable_bridge_arg,
         robot_bridge_name_arg,
         enable_sound_arg,
-        load_operator_yaml,
-        udp_bridge_node,
+        udp_bridge_include,
         command_bridge_sender_node,
         joy_group,
         sound_node
