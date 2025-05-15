@@ -57,10 +57,10 @@ def generate_launch_description():
         namespace=robot_namespace,
         condition=IfCondition(rviz),
         arguments=['-d', rviz_configuration],
-        remappings=[
-            ('/tf', 'tf'),
-            ('/tf_static', 'tf_static')
-        ]
+        # remappings=[
+        #     ('/tf', 'tf'),
+        #     ('/tf_static', 'tf_static')
+        # ]
     )   
 
     camp_node = Node(
