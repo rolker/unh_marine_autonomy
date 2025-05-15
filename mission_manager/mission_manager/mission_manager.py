@@ -142,10 +142,7 @@ class MissionManager(Node):
         self.goal_future.add_done_callback(self.navigator_done_callback)
 
 
-    def navigator_feedback_callback(self, feedback_msg):
-
-        self.get_logger().debug('navigator feedback: ' + str(feedback_msg))
-
+    def navigator_feedback_callback(self, feedback_msg: RunTasks.Feedback):
         # This block updates our local list of tasks with the status from the navigator.
         needUpdate = False
         if feedback_msg is not None:
