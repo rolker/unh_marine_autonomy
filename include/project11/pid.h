@@ -22,15 +22,23 @@ public:
     if(!parameter_prefix_.empty())
       parameter_prefix_ += ".";
 
-    node->declare_parameter<double>(parameter_prefix_+"kp", Kp_);
-    node->declare_parameter<double>(parameter_prefix_+"ki", Ki_);
-    node->declare_parameter<double>(parameter_prefix_+"kd", Kd_);
-    node->declare_parameter<double>(parameter_prefix_+"windup_limit", windup_limit_);
-    node->declare_parameter<double>(parameter_prefix_+"upper_limit", upper_limit_);
-    node->declare_parameter<double>(parameter_prefix_+"lower_limit", lower_limit_);
+    if(!node->has_parameter(parameter_prefix_+"kp"))
+      node->declare_parameter<double>(parameter_prefix_+"kp", Kp_);
+    if(!node->has_parameter(parameter_prefix_+"ki"))
+      node->declare_parameter<double>(parameter_prefix_+"ki", Ki_);
+    if(!node->has_parameter(parameter_prefix_+"kd"))
+      node->declare_parameter<double>(parameter_prefix_+"kd", Kd_);
+    if(!node->has_parameter(parameter_prefix_+"windup_limit"))
+      node->declare_parameter<double>(parameter_prefix_+"windup_limit", windup_limit_);
+    if(!node->has_parameter(parameter_prefix_+"upper_limit"))
+      node->declare_parameter<double>(parameter_prefix_+"upper_limit", upper_limit_);
+    if(!node->has_parameter(parameter_prefix_+"lower_limit"))
+      node->declare_parameter<double>(parameter_prefix_+"lower_limit", lower_limit_);
 
-    node->declare_parameter<double>(parameter_prefix_+"max_dt", max_dt_.seconds());
-    node->declare_parameter<bool>(parameter_prefix_+"publish_debug", false);
+    if(!node->has_parameter(parameter_prefix_+"max_dt"))
+      node->declare_parameter<double>(parameter_prefix_+"max_dt", max_dt_.seconds());
+    if(!node->has_parameter(parameter_prefix_+"publish_debug"))
+      node->declare_parameter<bool>(parameter_prefix_+"publish_debug", false);
 
     topic_prefix_ = prefix;
     if(!topic_prefix_.empty())
