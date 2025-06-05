@@ -1,6 +1,7 @@
 #ifndef PROJECT11_PID_H
 #define PROJECT11_PID_H
 
+#include <algorithm>
 #include <rclcpp/rclcpp.hpp>
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include <project11_msgs/msg/pid_parameters.hpp>
@@ -21,6 +22,7 @@ public:
     parameter_prefix_ = prefix;
     if(!parameter_prefix_.empty())
       parameter_prefix_ += ".";
+    std::replace(parameter_prefix_.begin(), parameter_prefix_.end(), '/', '.');
 
     if(!node->has_parameter(parameter_prefix_+"kp"))
       node->declare_parameter<double>(parameter_prefix_+"kp", Kp_);
@@ -43,6 +45,7 @@ public:
     topic_prefix_ = prefix;
     if(!topic_prefix_.empty())
       topic_prefix_ += "/";
+    std::replace(topic_prefix_.begin(), topic_prefix_.end(), '.', '/');
   }
 
   double setPoint(double set_point)
