@@ -11,6 +11,7 @@ def generate_launch_description():
     robot_namespace = LaunchConfiguration('robot_namespace')
     background_chart = LaunchConfiguration('background_chart')
     rqt = LaunchConfiguration('rqt')
+    rqt_perspective = LaunchConfiguration('rqt_perspective')
     rviz = LaunchConfiguration('rviz')
     rviz_configuration = LaunchConfiguration('rviz_configuration')
     dual_camp = LaunchConfiguration('dual_camp')
@@ -32,6 +33,11 @@ def generate_launch_description():
         "rqt", default_value="false"
     )
 
+    rqt_perspective_arg = DeclareLaunchArgument(
+        "rqt_perspective",
+        default_value="default"
+    )
+
     rviz_arg = DeclareLaunchArgument(
         "rviz", default_value="false"
     )
@@ -48,6 +54,7 @@ def generate_launch_description():
         package='rqt_gui',
         executable='rqt_gui',
         name='rqt',
+        arguments=['-p', rqt_perspective],
         condition=IfCondition(rqt),
     )
 
@@ -93,6 +100,7 @@ def generate_launch_description():
         robot_namespace_arg,
         background_chart_arg,
         rqt_arg,
+        rqt_perspective_arg,
         rviz_arg,
         rviz_configuration_arg,
         dual_camp_arg,
