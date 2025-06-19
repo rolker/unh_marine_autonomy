@@ -48,6 +48,26 @@ public:
     std::replace(topic_prefix_.begin(), topic_prefix_.end(), '.', '/');
   }
 
+  void on_activate()
+  {
+    auto node = node_.lock();
+    Kp_ = node->get_parameter(parameter_prefix_+"kp").as_double();
+    Ki_ = node->get_parameter(parameter_prefix_+"ki").as_double();
+    Kd_ = node->get_parameter(parameter_prefix_+"kd").as_double();
+    windup_limit_ = node->get_parameter(parameter_prefix_+"windup_limit").as_double();
+    upper_limit_ = node->get_parameter(parameter_prefix_+"upper_limit").as_double();
+    lower_limit_ = node->get_parameter(parameter_prefix_+"lower_limit").as_double();
+    max_dt_ = rclcpp::Duration::from_seconds(node->get_parameter(parameter_prefix_+"max_dt").as_double());
+    bool publish_debug = node->get_parameter(parameter_prefix_+"publish_debug").as_bool();
+    if(publish_debug)
+    {
+      if(!debug_publisher_)
+        debug_publisher_ = node->create_publisher<project11_msgs::msg::PIDDebug>(topic_prefix_+"debug", 10);
+      debug_publisher_->on_activate();  
+    }
+
+  }
+
   double setPoint(double set_point)
   {
     set_point_ = set_point;
@@ -169,6 +189,7 @@ private:
         {
           if(!debug_publisher_)
             debug_publisher_ = node_.lock()->create_publisher<project11_msgs::msg::PIDDebug>(topic_prefix_+"debug", 10);
+            debug_publisher_->on_activate();
         }
         else
           debug_publisher_.reset();
@@ -202,7 +223,7 @@ private:
   //rclcpp::Node::SharedPtr node_;
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
   rclcpp::node_interfaces::PostSetParametersCallbackHandle::SharedPtr update_parameters_callback_;
-  rclcpp::Publisher<project11_msgs::msg::PIDDebug>::SharedPtr debug_publisher_;
+  rclcpp_lifecycle::LifecyclePublisher<project11_msgs::msg::PIDDebug>::SharedPtr debug_publisher_;
 
 };
 
