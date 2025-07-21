@@ -1430,7 +1430,11 @@ namespace gz4d
               double lonr = p[CF::Longitude];
               double height = p[CF::Height];
               double n = N(latr);
-              return Point<double,ReferenceFrame<ct::ECEF<>, Ellipsoid<S> > >((n+height)*cos(latr)*cos(lonr),(n+height)*cos(latr)*sin(lonr),(n*(1.0-S::e2)+height)*sin(latr));
+              return Point<double,ReferenceFrame<ct::ECEF<>, Ellipsoid<S> > >(
+                (n+height)*cos(latr)*cos(lonr),
+                (n+height)*cos(latr)*sin(lonr),
+                (n*(1.0-S::e2)+height)*sin(latr)
+                );
           }
 
           template<typename T, typename CF, typename PU> static Point<double,ReferenceFrame<ct::ECEF<>, Ellipsoid<S> > > ToEarthCenteredEarthFixed( Point<T,ReferenceFrame<ct::Geodetic<CF, PU>, Ellipsoid<S> > > const &p)
