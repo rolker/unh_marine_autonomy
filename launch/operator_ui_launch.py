@@ -56,6 +56,8 @@ def generate_launch_description():
         name='rqt',
         arguments=['-p', rqt_perspective],
         condition=IfCondition(rqt),
+        respawn=True,
+        respawn_delay=5
     )
 
     rviz_node = Node(
