@@ -15,8 +15,8 @@ jobs:
     steps:
     - name: Update apt
       run: apt update
-    - name: Install git and vcstool
-      run: DEBIAN_FRONTEND=noninteractive apt -y install git python3-vcstool
+    - name: Install ros dev tools
+      run: DEBIAN_FRONTEND=noninteractive apt -y install ros-dev-tools
     - name: Checkout Project11
       uses: actions/checkout@v3
     - name: Update rosdep

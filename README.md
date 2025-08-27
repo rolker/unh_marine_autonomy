@@ -8,22 +8,28 @@ over unreliable wireless networks; and to provide an environment to develop adva
 
 ## Quick Installation Guide
 
+ https://docs.ros.org/en/jazzy/Installation.html
+
 On a ROS2 Jazzy system, you can quickly install and run Project11 with the following:
 
     mkdir -p project11/jazzy_ws/src
     cd project11/jazzy_ws/src
     git clone https://github.com/CCOMJHC/project11.git -b jazzy
 
-    sudo apt-get install python3-rosdep python3-vcstool
+    # If rosdep is not installed:
+    # sudo apt-get install python3-rosdep 
     sudo rosdep init
     rosdep update
 
+    # If vcs is not installed:
+    # sudo apt-get install python3-vcstool   
     vcs import < project11/config/repos/simulator.repos
     
     rosdep install --from-paths . --ignore-src -r -y
 
     cd ..
-    colcon build --symlin-install
+    source /opt/ros/jazzy/setup.bash
+    colcon build --symlink-install
     
     source install/setup.bash
     ros2 launch project11_simulation simulator_launch.py
