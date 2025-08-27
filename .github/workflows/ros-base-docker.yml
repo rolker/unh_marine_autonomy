@@ -19,6 +19,8 @@ jobs:
       run: DEBIAN_FRONTEND=noninteractive apt -y install ros-dev-tools
     - name: Checkout Project11
       uses: actions/checkout@v3
+    - name: Init rosdep
+      run: rosdep init
     - name: Update rosdep
       run: rosdep update
     - name: Create workspace
