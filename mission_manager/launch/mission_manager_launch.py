@@ -21,7 +21,8 @@ def generate_launch_description():
             }],
             respawn=True,
             respawn_delay=5,
-            remappings = []#('/tf', 'tf'), ('/tf_static', 'tf_static')]
+            remappings = [],
+            emulate_tty=True
         ),
         LifecycleTransition(
             lifecycle_node_names=(
