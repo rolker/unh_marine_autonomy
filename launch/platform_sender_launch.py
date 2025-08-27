@@ -22,7 +22,8 @@ def generate_launch_description():
             parameters=[{
                 'name': LaunchConfiguration("name"),
                 'platform_namespace': LaunchConfiguration("namespace")
-            }]
+            }],
+            emulate_tty=True,
         ),
         LifecycleTransition(
             lifecycle_node_names=(

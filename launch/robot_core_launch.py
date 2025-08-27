@@ -47,13 +47,15 @@ def generate_launch_description():
                 executable='udp_bridge_node',
                 name='udp_bridge',
                 parameters=[{'port': local_port}, {'name': bridge_name}],
-                condition=IfCondition(enable_bridge)
+                condition=IfCondition(enable_bridge),
+                emulate_tty=True
             ),
             # Command bridge is used to robustly send operator commands over an unreliable connection.
             Node(
                 package='command_bridge',
                 executable='command_bridge_receiver',
                 name='command_bridge_receiver',
+                emulate_tty=True,
             ),
             # helm_manager is the low level heart of project11. It manages which control messages get sent to the robot based on piloting mode and reports the piloting mode and other status as a heartbeat message.
             GroupAction(

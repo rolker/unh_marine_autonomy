@@ -66,7 +66,8 @@ def generate_launch_description():
         package='command_bridge',
         executable='command_bridge_sender',
         name='command_bridge_sender',
-        namespace=robot_namespace
+        namespace=robot_namespace,
+        emulate_tty=True
     )
 
     # Driver for joystick device.
@@ -78,6 +79,7 @@ def generate_launch_description():
                 executable='joy_node',
                 name='joy_node',
                 parameters=[{'autorepeat_rate': 10.0}, {'deadzone': 0.0}],
+                emulate_tty=True
             ),
             # joy_to_helm converts joystick messages to Helm messages with throttle and 
             # rudder values, and sends piloting_mode change commands based on button clicks.

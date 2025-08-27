@@ -57,7 +57,8 @@ def generate_launch_description():
         arguments=['-p', rqt_perspective],
         condition=IfCondition(rqt),
         respawn=True,
-        respawn_delay=5
+        respawn_delay=5,
+        emulate_tty=True
     )
 
     rviz_node = Node(
@@ -66,6 +67,7 @@ def generate_launch_description():
         namespace=robot_namespace,
         condition=IfCondition(rviz),
         arguments=['-d', rviz_configuration],
+        emulate_tty=True,
         # remappings=[
         #     ('/tf', 'tf'),
         #     ('/tf_static', 'tf_static')
@@ -83,6 +85,7 @@ def generate_launch_description():
         parameters=[{'robot_namespace': robot_namespace}],
         respawn=True,
         respawn_delay=5,
+        emulate_tty=True
     )
 
     camp2_node = Node(
@@ -95,6 +98,7 @@ def generate_launch_description():
         namespace=namespace,
         parameters=[{'robot_namespace': robot_namespace}],
         condition=IfCondition(dual_camp),
+        emulate_tty=True
     )
 
     return LaunchDescription([
