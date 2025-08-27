@@ -1,16 +1,16 @@
-name: docker-noetic-ros-base
+name: docker-jazzy-ros-core
 
 on:
   push:
-    branches: [ noetic ]
+    branches: [ jazzy ]
   pull_request:
-    branches: [ noetic ]
+    branches: [ jazzy ]
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     container:
-      image: ros:noetic-ros-base
+      image: ros:jazzy-ros-core
 
     steps:
     - name: Update apt
@@ -22,12 +22,12 @@ jobs:
     - name: Update rosdep
       run: rosdep update
     - name: Create workspace
-      run: mkdir -p ../catkin_ws/src
+      run: mkdir -p ../jazzy_ws/src
     - name: Install repos
-      run: vcs import --input config/repos/simulator.repos ../catkin_ws/src/
+      run: vcs import --input config/repos/simulator.repos ../jazzy_ws/src/
     - name: Install ROS dependencies
-      working-directory: ../catkin_ws/
+      working-directory: ../jazzy_ws/
       run: DEBIAN_FRONTEND=noninteractive rosdep install --from-paths src --ignore-src -r -y
     - name: Catkin_make
-      working-directory: ../catkin_ws/
-      run: bash -c 'source /opt/ros/noetic/setup.bash && catkin_make'
+      working-directory: ../jazzy_ws/
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build'

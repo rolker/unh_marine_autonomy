@@ -6,19 +6,13 @@ The Project 11 framework was developed as a backseat driver for Autonomous Surfa
 (ASVs). Key design features include the ability to quickly and easily specify survey plans; monitoring of mission progress, even
 over unreliable wireless networks; and to provide an environment to develop advanced autonomous technologies.
 
-## Installation
+## Quick Installation Guide
 
-See the following for detailed instructions on setting up a Simulation Environment:
+On a ROS2 Jazzy system, you can quickly install and run Project11 with the following:
 
-[Installing Project11's backseat driver system and simulator.](doc/Installation.md)
-
-### Quick Installation Guide
-
-If you have an available ROS Noetic system, you can quickly install and run Project11 with the following:
-
-    mkdir -p project11/catkin_ws/src
-    cd project11/catkin_ws/src
-    git clone https://github.com/CCOMJHC/project11.git
+    mkdir -p project11/jazzy_ws/src
+    cd project11/jazzy_ws/src
+    git clone https://github.com/CCOMJHC/project11.git -b jazzy
 
     sudo apt-get install python3-rosdep python3-vcstool
     sudo rosdep init
@@ -29,14 +23,14 @@ If you have an available ROS Noetic system, you can quickly install and run Proj
     rosdep install --from-paths . --ignore-src -r -y
 
     cd ..
-    catkin_make
+    colcon build --symlin-install
     
-    source devel/setup.bash
-    roslaunch project11_simulation sim_local.launch
+    source install/setup.bash
+    ros2 launch project11_simulation simulator_launch.py
     
 ## Major components and concepts
 
-A typical setup has a ROS core running on the robot with some key nodes including the `mission_manager`, the `helm_manager` and the `udp_bridge`. The operator station runs a separate ROS core that also runs a `udp_bridge` node as well as `camp`, the CCOM Autonomous Mission Planner which provide a planning and monitoring interface.
+A typical setup has a ROS nodes running on the robot with some key nodes including the `mission_manager`, the `helm_manager` and the `udp_bridge`. The operator station also runs  a `udp_bridge` node as well as `camp`, the CCOM Autonomous Mission Planner which provide a planning and monitoring interface.
 
 ### Operator user interface - CAMP
 

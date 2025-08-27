@@ -2,93 +2,74 @@ repositories:
   asv_helm:
     type: git
     url: https://github.com/CCOMJHC/asv_helm.git
-    version: noetic
+    version: jazzy
   asv_sim:
     type: git
     url: https://github.com/CCOMJHC/asv_sim.git
-    version: noetic
+    version: jazzy
   ben_description:
     type: git
     url: https://github.com/CCOMJHC/ben_description.git
-    version: noetic
+    version: jazzy
   ben_project11:
     type: git
     url: https://github.com/CCOMJHC/ben_project11.git
-    version: noetic
+    version: jazzy
   camp:
     type: git
     url: https://github.com/CCOMJHC/camp.git
-    version: noetic
+    version: jazzy
   command_bridge:
     type: git
     url: https://github.com/CCOMJHC/command_bridge
-    version: noetic
+    version: jazzy
   dubins_curves:
     type: git
     url: https://github.com/CCOMJHC/dubins_curves.git
-    version: noetic
-  geographic_visualization_msgs:
-    type: git
-    url: https://github.com/CCOMJHC/geographic_visualization_msgs.git
-    version: noetic
+    version: jazzy
   helm_manager:
     type: git
     url: https://github.com/CCOMJHC/helm_manager.git
-    version: noetic
-  hover:
-    type: git
-    url: https://github.com/CCOMJHC/hover.git
-    version: noetic
+    version: jazzy
   joy_to_helm:
     type: git
     url: https://github.com/CCOMJHC/joy_to_helm.git
-    version: noetic
+    version: jazzy
   marine_ais:
     type: git
     url: https://github.com/CCOMJHC/marine_ais.git
-  marine_msgs:
-    type: git
-    url: https://github.com/CCOMJHC/marine_msgs.git
-    version: main
   mission_manager:
     type: git
     url: https://github.com/CCOMJHC/mission_manager.git
-    version: noetic
+    version: jazzy
   mru_transform:
     type: git
     url: https://github.com/CCOMJHC/mru_transform.git
-    version: noetic
-  path_follower:
-    type: git
-    url: https://github.com/CCOMJHC/path_follower.git
-    version: noetic
+    version: jazzy
   project11:
     type: git
     url: https://github.com/CCOMJHC/project11.git
-    version: noetic
+    version: jazzy
   project11_msgs:
     type: git
     url: https://github.com/CCOMJHC/project11_msgs.git
-    version: noetic
+    version: jazzy
   project11_navigation:
     type: git
     url: https://github.com/CCOMJHC/project11_navigation.git
-    version: noetic
+    version: jazzy
   project11_nav_msgs:
     type: git
     url: https://github.com/CCOMJHC/project11_nav_msgs.git
-    version: noetic
+    version: jazzy
   project11_simulation:
     type: git
     url: https://github.com/CCOMJHC/project11_simulation.git
-    version: noetic
-  remote_manager:
+    version: jazzy
+  s57_tools:
     type: git
-    url: https://github.com/CCOMJHC/remote_manager.git
-  s57_layer:
-    type: git
-    url: https://github.com/CCOMJHC/s57_layer.git
+    url: https://github.com/CCOMJHC/s57_tools.git
   udp_bridge:
     type: git
     url: https://github.com/CCOMJHC/udp_bridge.git
-    version: noetic
+    version: jazzy
