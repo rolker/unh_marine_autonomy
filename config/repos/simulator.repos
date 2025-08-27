@@ -38,6 +38,7 @@ repositories:
   marine_ais:
     type: git
     url: https://github.com/CCOMJHC/marine_ais.git
+    version: jazzy
   mission_manager:
     type: git
     url: https://github.com/CCOMJHC/mission_manager.git
@@ -69,6 +70,7 @@ repositories:
   s57_tools:
     type: git
     url: https://github.com/CCOMJHC/s57_tools.git
+    version: jazzy
   udp_bridge:
     type: git
     url: https://github.com/CCOMJHC/udp_bridge.git

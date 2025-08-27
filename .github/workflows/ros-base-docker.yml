@@ -30,6 +30,6 @@ jobs:
     - name: Install ROS dependencies
       working-directory: ../jazzy_ws/
       run: DEBIAN_FRONTEND=noninteractive rosdep install --from-paths src --ignore-src -r -y
-    - name: Catkin_make
+    - name: Colcon build
       working-directory: ../jazzy_ws/
       run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build'
