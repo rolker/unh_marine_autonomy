@@ -1,4 +1,4 @@
-[![docker-jazzy-ros-base](../../actions/workflows/ros-base-docker.yml/badge.svg)](../../actions/workflows/ros-base-docker.yml)
+[![docker-jazzy-ros-core](../../actions/workflows/ros-base-docker.yml/badge.svg?branch=jazzy)](../../actions/workflows/ros-base-docker.yml)
 
 # Project11: A mapping focused open-sourced software framework for Autonomous Surface Vehicles
 
