@@ -75,3 +75,8 @@ repositories:
     type: git
     url: https://github.com/CCOMJHC/udp_bridge.git
     version: jazzy
+
+  geographic_info:
+    type: git
+    url: https://github.com/rolker/geographic_info.git
+    version: add_ecef
