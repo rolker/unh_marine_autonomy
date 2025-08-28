@@ -1,4 +1,4 @@
-[![docker-noetic-ros-base](../../actions/workflows/ros-base-docker.yml/badge.svg)](../../actions/workflows/ros-base-docker.yml)
+[![docker-jazzy-ros-base](../../actions/workflows/ros-base-docker.yml/badge.svg)](../../actions/workflows/ros-base-docker.yml)
 
 # Project11: A mapping focused open-sourced software framework for Autonomous Surface Vehicles
 
