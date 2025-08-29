@@ -6,14 +6,22 @@ The Project 11 framework was developed as a backseat driver for Autonomous Surfa
 (ASVs). Key design features include the ability to quickly and easily specify survey plans; monitoring of mission progress, even
 over unreliable wireless networks; and to provide an environment to develop advanced autonomous technologies.
 
-## Quick Installation Guide
+## Quick Start Guide
 
- https://docs.ros.org/en/jazzy/Installation.html
+### System requirements
 
-On a ROS2 Jazzy system, you can quickly install and run Project11 with the following:
+On an Ubuntu 24.04 system, install ROS2 Jazzy including the developer tools following instructions on the ROS website.
 
-    mkdir -p project11/jazzy_ws/src
-    cd project11/jazzy_ws/src
+https://docs.ros.org/en/jazzy/Installation.html
+
+A system with decent performance is required. While testing in a virtual machine (vm) using VirtualBox on an Ubuntu host with 32G of ram, an Intel i7-10875H processor and an NVidia graphics card, I needed to set the vm to have 16G of ram, 8 CPUs and enabled 3D acceleration to reduce timeout errors while running the simulation.
+
+### Installation and launch
+
+Once ROS2 Jazzy is installed, you can quickly install and run Project11 with the following:
+
+    mkdir -p ~/project11/jazzy_ws/src
+    cd ~/project11/jazzy_ws/src
     git clone https://github.com/CCOMJHC/project11.git -b jazzy
 
     # If rosdep is not installed:
@@ -32,7 +40,19 @@ On a ROS2 Jazzy system, you can quickly install and run Project11 with the follo
     colcon build --symlink-install
     
     source install/setup.bash
-    ros2 launch project11_simulation simulator_launch.py
+
+    # download nautical charts
+    cd ..
+    mkdir data
+    cd data
+    wget https://charts.noaa.gov/ENCs/02Region_ENCs.zip
+    unzip 02Region_ENCs.zip
+
+    ROS_S57_ENC_ROOT=~/project11/data/ENC_ROOT ros2 launch project11_simulation simulator_launch.py
+
+Two windows should appear, CAMP and RViz. RViz can seem to freeze when loading the robot model. Be patient.
+
+In the CAMP window, zoom out with the mouse wheel to find the boat. Right click on an target area and select "Hover here" to have the boat go into autonomous mode, transit to the location and hover in place once it gets there.
     
 ## Major components and concepts
 

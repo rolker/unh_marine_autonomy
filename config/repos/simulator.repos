@@ -21,7 +21,11 @@ repositories:
     version: jazzy
   command_bridge:
     type: git
-    url: https://github.com/CCOMJHC/command_bridge
+    url: https://github.com/CCOMJHC/command_bridge.git
+    version: jazzy
+  cube_bathymetry:
+    type: git
+    url: https://github.com/CCOMJHC/cube_bathymetry.git
     version: jazzy
   dubins_curves:
     type: git
@@ -38,6 +42,10 @@ repositories:
   marine_ais:
     type: git
     url: https://github.com/CCOMJHC/marine_ais.git
+    version: jazzy
+  mbes_sim:
+    type: git
+    url: https://github.com/CCOMJHC/mbes_sim.git
     version: jazzy
   mission_manager:
     type: git
