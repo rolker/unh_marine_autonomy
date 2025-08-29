@@ -52,7 +52,7 @@ Once ROS2 Jazzy is installed, you can quickly install and run Project11 with the
 
 Two windows should appear, CAMP and RViz. RViz can seem to freeze when loading the robot model. Be patient.
 
-In the CAMP window, zoom out with the mouse wheel to find the boat. Right click on an target area and select "Hover here" to have the boat go into autonomous mode, transit to the location and hover in place once it gets there.
+In the CAMP window, zoom out with the mouse wheel to find the boat. Right click on a target area and select "Hover here" to have the boat go into autonomous mode, transit to the location, and hover in place once it gets there.
     
 ## Major components and concepts
 
