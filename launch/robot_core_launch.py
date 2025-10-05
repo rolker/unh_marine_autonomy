@@ -16,6 +16,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     namespace = LaunchConfiguration('namespace')
     enable_bridge = LaunchConfiguration('enable_bridge')
+    enable_helm = LaunchConfiguration('enable_helm', default=TextSubstitution(text="true"))
     local_port = LaunchConfiguration('local_port')
     bridge_name = LaunchConfiguration('bridge_name')
     map_frame = LaunchConfiguration('map_frame')
@@ -26,6 +27,9 @@ def generate_launch_description():
     enable_bridge_arg = DeclareLaunchArgument(
       "enable_bridge", default_value=TextSubstitution(text="false")
     )
+    enable_helm_arg = DeclareLaunchArgument(
+      "enable_helm", default_value=TextSubstitution(text="true")
+      )
     local_port_arg = DeclareLaunchArgument(
       "local_port", default_value=TextSubstitution(text="4200")
     )
@@ -72,6 +76,7 @@ def generate_launch_description():
                         ),
                     )
                 ],
+                condition=IfCondition(enable_helm)
             ),
             # mission_manager handles commands from the operator and manages the task list sent to the navigator.
             IncludeLaunchDescription(
