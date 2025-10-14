@@ -6,6 +6,7 @@ from typing import Optional
 
 import rclpy
 from rclpy.action import ActionClient
+from rclpy.action.client import ClientGoalHandle
 from rclpy.executors import ExternalShutdownException
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.lifecycle import Node
@@ -38,6 +39,7 @@ class MissionManager(Node):
     def __init__(self, node_name='mission_manager', **kwargs):
         self.task_service_server: Optional[Service] =  None
         self.goal_future: Optional[Future] = None
+        self.goal_handle: Optional[ClientGoalHandle] = None
         self.camp = CampInterface(self)
         super().__init__(node_name, **kwargs)
 
@@ -64,6 +66,7 @@ class MissionManager(Node):
 
         self.navigator_client = ActionClient(self, RunTasks, 'run_tasks')
         self.goal_future = None
+        self.goal_handle = None
         self.camp.on_configure()
         return TransitionCallbackReturn.SUCCESS
 
@@ -91,6 +94,16 @@ class MissionManager(Node):
         return super().on_cleanup(state)
 
     def updateNavigator(self):
+        # if self.goal_future is not None:
+        #     self.get_logger().info('Canceling previous pending goal')
+        #     self.goal_future.cancel()
+        #     self.goal_future = None
+        # if self.goal_handle is not None:
+        #     self.get_logger().info('Cancelling previous goal')
+        #     cancel_future = self.goal_handle.cancel_goal_async()
+        #     cancel_future.add_done_callback(self.cancel_goal_callback)
+        #     self.goal_handle = None
+        #     rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=2.0)
         goal = RunTasks.Goal()
         goal.tasks = self.tasks.listMessages()
 
@@ -128,18 +141,24 @@ class MissionManager(Node):
                 self.get_logger().info(" task: "+ t.id + " type: " + t.type + " status: " + t.status + " done: " + str(t.done))
             self.goal_future = self.navigator_client.send_goal_async(goal, feedback_callback=self.navigator_feedback_callback)
             self.goal_future.add_done_callback(self.navigator_goal_response_callback)
+
         else:
             self.get_logger().warn('Timeout waiting for navigator action server')
 
     def navigator_goal_response_callback(self, future: Future):
-        goal_handle = future.result()
-        if not goal_handle.accepted:
+        self.goal_handle = future.result()
+        self.goal_future = None
+        if self.goal_handle is None:
+            self.get_logger().warn('Goal response is None')
+            return
+        if not self.goal_handle.accepted:
             self.get_logger().info('Goal rejected :(')
+            self.goal_handle = None
             return
         self.get_logger().info('Goal accepted :)')
 
-        self.goal_future = goal_handle.get_result_async()
-        self.goal_future.add_done_callback(self.navigator_done_callback)
+        self.result_future = self.goal_handle.get_result_async()
+        self.result_future.add_done_callback(self.navigator_done_callback)
 
 
     def navigator_feedback_callback(self, feedback_msg: RunTasks.Feedback):
@@ -176,9 +195,14 @@ class MissionManager(Node):
 
     def navigator_done_callback(self, future):
         self.get_logger().info('navigator done')
-        print(future.result())
         result = future.result()
         self.camp.navigatorDone(None, result.result)
+        self.result_future = None
+        self.goal_handle = None
+
+    def cancel_goal_callback(self, future):
+        self.get_logger().info('Goal cancelled')
+        self.cancel_future = None
 
     
     def behaviorFeedbackCallback(self,feedback):
