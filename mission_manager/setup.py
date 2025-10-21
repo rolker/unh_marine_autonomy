@@ -23,6 +23,7 @@ setup(
     entry_points={
         'console_scripts': [
           'mission_manager = mission_manager.mission_manager:main',
+          'multibeam_coverage_adapter = mission_manager.multibeam_coverage_adapter:main',
         ],
     },
 )
