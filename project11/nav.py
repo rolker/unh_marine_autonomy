@@ -161,7 +161,7 @@ class EarthTransforms(object):
         try:
             earth_to_frame = self.tf_buffer.lookup_transform(frame_id, "earth", time, timeout)
         except Exception as e:
-            self.node.get_logger().error("mission_manager: Cannot lookup transform from <earth> to {}".format(frame_id))
+            self.node.get_logger().error("Cannot lookup transform from <earth> to {}".format(frame_id))
             self.node.get_logger().error(str(e))
             return None
 
