@@ -8,6 +8,8 @@
   <license>BSD</license>
 
   <depend>geometry_msgs</depend>
+  <depend>marine_nav_interfaces</depend>
+  <depend>marine_nav_tasks</depend>
   <depend>mission_manager_interfaces</depend>
   <depend>nav_msgs</depend>
   <depend>project11</depend>

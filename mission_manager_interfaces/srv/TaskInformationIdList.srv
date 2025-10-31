@@ -5,4 +5,4 @@
 string[]                               task_ids
 ---
 # The list of tasks resulting from the service call
-project11_nav_msgs/TaskInformation[]   tasks
+marine_nav_interfaces/TaskInformation[]   tasks

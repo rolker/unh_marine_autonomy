@@ -4,7 +4,7 @@ project(mission_manager_interfaces)
 set(CMAKE_CXX_STANDARD 17)
 
 find_package(ament_cmake REQUIRED)
-find_package(project11_nav_msgs REQUIRED)
+find_package(marine_nav_interfaces REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(
@@ -13,11 +13,11 @@ rosidl_generate_interfaces(
     srv/TaskInformationList.srv
     srv/TaskManagerCmd.srv
     DEPENDENCIES
-    project11_nav_msgs
+    marine_nav_interfaces
 )
 
 ament_export_dependencies(
-    project11_nav_msgs
+    marine_nav_interfaces
     rosidl_default_runtime
 )   
 

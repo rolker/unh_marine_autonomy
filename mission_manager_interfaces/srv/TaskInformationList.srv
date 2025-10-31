@@ -2,7 +2,7 @@
 # service calls
 
 # The task list (may be empty)
-project11_nav_msgs/TaskInformation[]   tasks
+marine_nav_interfaces/TaskInformation[]   tasks
 ---
 # The list of tasks resulting from the service call
-project11_nav_msgs/TaskInformation[]   tasks
+marine_nav_interfaces/TaskInformation[]   tasks

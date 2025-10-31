@@ -21,12 +21,12 @@ from rclpy.subscription import Subscription
 from rclpy.task import Future
 
 from project11_msgs.msg import BehaviorInformation
-from project11_nav_msgs.msg import TaskInformation, TaskFeedback
-from project11_nav_msgs.action import RunTasks
+from marine_nav_interfaces.msg import TaskInformation, TaskFeedback
+from marine_nav_interfaces.action import RunTasks
 
 from mission_manager_interfaces.srv import TaskManagerCmd
 
-from project11_navigation import TaskList
+from marine_nav_tasks import TaskList
 
 
 from .camp_interface import CampInterface
@@ -42,9 +42,11 @@ class MissionManager(Node):
         self.goal_handle: Optional[ClientGoalHandle] = None
         self.camp = CampInterface(self)
         super().__init__(node_name, **kwargs)
+        self.get_logger().debug('Initializing mission manager node')
 
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().debug('Configuring mission manager')
         self.tasks = TaskList(self)
 
         # A task that may be added, such as hover,
@@ -68,12 +70,20 @@ class MissionManager(Node):
         self.goal_future = None
         self.goal_handle = None
         self.camp.on_configure()
+        self.get_logger().debug('Mission manager configured')
         return TransitionCallbackReturn.SUCCESS
 
     def on_activate(self, state: State) -> TransitionCallbackReturn:        
         self.task_service_server = self.create_service(TaskManagerCmd, 'task_manager', self.taskManagerCallback)
+        self.get_logger().debug('Activating mission manager, about to activate CAMP interface')
         self.camp.on_activate()
-        self.updateNavigator()
+        self.get_logger().debug('Mission manager activated, about to update navigator')
+        try:
+            self.updateNavigator()
+        except Exception as e:
+            self.get_logger().error('Error updating navigator on activation: ' + str(e))
+            return TransitionCallbackReturn.FAILURE
+        self.get_logger().debug('Navigator updated')
         return super().on_activate(state)
 
     def on_deactivate(self, state: State) -> TransitionCallbackReturn:
@@ -107,33 +117,33 @@ class MissionManager(Node):
         goal = RunTasks.Goal()
         goal.tasks = self.tasks.listMessages()
 
-        for t in goal.tasks:
+        # for t in goal.tasks:
 
-            # Populate the library with the behaviors for this task.
-            self.behavior_library[t.id] = t.behaviors
+        #     # Populate the library with the behaviors for this task.
+        #     self.behavior_library[t.id] = t.behaviors
 
-            for bhv in t.behaviors:
-                # Don't make new pub/sub's if they already exist.
-                if bhv.id not in self.behavior_info_publishers.keys():
-                    # Create behavior publisher and subscriber
-                    latching_qos = QoSProfile(
-                        depth=1,
-                        durability=DurabilityPolicy.TRANSIENT_LOCAL,
-                        history=HistoryPolicy.KEEP_LAST
-                        )
-                    self.behavior_info_publishers[bhv.id] = self.create_lifecycle_publisher(
-                        TaskFeedback,
-                        'project11/behaviors/' + bhv.type + '/input', qos_profile=latching_qos
-                    )
+        #     for bhv in t.behaviors:
+        #         # Don't make new pub/sub's if they already exist.
+        #         if bhv.id not in self.behavior_info_publishers.keys():
+        #             # Create behavior publisher and subscriber
+        #             latching_qos = QoSProfile(
+        #                 depth=1,
+        #                 durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        #                 history=HistoryPolicy.KEEP_LAST
+        #                 )
+        #             self.behavior_info_publishers[bhv.id] = self.create_lifecycle_publisher(
+        #                 TaskFeedback,
+        #                 'project11/behaviors/' + bhv.type + '/input', qos_profile=latching_qos
+        #             )
             
-                    self.behavior_feedback_subscribers[bhv.id] = self.create_subscription(
-                        BehaviorInformation,
-                        'project11/behaviors/' + bhv.type + '/feedback',
-                        self.behaviorFeedbackCallback,
-                        1
-                    )
+        #             self.behavior_feedback_subscribers[bhv.id] = self.create_subscription(
+        #                 BehaviorInformation,
+        #                 'project11/behaviors/' + bhv.type + '/feedback',
+        #                 self.behaviorFeedbackCallback,
+        #                 1
+        #             )
 
-            # Send the behavior info here for each? or Wait until feedback from the navigator?
+        #     # Send the behavior info here for each? or Wait until feedback from the navigator?
             
         if self.navigator_client.wait_for_server(timeout_sec=2.0):
             self.get_logger().info('mission_manager: sending goal:')

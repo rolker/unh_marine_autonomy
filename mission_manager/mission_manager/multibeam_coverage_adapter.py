@@ -17,8 +17,8 @@ from rclpy.qos import QoSDurabilityPolicy
 from geometry_msgs.msg import Point32
 from nav_msgs.msg import Path
 from geographic_msgs.msg import GeoPath
-from project11_nav_msgs.action import RunTasks
-from project11_nav_msgs.action import MultibeamCoverage
+from marine_nav_interfaces.action import RunTasks
+from marine_nav_interfaces.action import ComputeSonarCoveragePath
 
 class MultibeamCoverageAdapter(Node):
     """
@@ -38,7 +38,7 @@ class MultibeamCoverageAdapter(Node):
 
         self.coverage_path_geo_publisher = self.create_publisher(GeoPath, 'coverage_path_geo', qos_profile)
 
-        self.coverage_client = ActionClient(self, MultibeamCoverage, 'survey_area_action', callback_group=self.coverage_callback_group)
+        self.coverage_client = ActionClient(self, ComputeSonarCoveragePath,'compute_sonar_coverage_path', callback_group=self.coverage_callback_group)
 
         self._action_server = ActionServer(
             self,
@@ -60,7 +60,7 @@ class MultibeamCoverageAdapter(Node):
             if task.type == "survey_area":
                 self.get_logger().info(f"Processing survey area task: {task.id}")
 
-                goal = MultibeamCoverage.Goal()
+                goal = ComputeSonarCoveragePath.Goal()
                 goal.survey_area.header.frame_id = task.poses[0].header.frame_id
                 for p in task.poses:
                     p32 = Point32()
@@ -70,7 +70,7 @@ class MultibeamCoverageAdapter(Node):
                     goal.survey_area.polygon.points.append(p32)
 
                 if self.coverage_client.wait_for_server(timeout_sec=5.0):
-                    self.get_logger().info("Sending goal to MultibeamCoverage action server.")
+                    self.get_logger().info("Sending goal to ComputeSonarCoveragePath action server.")
 
                     coverage_goal_handle: Optional[ClientGoalHandle] = None
                     coverage_result_future = None

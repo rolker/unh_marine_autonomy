@@ -19,7 +19,7 @@ from project11 import nav
 from project11_msgs.msg import Heartbeat
 from project11_msgs.msg import KeyValue
 from project11_msgs.msg import BehaviorInformation
-from project11_nav_msgs.msg import TaskInformation
+from marine_nav_interfaces.msg import TaskInformation
 
 import json
 import yaml
@@ -91,9 +91,14 @@ class CampInterface:
       String, 'project11/mission_manager/command', self.commandCallback, 1)
 
     self.status_publisher = self.mission_manager.create_lifecycle_publisher(
-      Heartbeat, 'project11/status/mission_manager', 10)
+      Heartbeat,
+      'project11/status/mission_manager',
+       10
+    )
     
+    self.mission_manager.get_logger().debug("CampInterface: on_configure(). About to create EarthTransforms.")
     self.earth = nav.EarthTransforms(self.mission_manager)
+    self.mission_manager.get_logger().debug("CampInterface: on_configure(). EarthTransforms created.")
 
   def on_activate(self):
     pass
