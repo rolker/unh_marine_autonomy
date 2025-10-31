@@ -13,9 +13,6 @@ find_package(project11_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
 set(MSG_FILES
-  action/Hover.action
-  action/MultibeamCoverage.action
-  action/RunTasks.action
   msg/BoundingBox.msg
   msg/Curve.msg
   msg/CurvedTrajectory.msg
@@ -25,9 +22,6 @@ set(MSG_FILES
   msg/OccupancyPolygon.msg
   msg/OccupancyVectorMap.msg
   msg/RobotState.msg
-  msg/TaskFeedback.msg
-  msg/TaskInformation.msg
-  msg/TaskInformationList.msg
 )
 
 rosidl_generate_interfaces(
