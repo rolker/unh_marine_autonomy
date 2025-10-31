@@ -7,11 +7,12 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PathJoinSubstitution
+from launch.substitutions import PythonExpression
 
 from launch_ros.actions import Node
 from launch_ros.actions import PushROSNamespace
+from launch_ros.actions import SetParameter
 from launch_ros.actions import SetRemap
-from launch_ros.actions import SetParametersFromFile
 from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
