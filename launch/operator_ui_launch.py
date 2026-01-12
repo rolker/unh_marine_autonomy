@@ -43,7 +43,7 @@ def generate_launch_description():
     )
 
     rviz_configuration_arg = DeclareLaunchArgument(
-        "rqt_configuration", default_value=""
+        "rviz_configuration", default_value=""
     )
 
     dual_camp_arg = DeclareLaunchArgument(

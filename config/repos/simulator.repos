@@ -1,12 +1,4 @@
 repositories:
-  asv_helm:
-    type: git
-    url: https://github.com/CCOMJHC/asv_helm.git
-    version: jazzy
-  asv_sim:
-    type: git
-    url: https://github.com/CCOMJHC/asv_sim.git
-    version: jazzy
   ben_description:
     type: git
     url: https://github.com/CCOMJHC/ben_description.git
@@ -42,10 +34,6 @@ repositories:
   marine_ais:
     type: git
     url: https://github.com/CCOMJHC/marine_ais.git
-    version: jazzy
-  mbes_sim:
-    type: git
-    url: https://github.com/CCOMJHC/mbes_sim.git
     version: jazzy
   mission_manager:
     type: git
