@@ -1,0 +1,8 @@
+# List of TaskInformations to use with task management
+# service calls
+
+# The task list (may be empty)
+marine_nav_interfaces/TaskInformation[]   tasks
+---
+# The list of tasks resulting from the service call
+marine_nav_interfaces/TaskInformation[]   tasks
