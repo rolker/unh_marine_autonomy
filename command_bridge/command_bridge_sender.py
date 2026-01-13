@@ -8,6 +8,13 @@ from threading import Lock
 
 
 class CommandBridgeSender(Node):
+    """
+    Node that sends commands to the command_bridge_receiver reliability.
+
+    Implements a "send-until-acknowledged" protocol. Commands are queued and 
+    periodically republished until a matching acknowledgment (same command and timestamp) 
+    is received on the response topic.
+    """
     
     def __init__(self):
         super().__init__('command_bridge_sender')
@@ -19,6 +26,12 @@ class CommandBridgeSender(Node):
         self.timer = self.create_timer(1.0, self.update)
 
     def send_command_callback(self, msg):
+        """
+        Callback for new commands to be sent.
+        
+        Assigns a timestamp to the command and adds it to the send queue.
+        The timestamp is used for deduplication on the receiver side.
+        """
         parts = msg.data.split(None, 1)
         cmd = parts[0]
         if len(parts) > 1:
@@ -30,6 +43,12 @@ class CommandBridgeSender(Node):
             self.send_queue[cmd] = (ts, args)
 
     def update(self):
+        """
+        Timer callback to republish pending commands.
+        
+        Iterates through the send queue and publishes each command again.
+        This provides reliability over lossy links (like UDP).
+        """
         with self.lock:
             for cmd in self.send_queue:
                 s = String()
@@ -39,6 +58,12 @@ class CommandBridgeSender(Node):
                 self.command_pub.publish(s)
 
     def response_callback(self, msg):
+        """
+        Callback for acknowledgments from the receiver.
+        
+        If the acknowledgment matches a pending command (same timestamp),
+        the command is removed from the queue and stops being published.
+        """
         ts, cmd = msg.data.split(None, 1)
         with self.lock:
             if cmd in self.send_queue and self.send_queue[cmd][0] == ts:
