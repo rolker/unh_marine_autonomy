@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>helm_manager</name>
+  <version>0.0.0</version>
+  <description>The helm_manager package</description>
+
+  <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
+
+  <license>BSD</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>geometry_msgs</depend>
+  <depend>project11_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
