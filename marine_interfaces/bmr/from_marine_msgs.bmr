@@ -1,0 +1,310 @@
+class update_marine_msgs_Helm_fcdbe725c5dd1c0da661a83d0a658fcf(MessageUpdateRule):
+	old_type = "marine_msgs/Helm"
+	old_full_text = """
+# Throttle and rudder command input
+Header header
+float32 throttle   # -1.0 to 1.0, full reverse to full forward
+float32 rudder     # -1.0 to 1.0, fell left to full right
+
+================================================================================
+MSG: std_msgs/Header
+# Standard metadata for higher-level stamped data types.
+# This is generally used to communicate timestamped data 
+# in a particular coordinate frame.
+# 
+# sequence ID: consecutively increasing ID 
+uint32 seq
+#Two-integer timestamp that is expressed as:
+# * stamp.sec: seconds (stamp_secs) since epoch (in Python the variable is called 'secs')
+# * stamp.nsec: nanoseconds since stamp_secs (in Python the variable is called 'nsecs')
+# time-handling sugar is provided by the client library
+time stamp
+#Frame this data is associated with
+string frame_id
+"""
+
+	new_type = "project11_msgs/Helm"
+	new_full_text = """
+# Throttle and rudder command input
+Header header
+float32 throttle   # -1.0 to 1.0, full reverse to full forward
+float32 rudder     # -1.0 to 1.0, fell left to full right
+
+================================================================================
+MSG: std_msgs/Header
+# Standard metadata for higher-level stamped data types.
+# This is generally used to communicate timestamped data 
+# in a particular coordinate frame.
+# 
+# sequence ID: consecutively increasing ID 
+uint32 seq
+#Two-integer timestamp that is expressed as:
+# * stamp.sec: seconds (stamp_secs) since epoch (in Python the variable is called 'secs')
+# * stamp.nsec: nanoseconds since stamp_secs (in Python the variable is called 'nsecs')
+# time-handling sugar is provided by the client library
+time stamp
+#Frame this data is associated with
+string frame_id
+"""
+
+	order = 0
+	migrated_types = [
+		("Header","Header"),]
+
+	valid = True
+
+	def update(self, old_msg, new_msg):
+		self.migrate(old_msg.header, new_msg.header)
+		new_msg.throttle = old_msg.throttle
+		new_msg.rudder = old_msg.rudder
+
+
+
+class update_marine_msgs_Heartbeat_2fe4ae4bb59adf08a43230b05416c15e(MessageUpdateRule):
+	old_type = "marine_msgs/Heartbeat"
+	old_full_text = """
+# periodic message sent with basic status info
+
+Header header
+KeyValue[] values # an array of values associated with the status
+
+
+================================================================================
+MSG: std_msgs/Header
+# Standard metadata for higher-level stamped data types.
+# This is generally used to communicate timestamped data 
+# in a particular coordinate frame.
+# 
+# sequence ID: consecutively increasing ID 
+uint32 seq
+#Two-integer timestamp that is expressed as:
+# * stamp.sec: seconds (stamp_secs) since epoch (in Python the variable is called 'secs')
+# * stamp.nsec: nanoseconds since stamp_secs (in Python the variable is called 'nsecs')
+# time-handling sugar is provided by the client library
+time stamp
+#Frame this data is associated with
+string frame_id
+
+================================================================================
+MSG: marine_msgs/KeyValue
+# This is equivalent to diagnostic_msgs/KeyValue, repeated here to
+# avoid introducing a trivial stack dependency.
+
+string key                     # tag label
+string value                   # corresponding value
+"""
+
+	new_type = "project11_msgs/Heartbeat"
+	new_full_text = """
+# periodic message sent with basic status info
+
+Header header
+KeyValue[] values # an array of values associated with the status
+
+
+================================================================================
+MSG: std_msgs/Header
+# Standard metadata for higher-level stamped data types.
+# This is generally used to communicate timestamped data 
+# in a particular coordinate frame.
+# 
+# sequence ID: consecutively increasing ID 
+uint32 seq
+#Two-integer timestamp that is expressed as:
+# * stamp.sec: seconds (stamp_secs) since epoch (in Python the variable is called 'secs')
+# * stamp.nsec: nanoseconds since stamp_secs (in Python the variable is called 'nsecs')
+# time-handling sugar is provided by the client library
+time stamp
+#Frame this data is associated with
+string frame_id
+
+================================================================================
+MSG: project11_msgs/KeyValue
+# This is equivalent to diagnostic_msgs/KeyValue, repeated here to
+# avoid introducing a trivial stack dependency.
+
+string key                     # tag label
+string value                   # corresponding value
+"""
+
+	order = 0
+	migrated_types = [
+		("Header","Header"),
+		("marine_msgs/KeyValue","project11_msgs/KeyValue")]
+
+	valid = True
+
+	def update(self, old_msg, new_msg):
+		self.migrate(old_msg.header, new_msg.header)
+		for kv in old_msg.values:
+			new_msgs.values.append(self.get_new_class("project11_msgs/KeyValue"))
+			new_msg.values[-1].key = kv.key
+			new_msg.values[-1].value = kv.value
+
+# class update_marine_msgs_KeyValue_cf57fdc6617a881a88c16e768132149c(MessageUpdateRule):
+# 	old_type = "marine_msgs/KeyValue"
+# 	old_full_text = """
+# # This is equivalent to diagnostic_msgs/KeyValue, repeated here to
+# # avoid introducing a trivial stack dependency.
+
+# string key                     # tag label
+# string value                   # corresponding value
+# """
+# 	new_type = "marine_msgs/KeyValue"
+# 	new_full_text = """
+# # This is equivalent to diagnostic_msgs/KeyValue, repeated here to
+# # avoid introducing a trivial stack dependency.
+
+# string key                     # tag label
+# string value                   # corresponding value
+# """
+# 	order = 0
+# 	migrated_types = []
+
+# 	valid = True
+
+# 	def update(self, old_msg, new_msg):
+# 		new_msg.key = old_msg.key
+# 		new_msg.value = old_msg.value
+
+
+class update_marine_msgs_Contact_78458b28c9a485651992b3f7924a67d1(MessageUpdateRule):
+	old_type = "marine_msgs/Contact"
+	old_full_text = """
+# Info about a contact
+
+uint8 CONTACT_SOURCE_UNSPECIFIED = 0
+uint8 CONTACT_SOURCE_AIS         = 1
+uint8 CONTACT_SOURCE_RADAR       = 2
+
+Header header
+
+uint8 contact_source
+
+uint32 mmsi                     # Maritime Mobile Service Identity
+string name
+string callsign
+
+geographic_msgs/GeoPoint position
+float32 cog                     # Course over ground (radians clockwise from north) [-1 = unavailable]
+float32 sog                     # Speed over ground (m/s) [-1 = unavailable]
+float32 heading                 # True heading (radians clockwise from north) [-1 = unavailable]
+
+float32 dimension_to_stbd       # Distance between position source and starboard end of the contact (m) [0 = unavailable]
+float32 dimension_to_port       # Distance between position source and port end of the contact (m) [0 = unavailable]
+float32 dimension_to_bow        # Distance between position source and the forward most end of the contact (m) [0 = unavailable]
+float32 dimension_to_stern      # Distance between position source and aft most end of the contact (m) [0 = unavailable]
+
+================================================================================
+MSG: std_msgs/Header
+# Standard metadata for higher-level stamped data types.
+# This is generally used to communicate timestamped data 
+# in a particular coordinate frame.
+# 
+# sequence ID: consecutively increasing ID 
+uint32 seq
+#Two-integer timestamp that is expressed as:
+# * stamp.sec: seconds (stamp_secs) since epoch (in Python the variable is called 'secs')
+# * stamp.nsec: nanoseconds since stamp_secs (in Python the variable is called 'nsecs')
+# time-handling sugar is provided by the client library
+time stamp
+#Frame this data is associated with
+string frame_id
+
+================================================================================
+MSG: geographic_msgs/GeoPoint
+# Geographic point, using the WGS 84 reference ellipsoid.
+
+# Latitude [degrees]. Positive is north of equator; negative is south
+# (-90 <= latitude <= +90).
+float64 latitude
+
+# Longitude [degrees]. Positive is east of prime meridian; negative is
+# west (-180 <= longitude <= +180). At the poles, latitude is -90 or
+# +90, and longitude is irrelevant, but must be in range.
+float64 longitude
+
+# Altitude [m]. Positive is above the WGS 84 ellipsoid (NaN if unspecified).
+float64 altitude
+"""
+
+	new_type = "project11_msgs/Contact"
+	new_full_text = """
+# Info about a contact
+
+uint8 CONTACT_SOURCE_UNSPECIFIED = 0
+uint8 CONTACT_SOURCE_AIS         = 1
+uint8 CONTACT_SOURCE_RADAR       = 2
+
+Header header
+
+uint8 contact_source
+
+uint32 mmsi                     # Maritime Mobile Service Identity
+string name
+string callsign
+
+geographic_msgs/GeoPoint position
+float32 cog                     # Course over ground (radians clockwise from north) [-1 = unavailable]
+float32 sog                     # Speed over ground (m/s) [-1 = unavailable]
+float32 heading                 # True heading (radians clockwise from north) [-1 = unavailable]
+
+float32 dimension_to_stbd       # Distance between position source and starboard end of the contact (m) [0 = unavailable]
+float32 dimension_to_port       # Distance between position source and port end of the contact (m) [0 = unavailable]
+float32 dimension_to_bow        # Distance between position source and the forward most end of the contact (m) [0 = unavailable]
+float32 dimension_to_stern      # Distance between position source and aft most end of the contact (m) [0 = unavailable]
+
+================================================================================
+MSG: std_msgs/Header
+# Standard metadata for higher-level stamped data types.
+# This is generally used to communicate timestamped data 
+# in a particular coordinate frame.
+# 
+# sequence ID: consecutively increasing ID 
+uint32 seq
+#Two-integer timestamp that is expressed as:
+# * stamp.sec: seconds (stamp_secs) since epoch (in Python the variable is called 'secs')
+# * stamp.nsec: nanoseconds since stamp_secs (in Python the variable is called 'nsecs')
+# time-handling sugar is provided by the client library
+time stamp
+#Frame this data is associated with
+string frame_id
+
+================================================================================
+MSG: geographic_msgs/GeoPoint
+# Geographic point, using the WGS 84 reference ellipsoid.
+
+# Latitude [degrees]. Positive is north of equator; negative is south
+# (-90 <= latitude <= +90).
+float64 latitude
+
+# Longitude [degrees]. Positive is east of prime meridian; negative is
+# west (-180 <= longitude <= +180). At the poles, latitude is -90 or
+# +90, and longitude is irrelevant, but must be in range.
+float64 longitude
+
+# Altitude [m]. Positive is above the WGS 84 ellipsoid (NaN if unspecified).
+float64 altitude
+"""
+
+	order = 0
+	migrated_types = [
+		("Header","Header"),
+		("geographic_msgs/GeoPoint","geographic_msgs/GeoPoint"),]
+
+	valid = True
+
+	def update(self, old_msg, new_msg):
+		self.migrate(old_msg.header, new_msg.header)
+		new_msg.contact_source = old_msg.contact_source
+		new_msg.mmsi = old_msg.mmsi
+		new_msg.name = old_msg.name
+		new_msg.callsign = old_msg.callsign
+		self.migrate(old_msg.position, new_msg.position)
+		new_msg.cog = old_msg.cog
+		new_msg.sog = old_msg.sog
+		new_msg.heading = old_msg.heading
+		new_msg.dimension_to_stbd = old_msg.dimension_to_stbd
+		new_msg.dimension_to_port = old_msg.dimension_to_port
+		new_msg.dimension_to_bow = old_msg.dimension_to_bow
+		new_msg.dimension_to_stern = old_msg.dimension_to_stern

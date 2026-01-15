@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>joy_to_helm</name>
+  <version>0.0.0</version>
+  <description>The joy_to_helm package</description>
+
+  <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
+
+  <license>BSD</license>
+
+  <depend>rclpy</depend>
+  <depend>project11_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <exec_depend>joy</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
