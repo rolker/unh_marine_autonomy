@@ -1,6 +1,10 @@
 [![docker-jazzy-ros-core](../../actions/workflows/ros-base-docker.yml/badge.svg?branch=jazzy)](../../actions/workflows/ros-base-docker.yml)
 
-# Project11: A mapping focused open-sourced software framework for Autonomous Surface Vehicles
+# Package: marine_autonomy
+ 
+ > **Note**: This is the documentation for the `marine_autonomy` ROS 2 package. For the full framework documentation, please see the [Repository Root](../README.md).
+ 
+ # Project11: A mapping focused open-sourced software framework for Autonomous Surface Vehicles
 
 The Project 11 framework was developed as a backseat driver for Autonomous Surface Vehicles
 (ASVs). Key design features include the ability to quickly and easily specify survey plans; monitoring of mission progress, even
