@@ -1,0 +1,5 @@
+repositories:
+  project11_simulation:
+    type: git
+    url: git@github.com:rolker/project11_simulation.git
+    version: jazzy

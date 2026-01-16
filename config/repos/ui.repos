@@ -1,0 +1,21 @@
+repositories:
+  camp:
+    type: git
+    url: git@github.com:rolker/camp.git
+    version: jazzy
+  rqt_marine_radar:
+    type: git
+    url: git@github.com:rolker/rqt_marine_radar.git
+    version: jazzy
+  rqt_udp_bridge:
+    type: git
+    url: git@github.com:rolker/rqt_udp_bridge.git
+    version: jazzy
+  rviz_sonar_image:
+    type: git
+    url: git@github.com:rolker/rviz_sonar_image.git
+    version: jazzy
+  joy_to_helm:
+    type: git
+    url: git@github.com:rolker/joy_to_helm.git
+    version: jazzy
