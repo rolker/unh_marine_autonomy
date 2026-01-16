@@ -43,21 +43,17 @@ repositories:
     type: git
     url: https://github.com/CCOMJHC/mru_transform.git
     version: jazzy
-  project11:
+  unh_marine_autonomy:
     type: git
     url: https://github.com/CCOMJHC/project11.git
     version: jazzy
-  project11_msgs:
+  marine_interfaces:
     type: git
-    url: https://github.com/CCOMJHC/project11_msgs.git
+    url: https://github.com/CCOMJHC/marine_interfaces.git
     version: jazzy
   project11_navigation:
     type: git
     url: https://github.com/CCOMJHC/project11_navigation.git
-    version: jazzy
-  project11_nav_msgs:
-    type: git
-    url: https://github.com/CCOMJHC/project11_nav_msgs.git
     version: jazzy
   project11_simulation:
     type: git

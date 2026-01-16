@@ -25,7 +25,7 @@ private:
   std::string piloting_mode_;
   bool active_ = false;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr active_publisher_;
-  rclcpp::Subscription<project11_msgs::msg::Helm>::SharedPtr helm_subscription_;
+  rclcpp::Subscription<marine_interfaces::msg::Helm>::SharedPtr helm_subscription_;
   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr twist_subscription_;
   HelmManager& helm_manager_;
 };

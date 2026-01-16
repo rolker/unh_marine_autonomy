@@ -14,8 +14,8 @@ from geometry_msgs.msg import PointStamped
 from geometry_msgs.msg import Quaternion
 from nav_msgs.msg import Odometry
 
-import project11.wgs84
-import project11.geodesic
+import marine_autonomy.wgs84
+import marine_autonomy.geodesic
 
 from tf2_geometry_msgs import do_transform_pose_stamped
 from tf2_geometry_msgs import do_transform_point
@@ -43,7 +43,7 @@ def distanceBearingDegrees(start_lat, start_lon, dest_lat, dest_lon):
     dest_lat_rad = math.radians(dest_lat)
     dest_lon_rad = math.radians(dest_lon)
     
-    path_azimuth, path_distance = project11.geodesic.inverse( start_lon_rad, start_lat_rad, dest_lon_rad, dest_lat_rad)
+    path_azimuth, path_distance = marine_autonomy.geodesic.inverse( start_lon_rad, start_lat_rad, dest_lon_rad, dest_lat_rad)
     return path_distance, math.degrees(path_azimuth)
 
 def headingToYaw(heading):
@@ -109,7 +109,7 @@ def transformPointToGeoPoint(point, transform):
         ps = PointStamped()
         ps.point = point
     ecef = do_transform_point(point, transform)
-    latlon = project11.wgs84.fromECEFtoLatLong(ecef.point.x, ecef.point.y, ecef.point.z)
+    latlon = marine_autonomy.wgs84.fromECEFtoLatLong(ecef.point.x, ecef.point.y, ecef.point.z)
     gp = GeoPointStamped()
     gp.position.latitude = math.degrees(latlon[0])
     gp.position.longitude = math.degrees(latlon[1])
@@ -165,7 +165,7 @@ class EarthTransforms(object):
             self.node.get_logger().error(str(e))
             return None
 
-        ecef = project11.wgs84.toECEFfromDegrees(lat, lon)
+        ecef = marine_autonomy.wgs84.toECEFfromDegrees(lat, lon)
         ecef_pose = PoseStamped()
         ecef_pose.pose.position.x = ecef[0]
         ecef_pose.pose.position.y = ecef[1]
@@ -229,7 +229,7 @@ class EarthTransforms(object):
             self.node.get_logger().error(e)
             return None
         ecef = do_transform_point(point, map_to_earth)
-        latlon = project11.wgs84.fromECEFtoLatLong(ecef.point.x, ecef.point.y, ecef.point.z)
+        latlon = marine_autonomy.wgs84.fromECEFtoLatLong(ecef.point.x, ecef.point.y, ecef.point.z)
         gp = GeoPointStamped()
         gp.position.latitude = math.degrees(latlon[0])
         gp.position.longitude = math.degrees(latlon[1])
@@ -288,7 +288,7 @@ class RobotNavigation(EarthTransforms):
             return None
         # Function from tf2_geoemetry_msgs
         ecef = do_transform_pose_stamped(self.odometry.pose, odom_to_earth).pose.position
-        return project11.wgs84.fromECEFtoLatLong(ecef.x, ecef.y, ecef.z)
+        return marine_autonomy.wgs84.fromECEFtoLatLong(ecef.x, ecef.y, ecef.z)
 
     def heading(self):
         """Uses current odometry message to return heading in degrees NED.

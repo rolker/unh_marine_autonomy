@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.8)
 
-project(project11_msgs)
+project(marine_interfaces)
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -10,6 +10,8 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(geographic_msgs REQUIRED)
 find_package(marine_acoustic_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 
 set(MSG_FILES
   msg/AcousticLayer.msg
@@ -36,7 +38,18 @@ set(MSG_FILES
   msg/PIDParameters.msg
   msg/Platform.msg
   msg/PlatformList.msg
-  msg/RangeBearing.msg)
+  msg/RangeBearing.msg
+  # Formerly project11_nav_msgs
+  msg/BoundingBox.msg
+  msg/Curve.msg
+  msg/CurvedTrajectory.msg
+  msg/GeoOccupancyPolygon.msg
+  msg/GeoOccupancyVectorMap.msg
+  msg/GeoPolygon.msg
+  msg/OccupancyPolygon.msg
+  msg/OccupancyVectorMap.msg
+  msg/RobotState.msg
+)
 
 rosidl_generate_interfaces(
     ${PROJECT_NAME}
@@ -46,6 +59,8 @@ rosidl_generate_interfaces(
     geographic_msgs
     marine_acoustic_msgs
     std_msgs
+    geometry_msgs
+    nav_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)

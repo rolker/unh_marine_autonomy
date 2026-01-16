@@ -104,7 +104,7 @@ def generate_launch_description():
         name='soundplay_node',
         namespace=operator_namespace,
         condition=IfCondition(enable_sound),
-        remappings=[('robotsound', 'project11/robotsound')]
+        remappings=[('robotsound', 'marine/robotsound')]
     )
 
     return LaunchDescription([

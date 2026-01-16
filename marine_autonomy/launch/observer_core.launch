@@ -8,7 +8,7 @@
   </node>
 
   <node name="soundplay_node" pkg="sound_play" type="soundplay_node.py" ns="$(arg namespace)">
-    <remap from="robotsound" to="project11/robotsound"/>
+    <remap from="robotsound" to="marine/robotsound"/>
   </node>
 
 </launch>

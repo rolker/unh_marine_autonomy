@@ -27,19 +27,19 @@ CallbackReturn HelmManager::on_configure(const rclcpp_lifecycle::State& state)
 
   declare_parameter<std::string>("output_type", "helm");
 
-  heartbeat_publisher_ = create_publisher<project11_msgs::msg::Heartbeat>("heartbeat", 1);
+  heartbeat_publisher_ = create_publisher<marine_interfaces::msg::Heartbeat>("heartbeat", 1);
   piloting_mode_subscription_ = create_subscription<std_msgs::msg::String>("piloting_mode", 1, std::bind(&HelmManager::pilotingModeCallback, this, std::placeholders::_1));
   declare_parameter<double>("max_speed", 1.0);
   declare_parameter<double>("max_yaw_speed", 1.0);
 
 
-  helm_status_subscription_ = create_subscription<project11_msgs::msg::Heartbeat>("status/helm", 1, std::bind(&HelmManager::helmStatusCallback, this, std::placeholders::_1));
+  helm_status_subscription_ = create_subscription<marine_interfaces::msg::Heartbeat>("status/helm", 1, std::bind(&HelmManager::helmStatusCallback, this, std::placeholders::_1));
 
   output_type_ = get_parameter("output_type").as_string();
 
 
   if(output_type_ == "helm" || output_type_ == "dual")
-    helm_publisher_ = create_publisher<project11_msgs::msg::Helm>("out/helm", 1);
+    helm_publisher_ = create_publisher<marine_interfaces::msg::Helm>("out/helm", 1);
 
   if(output_type_ == "twist" || output_type_ == "dual")
     twist_publisher_ = create_publisher<geometry_msgs::msg::TwistStamped>("out/cmd_vel", 1);
@@ -100,12 +100,12 @@ bool HelmManager::canPublish(const std::string& mode)
   return mode == piloting_mode_;
 }
 
-void HelmManager::helmStatusCallback(const project11_msgs::msg::Heartbeat& msg)
+void HelmManager::helmStatusCallback(const marine_interfaces::msg::Heartbeat& msg)
 {
-  project11_msgs::msg::Heartbeat hb;
+  marine_interfaces::msg::Heartbeat hb;
   hb.header = msg.header;
 
-  project11_msgs::msg::KeyValue kv;
+  marine_interfaces::msg::KeyValue kv;
 
   kv.key = "piloting_mode";
   kv.value = piloting_mode_;
@@ -117,7 +117,7 @@ void HelmManager::helmStatusCallback(const project11_msgs::msg::Heartbeat& msg)
   heartbeat_publisher_->publish(hb);
 }
 
-void HelmManager::update(const std::string & mode, const project11_msgs::msg::Helm& msg)
+void HelmManager::update(const std::string & mode, const marine_interfaces::msg::Helm& msg)
 {
   if(canPublish(mode))
   {
@@ -149,7 +149,7 @@ void HelmManager::update(const std::string & mode, const geometry_msgs::msg::Twi
     }
     else
     {
-      project11_msgs::msg::Helm helm;
+      marine_interfaces::msg::Helm helm;
       helm.header = msg.header;
       if(std::isnan(msg.twist.linear.x))
       {

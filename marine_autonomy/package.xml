@@ -1,5 +1,5 @@
 <package format="2">
-  <name>project11</name>
+  <name>marine_autonomy</name>
   <version>0.0.0</version>
   <description>The Project 11 package</description>
   <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
@@ -10,7 +10,7 @@
   <buildtool_depend>ament_cmake_python</buildtool_depend>
 
   <depend>geometry_msgs</depend>
-  <depend>project11_msgs</depend>
+  <depend>marine_interfaces</depend>
   <depend>rclpy</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_lifecycle</depend>

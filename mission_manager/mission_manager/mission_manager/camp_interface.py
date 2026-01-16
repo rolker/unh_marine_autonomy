@@ -7,7 +7,7 @@ from rclpy.lifecycle import Node
 from rclpy.lifecycle import Publisher
 from rclpy.subscription import Subscription
 
-import project11
+import marine_autonomy
 import datetime
 
 import rclpy.constants

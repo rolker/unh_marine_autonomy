@@ -5,7 +5,7 @@
 #include <cmath>
 //#include <ostream>
 
-#include "project11/utils.h"
+#include "marine_autonomy/utils.h"
 
 // based on "A global geographic grid system for visualizing bathymetry" by Colin Ware et al.
 // https://gi.copernicus.org/articles/9/375/2020/
@@ -24,7 +24,7 @@ constexpr uint16_t cell_rows_per_grid = 960;
 constexpr uint16_t cell_columns_per_grid = 960;
 constexpr uint32_t grid_total_cell_count = cell_rows_per_grid*cell_columns_per_grid;
 
-constexpr double earth_radius_at_equator = project11::WGS84::specs::a;
+constexpr double earth_radius_at_equator = marine::WGS84::specs::a;
 constexpr double equator_circumference = 2.0 * M_PI * earth_radius_at_equator;
 
 /// approximate size in meters of an 8 degree area around the equator
