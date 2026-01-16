@@ -1,0 +1,13 @@
+repositories:
+  ros2launch_gui:
+    type: git
+    url: git@github.com:rolker/ros2launch_gui.git
+    version: jazzy
+  geographic_info:
+    type: git
+    url: https://github.com/ros-geographic-info/geographic_info.git
+    version: ros2
+  audio_common:
+    type: git
+    url: git@github.com:rolker/audio_common.git
+    version: port_sound_play_h_to_ros2
