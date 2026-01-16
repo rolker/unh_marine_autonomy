@@ -9,7 +9,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(project11_msgs REQUIRED)
+find_package(marine_interfaces REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 
@@ -17,7 +17,7 @@ add_executable(${PROJECT_NAME} src/helm_manager_node.cpp src/helm_manager.cpp sr
 
 ament_target_dependencies(${PROJECT_NAME}
   geometry_msgs
-  project11_msgs
+  marine_interfaces
   rclcpp
   rclcpp_lifecycle
 )

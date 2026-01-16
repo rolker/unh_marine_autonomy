@@ -12,8 +12,8 @@
   <depend>marine_nav_tasks</depend>
   <depend>mission_manager_interfaces</depend>
   <depend>nav_msgs</depend>
-  <depend>project11</depend>
-  <depend>project11_nav_msgs</depend>
+  <depend>marine_autonomy</depend>
+  <depend>marine_interfaces</depend>
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <exec_depend>python3-yaml</exec_depend>

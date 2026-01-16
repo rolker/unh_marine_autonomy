@@ -4,10 +4,10 @@
 #include <algorithm>
 #include <rclcpp/rclcpp.hpp>
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
-#include <project11_msgs/msg/pid_parameters.hpp>
-#include <project11_msgs/msg/pid_debug.hpp>
+#include <marine_interfaces/msg/pid_parameters.hpp>
+#include <marine_interfaces/msg/pid_debug.hpp>
 
-namespace project11
+namespace marine
 {
 
 class PID
@@ -62,7 +62,7 @@ public:
     if(publish_debug)
     {
       if(!debug_publisher_)
-        debug_publisher_ = node->create_publisher<project11_msgs::msg::PIDDebug>(topic_prefix_+"debug", 10);
+        debug_publisher_ = node->create_publisher<marine_interfaces::msg::PIDDebug>(topic_prefix_+"debug", 10);
       debug_publisher_->on_activate();  
     }
 
@@ -125,7 +125,7 @@ public:
 
     if(debug_publisher_)
     {
-      project11_msgs::msg::PIDDebug debug;
+      marine_interfaces::msg::PIDDebug debug;
       debug.header.stamp = timestamp;
       debug.parameters.kp = Kp_;
       debug.parameters.ki = Ki_;
@@ -188,7 +188,7 @@ private:
         if(param.as_bool())
         {
           if(!debug_publisher_)
-            debug_publisher_ = node_.lock()->create_publisher<project11_msgs::msg::PIDDebug>(topic_prefix_+"debug", 10);
+            debug_publisher_ = node_.lock()->create_publisher<marine_interfaces::msg::PIDDebug>(topic_prefix_+"debug", 10);
             debug_publisher_->on_activate();
         }
         else
@@ -223,10 +223,10 @@ private:
   //rclcpp::Node::SharedPtr node_;
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
   rclcpp::node_interfaces::PostSetParametersCallbackHandle::SharedPtr update_parameters_callback_;
-  rclcpp_lifecycle::LifecyclePublisher<project11_msgs::msg::PIDDebug>::SharedPtr debug_publisher_;
+  rclcpp_lifecycle::LifecyclePublisher<marine_interfaces::msg::PIDDebug>::SharedPtr debug_publisher_;
 
 };
 
-} // namespace project11
+} // namespace marine
 
 #endif

@@ -133,12 +133,12 @@ class MissionManager(Node):
         #                 )
         #             self.behavior_info_publishers[bhv.id] = self.create_lifecycle_publisher(
         #                 TaskFeedback,
-        #                 'project11/behaviors/' + bhv.type + '/input', qos_profile=latching_qos
+        #                 'marine/behaviors/' + bhv.type + '/input', qos_profile=latching_qos
         #             )
             
         #             self.behavior_feedback_subscribers[bhv.id] = self.create_subscription(
         #                 BehaviorInformation,
-        #                 'project11/behaviors/' + bhv.type + '/feedback',
+        #                 'marine/behaviors/' + bhv.type + '/feedback',
         #                 self.behaviorFeedbackCallback,
         #                 1
         #             )

@@ -5,7 +5,7 @@
 #include <tf2/utils.h>
 #include "gz4d_geo.h"
 
-namespace project11
+namespace marine
 {
   template <typename A> double quaternionToHeadingDegrees(const A& a)
   {
@@ -70,9 +70,9 @@ namespace project11
   }
 }
 
-std::ostream& operator<< (std::ostream &out, const project11::LatLongDegrees &p);
-std::ostream& operator<< (std::ostream &out, const project11::ECEF &p);
-std::ostream& operator<< (std::ostream &out, const project11::AngleDegrees &p);
-std::ostream& operator<< (std::ostream &out, const project11::AngleRadians &p);
+std::ostream& operator<< (std::ostream &out, const marine::LatLongDegrees &p);
+std::ostream& operator<< (std::ostream &out, const marine::ECEF &p);
+std::ostream& operator<< (std::ostream &out, const marine::AngleDegrees &p);
+std::ostream& operator<< (std::ostream &out, const marine::AngleRadians &p);
 
 #endif

@@ -43,7 +43,7 @@ def generate_launch_description():
     namespace_group = GroupAction(
         actions=[
             SetParametersFromFile(
-                filename=PathJoinSubstitution([FindPackageShare('project11'), 'config', 'robot.yaml'])
+                filename=PathJoinSubstitution([FindPackageShare('marine_autonomy'), 'config', 'robot.yaml'])
             ),
             # The udp_bridge_node is what sends and receives messages from select topics to the operator.
             Node(
@@ -64,10 +64,10 @@ def generate_launch_description():
             # helm_manager is the low level heart of project11. It manages which control messages get sent to the robot based on piloting mode and reports the piloting mode and other status as a heartbeat message.
             GroupAction(
                 actions=[
-                    SetRemap(src='out/helm', dst='project11/control/helm'),
-                    SetRemap(src='out/cmd_vel', dst='project11/control/cmd_vel'),
-                    SetRemap(src='heartbeat', dst='project11/heartbeat'),
-                    SetRemap(src='status/helm', dst='project11/status/helm'),
+                    SetRemap(src='out/helm', dst='marine/control/helm'),
+                    SetRemap(src='out/cmd_vel', dst='marine/control/cmd_vel'),
+                    SetRemap(src='heartbeat', dst='marine/heartbeat'),
+                    SetRemap(src='status/helm', dst='marine/status/helm'),
                     IncludeLaunchDescription(
                         PythonLaunchDescriptionSource(
                             PathJoinSubstitution([
@@ -101,7 +101,7 @@ def generate_launch_description():
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     PathJoinSubstitution([
-                        FindPackageShare('project11'),
+                        FindPackageShare('marine_autonomy'),
                         'launch',
                         'platform_sender_launch.py'])
                 ),

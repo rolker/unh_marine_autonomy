@@ -8,19 +8,19 @@ udp_bridge:
             port: 4200
             maximumBytesPerSecond: 1000000
             topics:
-              platforms: {source: /project11/platforms}
-              nav_orientation: {source: project11/nav/orientation}
-              nav_position: {source: project11/nav/position}
-              nav_velocity: {source: project11/nav/velocity}
-              nav_active_sensor: {source: project11/nav/active_sensor}
-              project11_display: {source: project11/display}
-              project11_heartbeat: {source: project11/heartbeat}
-              project11_status_mission_manager: {source: project11/status/mission_manager}
-              project11_response: {source: project11/response}
+              platforms: {source: /marine/platforms}
+              nav_orientation: {source: marine/nav/orientation}
+              nav_position: {source: marine/nav/position}
+              nav_velocity: {source: marine/nav/velocity}
+              nav_active_sensor: {source: marine/nav/active_sensor}
+              marine_display: {source: marine/display}
+              marine_heartbeat: {source: marine/heartbeat}
+              marine_status_mission_manager: {source: marine/status/mission_manager}
+              marine_response: {source: marine/response}
               # diagnostics: {source: /diagnostics}
               tf: {source: /tf}
               tf_static: {source: /tf_static}
-              control_helm: {source: project11/control/helm}
+              control_helm: {source: marine/control/helm}
               odom: {source: odom}
               nav_visualization_markers: {source: navigator/visualization_markers}
 

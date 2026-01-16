@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5.1)
 
-project(project11)
+project(marine_autonomy)
 
 set(CMAKE_CXX_STANDARD 17)
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -12,7 +12,7 @@ find_package(ament_cmake_python REQUIRED)
 
 find_package(geographic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(project11_msgs REQUIRED)
+find_package(marine_interfaces REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -56,8 +56,7 @@ install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 install(PROGRAMS scripts/platform_send.py DESTINATION lib/${PROJECT_NAME})
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(geographic_msgs geometry_msgs project11_msgs tf2_geometry_msgs tf2_ros rclcpp_lifecycle)
+ament_export_dependencies(geographic_msgs geometry_msgs marine_interfaces tf2_geometry_msgs tf2_ros rclcpp_lifecycle)
 ament_export_include_directories("include/${PROJECT_NAME}")
 
 ament_package()
-

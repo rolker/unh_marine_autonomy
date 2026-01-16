@@ -10,7 +10,7 @@
 
     <node pkg="udp_bridge" type="udp_bridge_node" name="udp_bridge" ns="$(arg namespace)"/>
 
-    <include file="$(find project11)/launch/operator_ui.launch">
+    <include file="$(find marine_autonomy)/launch/operator_ui.launch">
       <arg name="namespace" value="$(arg namespace)"/>
       <arg name="robotNamespace" value="$(arg robotNamespace)"/>
       <arg name="backgroundChart" value="$(arg backgroundChart)"/>
@@ -38,11 +38,11 @@
   <node pkg="rosservice" type="rosservice" name="get_diag" args="call /$(arg namespace)/udp_bridge/remote_subscribe $(arg operatorNamespace) /diagnostics /diagnostics 1 0.0"/>
 
 
-  <node pkg="rosservice" type="rosservice" name="get_heartbeat" args="call /$(arg namespace)/udp_bridge/remote_subscribe $(arg operatorNamespace) /$(arg robotNamespace)/project11/heartbeat /$(arg robotNamespace)/project11/heartbeat 1 0.0"/>
+  <node pkg="rosservice" type="rosservice" name="get_heartbeat" args="call /$(arg namespace)/udp_bridge/remote_subscribe $(arg operatorNamespace) /$(arg robotNamespace)/marine/heartbeat /$(arg robotNamespace)/marine/heartbeat 1 0.0"/>
 
-  <node pkg="rosservice" type="rosservice" name="get_display" args="call /$(arg namespace)/udp_bridge/remote_subscribe $(arg operatorNamespace) /$(arg robotNamespace)/project11/display /$(arg robotNamespace)/project11/display 1 0.0"/>
+  <node pkg="rosservice" type="rosservice" name="get_display" args="call /$(arg namespace)/udp_bridge/remote_subscribe $(arg operatorNamespace) /$(arg robotNamespace)/marine/display /$(arg robotNamespace)/marine/display 1 0.0"/>
 
-  <node pkg="rosservice" type="rosservice" name="get_mission_manager_status" args="call /$(arg namespace)/udp_bridge/remote_subscribe $(arg operatorNamespace) /$(arg robotNamespace)/project11/status/mission_manager /$(arg robotNamespace)/project11/status/mission_manager 1 0.0"/>
+  <node pkg="rosservice" type="rosservice" name="get_mission_manager_status" args="call /$(arg namespace)/udp_bridge/remote_subscribe $(arg operatorNamespace) /$(arg robotNamespace)/marine/status/mission_manager /$(arg robotNamespace)/marine/status/mission_manager 1 0.0"/>
 
   <node pkg="rosservice" type="rosservice" name="get_position" args="call /$(arg namespace)/udp_bridge/remote_subscribe $(arg operatorNamespace) /$(arg robotNamespace)/nav/position /$(arg robotNamespace)/nav/position 1 0.0"/>
 
@@ -52,7 +52,7 @@
 
   <node pkg="rosservice" type="rosservice" name="get_active_sensor" args="call /$(arg namespace)/udp_bridge/remote_subscribe $(arg operatorNamespace) /$(arg robotNamespace)/nav/active_sensor /$(arg robotNamespace)/nav/active_sensor 1 0.0"/>
 
-  <node pkg="rosservice" type="rosservice" name="send_send_command" args="call /$(arg namespace)/udp_bridge/remote_advertise $(arg operatorNamespace) /$(arg namespace)/project11/send_command /$(arg operatorNamespace)/project11/send_command 1 0.0"/>
+  <node pkg="rosservice" type="rosservice" name="send_send_command" args="call /$(arg namespace)/udp_bridge/remote_advertise $(arg operatorNamespace) /$(arg namespace)/marine/send_command /$(arg operatorNamespace)/marine/send_command 1 0.0"/>
 
   <node pkg="rosservice" type="rosservice" name="send_helm" args="call /$(arg namespace)/udp_bridge/remote_advertise $(arg operatorNamespace) /$(arg namespace)/piloting_mode/manual/helm /$(arg operatorNamespace)/piloting_mode/manual/helm 1 0.0"/> -->
 </launch>

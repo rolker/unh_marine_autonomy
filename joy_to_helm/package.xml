@@ -9,7 +9,7 @@
   <license>BSD</license>
 
   <depend>rclpy</depend>
-  <depend>project11_msgs</depend>
+  <depend>marine_interfaces</depend>
   <depend>sensor_msgs</depend>
   <exec_depend>joy</exec_depend>
 

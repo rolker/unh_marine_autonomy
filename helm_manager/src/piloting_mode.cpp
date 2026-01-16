@@ -13,7 +13,7 @@ PilotingMode::PilotingMode(std::string mode, HelmManager &helm_manager, bool ena
   active_publisher_ = helm_manager.create_publisher<std_msgs::msg::Bool>("piloting_mode/"+mode+"/active", qos);
   if(enable)
   {
-    helm_subscription_ = helm_manager.create_subscription<project11_msgs::msg::Helm>("piloting_mode/"+mode+"/helm", 10, std::bind(&PilotingMode::callback<project11_msgs::msg::Helm const>, this, std::placeholders::_1));
+    helm_subscription_ = helm_manager.create_subscription<marine_interfaces::msg::Helm>("piloting_mode/"+mode+"/helm", 10, std::bind(&PilotingMode::callback<marine_interfaces::msg::Helm const>, this, std::placeholders::_1));
 
     twist_subscription_ = helm_manager.create_subscription<geometry_msgs::msg::TwistStamped>("piloting_mode/"+mode+"/cmd_vel", 10, std::bind(&PilotingMode::callback<geometry_msgs::msg::TwistStamped const>, this, std::placeholders::_1));
   }

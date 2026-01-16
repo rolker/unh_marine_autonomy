@@ -42,7 +42,7 @@ S.create()
 '''
 
 
-from project11_nav_msgs.msg import TaskInformation
+from marine_interfaces.msg import TaskInformation
 from geometry_msgs.msg import PoseStamped
 import numpy as np
 import yaml
@@ -101,7 +101,7 @@ class ExpandingBoxSearch():
         maxSearchRadius:Maximum search radius, m.  (default 10000)  
 
     Returns:
-        project11_nav_msgs.msg.TaskInformation() object containing a 
+        marine_interfaces.msg.TaskInformation() object containing a 
         trackline for the search.
         
     '''

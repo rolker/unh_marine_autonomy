@@ -15,7 +15,7 @@ def generate_launch_description():
             default_value=LaunchConfiguration("name")
         ),
         LifecycleNode(
-            package='project11',
+            package='marine_autonomy',
             executable='platform_send.py',
             name='platform_sender',
             namespace='',
