@@ -72,7 +72,7 @@ The **CCOM Autonomous Mission Planner (CAMP)** is the primary UI. It allows oper
 The `mission_manager` receives JSON plans from CAMP and translates them into discrete navigation tasks (e.g., "Follow this path", "Hover here"). It manages the high-level mission state machine.
 
 ### Control Arbitration (Helm Manager)
-The `helm_manager` is the safety-critical arbitrator. it switches between **Standby**, **Manual**, and **Autonomous** modes, ensuring only one source of control is ever active on the hardware.
+The `helm_manager` is the safety-critical arbitrator. It switches between **Standby**, **Manual**, and **Autonomous** modes, ensuring only one source of control is ever active on the hardware.
 
 ### Reliable Communications (UDP & Command Bridge)
 To support operations over low-bandwidth or unreliable wireless links, we use:
