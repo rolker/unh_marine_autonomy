@@ -58,41 +58,39 @@ Two windows should appear, CAMP and RViz. RViz can seem to freeze when loading t
 
 In the CAMP window, zoom out with the mouse wheel to find the boat. Right click on a target area and select "Hover here" to have the boat go into autonomous mode, transit to the location, and hover in place once it gets there.
     
-## Major components and concepts
+## Major Components & Concepts
 
-A typical setup has a ROS nodes running on the robot with some key nodes including the `mission_manager`, the `helm_manager` and the `udp_bridge`. The operator station also runs  a `udp_bridge` node as well as `camp`, the CCOM Autonomous Mission Planner which provide a planning and monitoring interface.
+The framework is a modular ecosystem of ROS 2 nodes. For a detailed deep-dive into data flows, piloting modes, and hardware abstraction, see the **[System Architecture Documentation](./docs/system_architecture.md)**.
 
-### Operator user interface - CAMP
+### Operator Interface (CAMP)
+The **CCOM Autonomous Mission Planner (CAMP)** is the primary UI. It allows operators to:
+- Visualize vehicle position on georeferenced charts.
+- Plan and transmit complex survey missions.
+- Monitor real-time status and command mode changes.
 
-The [CCOM Autonomous Mission Planner](../../../camp), also known as CAMP, displays the vehicle's position on background georeferenced charts and maps. It also allows the planning of missions to be sent to the vehicle and to manage the vehicle's piloting mode.
+### Mission Management
+The `mission_manager` receives JSON plans from CAMP and translates them into discrete navigation tasks (e.g., "Follow this path", "Hover here"). It manages the high-level mission state machine.
 
-![Camp](doc/CAMP_3Click_Survey_Pattern.gif)
+### Control Arbitration (Helm Manager)
+The `helm_manager` is the safety-critical arbitrator. It switches between **Standby**, **Manual**, and **Autonomous** modes, ensuring only one source of control is ever active on the hardware.
 
-### UDP Bridge - udp_bridge
+### Reliable Communications (UDP & Command Bridge)
+To support operations over low-bandwidth or unreliable wireless links, we use:
+- **`udp_bridge`**: Optimized message transport.
+- **`command_bridge`**: A transaction layer ensuring high-level commands (like "Start") are successfully delivered even if the link drops momentarily.
 
-The [UDP Bridge](../../../udp_bridge) sends select ROS topics between ROS cores. It allows control and monitoring over wireless unreliable networks.
+### Hardware Agnosticism
+The framework uses a **Low-Level Helm** pattern. Core nodes output generic control messages, which are then translated by a vehicle-specific node (e.g., `ben_helm`) into hardware commands. This allows the same framework to drive diverse vessels with minimal changes.
 
-### Mission Manager - mission_manager
+## Piloting Modes
 
-The [Mission Manager](../../../mission_manager) receives missions from CAMP and executes them. It also handles requests such as hover.
+The system operates in three states, managed by the `helm_manager`:
+1. **Standby**: No control output; safest state.
+2. **Manual**: Passthrough for joystick or teleoperation commands.
+3. **Autonomous**: Passthrough for Mission Manager and Navigation Stack outputs.
 
-### Helm Manager - helm_manager
+---
 
-The [Helm Manager](../../../helm_manager) controls which commands get sent to the underlying hardware. It reacts to changes in piloting mode by sending messages to the piloting mode enable topics and only allowing incoming control messages from the current piloting mode to be sent to the hardware interface.
+## Detailed Navigation Stack
 
-### Piloting modes
-
-Project11 operates in 3 major piloting modes: "manual", "autonomous" and "standby". 
-
-In "manual" mode, the vehicle responds to commands sent from a device such as a joystick or a gamepad. The commands are converted to "helm" messages by the `joy_to_helm` node and are sent from the operator station to the vehicle via the `udp_bridge`.
-
-In "autonomous" mode, the `mission_manager` sends mission items to the navigation stack and responds to override commands such as the hover command that can allow the vehicle to station keep for a while, then resume the mission when the hover is canceled.
-
-The "standby" mode is used to when no control commands are to be sent by Project11.
-
-
-
-### Navigation Stack
-
-The `mission_manager` receives and executes the higher level missions. Depending on the task, track lines may be sent to the `path_follower` or another node will receive a higher level directive, such as "survey this area", and generate and send out track lines or other navigation segments to lower level planners or controllers.
-Eventually, a "helm" or "cmd_velocity" message gets sent to the autonomous/helm or autonomous/cmd_vel topic reaching the `helm_manager`. 
+The `mission_manager` interacts with a Behavior Tree-based navigation stack. High-level directives like "Survey this area" are decomposed into track lines which are then sent to path followers. Eventually, these result in `Helm` or `Twist` messages reaching the `helm_manager`.
