@@ -1,57 +1,79 @@
 # UNH Marine Autonomy System Architecture
 
 ## Overview
-The **UNH Marine Autonomy** system is a modular framework for Autonomous Surface Vehicle (ASV) control and multi-vehicle mission planning and execution. It was originally known as "Project11".
+The **UNH Marine Autonomy** system (aka **Project11**) is a modular framework for Autonomous Surface Vehicle (ASV) control and multi-vehicle mission planning and execution. It prioritizes reliability over unreliable networks and abstracts hardware specifics to support heterogeneous fleets.
 
-## Core Components
-The system is composed of several independent ROS 2 nodes that work together to provide autonomy capabilities.
+## Core Concepts
 
-| Component | Description |
-| :--- | :--- |
-| **Mission Planner (CAMP)** | Desktop Operator UI for defining missions, monitoring status, and visualizing data. |
-| **Mission Manager** | On-vehicle executive node. Receives missions and orchestrates execution by issuing tasks. |
-| **Navigation Stack** | A Behavior Tree (BT) based system that receives tasks (e.g., "Survey Area") and generates low-level navigation commands. |
-| **Helm Manager** | Control arbitration node. Switches between Manual (Joystick) and Autonomous modes. Ensures only one controller drives the hardware. |
-| **UDP Bridge** | Robust, low-bandwidth communications link between the vehicle and the operator station. |
+### 1. Reliable Command Bridging (`udp_bridge` & `command_bridge`)
+In marine environments, telemetry links (Radio, Cellular, Satellite) are often intermittent. To ensure commands (like "Hover" or "Start Mission") are received, we use a "Send-Until-Acknowledged" pattern.
+- **`udp_bridge`**: Handles the low-level transport of ROS messages over UDP, optimized for bandwidth.
+- **`command_bridge`**: Sits on top of the bridge. It queues commands with a timestamp and republishes them until the remote side sends a matching acknowledgment.
 
-## Data Flow
-The high-level data flow from operator to hardware is:
+### 2. Hardware Agnosticism (Low-Level Helm Nodes)
+To keep the core framework agnostic of specific vehicle hardware (different thruster configurations, steering types, etc.), we use **Low-Level Helm Nodes**.
+- **Core Framework**: Outputs generic `Helm` or `Twist` messages.
+- **Platform-Specific Node**: (e.g., `ben_helm`, `dory_helm`) Subscribes to these generic commands and translates them into specific thruster setpoints or serial commands for that vehicle.
+- **Benefit**: Changing vehicles only requires swapping one low-level node.
+
+## Data Flows
+
+### 1. Mission Planning & Execution Flow
+How a mission goes from the operator's clicks to the vehicle's movement:
 
 ```mermaid
-graph LR
-    User[Operator UI] -- Mission Msg --> MM[Mission Manager]
-    MM -- Task List --> Nav[Navigation Stack]
-    Nav -- Nav Command --> Helm[Helm Manager]
-    Joystick -- Joy Command --> Helm
-    Helm -- Thruster Cmd --> Hardware[Vehicle Hardware]
+sequenceDiagram
+    participant UI as CAMP (Operator UI)
+    participant CB_S as Command Bridge (Shore)
+    participant UDP as UDP Bridge (Link)
+    participant CB_R as Command Bridge (Robot)
+    participant MM as Mission Manager
+    participant Nav as Navigation Stack
+    participant HM as Helm Manager
+    participant LL as Low-Level Helm
+    participant HW as Hardware
+
+    UI->>CB_S: "Execute Survey Plan"
+    CB_S->>UDP: Bridge (project11/command)
+    UDP->>CB_R: Receive Command
+    CB_R->>CB_S: Acknowledge (project11/response)
+    CB_R->>MM: Request Mission Execution
+    MM->>Nav: Send Task List (project11_nav_msgs/TaskInformation)
+    Nav->>HM: Output Helm/Twist (autonomous/helm)
+    HM->>LL: Passthrough (active/helm)
+    LL->>HW: Hardware Specific Commands
 ```
 
-## Repository Structure (Planned)
+### 2. Status Feedback Flow
+How the operator knows what the robot is doing:
 
-### 1. `unh_marine_autonomy`
-The central monorepo for core robot capabilities.
-*   `marine_autonomy`: Core launch files and system configuration.
-*   `marine_interfaces`: Standard message definitions.
-*   `mission_manager`: Autonomy executive.
-*   `helm_manager`: Control arbitrator.
-*   `command_bridge`: Shore-side communications.
-*   `joy_to_helm`: Joystick Adapter.
+```mermaid
+graph RL
+    HW[Hardware] --> LL[Low-Level Helm]
+    LL -- Status --> HM[Helm Manager]
+    HM -- Heartbeat --> UDP[UDP Bridge]
+    UDP -- Telemetry --> UI[CAMP UI]
+    MM[Mission Manager] -- "state: executing" --> UDP
+```
 
-### 2. `unh_marine_navigation`
-The Guidance, Navigation, and Control connection.
-*   `marine_nav_behaviors`: Path following and specific behaviors.
-*   `marine_nav_interfaces`: Internal navigation messages.
+## Piloting Modes & Arbitration
+The **`helm_manager`** is the "brain" that decides who is currently driving the vehicle. It arbitrates between three primary modes:
 
-### 3. `camp` & `s57_tools`
-*   `camp`: The operator interface (Qt Application).
-*   `s57_tools`: Tools for handling Chart data (S-57/S-63).
+| Mode | Trigger | Description |
+| :--- | :--- | :--- |
+| **Standby** | Default / "Stop" | No control signals are sent to the hardware. Safest state. |
+| **Manual** | Joystick Input | Commands from a local or remote joystick (`joy_to_helm`) are passed through. |
+| **Autonomous** | Mission Start | Signals from the `mission_manager` and Navigation Stack are passed through. |
 
-### 4. Hardware Interfaces
-*   `udp_bridge`: Communications link.
-*   `marine_ais`: AIS data handling.
+The `helm_manager` ensures that if the user grabs a joystick, the system can quickly switch to Manual, or if a mission is aborted, it returns to Standby.
 
-## Robot Configuration
-Each specific robot (e.g., "Ben") has its own configuration package (e.g., `ben_marine`) containing:
-*   URDF / Mesh descriptions.
-*   Specific launch files (sensor drivers, hardware interface selection).
-*   Parameter configurations.
+## Component Map
+
+| Component | Role |
+| :--- | :--- |
+| **CAMP** | Planning interface & Situational Awareness. |
+| **Mission Manager** | High-level executive; converts plans to discrete navigation tasks. |
+| **Navigation Stack** | Path planners and followers; handles the "physics" of getting there. |
+| **Helm Manager** | Safety-critical arbitrator of control sources. |
+| **Command Bridge** | Reliable transaction layer for critical commands. |
+| **UDP Bridge** | Efficient data transport for remote operations. |
