@@ -40,7 +40,7 @@ sequenceDiagram
     CB_R->>MM: Request Mission Execution
     MM->>Nav: Send Task List (project11_nav_msgs/TaskInformation)
     Nav->>HM: Output Helm/Twist (autonomous/helm)
-    HM->>LL: Passthrough (active/helm)
+    HM->>LL: Passthrough (out/helm)
     LL->>HW: Hardware Specific Commands
 ```
 
