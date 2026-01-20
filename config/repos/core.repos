@@ -1,35 +1,11 @@
 repositories:
-  project11:
-    type: git
-    url: git@github.com:rolker/project11.git
-    version: jazzy
-  project11_msgs:
-    type: git
-    url: git@github.com:rolker/project11_msgs.git
-    version: jazzy
   marine_ais:
     type: git
     url: git@github.com:rolker/marine_ais.git
     version: jazzy
-  project11_nav_msgs:
-    type: git
-    url: git@github.com:rolker/project11_nav_msgs.git
-    version: jazzy
   udp_bridge:
     type: git
     url: git@github.com:rolker/udp_bridge.git
-    version: jazzy
-  command_bridge:
-    type: git
-    url: git@github.com:rolker/command_bridge.git
-    version: jazzy
-  helm_manager:
-    type: git
-    url: git@github.com:rolker/helm_manager.git
-    version: jazzy
-  mission_manager:
-    type: git
-    url: git@github.com:rolker/mission_manager.git
     version: jazzy
   unh_marine_navigation:
     type: git
