@@ -15,3 +15,7 @@ repositories:
     type: git
     url: git@github.com:rolker/s57_tools.git
     version: jazzy
+  unh_marine_autonomy:
+    type: git
+    url: git@github.com:rolker/unh_marine_autonomy.git
+    version: jazzy
