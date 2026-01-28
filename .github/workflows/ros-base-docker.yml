@@ -28,7 +28,13 @@ jobs:
     - name: Create workspace
       run: mkdir -p ../jazzy_ws/src
     - name: Install repos
-      run: vcs import --input config/repos/simulation.repos ../jazzy_ws/src/
+      run: |
+        vcs import --input config/repos/underlay.repos ../jazzy_ws/src/
+        vcs import --input config/repos/core.repos ../jazzy_ws/src/
+        vcs import --input config/repos/platforms.repos ../jazzy_ws/src/
+        vcs import --input config/repos/sensors.repos ../jazzy_ws/src/
+        vcs import --input config/repos/simulation.repos ../jazzy_ws/src/
+        vcs import --input config/repos/ui.repos ../jazzy_ws/src/
     - name: Install ROS dependencies
       working-directory: ../jazzy_ws/
       run: DEBIAN_FRONTEND=noninteractive rosdep install --from-paths src --ignore-src -r -y
