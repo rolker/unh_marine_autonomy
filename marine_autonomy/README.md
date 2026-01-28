@@ -35,7 +35,7 @@ Once ROS2 Jazzy is installed, you can quickly install and run Project11 with the
 
     # If vcs is not installed:
     # sudo apt-get install python3-vcstool   
-    vcs import < project11/config/repos/simulator.repos
+    vcs import < project11/config/repos/simulation.repos
     
     rosdep install --from-paths . --ignore-src -r -y
 
