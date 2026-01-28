@@ -33,3 +33,11 @@ jobs:
     - name: Colcon build
       working-directory: ../jazzy_ws/
       run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build'
+    - name: Colcon test
+      working-directory: ../jazzy_ws/
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --event-handlers console_direct+ --return-code-on-test-failure'
+    - name: Test results
+      working-directory: ../jazzy_ws/
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test-result --verbose'
+      if: always()
+
