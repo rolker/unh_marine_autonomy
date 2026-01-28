@@ -35,10 +35,6 @@ if(BUILD_TESTING)
   
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_placeholder test/test_placeholder.cpp)
-  target_include_directories(test_placeholder PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-  )
   ament_target_dependencies(test_placeholder
     geometry_msgs
     marine_interfaces
