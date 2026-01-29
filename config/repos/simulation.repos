@@ -1,5 +1,5 @@
 repositories:
   unh_marine_simulation:
     type: git
-    url: git@github.com:rolker/unh_marine_simulation.git
+    url: https://github.com/rolker/unh_marine_simulation.git
     version: jazzy

@@ -1,21 +1,21 @@
 repositories:
   ben_project11:
     type: git
-    url: git@github.com:rolker/ben_project11.git
+    url: https://github.com/rolker/ben_project11.git
     version: jazzy
   ben_description:
     type: git
-    url: git@github.com:rolker/ben_description.git
+    url: https://github.com/rolker/ben_description.git
     version: jazzy
   mru_transform:
     type: git
-    url: git@github.com:rolker/mru_transform.git
+    url: https://github.com/rolker/mru_transform.git
     version: jazzy
   seafloor_echoboat_project11:
     type: git
-    url: git@github.com:rolker/seafloor_echoboat_project11.git
+    url: https://github.com/rolker/seafloor_echoboat_project11.git
     version: jazzy
   unh_echoboats_project11:
     type: git
-    url: git@github.com:rolker/unh_echoboats_project11.git
+    url: https://github.com/rolker/unh_echoboats_project11.git
     version: jazzy

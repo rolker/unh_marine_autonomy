@@ -1,13 +1,13 @@
 repositories:
   unh_marine_radar:
     type: git
-    url: git@github.com:rolker/unh_marine_radar.git
+    url: https://github.com/rolker/unh_marine_radar.git
     version: jazzy
   cube_bathymetry:
     type: git
-    url: git@github.com:rolker/cube_bathymetry.git
+    url: https://github.com/rolker/cube_bathymetry.git
     version: jazzy
   unh_marine_perception:
     type: git
-    url: git@github.com:rolker/unh_marine_perception.git
+    url: https://github.com/rolker/unh_marine_perception.git
     version: jazzy
