@@ -200,6 +200,7 @@ This document illustrates the data flows through the UNH Marine Autonomy system,
 - The `task_manager` **service** can also be called directly
 - Bypasses command bridge for programmatic access
 - Used by test scripts and automation tools
+- Note: Service commands use plural forms (`replace_tasks`, `append_tasks`, etc.), while topic commands use singular forms (`replace_task`, `append_task`, etc.)
 
 ### Flow 4: Sonar Coverage Planning
 
