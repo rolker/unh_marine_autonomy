@@ -3,4 +3,4 @@
 
 def test_placeholder():
     """Minimal test to verify pytest infrastructure works."""
-    assert True, "Test infrastructure is working"
+    assert True, 'Test infrastructure is working'
