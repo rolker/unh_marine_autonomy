@@ -159,9 +159,10 @@ This document illustrates the data flows through the UNH Marine Autonomy system,
 ```
 
 **Mode Gating:**
-- Each piloting mode subscribes to `piloting_mode/{mode}/helm`
-- Only the **active mode** can publish to `out/helm`
-- This prevents conflicting commands from different sources
+- Output-enabled piloting modes (e.g., `manual`, `autonomous`) subscribe to their per-mode command topics (e.g., `piloting_mode/{mode}/helm`)
+- The `standby` mode is instantiated with `enable_output=false` and does not subscribe to per-mode helm/twist topics; it suppresses outgoing motion commands instead of generating them
+- Only the **active output-enabled mode** can publish to `out/helm` / `out/cmd_vel`
+- This prevents conflicting motion commands from different sources
 - Mode transitions are instantaneous (no hysteresis)
 
 ### Flow 3: Task Manipulation Commands
@@ -170,7 +171,7 @@ This document illustrates the data flows through the UNH Marine Autonomy system,
 ┌──────┐
 │ CAMP │
 └──┬───┘
-   │ 1. Task command: replace/append/goto/hover/clear
+   │ 1. Task command: replace_task/append_task/prepend_task/clear_tasks/override
    ▼
 ┌─────────────────────┐
 │ command_bridge      │
@@ -181,11 +182,11 @@ This document illustrates the data flows through the UNH Marine Autonomy system,
 │  mission_manager (CampInterface)    │
 │                                     │
 │  Commands:                          │
-│  • "replace" → overwrite task list  │
-│  • "append"  → add to end           │
-│  • "goto"    → insert urgent task   │
-│  • "hover"   → pause at position    │
-│  • "clear"   → remove all tasks     │
+│  • "replace_task" → replace task list │
+│  • "append_task"  → add to end      │
+│  • "prepend_task" → add to beginning│
+│  • "clear_tasks"  → remove all tasks│
+│  • "override"     → insert urgent task│
 └──────┬──────────────────────────────┘
        │ 3. Updates internal task list
        │ 4. Calls run_tasks action (if tasks exist)
@@ -199,6 +200,7 @@ This document illustrates the data flows through the UNH Marine Autonomy system,
 - The `task_manager` **service** can also be called directly
 - Bypasses command bridge for programmatic access
 - Used by test scripts and automation tools
+- Note: Service commands use plural forms (`replace_tasks`, `append_tasks`, etc.), while topic commands use singular forms (`replace_task`, `append_task`, etc.)
 
 ### Flow 4: Sonar Coverage Planning
 

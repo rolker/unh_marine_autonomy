@@ -36,8 +36,8 @@ This document describes all ROS communication interfaces (topics, services, acti
 - **Type**: `std_msgs/String`
 - **Publisher**: `command_bridge_receiver`
 - **Subscriber**: `mission_manager` (CampInterface node)
-- **Purpose**: Task manipulation commands (replace, append, goto, hover, clear)
-- **Format**: JSON command with type and parameters
+- **Purpose**: Task manipulation and control commands (e.g., `replace_task`, `append_task`, `prepend_task`, `clear_tasks`, `override`)
+- **Format**: Space-delimited command string. The first token is the command keyword, and subsequent tokens are arguments. Some arguments (such as `mission_plan` contents) may themselves be JSON strings.
 
 #### `piloting_mode`
 - **Type**: `std_msgs/String`
@@ -48,11 +48,11 @@ This document describes all ROS communication interfaces (topics, services, acti
 ### Mission Manager
 
 #### `project11/status/mission_manager`
-- **Type**: `marine_interfaces/Heartbeat`
+- **Type**: `project11_msgs/Heartbeat`
 - **Publisher**: `mission_manager` (CampInterface node)
 - **Subscriber**: CAMP/monitoring systems
 - **Purpose**: Status feedback with current task information and timestamps
-- **Key-Value Pairs**: mission state, current task, task progress
+- **Key-Value Type**: `project11_msgs/KeyValue` (fields include mission state, current task, task progress)
 
 #### `coverage_path`
 - **Type**: `nav_msgs/Path`
@@ -133,35 +133,35 @@ This document describes all ROS communication interfaces (topics, services, acti
 ## Services
 
 ### `task_manager`
-- **Type**: `marine_interfaces/TaskManagerCmd`
+- **Type**: `mission_manager_interfaces/TaskManagerCmd`
 - **Provider**: `mission_manager`
 - **Client**: External tools, CAMP
 - **Purpose**: Command and query task list
 - **Request**:
   - `command` (string): Operation type
-    - `"replace"`: Replace entire task list
-    - `"append"`: Add tasks to end of list
-    - `"prepend"`: Add tasks to beginning of list
-    - `"clear"`: Remove all tasks
+    - `"replace_tasks"`: Replace entire task list
+    - `"append_tasks"`: Add tasks to end of list
+    - `"prepend_tasks"`: Add tasks to beginning of list
+    - `"clear_tasks"`: Remove all tasks
     - `"update"`: Update specific task properties
   - `tasks` (TaskInformation[]): Task list for operation
 - **Response**:
   - `result` (string): Status message
 
 ### `sonar/control`
-- **Type**: `marine_interfaces/EMControl`
+- **Type**: `kongsberg_em_control/EMControl`
 - **Provider**: External (Kongsberg sonar driver)
 - **Client**: `command_bridge_receiver`
 - **Purpose**: Control sonar operation (mode, line number)
 - **Request**:
-  - `mode` (uint8): Sonar operating mode
-  - `line_number` (uint16): Sonar line identifier
+  - `requested_mode` (int): Sonar operating mode
+  - `line_number` (int): Sonar line identifier
 - **Response**: Success/failure status
 
 ## Actions
 
 ### `run_tasks`
-- **Type**: `marine_interfaces/RunTasks`
+- **Type**: `marine_nav_interfaces/RunTasks`
 - **Server**: Navigator node (external navigation stack)
 - **Client**: `mission_manager`
 - **Purpose**: Send task list and receive navigation feedback/results
@@ -174,7 +174,7 @@ This document describes all ROS communication interfaces (topics, services, acti
   - `tasks` (TaskInformation[]): Final task list with completion status
 
 ### `compute_sonar_coverage_path`
-- **Type**: `marine_interfaces/ComputeSonarCoveragePath`
+- **Type**: `marine_nav_interfaces/ComputeSonarCoveragePath`
 - **Server**: Coverage planning service
 - **Client**: `multibeam_coverage_adapter`
 - **Purpose**: Generate sonar coverage patterns for survey missions
@@ -190,18 +190,18 @@ This document describes all ROS communication interfaces (topics, services, acti
 
 ### `marine_interfaces/Heartbeat`
 - `std_msgs/Header header`
-- `diagnostic_msgs/KeyValue[] values`: Array of key-value status pairs
+- `marine_interfaces/KeyValue[] values`: Array of key-value status pairs (type equivalent to `diagnostic_msgs/KeyValue`)
 
-### `marine_interfaces/TaskInformation`
+### `marine_nav_interfaces/TaskInformation`
 - `string id`: Unique task identifier
 - `string type`: Task type (goto, survey, hover, etc.)
 - `geometry_msgs/PoseStamped[] poses`: Task waypoints
 - `int32 priority`: Task priority for ordering
 - `string status`: Current status (pending, active, complete, failed)
 - `bool done`: Completion flag
-- `marine_interfaces/Behavior[] behaviors`: Associated behaviors
+- `marine_nav_interfaces/Behavior[] behaviors`: Associated behaviors
 
-### `marine_interfaces/TaskFeedback`
+### `marine_nav_interfaces/TaskFeedback`
 - `TaskInformation current_navigation_task`: Active task
 - `TaskInformation[] tasks`: Full task list with status
 
