@@ -1,21 +1,21 @@
 repositories:
   marine_ais:
     type: git
-    url: git@github.com:rolker/marine_ais.git
+    url: https://github.com/rolker/marine_ais.git
     version: jazzy
   udp_bridge:
     type: git
-    url: git@github.com:rolker/udp_bridge.git
+    url: https://github.com/rolker/udp_bridge.git
     version: jazzy
   unh_marine_navigation:
     type: git
-    url: git@github.com:rolker/unh_marine_navigation.git
+    url: https://github.com/rolker/unh_marine_navigation.git
     version: jazzy
   s57_tools:
     type: git
-    url: git@github.com:rolker/s57_tools.git
+    url: https://github.com/rolker/s57_tools.git
     version: jazzy
   unh_marine_autonomy:
     type: git
-    url: git@github.com:rolker/unh_marine_autonomy.git
+    url: https://github.com/rolker/unh_marine_autonomy.git
     version: jazzy
