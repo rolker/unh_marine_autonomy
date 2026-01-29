@@ -93,32 +93,23 @@ State changes occur when the `piloting_mode` topic receives a mode string:
 
 When `piloting_mode` receives a new mode string:
 
-1. **pilotingModeCallback()** updates `piloting_mode_` member variable
-2. **timerCallback()** (periodic) checks active mode:
-   - Iterates through all `PilotingMode` instances
-   - Calls `activeMode()` for each
-   - Each mode publishes `Bool` on `piloting_mode/{mode}/active`
-3. **Input Processing**:
+1. **pilotingModeCallback()** updates the `piloting_mode_` member variable
+   - Calls `activeMode()` to determine which `PilotingMode` should be active
+   - Updates each `PilotingMode` instance's active flag
+   - Each mode publishes a `Bool` on `piloting_mode/{mode}/active` reflecting its active state
+2. **Input Processing**:
    - Each mode receives helm commands on `piloting_mode/{mode}/helm`
-   - `canPublish(mode)` checks if mode matches current active mode
-   - Only active mode's commands forwarded to output
+   - `canPublish(mode)` checks if the mode matches the current active mode
+   - Only the active mode's commands are forwarded to the output
 
 ### Transition Timing
-- **Latency**: Instantaneous (next timer cycle, typically 10-50 Hz)
+- **Latency**: Effectively immediate on reception of a `piloting_mode` message (no timer-based delay)
 - **No Hysteresis**: Mode switch is immediate, no delay or confirmation
 - **No Transition States**: Direct switch between modes
 
 ## Mode-Specific Behavior
 
 ### Standby Mode Details
-
-```cpp
-// Example: Standby mode configuration
-PilotingMode standby_mode;
-standby_mode.name = "standby";
-standby_mode.enabled = false;  // Disabled by default
-standby_mode.input_topic = "piloting_mode/standby/helm";
-```
 
 **Characteristics:**
 - Receives helm input but does not process
@@ -128,14 +119,6 @@ standby_mode.input_topic = "piloting_mode/standby/helm";
 
 ### Manual Mode Details
 
-```cpp
-// Example: Manual mode configuration
-PilotingMode manual_mode;
-manual_mode.name = "manual";
-manual_mode.enabled = true;  // Enabled on startup
-manual_mode.input_topic = "piloting_mode/manual/helm";
-```
-
 **Characteristics:**
 - Direct pass-through from joystick/operator to robot
 - No autonomy or safety logic applied
@@ -143,14 +126,6 @@ manual_mode.input_topic = "piloting_mode/manual/helm";
 - Immediate response to operator input
 
 ### Autonomous Mode Details
-
-```cpp
-// Example: Autonomous mode configuration
-PilotingMode autonomous_mode;
-autonomous_mode.name = "autonomous";
-autonomous_mode.enabled = true;  // Enabled on startup
-autonomous_mode.input_topic = "piloting_mode/autonomous/helm";
-```
 
 **Characteristics:**
 - Commands from navigator/mission manager
@@ -192,18 +167,19 @@ The helm manager supports three output modes (parameter: `output_type`):
 | `output_type` | string | `"helm"` | Output format: "helm", "twist", or "dual" |
 | `max_speed` | double | `1.0` | Maximum speed for twist conversion (m/s) |
 | `max_yaw_speed` | double | `1.0` | Maximum yaw rate for twist conversion (rad/s) |
-| `update_rate` | double | `10.0` | Helm manager timer frequency (Hz) |
 
 ### Mode Enable/Disable
 
-Modes can be enabled/disabled at launch:
+Modes are enabled/disabled via the robot configuration (for example, in `marine_autonomy/config/robot.yaml`), not via per-node parameters on `helm_manager`:
 ```yaml
-# Example launch configuration
-helm_manager:
+# Example robot configuration
+marine_autonomy:
   ros__parameters:
-    standby_enabled: false
-    manual_enabled: true
-    autonomous_enabled: true
+    # Only these modes will be available to the helm_manager state machine
+    piloting_modes:
+      - standby
+      - manual
+      - autonomous
 ```
 
 ## Command Gating Logic
