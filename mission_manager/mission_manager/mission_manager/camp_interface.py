@@ -214,7 +214,7 @@ class CampInterface:
                 task.priority = -1
                 self.mission_manager.setOverrideTask(task)
         else:
-            self.mission_manager.get_logger().err(
+            self.mission_manager.get_logger().error(
                 'mission_manager: No defined action for the '
                 'received command <%s> - ignoring!' % msg.data)
 

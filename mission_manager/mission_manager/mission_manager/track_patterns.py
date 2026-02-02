@@ -96,7 +96,7 @@ class ExpandingBoxSearch():
     Args:
         name:           Mission element name
         startLocation:  PoseStamped. Return pattern is in this map frame
-        startHeading:   Initial heading of search, deg T. (default 0, 000T)
+        startHeading:   Initial heading of search, deg T. (default 0 degrees True, e.g., 000T)
         searchSpeedKts: Search speed (default 8).
         loopSpacing:    Spacing between each loop, m. (default 300)
         searchDirection:"clockwise" (default) or "counterclockwise"
