@@ -127,7 +127,7 @@ class ExpandingBoxSearch():
         self.pattern = TaskInformation()
 
     def create(self, id = None):
-        '''Creates an Expanding Box Search Pattern'''
+        """Create an Expanding Box Search Pattern."""
 
         if id is None:
             # Setup the task. Use a random id so it is unique.
@@ -139,20 +139,20 @@ class ExpandingBoxSearch():
         self.pattern.data = yaml.safe_dump({'speed': self.searchSpeed})
         self.pattern.poses.append(self.startLocation)
 
-        heading = self.startHeading 
+        heading = self.startHeading
         segmentLength = self.loopSpacing
         z = 1
         # Continue adding waypoints until we reach the maximum search radius.
         while (pose2poseDistance(self.startLocation,
-                            self.pattern.poses[-1]) <
-                            self.maxSearchRadius):
-            
+                                  self.pattern.poses[-1]) <
+               self.maxSearchRadius):
+
+            self.pattern.poses.append(
             self.pattern.poses.append(
                 poseFromDistanceAndHeading(self.pattern.poses[-1],
-                                     segmentLength, 
-                                     heading)
+                                           segmentLength,
+                                           heading)
             )
-
             # Note reversed convention here, bc in euclidian space, angles
             # are measured in the opposite direction from geogrpahic heading.
             if self.searchDirection == "clockwise":
@@ -160,14 +160,14 @@ class ExpandingBoxSearch():
             else:
                 heading += 90
 
-            if np.mod(z,2) == 0:
+            if np.mod(z, 2) == 0:
                 segmentLength = segmentLength + self.loopSpacing
-            z+=1
+            z += 1
         return self.pattern
 
+
 class RaceTrackPattern():
-    '''A class to create a sliding rectangle racetrack pattern.
-    
+    """A class to create a sliding rectangle racetrack pattern.
     startLocation:      PoseStamped of the start point.
     startHeading:       Heading in degrees of the first line.
     dimX:               X-dimension of the sliding rectangle.
@@ -179,25 +179,25 @@ class RaceTrackPattern():
     
     '''
     def __init__(self,
-                 name = None,
-                 startLocation = PoseStamped(),
-                 startHeading = 0,
-                 dimX = 100,
-                 dimY = 500,
-                 lapSpacinginX = 100,
-                 lapSpacingInY = 100,
-                 maxRadius = 1000,
-                 speedKts = 8):
+                 name=None,
+                 startLocation=PoseStamped(),
+                 startHeading=0,
+                 dimX=100,
+                 dimY=500,
+                 lapSpacinginX=100,
+                 lapSpacingInY=100,
+                 maxRadius=1000,
+                 speedKts=8):
 
         self.name = name
         self.startLocation = startLocation
         self.dimX = dimX
         self.dimY = dimY
-        self.startHeading = startHeading + 90 # Makes it north up.
+        self.startHeading = startHeading + 90  # Makes it north up.
         self.lapSpacingInX = lapSpacinginX
         self.lapSpacingInY = lapSpacingInY
         self.maxRadius = maxRadius
-        self.speed = speedKts * 0.514444 # knots to m/s
+        self.speed = speedKts * 0.514444  # knots to m/s
 
         self.pattern = TaskInformation()
 
@@ -214,26 +214,26 @@ class RaceTrackPattern():
         box.append(self.startLocation)
         heading = self.startHeading
         z = 0
-            
+
         box.append(poseFromDistanceAndHeading(box[-1],
-                                            self.dimY + self.lapSpacingInY,
-                                            heading))
+                                              self.dimY + self.lapSpacingInY,
+                                              heading))
         heading -= 90
-        box.append(poseFromDistanceAndHeading(box[-1],
-                                              self.dimX + self.lapSpacingInX,                                                  heading))
+        box.append(poseFromDistanceAndHeading(
+            box[-1], self.dimX + self.lapSpacingInX, heading))
         heading -= 90
         box.append(poseFromDistanceAndHeading(box[-1],
                                               self.dimY + self.lapSpacingInY,
                                               heading))
-        heading -= 90   
+        heading -= 90
 
-        while pose2poseDistance(self.startLocation,box[-1]) < self.maxRadius:
-            if z==1:
-                box.append(translatedPose(box[-4],self.lapSpacingInX,0))
+        while pose2poseDistance(self.startLocation, box[-1]) < self.maxRadius:
+            if z == 1:
+                box.append(translatedPose(box[-4], self.lapSpacingInX, 0))
             else:
-                box.append(translatedPose(box[-4],self.lapSpacingInX,self.lapSpacingInY))
-                
-            box.append(translatedPose(box[-4],self.lapSpacingInX,self.lapSpacingInY))
-            box.append(translatedPose(box[-4],self.lapSpacingInX,self.lapSpacingInY))
-            box.append(translatedPose(box[-4],self.lapSpacingInX,self.lapSpacingInY))
-            z +=1
+                box.append(translatedPose(box[-4], self.lapSpacingInX, self.lapSpacingInY))
+
+            box.append(translatedPose(box[-4], self.lapSpacingInX, self.lapSpacingInY))
+            box.append(translatedPose(box[-4], self.lapSpacingInX, self.lapSpacingInY))
+            box.append(translatedPose(box[-4], self.lapSpacingInX, self.lapSpacingInY))
+            z += 1
