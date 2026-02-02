@@ -177,7 +177,7 @@ class RaceTrackPattern():
     maxRadius:          How far away from the start to continue the pattern.
     speedKts:           Survey speed in knots (default 8)
     
-    '''
+    """
     def __init__(self,
                  name=None,
                  startLocation=PoseStamped(),
