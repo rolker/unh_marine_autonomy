@@ -1,3 +1,5 @@
+"""Setup configuration for mission_manager package."""
+
 import os
 from glob import glob
 
@@ -22,11 +24,16 @@ setup(
     maintainer_email='roland@ccom.unh.edu',
     description='Mission manager for project11',
     license='BSD-2-Clause',
-    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-          'mission_manager = mission_manager.mission_manager:main',
-          'multibeam_coverage_adapter = mission_manager.multibeam_coverage_adapter:main',
+            (
+                'mission_manager = '
+                'mission_manager.mission_manager:main'
+            ),
+            (
+                'multibeam_coverage_adapter = '
+                'mission_manager.multibeam_coverage_adapter:main'
+            ),
         ],
     },
 )
