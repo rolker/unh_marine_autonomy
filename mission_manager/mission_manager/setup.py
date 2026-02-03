@@ -1,6 +1,9 @@
-from setuptools import find_packages, setup
+"""Setup configuration for mission_manager package."""
+
 import os
 from glob import glob
+
+from setuptools import find_packages, setup
 
 package_name = 'mission_manager'
 
@@ -12,7 +15,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
+        (os.path.join('share', package_name, 'launch'),
+         glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -22,9 +26,14 @@ setup(
     license='BSD-2-Clause',
     entry_points={
         'console_scripts': [
-          'mission_manager = mission_manager.mission_manager:main',
-          'multibeam_coverage_adapter = mission_manager.multibeam_coverage_adapter:main',
+            (
+                'mission_manager = '
+                'mission_manager.mission_manager:main'
+            ),
+            (
+                'multibeam_coverage_adapter = '
+                'mission_manager.multibeam_coverage_adapter:main'
+            ),
         ],
     },
 )
-
