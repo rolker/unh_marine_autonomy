@@ -17,7 +17,6 @@ setup(
     maintainer_email='roland@ccom.unh.edu',
     description='Command bridge for project11',
     license='BSD-2-Clause',
-    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
           'command_bridge_receiver = command_bridge.command_bridge_receiver:main',
