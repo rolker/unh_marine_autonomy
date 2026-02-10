@@ -35,9 +35,20 @@ jobs:
         vcs import --input config/repos/sensors.repos ../jazzy_ws/src/
         vcs import --input config/repos/simulation.repos ../jazzy_ws/src/
         vcs import --input config/repos/ui.repos ../jazzy_ws/src/
+    - name: Replace checked-out unh_marine_autonomy with PR branch
+      run: |
+        rm -rf ../jazzy_ws/src/unh_marine_autonomy
+        ln -s $GITHUB_WORKSPACE ../jazzy_ws/src/unh_marine_autonomy
     - name: Install ROS dependencies
       working-directory: ../jazzy_ws/
       run: DEBIAN_FRONTEND=noninteractive rosdep install --from-paths src --ignore-src -r -y
     - name: Colcon build
       working-directory: ../jazzy_ws/
       run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build'
+    - name: Colcon test
+      working-directory: ../jazzy_ws/
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --event-handlers console_direct+ --return-code-on-test-failure'
+    - name: Test results
+      working-directory: ../jazzy_ws/
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test-result --verbose'
+      if: always()

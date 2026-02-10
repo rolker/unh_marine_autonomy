@@ -29,4 +29,18 @@ install(TARGETS ${PROJECT_NAME}
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  ament_lint_auto_find_test_dependencies()
+
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_placeholder test/test_placeholder.cpp)
+  ament_target_dependencies(test_placeholder
+    geometry_msgs
+    marine_interfaces
+    rclcpp
+    rclcpp_lifecycle
+  )
+endif()
+
 ament_package()
