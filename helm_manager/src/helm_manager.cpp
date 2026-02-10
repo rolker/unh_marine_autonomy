@@ -9,8 +9,8 @@
 namespace helm_manager
 {
 
-HelmManager::HelmManager(const std::string &node_name):
-  rclcpp_lifecycle::LifecycleNode(node_name)
+HelmManager::HelmManager(const std::string &node_name, const rclcpp::NodeOptions & options):
+  rclcpp_lifecycle::LifecycleNode(node_name, options)
 {
 
 }

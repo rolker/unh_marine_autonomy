@@ -19,7 +19,8 @@ class PilotingMode;
 class HelmManager: public rclcpp_lifecycle::LifecycleNode
 {
 public:
-  HelmManager(const std::string & node_name);
+  HelmManager(const std::string & node_name,
+              const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
 
   CallbackReturn on_configure(const rclcpp_lifecycle::State& state) override;
   CallbackReturn on_activate(const rclcpp_lifecycle::State& state) override;
