@@ -6,7 +6,7 @@
  
  # UNH Marine Autonomy: A Mapping-Focused Open-Source Framework for Autonomous Surface Vehicles
 
-The UNH Marine Autonomy framework (formerly Project11), developed at the Center for Coastal and Ocean Mapping / Joint Hydrographic Center (CCOM/JHC) at the University of New Hampshire (UNH), provides a backseat driver for Autonomous Surface Vehicles
+The UNH Marine Autonomy framework (formerly Project11), developed at the Center for Coastal and Ocean Mapping / Joint Hydrographic Center (CCOM/JHC) at the University of New Hampshire (UNH), serves as a backseat driver for Autonomous Surface Vehicles
 (ASVs). Key design features include the ability to quickly and easily specify survey plans; monitoring of mission progress, even
 over unreliable wireless networks; and an environment to develop advanced autonomous technologies.
 
