@@ -4,7 +4,7 @@
 **Date**: 2026-01-13
 
 ## Objective
-Rename and restructure the ecosystem to reflect CCOM/UNH provenance and align with ROS 2 naming conventions.
+Rename and restructure the ecosystem to reflect CCOM/JHC provenance and align with ROS 2 naming conventions.
 
 ## Naming Schema
 
