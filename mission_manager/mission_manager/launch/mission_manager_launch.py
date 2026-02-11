@@ -7,29 +7,30 @@ from launch_ros.actions import LifecycleTransition
 
 from lifecycle_msgs.msg import Transition
 
+
 def generate_launch_description():
 
     return LaunchDescription([
-        DeclareLaunchArgument("map_frame", default_value="map"),
+        DeclareLaunchArgument('map_frame', default_value='map'),
         LifecycleNode(
             package='mission_manager',
             executable='mission_manager',
             name='mission_manager',
             namespace='',
             parameters=[{
-                'map_frame': LaunchConfiguration("map_frame"),
+                'map_frame': LaunchConfiguration('map_frame'),
             }],
             respawn=True,
             respawn_delay=5,
-            remappings = [],
+            remappings=[],
             emulate_tty=True
         ),
         LifecycleTransition(
             lifecycle_node_names=(
                 PythonExpression(
-                    expression = [
+                    expression=[
                         '"',
-                        LaunchConfiguration("ros_namespace", default=''),
+                        LaunchConfiguration('ros_namespace', default=''),
                         '" + "/mission_manager"'
                     ],
                 ),
