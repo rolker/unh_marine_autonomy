@@ -6,12 +6,12 @@ The **UNH Marine Autonomy** system (aka **Project11**) is a modular framework fo
 ## Core Concepts
 
 ### 1. Reliable Command Bridging (`udp_bridge` & `command_bridge`)
-In marine environments, telemetry links (Radio, Cellular, Satellite) are often intermittent. To ensure commands (like "Hover" or "Start Mission") are received, we use a "Send-Until-Acknowledged" pattern.
+In marine environments, telemetry links (Radio, Cellular, Satellite) are often intermittent. To ensure commands (like "Hover" or "Start Mission") are received, the system uses a "Send-Until-Acknowledged" pattern.
 - **`udp_bridge`**: Handles the low-level transport of ROS messages over UDP, optimized for bandwidth.
 - **`command_bridge`**: Sits on top of the bridge. It queues commands with a timestamp and republishes them until the remote side sends a matching acknowledgment.
 
 ### 2. Hardware Agnosticism (Low-Level Helm Nodes)
-To keep the core framework agnostic of specific vehicle hardware (different thruster configurations, steering types, etc.), we use **Low-Level Helm Nodes**.
+To keep the core framework agnostic of specific vehicle hardware (different thruster configurations, steering types, etc.), the architecture uses **Low-Level Helm Nodes**.
 - **Core Framework**: Outputs generic `Helm` or `Twist` messages.
 - **Platform-Specific Node**: (e.g., `ben_helm`, `dory_helm`) Subscribes to these generic commands and translates them into specific thruster setpoints or serial commands for that vehicle.
 - **Benefit**: Changing vehicles only requires swapping one low-level node.
