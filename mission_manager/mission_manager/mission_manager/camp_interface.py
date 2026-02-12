@@ -9,8 +9,8 @@ from typing import Optional
 import yaml
 from geometry_msgs.msg import PoseStamped, Quaternion
 from marine_nav_interfaces.msg import TaskInformation
-from project11 import nav
-from project11_msgs.msg import BehaviorInformation, Heartbeat, KeyValue
+from marine_autonomy import nav
+from marine_interfaces.msg import BehaviorInformation, Heartbeat, KeyValue
 from rclpy.lifecycle import Node, Publisher
 from rclpy.subscription import Subscription
 from std_msgs.msg import String
@@ -82,13 +82,13 @@ class CampInterface:
     def on_configure(self):
         """Configure CAMP interface."""
         self.command_subscriber = self.mission_manager.create_subscription(
-            String, 'project11/mission_manager/command',
+            String, 'marine/mission_manager/command',
             self.commandCallback, 1)
 
         self.status_publisher = (
             self.mission_manager.create_lifecycle_publisher(
                 Heartbeat,
-                'project11/status/mission_manager',
+                'marine/status/mission_manager',
                 10
             )
         )
