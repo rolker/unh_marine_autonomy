@@ -3,12 +3,12 @@
 
 from typing import Dict, List, Optional
 
-import rclpy
 from marine_nav_interfaces.action import RunTasks
 from marine_nav_interfaces.msg import TaskFeedback, TaskInformation
 from marine_nav_tasks import TaskList
 from mission_manager_interfaces.srv import TaskManagerCmd
 from marine_interfaces.msg import BehaviorInformation
+import rclpy
 from rclpy.action import ActionClient
 from rclpy.action.client import ClientGoalHandle
 from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
@@ -295,7 +295,9 @@ class MissionManager(Node):
         """Receive commands to manipulate the navigator's task list.
 
         Args:
-            request:    TaskManagerCmd
+            request: TaskManagerCmd request.
+            response: TaskManagerCmd response.
+
         """
         self.updateLocalTaskList(request.command, request.tasks)
 

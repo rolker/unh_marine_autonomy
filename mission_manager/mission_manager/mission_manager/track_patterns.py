@@ -43,10 +43,10 @@ S.create()
 
 import copy
 
-import numpy as np
-import yaml
 from geometry_msgs.msg import PoseStamped
 from marine_interfaces.msg import TaskInformation
+import numpy as np
+import yaml
 
 
 def poseFromDistanceAndHeading(start, distance, heading):
@@ -59,6 +59,7 @@ def poseFromDistanceAndHeading(start, distance, heading):
 
     Returns:
         pose:       PostStamped message containing the point.
+
     """
     po = start.pose.position
     P = PoseStamped()
@@ -105,6 +106,7 @@ class ExpandingBoxSearch():
     Returns:
         marine_interfaces.msg.TaskInformation() object containing a
         trackline for the search.
+
     """
 
     def __init__(self,

@@ -12,6 +12,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
     ],
     install_requires=['setuptools'],
+    tests_require=['pytest'],
     zip_safe=True,
     maintainer='Roland Arsenault',
     maintainer_email='roland@ccom.unh.edu',

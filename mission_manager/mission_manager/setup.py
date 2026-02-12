@@ -1,7 +1,7 @@
 """Setup configuration for mission_manager package."""
 
-import os
 from glob import glob
+import os
 
 from setuptools import find_packages, setup
 
@@ -19,6 +19,7 @@ setup(
          glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
     ],
     install_requires=['setuptools'],
+    tests_require=['pytest'],
     zip_safe=True,
     maintainer='Roland Arsenault',
     maintainer_email='roland@ccom.unh.edu',
