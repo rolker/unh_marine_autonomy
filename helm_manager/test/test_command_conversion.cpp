@@ -128,7 +128,7 @@ TEST_F(HelmOutputTest, HelmPassthroughInHelmMode)
   cmd.throttle = 0.5;
   cmd.rudder = -0.3;
   manual_helm_pub_->publish(cmd);
-  spinUntil([this] { return helm_received_; });
+  spinUntil([this] {return helm_received_;});
 
   ASSERT_TRUE(helm_received_);
   EXPECT_FLOAT_EQ(last_helm_.throttle, 0.5f);
@@ -146,7 +146,7 @@ TEST_F(HelmOutputTest, TwistToHelmConversion)
   twist.twist.linear.x = 0.5;   // max_speed=1.0, so throttle = 0.5
   twist.twist.angular.z = -0.3;  // rudder = -(-0.3)/1.0 = 0.3
   manual_twist_pub_->publish(twist);
-  spinUntil([this] { return helm_received_; });
+  spinUntil([this] {return helm_received_;});
 
   ASSERT_TRUE(helm_received_);
   EXPECT_FLOAT_EQ(last_helm_.throttle, 0.5f);
@@ -163,7 +163,7 @@ TEST_F(HelmOutputTest, TwistToHelmClampingThrottle)
   twist.twist.linear.x = 5.0;   // exceeds max_speed=1.0, so throttle would be 5.0
   twist.twist.angular.z = 0.0;
   manual_twist_pub_->publish(twist);
-  spinUntil([this] { return helm_received_; });
+  spinUntil([this] {return helm_received_;});
 
   ASSERT_TRUE(helm_received_);
   EXPECT_FLOAT_EQ(last_helm_.throttle, 1.0f)
@@ -179,7 +179,7 @@ TEST_F(HelmOutputTest, TwistToHelmClampingRudder)
   twist.twist.linear.x = 0.0;
   twist.twist.angular.z = 5.0;  // rudder = -5.0/1.0 = -5.0, clamped to -1.0
   manual_twist_pub_->publish(twist);
-  spinUntil([this] { return helm_received_; });
+  spinUntil([this] {return helm_received_;});
 
   ASSERT_TRUE(helm_received_);
   EXPECT_FLOAT_EQ(last_helm_.rudder, -1.0f)
@@ -195,7 +195,7 @@ TEST_F(HelmOutputTest, TwistToHelmNegativeClamping)
   twist.twist.linear.x = -5.0;   // throttle = -5.0, clamped to -1.0
   twist.twist.angular.z = -5.0;   // rudder = 5.0, clamped to 1.0
   manual_twist_pub_->publish(twist);
-  spinUntil([this] { return helm_received_; });
+  spinUntil([this] {return helm_received_;});
 
   ASSERT_TRUE(helm_received_);
   EXPECT_FLOAT_EQ(last_helm_.throttle, -1.0f)
@@ -214,7 +214,7 @@ TEST_F(HelmOutputTest, TwistToHelmNanHandling)
   twist.twist.linear.x = std::nan("");
   twist.twist.angular.z = 0.5;
   manual_twist_pub_->publish(twist);
-  spinUntil([this] { return helm_received_; });
+  spinUntil([this] {return helm_received_;});
 
   ASSERT_TRUE(helm_received_);
   EXPECT_FLOAT_EQ(last_helm_.throttle, 0.0f)
@@ -230,7 +230,7 @@ TEST_F(HelmOutputTest, ZeroCommandPassthrough)
   cmd.throttle = 0.0;
   cmd.rudder = 0.0;
   manual_helm_pub_->publish(cmd);
-  spinUntil([this] { return helm_received_; });
+  spinUntil([this] {return helm_received_;});
 
   ASSERT_TRUE(helm_received_);
   EXPECT_FLOAT_EQ(last_helm_.throttle, 0.0f);
@@ -246,7 +246,7 @@ TEST_F(HelmOutputTest, FullReverseThrottle)
   cmd.throttle = -1.0;
   cmd.rudder = 0.0;
   manual_helm_pub_->publish(cmd);
-  spinUntil([this] { return helm_received_; });
+  spinUntil([this] {return helm_received_;});
 
   ASSERT_TRUE(helm_received_);
   EXPECT_FLOAT_EQ(last_helm_.throttle, -1.0f);
@@ -365,7 +365,7 @@ TEST_F(TwistOutputTest, HelmToTwistConversion)
   helm_cmd.throttle = 0.5;
   helm_cmd.rudder = 0.3;
   manual_helm_pub_->publish(helm_cmd);
-  spinUntil([this] { return twist_received_; });
+  spinUntil([this] {return twist_received_;});
 
   ASSERT_TRUE(twist_received_);
   EXPECT_NEAR(last_twist_.twist.linear.x, 1.0, 0.001);
@@ -383,7 +383,7 @@ TEST_F(TwistOutputTest, HelmToTwistClamping)
   helm_cmd.throttle = 1.0;
   helm_cmd.rudder = 1.0;
   manual_helm_pub_->publish(helm_cmd);
-  spinUntil([this] { return twist_received_; });
+  spinUntil([this] {return twist_received_;});
 
   ASSERT_TRUE(twist_received_);
   EXPECT_NEAR(last_twist_.twist.linear.x, 2.0, 0.001)
@@ -402,7 +402,7 @@ TEST_F(TwistOutputTest, TwistPassthroughInTwistMode)
   twist.twist.linear.x = 1.5;
   twist.twist.angular.z = -0.8;
   manual_twist_pub_->publish(twist);
-  spinUntil([this] { return twist_received_; });
+  spinUntil([this] {return twist_received_;});
 
   ASSERT_TRUE(twist_received_);
   EXPECT_NEAR(last_twist_.twist.linear.x, 1.5, 0.001);
@@ -419,7 +419,7 @@ TEST_F(TwistOutputTest, TwistClampedToMaxSpeed)
   twist.twist.linear.x = 5.0;
   twist.twist.angular.z = 0.0;
   manual_twist_pub_->publish(twist);
-  spinUntil([this] { return twist_received_; });
+  spinUntil([this] {return twist_received_;});
 
   ASSERT_TRUE(twist_received_);
   EXPECT_NEAR(last_twist_.twist.linear.x, 2.0, 0.001)
@@ -436,7 +436,7 @@ TEST_F(TwistOutputTest, TwistClampedToMaxYawSpeed)
   twist.twist.linear.x = 0.0;
   twist.twist.angular.z = 5.0;
   manual_twist_pub_->publish(twist);
-  spinUntil([this] { return twist_received_; });
+  spinUntil([this] {return twist_received_;});
 
   ASSERT_TRUE(twist_received_);
   EXPECT_NEAR(last_twist_.twist.angular.z, 1.5, 0.001)
@@ -452,7 +452,7 @@ TEST_F(TwistOutputTest, TwistNegativeClampedToNegativeMax)
   twist.twist.linear.x = -10.0;
   twist.twist.angular.z = -10.0;
   manual_twist_pub_->publish(twist);
-  spinUntil([this] { return twist_received_; });
+  spinUntil([this] {return twist_received_;});
 
   ASSERT_TRUE(twist_received_);
   EXPECT_NEAR(last_twist_.twist.linear.x, -2.0, 0.001);
@@ -564,7 +564,7 @@ TEST_F(ParameterUpdateTest, MaxSpeedUpdateAffectsConversion)
   cmd.throttle = 0.5;
   cmd.rudder = 0.0;
   manual_helm_pub_->publish(cmd);
-  spinUntil([this] { return twist_received_; });
+  spinUntil([this] {return twist_received_;});
 
   ASSERT_TRUE(twist_received_);
   EXPECT_NEAR(last_twist_.twist.linear.x, 0.5, 0.001);
@@ -576,7 +576,7 @@ TEST_F(ParameterUpdateTest, MaxSpeedUpdateAffectsConversion)
 
   // Now throttle 0.5 -> linear.x = 0.5 * 3.0 = 1.5
   manual_helm_pub_->publish(cmd);
-  spinUntil([this] { return twist_received_; });
+  spinUntil([this] {return twist_received_;});
 
   ASSERT_TRUE(twist_received_);
   EXPECT_NEAR(last_twist_.twist.linear.x, 1.5, 0.001)
@@ -596,7 +596,7 @@ TEST_F(ParameterUpdateTest, MaxYawSpeedUpdateAffectsConversion)
   cmd.throttle = 0.0;
   cmd.rudder = 0.5;   // angular.z = -0.5 * 2.0 = -1.0
   manual_helm_pub_->publish(cmd);
-  spinUntil([this] { return twist_received_; });
+  spinUntil([this] {return twist_received_;});
 
   ASSERT_TRUE(twist_received_);
   EXPECT_NEAR(last_twist_.twist.angular.z, -1.0, 0.001);

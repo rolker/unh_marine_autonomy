@@ -176,7 +176,7 @@ TEST_F(PilotingModeTest, ActiveModePublishesTrueWhenMatching)
 
   // Set active mode to matching
   pm->activeMode("test_match");
-  spinUntil([&] { return active_received; });
+  spinUntil([&] {return active_received;});
 
   EXPECT_TRUE(active_received) << "Active flag should be published";
   EXPECT_TRUE(active_value) << "Active should be true when mode matches";
@@ -201,7 +201,7 @@ TEST_F(PilotingModeTest, ActiveModePublishesFalseWhenNotMatching)
 
   // Set active mode to something different
   pm->activeMode("other_mode");
-  spinUntil([&] { return active_received; });
+  spinUntil([&] {return active_received;});
 
   EXPECT_TRUE(active_received) << "Active flag should be published";
   EXPECT_FALSE(active_value) << "Active should be false when mode does not match";
@@ -224,11 +224,11 @@ TEST_F(PilotingModeTest, ActiveModeToggle)
 
   // Toggle: activate, deactivate, activate
   pm->activeMode("test_toggle");
-  spinUntil([&] { return active_values.size() >= 1; });
+  spinUntil([&] {return active_values.size() >= 1;});
   pm->activeMode("other");
-  spinUntil([&] { return active_values.size() >= 2; });
+  spinUntil([&] {return active_values.size() >= 2;});
   pm->activeMode("test_toggle");
-  spinUntil([&] { return active_values.size() >= 3; });
+  spinUntil([&] {return active_values.size() >= 3;});
 
   ASSERT_GE(active_values.size(), 3u) << "Should have received at least 3 active flags";
   EXPECT_TRUE(active_values[0]);
@@ -299,7 +299,7 @@ TEST_F(PilotingModeTest, ActiveModeForwardsHelmCommands)
   cmd.throttle = 0.7;
   cmd.rudder = -0.4;
   helm_pub->publish(cmd);
-  spinUntil([&] { return helm_received; });
+  spinUntil([&] {return helm_received;});
 
   EXPECT_TRUE(helm_received) << "Active mode should forward helm commands";
   EXPECT_FLOAT_EQ(last_helm.throttle, 0.7f);
@@ -338,7 +338,7 @@ TEST_F(PilotingModeTest, ActiveModeForwardsTwistCommands)
   twist.twist.linear.x = 0.5;
   twist.twist.angular.z = -0.3;
   twist_pub->publish(twist);
-  spinUntil([&] { return helm_received; });
+  spinUntil([&] {return helm_received;});
 
   EXPECT_TRUE(helm_received) << "Active mode should forward twist commands (as helm)";
   // throttle = linear.x/max_speed = 0.5/1.0 = 0.5

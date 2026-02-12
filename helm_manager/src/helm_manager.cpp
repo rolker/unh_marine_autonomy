@@ -34,8 +34,8 @@
 namespace helm_manager
 {
 
-HelmManager::HelmManager(const std::string &node_name, const rclcpp::NodeOptions & options):
-  rclcpp_lifecycle::LifecycleNode(node_name, options)
+HelmManager::HelmManager(const std::string & node_name, const rclcpp::NodeOptions & options)
+:rclcpp_lifecycle::LifecycleNode(node_name, options)
 {
 }
 
