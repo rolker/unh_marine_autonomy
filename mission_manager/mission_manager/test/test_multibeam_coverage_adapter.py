@@ -111,6 +111,7 @@ class TestExecuteCallback(unittest.TestCase):
             result = self.adapter.execute_callback(goal_handle)
 
         goal_handle.abort.assert_called_once()
+        self.assertEqual(result.error_code, 1)
 
     def test_coverage_server_unavailable(self):
         """Coverage server not available should abort the goal."""
@@ -184,6 +185,7 @@ class TestExecuteCallback(unittest.TestCase):
 
         self.adapter.coverage_client.send_goal_async.assert_called_once()
         goal_handle.succeed.assert_called_once()
+        self.assertEqual(result.error_code, 0)
 
     def test_coverage_goal_not_accepted_aborts(self):
         """If coverage goal is not accepted, the run_tasks goal should abort."""
@@ -254,7 +256,7 @@ class TestExecuteCallback(unittest.TestCase):
                 with patch(
                     'mission_manager.multibeam_coverage_adapter.Point32'
                 ):
-                    result = self.adapter.execute_callback(goal_handle)
+                    self.adapter.execute_callback(goal_handle)
 
         # Should return without calling succeed or abort on goal_handle
         goal_handle.succeed.assert_not_called()

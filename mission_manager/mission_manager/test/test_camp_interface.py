@@ -5,7 +5,7 @@
 
 Covers command parsing, mission plan parsing, task adding, and the
 navigatorFeedback / navigatorDone heartbeat logic.
-All ROS2 and project11 dependencies are mocked.
+All ROS2 and marine dependencies are mocked.
 """
 
 import datetime
@@ -21,8 +21,8 @@ _MOCK_MODULES = [
     'rclpy', 'rclpy.lifecycle', 'rclpy.subscription',
     'geometry_msgs', 'geometry_msgs.msg',
     'marine_nav_interfaces', 'marine_nav_interfaces.msg',
-    'project11', 'project11.nav',
-    'project11_msgs', 'project11_msgs.msg',
+    'marine_autonomy', 'marine_autonomy.nav',
+    'marine_interfaces', 'marine_interfaces.msg',
     'std_msgs', 'std_msgs.msg',
 ]
 for _mod in _MOCK_MODULES:
@@ -244,7 +244,7 @@ class TestParseMission(unittest.TestCase):
             'latitude': 43.1,
             'longitude': -70.9,
         }]
-        result = self.ci.parseMission(plan, parent_task=parent)
+        self.ci.parseMission(plan, parent_task=parent)
         # Should not produce a new task (type stays empty on mock)
         # The parent should have a pose appended
         self.assertEqual(len(parent.poses), 1)
@@ -423,7 +423,7 @@ class TestParseMission(unittest.TestCase):
             'enabled': True,
             'data': {},
         }]
-        result = self.ci.parseMission(plan, parent_task=parent)
+        self.ci.parseMission(plan, parent_task=parent)
         # The behavior should be appended to parent's behaviors list
         self.assertEqual(len(parent.behaviors), 1)
 
@@ -449,7 +449,7 @@ class TestNavigatorFeedback(unittest.TestCase):
     def test_feedback_none_publishes_heartbeat(self):
         """Even with None feedback, a heartbeat should be published."""
         with patch('mission_manager.camp_interface.KeyValue',
-                   side_effect=lambda **kw: MagicMock(**kw)):
+                   side_effect=MagicMock):
             with patch('mission_manager.camp_interface.Heartbeat',
                        return_value=MagicMock(values=[])):
                 self.ci.navigatorFeedback(None)
@@ -461,7 +461,7 @@ class TestNavigatorFeedback(unittest.TestCase):
         feedback_msg.feedback.feedback.current_navigation_task = 'task_1'
         feedback_msg.feedback.feedback.tasks = []
         with patch('mission_manager.camp_interface.KeyValue',
-                   side_effect=lambda **kw: MagicMock(**kw)):
+                   side_effect=MagicMock):
             with patch('mission_manager.camp_interface.Heartbeat',
                        return_value=MagicMock(values=[])):
                 self.ci.navigatorFeedback(feedback_msg)
@@ -488,7 +488,7 @@ class TestNavigatorDone(unittest.TestCase):
     def test_done_with_none_result(self):
         """navigatorDone with None result should still publish heartbeat."""
         with patch('mission_manager.camp_interface.KeyValue',
-                   side_effect=lambda **kw: MagicMock(**kw)):
+                   side_effect=MagicMock):
             with patch('mission_manager.camp_interface.Heartbeat',
                        return_value=MagicMock(values=[])):
                 self.ci.navigatorDone(None, None)
@@ -499,7 +499,7 @@ class TestNavigatorDone(unittest.TestCase):
         result = MagicMock()
         result.tasks = [MagicMock(id='t1', type='goto', done=True, status='')]
         with patch('mission_manager.camp_interface.KeyValue',
-                   side_effect=lambda **kw: MagicMock(**kw)):
+                   side_effect=MagicMock):
             with patch('mission_manager.camp_interface.Heartbeat',
                        return_value=MagicMock(values=[])):
                 self.ci.navigatorDone(None, result)

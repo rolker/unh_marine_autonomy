@@ -26,8 +26,8 @@ _MOCK_MODULES = [
     'marine_nav_interfaces.msg',
     'mission_manager_interfaces', 'mission_manager_interfaces.srv',
     'nav_msgs', 'nav_msgs.msg',
-    'project11', 'project11.nav',
-    'project11_msgs', 'project11_msgs.msg',
+    'marine_autonomy', 'marine_autonomy.nav',
+    'marine_interfaces', 'marine_interfaces.msg',
     'std_msgs', 'std_msgs.msg',
     # Other external
     'marine_nav_tasks',

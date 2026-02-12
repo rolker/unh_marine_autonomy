@@ -4,7 +4,7 @@
 """Unit tests for camp_interface utility functions (parseLatLong, listTasks).
 
 These tests exercise the standalone utility functions in camp_interface.py
-without requiring a running ROS2 system. ROS2 message types and project11
+without requiring a running ROS2 system. ROS2 message types and marine
 dependencies are mocked.
 """
 
@@ -13,17 +13,16 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
-# Mock every ROS / project11 module that camp_interface.py imports so that
+# Mock every ROS / marine module that camp_interface.py imports so that
 # the test can run without a ROS2 installation.
 # ---------------------------------------------------------------------------
 _MOCK_MODULES = [
     'rclpy', 'rclpy.lifecycle', 'rclpy.subscription',
     'geometry_msgs', 'geometry_msgs.msg',
     'marine_nav_interfaces', 'marine_nav_interfaces.msg',
-    'project11', 'project11.nav',
-    'project11_msgs', 'project11_msgs.msg',
+    'marine_autonomy', 'marine_autonomy.nav',
+    'marine_interfaces', 'marine_interfaces.msg',
     'std_msgs', 'std_msgs.msg',
-    'yaml',
 ]
 _saved = {}
 for _mod in _MOCK_MODULES:
@@ -35,6 +34,15 @@ for _mod in _MOCK_MODULES:
 
 # Now import the functions under test.
 from mission_manager.camp_interface import listTasks, parseLatLong  # noqa: E402
+
+
+def tearDownModule():
+    """Restore sys.modules to avoid leaking mocks into other test files."""
+    for mod, original in _saved.items():
+        if original is None:
+            sys.modules.pop(mod, None)
+        else:
+            sys.modules[mod] = original
 
 
 class TestParseLatLong(unittest.TestCase):
@@ -120,7 +128,7 @@ class TestListTasks(unittest.TestCase):
 
     @staticmethod
     def _make_kv(key='', value=''):
-        """Lightweight stand-in for project11_msgs.msg.KeyValue."""
+        """Lightweight stand-in for marine_interfaces.msg.KeyValue."""
         kv = MagicMock()
         kv.key = key
         kv.value = value

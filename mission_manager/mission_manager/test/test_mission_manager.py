@@ -10,7 +10,7 @@ and the task manager service callback. All ROS2 dependencies are mocked.
 
 import sys
 import unittest
-from unittest.mock import MagicMock, PropertyMock, call, patch
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # Mock ROS / external modules before importing mission_manager
@@ -24,8 +24,8 @@ _MOCK_MODULES = [
     'marine_nav_interfaces.msg',
     'marine_nav_tasks',
     'mission_manager_interfaces', 'mission_manager_interfaces.srv',
-    'project11', 'project11.nav',
-    'project11_msgs', 'project11_msgs.msg',
+    'marine_autonomy', 'marine_autonomy.nav',
+    'marine_interfaces', 'marine_interfaces.msg',
     'geometry_msgs', 'geometry_msgs.msg',
     'std_msgs', 'std_msgs.msg',
 ]
@@ -58,9 +58,11 @@ class TestMissionManagerInit(unittest.TestCase):
 class TestTaskOperations(unittest.TestCase):
     """Tests for task list manipulation methods."""
 
-    @patch('mission_manager.mission_manager.CampInterface')
-    def setUp(self, mock_camp_cls):
+    def setUp(self):
         """Create a MissionManager with mocked dependencies."""
+        patcher = patch('mission_manager.mission_manager.CampInterface')
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.mm = MissionManager('test_mm')
         # Mock the tasks attribute (TaskList)
         self.mm.tasks = MagicMock()
@@ -112,9 +114,11 @@ class TestTaskOperations(unittest.TestCase):
 class TestOverrideTask(unittest.TestCase):
     """Tests for override task management."""
 
-    @patch('mission_manager.mission_manager.CampInterface')
-    def setUp(self, mock_camp_cls):
+    def setUp(self):
         """Create MissionManager for override tests."""
+        patcher = patch('mission_manager.mission_manager.CampInterface')
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.mm = MissionManager('test_mm')
         self.mm.tasks = MagicMock()
         self.mm.tasks.listMessages.return_value = []
@@ -154,9 +158,11 @@ class TestOverrideTask(unittest.TestCase):
 class TestUpdateLocalTaskList(unittest.TestCase):
     """Tests for the updateLocalTaskList command dispatcher."""
 
-    @patch('mission_manager.mission_manager.CampInterface')
-    def setUp(self, mock_camp_cls):
+    def setUp(self):
         """Create MissionManager for dispatch tests."""
+        patcher = patch('mission_manager.mission_manager.CampInterface')
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.mm = MissionManager('test_mm')
         self.mm.tasks = MagicMock()
         self.mm.tasks.listMessages.return_value = []
@@ -203,9 +209,11 @@ class TestUpdateLocalTaskList(unittest.TestCase):
 class TestTaskManagerCallback(unittest.TestCase):
     """Tests for the ROS service callback."""
 
-    @patch('mission_manager.mission_manager.CampInterface')
-    def setUp(self, mock_camp_cls):
+    def setUp(self):
         """Create MissionManager for service callback tests."""
+        patcher = patch('mission_manager.mission_manager.CampInterface')
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.mm = MissionManager('test_mm')
         self.mm.tasks = MagicMock()
         self.mm.tasks.listMessages.return_value = []
@@ -231,9 +239,11 @@ class TestTaskManagerCallback(unittest.TestCase):
 class TestNavigatorCallbacks(unittest.TestCase):
     """Tests for navigator action client callbacks."""
 
-    @patch('mission_manager.mission_manager.CampInterface')
-    def setUp(self, mock_camp_cls):
+    def setUp(self):
         """Create MissionManager for callback tests."""
+        patcher = patch('mission_manager.mission_manager.CampInterface')
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.mm = MissionManager('test_mm')
         self.mm.tasks = MagicMock()
         self.mm.tasks.listMessages.return_value = []
@@ -352,9 +362,11 @@ class TestNavigatorCallbacks(unittest.TestCase):
 class TestUpdateNavigator(unittest.TestCase):
     """Tests for updateNavigator sending goals to the action server."""
 
-    @patch('mission_manager.mission_manager.CampInterface')
-    def setUp(self, mock_camp_cls):
+    def setUp(self):
         """Create MissionManager for navigator tests."""
+        patcher = patch('mission_manager.mission_manager.CampInterface')
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.mm = MissionManager('test_mm')
         self.mm.tasks = MagicMock()
         self.mm.navigator_client = MagicMock()
