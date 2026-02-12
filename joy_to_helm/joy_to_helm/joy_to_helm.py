@@ -2,9 +2,9 @@
 
 from typing import Optional
 
-from project11_msgs.msg import DifferentialDrive
-from project11_msgs.msg import Heartbeat
-from project11_msgs.msg import Helm
+from marine_interfaces.msg import DifferentialDrive
+from marine_interfaces.msg import Heartbeat
+from marine_interfaces.msg import Helm
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.executors import SingleThreadedExecutor
@@ -52,13 +52,13 @@ class JoyToHelm(Node):
             DifferentialDrive, 'differential_drive', 10)
 
         self.piloting_mode_publisher = self.create_publisher(
-            String, 'project11/send_command', 10)
+            String, 'marine/send_command', 10)
 
         self.joy_subscriber = self.create_subscription(
             Joy, 'joy', self.joystickCallback, 10)
 
         self.heartbeat_subscriber = self.create_subscription(
-            Heartbeat, 'project11/heartbeat',
+            Heartbeat, 'marine/heartbeat',
             self.heartbeatCallback, 10)
         return TransitionCallbackReturn.SUCCESS
 

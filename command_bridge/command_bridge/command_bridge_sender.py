@@ -21,12 +21,12 @@ class CommandBridgeSender(Node):
         self.send_queue = {}
         self.lock = Lock()
         self.command_pub = self.create_publisher(
-            String, 'project11/command', 10)
+            String, 'marine/command', 10)
         self.send_command_sub = self.create_subscription(
-            String, 'project11/send_command',
+            String, 'marine/send_command',
             self.send_command_callback, 10)
         self.response_sub = self.create_subscription(
-            String, 'project11/response', self.response_callback, 10)
+            String, 'marine/response', self.response_callback, 10)
         self.timer = self.create_timer(1.0, self.update)
 
     def send_command_callback(self, msg):

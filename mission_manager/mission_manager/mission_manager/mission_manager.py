@@ -7,7 +7,7 @@ from marine_nav_interfaces.action import RunTasks
 from marine_nav_interfaces.msg import TaskFeedback, TaskInformation
 from marine_nav_tasks import TaskList
 from mission_manager_interfaces.srv import TaskManagerCmd
-from project11_msgs.msg import BehaviorInformation
+from marine_interfaces.msg import BehaviorInformation
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.action.client import ClientGoalHandle

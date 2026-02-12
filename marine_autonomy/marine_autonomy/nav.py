@@ -29,7 +29,7 @@ import copy
 def distanceBearingDegrees(start_lat, start_lon, dest_lat, dest_lon):
     """ Returns distance and bearing of a geodesic line.
 
-    Uses project11.geodesic library to determine bearing (degrees, NED)
+    Uses marine_autonomy.geodesic library to determine bearing (degrees, NED)
     from start lat/lon to destination lat/lon.
 
     TODO: Write Args documentation.
@@ -269,7 +269,7 @@ class RobotNavigation(EarthTransforms):
         1. Use the frame_id value in the odometry message to lookup the 
         tf transfrom from the "earth" frame to the frame_id.  
         2. Transform odometry.pose to ECEF frame
-        2. The wgs84.py module from project11 is used to transfrom 
+        2. The wgs84.py module from marine_autonomy is used to transfrom
         ECEF -> lat/lon
 
         Returns:
@@ -294,7 +294,7 @@ class RobotNavigation(EarthTransforms):
         """Uses current odometry message to return heading in degrees NED.
 
         TODO: This should not be a method of the object.  Should be a general
-              purpose function, probably in project11 module.  
+              purpose function, probably in marine_autonomy module.
               Not specific to this program.
 
         Returns:
@@ -328,6 +328,6 @@ class RobotNavigation(EarthTransforms):
         current_lon_rad = p_rad[1]
         target_lat_rad = math.radians(lat)
         target_lon_rad = math.radians(lon)
-        azimuth, distance = project11.geodesic.inverse(current_lon_rad, current_lat_rad, target_lon_rad, target_lat_rad)
+        azimuth, distance = marine_autonomy.geodesic.inverse(current_lon_rad, current_lat_rad, target_lon_rad, target_lat_rad)
         return distance, math.degrees(azimuth)
 

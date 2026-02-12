@@ -2,15 +2,15 @@
 
 [![ROS 2 Jazzy](https://img.shields.io/badge/ROS_2-Jazzy-blue)](https://docs.ros.org/en/jazzy/)
 
-Welcome to the **UNH Marine Autonomy Framework** repository. This is the home of the autonomous control software developed at the Center for Coastal and Ocean Mapping / Joint Hydrographic Center (CCOM/JHC), also known as *Project11*.
+Welcome to the **UNH Marine Autonomy Framework** repository. This is the home of the autonomous control software developed at the Center for Coastal and Ocean Mapping / Joint Hydrographic Center (CCOM/JHC) at the University of New Hampshire (UNH), also known as *Project11*.
 
 > **North Star**: "Tell a robot to map an area, have it do it safely, and return with good data."
 
-## 🔭 Vision
-We are building a multi-domain, community-driven framework for marine robotics.
-👉 **[Read our Vision & Strategic Pillars](./VISION.md)**
+## Vision
+The framework is a multi-domain, community-driven platform for marine robotics.
+**[Read the Vision & Strategic Pillars](./VISION.md)**
 
-## 📂 Repository Structure
+## Repository Structure
 
 This repository is a collection of packages that form the core of the autonomy system.
 
@@ -19,7 +19,7 @@ This repository is a collection of packages that form the core of the autonomy s
 *   **`mission_manager`**: High-level mission execution and state machine.
 *   **`camp`** (External): The CCOM Autonomous Mission Planner (UI).
 
-## 🚀 Getting Started
+## Getting Started
 This repository is typically part of a layered workspace setup.
 
 ### Quick Build
@@ -28,6 +28,6 @@ colcon build --symlink-install
 ```
 
 ### Community & Contributing
-We welcome contributions from the marine robotics community!
+Contributions from the marine robotics community are welcome.
 - **Issues**: Please use GitHub Issues for bug reports and feature requests.
-- **Pull Requests**: We follow a standard PR workflow.
+- **Pull Requests**: The project follows a standard PR workflow.

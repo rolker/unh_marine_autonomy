@@ -23,7 +23,7 @@ setup(
     zip_safe=True,
     maintainer='Roland Arsenault',
     maintainer_email='roland@ccom.unh.edu',
-    description='Mission manager for project11',
+    description='Mission manager for marine autonomy',
     license='BSD-2-Clause',
     entry_points={
         'console_scripts': [

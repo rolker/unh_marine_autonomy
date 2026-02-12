@@ -8,7 +8,7 @@ Copyright 2023
 This module contains routines that create canned track patterns, which can be
 used as building blocks to create larger missions or to dynamically respond to
 changing situations quickly. Track patterns are returned as a list of
-project11_nav_msgs/TaskInformation messages which can be passed on directly to
+marine_interfaces/TaskInformation messages which can be passed on directly to
 the MissionManager node, which in turn, will then update the Navigator node
 for execution. (See the mission_manager service for updating the task queue.)
 
