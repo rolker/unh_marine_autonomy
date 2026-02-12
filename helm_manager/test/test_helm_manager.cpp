@@ -339,6 +339,23 @@ protected:
     }
   }
 
+  /// Spin both nodes until a predicate is true, or until timeout.
+  /// Returns true if the predicate was satisfied before the timeout.
+  template<typename Predicate>
+  bool spinUntil(Predicate pred, std::chrono::milliseconds timeout = 2000ms)
+  {
+    auto start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - start < timeout) {
+      rclcpp::spin_some(node_->get_node_base_interface());
+      rclcpp::spin_some(helper_node_);
+      if (pred()) {
+        return true;
+      }
+      std::this_thread::sleep_for(1ms);
+    }
+    return false;
+  }
+
   void resetActiveFlags()
   {
     standby_active_received_ = false;
@@ -365,7 +382,7 @@ TEST_F(HelmManagerModeTest, SwitchToManualMode)
   configureAndActivate();
 
   publishMode("manual");
-  spinBoth(100ms);
+  spinUntil([this] { return manual_active_received_; });
 
   EXPECT_TRUE(manual_active_received_) << "Should have received manual active flag";
   EXPECT_TRUE(manual_active_) << "Manual should be active";
@@ -382,7 +399,7 @@ TEST_F(HelmManagerModeTest, SwitchToAutonomousMode)
   configureAndActivate();
 
   publishMode("autonomous");
-  spinBoth(100ms);
+  spinUntil([this] { return autonomous_active_received_; });
 
   EXPECT_TRUE(autonomous_active_received_)
     << "Should have received autonomous active flag";
@@ -397,7 +414,7 @@ TEST_F(HelmManagerModeTest, SwitchToStandbyMode)
   configureAndActivate();
 
   publishMode("standby");
-  spinBoth(100ms);
+  spinUntil([this] { return standby_active_received_; });
 
   EXPECT_TRUE(standby_active_received_)
     << "Should have received standby active flag";
@@ -416,13 +433,13 @@ TEST_F(HelmManagerModeTest, ModeSwitchFromManualToAutonomous)
 
   // Switch to manual first
   publishMode("manual");
-  spinBoth(100ms);
+  spinUntil([this] { return manual_active_received_ && manual_active_; });
   ASSERT_TRUE(manual_active_);
 
   // Now switch to autonomous
   resetActiveFlags();
   publishMode("autonomous");
-  spinBoth(100ms);
+  spinUntil([this] { return autonomous_active_received_ && manual_active_received_; });
 
   EXPECT_TRUE(autonomous_active_received_);
   EXPECT_TRUE(autonomous_active_) << "Autonomous should now be active";
@@ -436,13 +453,13 @@ TEST_F(HelmManagerModeTest, ModeSwitchFromAutonomousToStandby)
 
   // Switch to autonomous first
   publishMode("autonomous");
-  spinBoth(100ms);
+  spinUntil([this] { return autonomous_active_received_ && autonomous_active_; });
   ASSERT_TRUE(autonomous_active_);
 
   // Switch back to standby
   resetActiveFlags();
   publishMode("standby");
-  spinBoth(100ms);
+  spinUntil([this] { return standby_active_received_ && autonomous_active_received_; });
 
   EXPECT_TRUE(standby_active_received_);
   EXPECT_TRUE(standby_active_) << "Standby should now be active";
@@ -459,7 +476,7 @@ TEST_F(HelmManagerModeTest, RapidModeSwitch)
   publishMode("autonomous");
   publishMode("standby");
   publishMode("manual");
-  spinBoth(200ms);
+  spinUntil([this] { return manual_active_received_ && manual_active_; });
 
   // After processing all, manual should be the final active mode
   EXPECT_TRUE(manual_active_) << "Manual should be the final active mode";
@@ -525,7 +542,7 @@ TEST_F(HelmManagerCommandTest, ManualHelmCommandForwardedWhenActive)
 
   // Set manual mode
   publishMode("manual");
-  spinBoth(100ms);
+  spinUntil([this] { return manual_active_received_ && manual_active_; });
   ASSERT_TRUE(manual_active_);
 
   // Publish helm command on manual topic
@@ -533,7 +550,7 @@ TEST_F(HelmManagerCommandTest, ManualHelmCommandForwardedWhenActive)
   helm_cmd.throttle = 0.5;
   helm_cmd.rudder = 0.3;
   manual_helm_pub_->publish(helm_cmd);
-  spinBoth(100ms);
+  spinUntil([this] { return helm_output_received_; });
 
   EXPECT_TRUE(helm_output_received_) << "Helm output should be received";
   EXPECT_FLOAT_EQ(last_helm_output_.throttle, 0.5f);
@@ -546,7 +563,7 @@ TEST_F(HelmManagerCommandTest, AutonomousHelmCommandBlockedWhenManualActive)
 
   // Set manual mode
   publishMode("manual");
-  spinBoth(100ms);
+  spinUntil([this] { return manual_active_received_ && manual_active_; });
   ASSERT_TRUE(manual_active_);
 
   // Publish helm command on autonomous topic -- should be blocked
@@ -566,7 +583,7 @@ TEST_F(HelmManagerCommandTest, ManualHelmCommandBlockedWhenAutonomousActive)
 
   // Set autonomous mode
   publishMode("autonomous");
-  spinBoth(100ms);
+  spinUntil([this] { return autonomous_active_received_ && autonomous_active_; });
   ASSERT_TRUE(autonomous_active_);
 
   // Publish helm command on manual topic -- should be blocked
@@ -586,7 +603,7 @@ TEST_F(HelmManagerCommandTest, AutonomousHelmForwardedWhenActive)
 
   // Set autonomous mode
   publishMode("autonomous");
-  spinBoth(100ms);
+  spinUntil([this] { return autonomous_active_received_ && autonomous_active_; });
   ASSERT_TRUE(autonomous_active_);
 
   // Publish helm command on autonomous topic
@@ -594,7 +611,7 @@ TEST_F(HelmManagerCommandTest, AutonomousHelmForwardedWhenActive)
   helm_cmd.throttle = 0.7;
   helm_cmd.rudder = -0.2;
   autonomous_helm_pub_->publish(helm_cmd);
-  spinBoth(100ms);
+  spinUntil([this] { return helm_output_received_; });
 
   EXPECT_TRUE(helm_output_received_) << "Autonomous helm should be forwarded";
   EXPECT_FLOAT_EQ(last_helm_output_.throttle, 0.7f);
@@ -607,7 +624,7 @@ TEST_F(HelmManagerCommandTest, StandbyBlocksAllCommands)
 
   // Set standby mode
   publishMode("standby");
-  spinBoth(100ms);
+  spinUntil([this] { return standby_active_received_ && standby_active_; });
   ASSERT_TRUE(standby_active_);
 
   // Try to publish commands on both manual and autonomous topics
@@ -630,21 +647,22 @@ TEST_F(HelmManagerCommandTest, ModeSwitchChangesWhichCommandsAreForwarded)
 
   // Start in manual mode
   publishMode("manual");
-  spinBoth(100ms);
+  spinUntil([this] { return manual_active_received_ && manual_active_; });
 
   marine_interfaces::msg::Helm helm_cmd;
   helm_cmd.throttle = 0.5;
   helm_cmd.rudder = 0.0;
   manual_helm_pub_->publish(helm_cmd);
-  spinBoth(100ms);
+  spinUntil([this] { return helm_output_received_; });
 
   ASSERT_TRUE(helm_output_received_);
   EXPECT_FLOAT_EQ(last_helm_output_.throttle, 0.5f);
 
   // Switch to autonomous
   helm_output_received_ = false;
+  resetActiveFlags();
   publishMode("autonomous");
-  spinBoth(100ms);
+  spinUntil([this] { return autonomous_active_received_ && autonomous_active_; });
 
   // Manual commands should now be blocked
   manual_helm_pub_->publish(helm_cmd);
@@ -657,7 +675,7 @@ TEST_F(HelmManagerCommandTest, ModeSwitchChangesWhichCommandsAreForwarded)
   auto_cmd.throttle = 0.9;
   auto_cmd.rudder = -0.1;
   autonomous_helm_pub_->publish(auto_cmd);
-  spinBoth(100ms);
+  spinUntil([this] { return helm_output_received_; });
 
   EXPECT_TRUE(helm_output_received_);
   EXPECT_FLOAT_EQ(last_helm_output_.throttle, 0.9f);
@@ -704,7 +722,7 @@ TEST_F(HelmManagerHeartbeatTest, HeartbeatIncludesPilotingMode)
 
   // Set a piloting mode
   publishMode("manual");
-  spinBoth(100ms);
+  spinUntil([this] { return manual_active_received_; });
 
   // Publish a helm status heartbeat
   marine_interfaces::msg::Heartbeat status;
@@ -714,7 +732,7 @@ TEST_F(HelmManagerHeartbeatTest, HeartbeatIncludesPilotingMode)
   kv.value = "ok";
   status.values.push_back(kv);
   helm_status_pub_->publish(status);
-  spinBoth(100ms);
+  spinUntil([this] { return heartbeat_received_; });
 
   ASSERT_TRUE(heartbeat_received_) << "Heartbeat should be republished";
   ASSERT_GE(last_heartbeat_.values.size(), 2u);
@@ -731,13 +749,13 @@ TEST_F(HelmManagerHeartbeatTest, HeartbeatReflectsCurrentMode)
 
   // Set autonomous mode
   publishMode("autonomous");
-  spinBoth(100ms);
+  spinUntil([this] { return autonomous_active_received_; });
 
   // Publish status
   marine_interfaces::msg::Heartbeat status;
   status.header.stamp = node_->now();
   helm_status_pub_->publish(status);
-  spinBoth(100ms);
+  spinUntil([this] { return heartbeat_received_; });
 
   ASSERT_TRUE(heartbeat_received_);
   ASSERT_GE(last_heartbeat_.values.size(), 1u);
@@ -753,7 +771,7 @@ TEST_F(HelmManagerHeartbeatTest, HeartbeatWithEmptyModeBeforeAnySwitch)
   marine_interfaces::msg::Heartbeat status;
   status.header.stamp = node_->now();
   helm_status_pub_->publish(status);
-  spinBoth(100ms);
+  spinUntil([this] { return heartbeat_received_; });
 
   ASSERT_TRUE(heartbeat_received_);
   ASSERT_GE(last_heartbeat_.values.size(), 1u);

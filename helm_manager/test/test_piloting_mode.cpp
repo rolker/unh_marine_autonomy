@@ -64,6 +64,21 @@ protected:
     }
   }
 
+  template<typename Predicate>
+  bool spinUntil(Predicate pred, std::chrono::milliseconds timeout = 2000ms)
+  {
+    auto start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - start < timeout) {
+      rclcpp::spin_some(node_->get_node_base_interface());
+      rclcpp::spin_some(helper_);
+      if (pred()) {
+        return true;
+      }
+      std::this_thread::sleep_for(1ms);
+    }
+    return false;
+  }
+
   std::shared_ptr<helm_manager::HelmManager> node_;
   std::shared_ptr<rclcpp::Node> helper_;
 };
@@ -161,7 +176,7 @@ TEST_F(PilotingModeTest, ActiveModePublishesTrueWhenMatching)
 
   // Set active mode to matching
   pm->activeMode("test_match");
-  spinBoth(200ms);
+  spinUntil([&] { return active_received; });
 
   EXPECT_TRUE(active_received) << "Active flag should be published";
   EXPECT_TRUE(active_value) << "Active should be true when mode matches";
@@ -186,7 +201,7 @@ TEST_F(PilotingModeTest, ActiveModePublishesFalseWhenNotMatching)
 
   // Set active mode to something different
   pm->activeMode("other_mode");
-  spinBoth(200ms);
+  spinUntil([&] { return active_received; });
 
   EXPECT_TRUE(active_received) << "Active flag should be published";
   EXPECT_FALSE(active_value) << "Active should be false when mode does not match";
@@ -209,11 +224,11 @@ TEST_F(PilotingModeTest, ActiveModeToggle)
 
   // Toggle: activate, deactivate, activate
   pm->activeMode("test_toggle");
-  spinBoth(100ms);
+  spinUntil([&] { return active_values.size() >= 1; });
   pm->activeMode("other");
-  spinBoth(100ms);
+  spinUntil([&] { return active_values.size() >= 2; });
   pm->activeMode("test_toggle");
-  spinBoth(200ms);
+  spinUntil([&] { return active_values.size() >= 3; });
 
   ASSERT_GE(active_values.size(), 3u) << "Should have received at least 3 active flags";
   EXPECT_TRUE(active_values[0]);
@@ -284,7 +299,7 @@ TEST_F(PilotingModeTest, ActiveModeForwardsHelmCommands)
   cmd.throttle = 0.7;
   cmd.rudder = -0.4;
   helm_pub->publish(cmd);
-  spinBoth(200ms);
+  spinUntil([&] { return helm_received; });
 
   EXPECT_TRUE(helm_received) << "Active mode should forward helm commands";
   EXPECT_FLOAT_EQ(last_helm.throttle, 0.7f);
@@ -323,7 +338,7 @@ TEST_F(PilotingModeTest, ActiveModeForwardsTwistCommands)
   twist.twist.linear.x = 0.5;
   twist.twist.angular.z = -0.3;
   twist_pub->publish(twist);
-  spinBoth(200ms);
+  spinUntil([&] { return helm_received; });
 
   EXPECT_TRUE(helm_received) << "Active mode should forward twist commands (as helm)";
   // throttle = linear.x/max_speed = 0.5/1.0 = 0.5
