@@ -46,5 +46,5 @@ jobs:
       run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --packages-select marine_interfaces marine_autonomy helm_manager joy_to_helm command_bridge mission_manager mission_manager_interfaces --event-handlers console_direct+ --return-code-on-test-failure'
     - name: Test results
       working-directory: ../jazzy_ws/
-      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test-result --verbose --packages-select marine_interfaces marine_autonomy helm_manager joy_to_helm command_bridge mission_manager mission_manager_interfaces'
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test-result --verbose'
       if: always()
