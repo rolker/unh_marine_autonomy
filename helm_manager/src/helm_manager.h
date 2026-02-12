@@ -51,7 +51,9 @@ namespace helm_manager
   class HelmManager: public rclcpp_lifecycle::LifecycleNode
   {
 public:
-    explicit HelmManager(const std::string & node_name);
+    explicit HelmManager(
+      const std::string & node_name,
+      const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
 
     CallbackReturn on_configure(const rclcpp_lifecycle::State & state) override;
     CallbackReturn on_activate(const rclcpp_lifecycle::State & state) override;
@@ -86,8 +88,8 @@ private:
     rclcpp::Publisher < marine_interfaces::msg::Helm > ::SharedPtr helm_publisher_;
     rclcpp::Publisher < geometry_msgs::msg::TwistStamped > ::SharedPtr twist_publisher_;
 
-    double max_speed_;
-    double max_yaw_speed_;
+    double max_speed_ = 1.0;
+    double max_yaw_speed_ = 1.0;
 
     rclcpp::node_interfaces::PostSetParametersCallbackHandle::SharedPtr update_parameters_callback_;
   };
