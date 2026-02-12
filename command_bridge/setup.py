@@ -16,7 +16,7 @@ setup(
     maintainer='Roland Arsenault',
     maintainer_email='roland@ccom.unh.edu',
     description='Command bridge for project11',
-    license='BSD-2-Clause',
+    license='BSD-3-Clause',
     entry_points={
         'console_scripts': [
           'command_bridge_receiver = command_bridge.command_bridge_receiver:main',
