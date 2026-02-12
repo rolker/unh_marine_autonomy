@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <chrono>
+#include <thread>
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
