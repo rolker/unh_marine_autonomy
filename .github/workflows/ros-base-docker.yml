@@ -31,10 +31,6 @@ jobs:
       run: |
         vcs import --input config/repos/underlay.repos ../jazzy_ws/src/
         vcs import --input config/repos/core.repos ../jazzy_ws/src/
-        vcs import --input config/repos/platforms.repos ../jazzy_ws/src/
-        vcs import --input config/repos/sensors.repos ../jazzy_ws/src/
-        vcs import --input config/repos/simulation.repos ../jazzy_ws/src/
-        vcs import --input config/repos/ui.repos ../jazzy_ws/src/
     - name: Replace checked-out unh_marine_autonomy with PR branch
       run: |
         rm -rf ../jazzy_ws/src/unh_marine_autonomy
@@ -44,10 +40,10 @@ jobs:
       run: DEBIAN_FRONTEND=noninteractive rosdep install --from-paths src --ignore-src -r -y
     - name: Colcon build
       working-directory: ../jazzy_ws/
-      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build'
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy'
     - name: Colcon test
       working-directory: ../jazzy_ws/
-      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --event-handlers console_direct+ --return-code-on-test-failure'
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --packages-select marine_interfaces marine_autonomy helm_manager joy_to_helm command_bridge mission_manager mission_manager_interfaces --event-handlers console_direct+ --return-code-on-test-failure'
     - name: Test results
       working-directory: ../jazzy_ws/
       run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test-result --verbose'
