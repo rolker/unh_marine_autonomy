@@ -11,9 +11,9 @@ from rclpy.lifecycle import State
 from rclpy.lifecycle import TransitionCallbackReturn
 
 from sensor_msgs.msg import Joy
-from project11_msgs.msg import Helm
-from project11_msgs.msg import DifferentialDrive
-from project11_msgs.msg import Heartbeat
+from marine_interfaces.msg import Helm
+from marine_interfaces.msg import DifferentialDrive
+from marine_interfaces.msg import Heartbeat
 from std_msgs.msg import String
 
 
@@ -49,11 +49,11 @@ class JoyToHelm(Node):
 
         self.dd_publisher = self.create_lifecycle_publisher(DifferentialDrive, 'differential_drive', 10)
 
-        self.piloting_mode_publisher = self.create_publisher(String, 'project11/send_command', 10)
+        self.piloting_mode_publisher = self.create_publisher(String, 'marine/send_command', 10)
 
         self.joy_subscriber = self.create_subscription(Joy, 'joy', self.joystickCallback, 10)
 
-        self.heartbeat_subscriber = self.create_subscription(Heartbeat, 'project11/heartbeat', self.heartbeatCallback, 10)
+        self.heartbeat_subscriber = self.create_subscription(Heartbeat, 'marine/heartbeat', self.heartbeatCallback, 10)
         return TransitionCallbackReturn.SUCCESS
 
     def on_activate(self, state: State) -> TransitionCallbackReturn:

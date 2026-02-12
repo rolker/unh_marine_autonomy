@@ -23,17 +23,17 @@ class CommandBridgeReceiver(Node):
     def __init__(self):
         super().__init__('command_bridge_receiver')
         self.response_pub = self.create_publisher(
-            String, 'project11/response', 10)
+            String, 'marine/response', 10)
         self.mission_plan_pub = self.create_publisher(
-            String, 'project11/mission_plan', 10)
+            String, 'marine/mission_plan', 10)
         self.piloting_mode_pub = self.create_publisher(
             String, 'piloting_mode', 10)
         self.mm_comand_pub = self.create_publisher(
-            String, 'project11/mission_manager/command', 10)
+            String, 'marine/mission_manager/command', 10)
         self.last_messages_received = {}
         self.emControl = None
         self.command_sub = self.create_subscription(
-            String, 'project11/command', self.command_callback, 10)
+            String, 'marine/command', self.command_callback, 10)
 
     def send_ack(self, cmd, ts):
         """Send an acknowledgment back to the sender.
