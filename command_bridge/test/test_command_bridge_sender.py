@@ -15,8 +15,6 @@ Tests cover the send-until-acknowledged protocol including:
 import datetime
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers to build a CommandBridgeSender without a live ROS2 graph
@@ -213,7 +211,7 @@ class TestUpdate:
         """No messages are published when the queue is empty."""
         sender = _make_sender()
 
-        with patch('command_bridge.command_bridge_sender.String') as MockStr:
+        with patch('command_bridge.command_bridge_sender.String'):
             sender.update()
 
         sender.command_pub.publish.assert_not_called()
@@ -379,7 +377,6 @@ class TestThreadSafety:
     def test_lock_held_during_send_command(self):
         """send_command_callback acquires the lock."""
         sender = _make_sender()
-        original_lock = sender.lock
         sender.lock = MagicMock()
         sender.lock.__enter__ = MagicMock(return_value=None)
         sender.lock.__exit__ = MagicMock(return_value=False)

@@ -11,8 +11,9 @@ Tests cover:
 - Edge cases: missing args, unknown commands, sonar_control routing
 """
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
+import command_bridge.command_bridge_receiver as cb_receiver_mod
 import pytest
 
 
@@ -358,15 +359,14 @@ class TestSonarControl:
         receiver = _make_receiver()
 
         # Temporarily patch have_em_control to True
-        import command_bridge.command_bridge_receiver as mod
-        original = mod.have_em_control
+        original = cb_receiver_mod.have_em_control
 
         try:
-            mod.have_em_control = True
+            cb_receiver_mod.have_em_control = True
 
             # Mock the EMControl types
-            with patch.object(mod, 'EMControl', create=True), \
-                 patch.object(mod, 'EMControlRequest', create=True) as MockReq:
+            with patch.object(cb_receiver_mod, 'EMControl', create=True), \
+                 patch.object(cb_receiver_mod, 'EMControlRequest', create=True) as MockReq:
                 mock_req_instance = MagicMock()
                 MockReq.return_value = mock_req_instance
 
@@ -379,20 +379,19 @@ class TestSonarControl:
                 assert mock_req_instance.requested_mode == 1
                 assert mock_req_instance.line_number == 2
         finally:
-            mod.have_em_control = original
+            cb_receiver_mod.have_em_control = original
 
     def test_sonar_control_reuses_existing_client(self):
         """sonar_control reuses the client on subsequent calls."""
         receiver = _make_receiver()
 
-        import command_bridge.command_bridge_receiver as mod
-        original = mod.have_em_control
+        original = cb_receiver_mod.have_em_control
 
         try:
-            mod.have_em_control = True
+            cb_receiver_mod.have_em_control = True
 
-            with patch.object(mod, 'EMControl', create=True), \
-                 patch.object(mod, 'EMControlRequest', create=True) as MockReq:
+            with patch.object(cb_receiver_mod, 'EMControl', create=True), \
+                 patch.object(cb_receiver_mod, 'EMControlRequest', create=True) as MockReq:
                 MockReq.return_value = MagicMock()
 
                 mock_client = MagicMock()
@@ -404,21 +403,20 @@ class TestSonarControl:
                 # create_client called only once
                 receiver.create_client.assert_called_once()
         finally:
-            mod.have_em_control = original
+            cb_receiver_mod.have_em_control = original
 
     def test_sonar_control_skipped_when_em_unavailable(self):
         """sonar_control is a no-op when kongsberg_em_control is absent."""
         receiver = _make_receiver()
 
-        import command_bridge.command_bridge_receiver as mod
-        original = mod.have_em_control
+        original = cb_receiver_mod.have_em_control
 
         try:
-            mod.have_em_control = False
+            cb_receiver_mod.have_em_control = False
             receiver.process_message('sonar_control', '1 2')
             receiver.create_client.assert_not_called()
         finally:
-            mod.have_em_control = original
+            cb_receiver_mod.have_em_control = original
 
 
 # ---------------------------------------------------------------------------
