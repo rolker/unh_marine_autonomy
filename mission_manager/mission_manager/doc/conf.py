@@ -14,15 +14,19 @@
 #
 import os
 import sys
+
 sys.path.insert(0, os.path.abspath('../node'))
-import catkin_pkg.package
-catkin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
-catkin_package = catkin_pkg.package.parse_package(os.path.join(catkin_dir, catkin_pkg.package.PACKAGE_MANIFEST_FILENAME))
+
+import catkin_pkg.package  # noqa: E402, I201
+
+catkin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+catkin_package = catkin_pkg.package.parse_package(
+    os.path.join(catkin_dir, catkin_pkg.package.PACKAGE_MANIFEST_FILENAME))
 
 # -- Project information -----------------------------------------------------
 
 project = 'mission_manager'
-copyright = '2021, Roland'
+copyright = '2021, Roland'  # noqa: A001
 author = 'Roland'
 
 version = catkin_package.version
@@ -57,7 +61,7 @@ templates_path = ['.templates']
 # You can specify multiple suffix as a list of string:
 #
 source_suffix = ['.rst', '.md']
-#source_suffix = '.rst'
+# source_suffix = '.rst'
 
 # The master toctree document.
 master_doc = 'index'

@@ -61,7 +61,7 @@ def generate_launch_description():
                 name='command_bridge_receiver',
                 emulate_tty=True,
             ),
-            # helm_manager is the low level heart of project11. It manages which control messages get sent to the robot based on piloting mode and reports the piloting mode and other status as a heartbeat message.
+            # helm_manager is the low level heart of marine_autonomy. It manages which control messages get sent to the robot based on piloting mode and reports the piloting mode and other status as a heartbeat message.
             GroupAction(
                 actions=[
                     SetRemap(src='out/helm', dst='marine/control/helm'),
@@ -89,10 +89,10 @@ def generate_launch_description():
                     'map_frame': map_frame
                 }.items()
             ),
-            # project11_navigation is the plugin based navigation stack that uses a list of tasks to plan trajectories and generate commands to drive the robot.
+            # marine_navigation is the plugin based navigation stack that uses a list of tasks to plan trajectories and generate commands to drive the robot.
             # IncludeLaunchDescription(
             #     PythonLaunchDescriptionSource(
-            #         PathJoinSubstitution([FindPackageShare('project11_navigation'), 'launch', 'navigator_launch.py'])
+            #         PathJoinSubstitution([FindPackageShare('marine_navigation'), 'launch', 'navigator_launch.py'])
             #     ),
             #     launch_arguments={
             #         'map_frame': map_frame

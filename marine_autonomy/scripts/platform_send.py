@@ -12,9 +12,9 @@ from rclpy.lifecycle import State
 from rclpy.lifecycle import TransitionCallbackReturn
 from rclpy.timer import Timer
 
-from project11_msgs.msg import NavSource
-from project11_msgs.msg import Platform
-from project11_msgs.msg import PlatformList
+from marine_interfaces.msg import NavSource
+from marine_interfaces.msg import Platform
+from marine_interfaces.msg import PlatformList
 
 class PlatformPublisher(Node):
     def __init__(self, node_name, **kwargs):
@@ -86,7 +86,7 @@ class PlatformPublisher(Node):
             self.declare_parameter('nav.source_names', ['',])
             self.update_nav_source_parameters()
 
-            self._platform_publisher = self.create_lifecycle_publisher(PlatformList, "/project11/platforms", 5)
+            self._platform_publisher = self.create_lifecycle_publisher(PlatformList, "/marine/platforms", 5)
 
             self._timer = self.create_timer(1.0, self.publish)
         except Exception as e:
