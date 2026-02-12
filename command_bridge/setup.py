@@ -12,10 +12,11 @@ setup(
         ('share/' + package_name, ['package.xml']),
     ],
     install_requires=['setuptools'],
+    tests_require=['pytest'],
     zip_safe=True,
     maintainer='Roland Arsenault',
     maintainer_email='roland@ccom.unh.edu',
-    description='Command bridge for project11',
+    description='Command bridge for marine autonomy',
     license='BSD-2-Clause',
     entry_points={
         'console_scripts': [

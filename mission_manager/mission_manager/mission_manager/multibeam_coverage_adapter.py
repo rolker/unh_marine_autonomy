@@ -3,11 +3,11 @@
 
 from typing import Optional
 
-import rclpy
 from geographic_msgs.msg import GeoPath
 from geometry_msgs.msg import Point32
 from marine_nav_interfaces.action import ComputeSonarCoveragePath, RunTasks
 from nav_msgs.msg import Path
+import rclpy
 from rclpy.action import ActionClient, ActionServer
 from rclpy.action.client import ClientGoalHandle
 from rclpy.action.server import ServerGoalHandle

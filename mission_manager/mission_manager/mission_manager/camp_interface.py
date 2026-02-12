@@ -6,14 +6,14 @@ import json
 import math
 from typing import Optional
 
-import yaml
 from geometry_msgs.msg import PoseStamped, Quaternion
 from marine_nav_interfaces.msg import TaskInformation
-from project11 import nav
-from project11_msgs.msg import BehaviorInformation, Heartbeat, KeyValue
+from marine_autonomy import nav
+from marine_interfaces.msg import BehaviorInformation, Heartbeat, KeyValue
 from rclpy.lifecycle import Node, Publisher
 from rclpy.subscription import Subscription
 from std_msgs.msg import String
+import yaml
 
 
 def parseLatLong(args, node: Node):
@@ -23,11 +23,12 @@ def parseLatLong(args, node: Node):
     latitude and longitude keys and float values.
 
     Args:
-            args:
+        args:
             A str of two float numbers separated by whitespace.
 
     Returns:
-            A dict with keys 'latitude' and 'longitude' and float values.
+        A dict with keys 'latitude' and 'longitude' and float values.
+
     """
     latlon = args.split()
     if len(latlon) == 2:
@@ -82,13 +83,13 @@ class CampInterface:
     def on_configure(self):
         """Configure CAMP interface."""
         self.command_subscriber = self.mission_manager.create_subscription(
-            String, 'project11/mission_manager/command',
+            String, 'marine/mission_manager/command',
             self.commandCallback, 1)
 
         self.status_publisher = (
             self.mission_manager.create_lifecycle_publisher(
                 Heartbeat,
-                'project11/status/mission_manager',
+                'marine/status/mission_manager',
                 10
             )
         )
@@ -154,6 +155,7 @@ class CampInterface:
                 A std_msg/String message.
                 Formatted string, delimited by whitespace, describing
                 task_type and task parameters.
+
         """
         parts = msg.data.split(None, 1)
         cmd = parts[0]
@@ -232,6 +234,7 @@ class CampInterface:
                 The remainder of the string sent with the command.
                 See README.md for task string syntax.
             prepend: A bool to prepend (true) or append (false).
+
         """
         parts = args.split(None, 1)
         self.mission_manager.get_logger().debug(

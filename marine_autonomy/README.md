@@ -4,25 +4,25 @@
  
  > **Note**: This is the documentation for the `marine_autonomy` ROS 2 package. For the full framework documentation, please see the [Repository Root](../README.md).
  
- # Project11: A mapping focused open-sourced software framework for Autonomous Surface Vehicles
+ # UNH Marine Autonomy: A Mapping-Focused Open-Source Framework for Autonomous Surface Vehicles
 
-The Project 11 framework was developed as a backseat driver for Autonomous Surface Vehicles
+The UNH Marine Autonomy framework (formerly Project11), developed at the Center for Coastal and Ocean Mapping / Joint Hydrographic Center (CCOM/JHC) at the University of New Hampshire (UNH), serves as a backseat driver for Autonomous Surface Vehicles
 (ASVs). Key design features include the ability to quickly and easily specify survey plans; monitoring of mission progress, even
-over unreliable wireless networks; and to provide an environment to develop advanced autonomous technologies.
+over unreliable wireless networks; and an environment to develop advanced autonomous technologies.
 
 ## Quick Start Guide
 
 ### System requirements
 
-On an Ubuntu 24.04 system, install ROS2 Jazzy including the developer tools following instructions on the ROS website.
+On an Ubuntu 24.04 system, install ROS 2 Jazzy including the developer tools following instructions on the ROS website.
 
 https://docs.ros.org/en/jazzy/Installation.html
 
-A system with decent performance is required. While testing in a virtual machine (vm) using VirtualBox on an Ubuntu host with 32G of ram, an Intel i7-10875H processor and an NVidia graphics card, I needed to set the vm to have 16G of ram, 8 CPUs and enabled 3D acceleration to reduce timeout errors while running the simulation.
+A system with decent performance is required. During testing in a virtual machine using VirtualBox on an Ubuntu host with 32 GB of RAM, an Intel i7-10875H processor, and an NVIDIA graphics card, the VM required 16 GB of RAM, eight CPUs, and 3D acceleration enabled to reduce timeout errors while running the simulation.
 
 ### Installation and launch
 
-Once ROS2 Jazzy is installed, you can quickly install and run Project11 with the following:
+Once ROS 2 Jazzy is installed, the framework can be quickly installed and launched with the following:
 
     mkdir -p ~/project11/jazzy_ws/src
     cd ~/project11/jazzy_ws/src
@@ -75,7 +75,7 @@ The `mission_manager` receives JSON plans from CAMP and translates them into dis
 The `helm_manager` is the safety-critical arbitrator. It switches between **Standby**, **Manual**, and **Autonomous** modes, ensuring only one source of control is ever active on the hardware.
 
 ### Reliable Communications (UDP & Command Bridge)
-To support operations over low-bandwidth or unreliable wireless links, we use:
+To support operations over low-bandwidth or unreliable wireless links, the framework uses:
 - **`udp_bridge`**: Optimized message transport.
 - **`command_bridge`**: A transaction layer ensuring high-level commands (like "Start") are successfully delivered even if the link drops momentarily.
 
