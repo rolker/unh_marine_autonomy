@@ -287,25 +287,25 @@ protected:
 
     // Publisher for piloting mode commands
     mode_pub_ = helper_node_->create_publisher<std_msgs::msg::String>(
-      "/test_helm_manager/piloting_mode", 1);
+      "/piloting_mode", 1);
 
     // Subscribers for active flags
     standby_active_sub_ = helper_node_->create_subscription<std_msgs::msg::Bool>(
-      "/test_helm_manager/piloting_mode/standby/active", rclcpp::QoS(1).transient_local(),
+      "/piloting_mode/standby/active", rclcpp::QoS(1).transient_local(),
       [this](const std_msgs::msg::Bool::SharedPtr msg) {
         standby_active_ = msg->data;
         standby_active_received_ = true;
       });
 
     manual_active_sub_ = helper_node_->create_subscription<std_msgs::msg::Bool>(
-      "/test_helm_manager/piloting_mode/manual/active", rclcpp::QoS(1).transient_local(),
+      "/piloting_mode/manual/active", rclcpp::QoS(1).transient_local(),
       [this](const std_msgs::msg::Bool::SharedPtr msg) {
         manual_active_ = msg->data;
         manual_active_received_ = true;
       });
 
     autonomous_active_sub_ = helper_node_->create_subscription<std_msgs::msg::Bool>(
-      "/test_helm_manager/piloting_mode/autonomous/active", rclcpp::QoS(1).transient_local(),
+      "/piloting_mode/autonomous/active", rclcpp::QoS(1).transient_local(),
       [this](const std_msgs::msg::Bool::SharedPtr msg) {
         autonomous_active_ = msg->data;
         autonomous_active_received_ = true;
@@ -478,7 +478,7 @@ protected:
     HelmManagerModeTest::SetUp();
 
     helm_output_sub_ = helper_node_->create_subscription<marine_interfaces::msg::Helm>(
-      "/test_helm_manager/out/helm", 1,
+      "/out/helm", 1,
       [this](const marine_interfaces::msg::Helm::SharedPtr msg) {
         last_helm_output_ = *msg;
         helm_output_received_ = true;
@@ -486,16 +486,16 @@ protected:
       });
 
     manual_helm_pub_ = helper_node_->create_publisher<marine_interfaces::msg::Helm>(
-      "/test_helm_manager/piloting_mode/manual/helm", 10);
+      "/piloting_mode/manual/helm", 10);
 
     autonomous_helm_pub_ = helper_node_->create_publisher<marine_interfaces::msg::Helm>(
-      "/test_helm_manager/piloting_mode/autonomous/helm", 10);
+      "/piloting_mode/autonomous/helm", 10);
 
     manual_twist_pub_ = helper_node_->create_publisher<geometry_msgs::msg::TwistStamped>(
-      "/test_helm_manager/piloting_mode/manual/cmd_vel", 10);
+      "/piloting_mode/manual/cmd_vel", 10);
 
     autonomous_twist_pub_ = helper_node_->create_publisher<geometry_msgs::msg::TwistStamped>(
-      "/test_helm_manager/piloting_mode/autonomous/cmd_vel", 10);
+      "/piloting_mode/autonomous/cmd_vel", 10);
   }
 
   void TearDown() override
@@ -675,14 +675,14 @@ protected:
     HelmManagerModeTest::SetUp();
 
     heartbeat_sub_ = helper_node_->create_subscription<marine_interfaces::msg::Heartbeat>(
-      "/test_helm_manager/heartbeat", 1,
+      "/heartbeat", 1,
       [this](const marine_interfaces::msg::Heartbeat::SharedPtr msg) {
         last_heartbeat_ = *msg;
         heartbeat_received_ = true;
       });
 
     helm_status_pub_ = helper_node_->create_publisher<marine_interfaces::msg::Heartbeat>(
-      "/test_helm_manager/status/helm", 1);
+      "/status/helm", 1);
   }
 
   void TearDown() override

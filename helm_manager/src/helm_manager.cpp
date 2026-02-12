@@ -58,7 +58,8 @@ CallbackReturn HelmManager::on_configure(const rclcpp_lifecycle::State & state)
       std::bind(&HelmManager::pilotingModeCallback, this, std::placeholders::_1));
   declare_parameter<double>("max_speed", 1.0);
   declare_parameter<double>("max_yaw_speed", 1.0);
-
+  max_speed_ = get_parameter("max_speed").as_double();
+  max_yaw_speed_ = get_parameter("max_yaw_speed").as_double();
 
   helm_status_subscription_ = create_subscription<marine_interfaces::msg::Heartbeat>("status/helm",
       1, std::bind(&HelmManager::helmStatusCallback, this, std::placeholders::_1));

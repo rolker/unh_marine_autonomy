@@ -87,8 +87,8 @@ private:
     rclcpp::Publisher < marine_interfaces::msg::Helm > ::SharedPtr helm_publisher_;
     rclcpp::Publisher < geometry_msgs::msg::TwistStamped > ::SharedPtr twist_publisher_;
 
-    double max_speed_;
-    double max_yaw_speed_;
+    double max_speed_ = 1.0;
+    double max_yaw_speed_ = 1.0;
 
     rclcpp::node_interfaces::PostSetParametersCallbackHandle::SharedPtr update_parameters_callback_;
   };

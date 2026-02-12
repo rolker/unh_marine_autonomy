@@ -39,20 +39,20 @@ protected:
     helper_ = std::make_shared<rclcpp::Node>("test_conv_helper");
 
     mode_pub_ = helper_->create_publisher<std_msgs::msg::String>(
-      "/test_helm_conv/piloting_mode", 1);
+      "/piloting_mode", 1);
 
     helm_sub_ = helper_->create_subscription<marine_interfaces::msg::Helm>(
-      "/test_helm_conv/out/helm", 1,
+      "/out/helm", 1,
       [this](const marine_interfaces::msg::Helm::SharedPtr msg) {
         last_helm_ = *msg;
         helm_received_ = true;
       });
 
     manual_helm_pub_ = helper_->create_publisher<marine_interfaces::msg::Helm>(
-      "/test_helm_conv/piloting_mode/manual/helm", 10);
+      "/piloting_mode/manual/helm", 10);
 
     manual_twist_pub_ = helper_->create_publisher<geometry_msgs::msg::TwistStamped>(
-      "/test_helm_conv/piloting_mode/manual/cmd_vel", 10);
+      "/piloting_mode/manual/cmd_vel", 10);
   }
 
   void TearDown() override
@@ -259,20 +259,20 @@ protected:
     helper_ = std::make_shared<rclcpp::Node>("test_twist_helper");
 
     mode_pub_ = helper_->create_publisher<std_msgs::msg::String>(
-      "/test_twist_out/piloting_mode", 1);
+      "/piloting_mode", 1);
 
     twist_sub_ = helper_->create_subscription<geometry_msgs::msg::TwistStamped>(
-      "/test_twist_out/out/cmd_vel", 1,
+      "/out/cmd_vel", 1,
       [this](const geometry_msgs::msg::TwistStamped::SharedPtr msg) {
         last_twist_ = *msg;
         twist_received_ = true;
       });
 
     manual_helm_pub_ = helper_->create_publisher<marine_interfaces::msg::Helm>(
-      "/test_twist_out/piloting_mode/manual/helm", 10);
+      "/piloting_mode/manual/helm", 10);
 
     manual_twist_pub_ = helper_->create_publisher<geometry_msgs::msg::TwistStamped>(
-      "/test_twist_out/piloting_mode/manual/cmd_vel", 10);
+      "/piloting_mode/manual/cmd_vel", 10);
   }
 
   void TearDown() override
@@ -450,17 +450,17 @@ protected:
     helper_ = std::make_shared<rclcpp::Node>("test_param_helper");
 
     mode_pub_ = helper_->create_publisher<std_msgs::msg::String>(
-      "/test_param_update/piloting_mode", 1);
+      "/piloting_mode", 1);
 
     twist_sub_ = helper_->create_subscription<geometry_msgs::msg::TwistStamped>(
-      "/test_param_update/out/cmd_vel", 1,
+      "/out/cmd_vel", 1,
       [this](const geometry_msgs::msg::TwistStamped::SharedPtr msg) {
         last_twist_ = *msg;
         twist_received_ = true;
       });
 
     manual_helm_pub_ = helper_->create_publisher<marine_interfaces::msg::Helm>(
-      "/test_param_update/piloting_mode/manual/helm", 10);
+      "/piloting_mode/manual/helm", 10);
   }
 
   void TearDown() override

@@ -149,7 +149,7 @@ TEST_F(PilotingModeTest, ActiveModePublishesTrueWhenMatching)
   bool active_received = false;
   bool active_value = false;
   auto sub = helper_->create_subscription<std_msgs::msg::Bool>(
-    "/test_pm_node/piloting_mode/test_match/active",
+    "/piloting_mode/test_match/active",
     rclcpp::QoS(1).transient_local(),
     [&](const std_msgs::msg::Bool::SharedPtr msg) {
       active_received = true;
@@ -174,7 +174,7 @@ TEST_F(PilotingModeTest, ActiveModePublishesFalseWhenNotMatching)
   bool active_received = false;
   bool active_value = true;
   auto sub = helper_->create_subscription<std_msgs::msg::Bool>(
-    "/test_pm_node/piloting_mode/test_nomatch/active",
+    "/piloting_mode/test_nomatch/active",
     rclcpp::QoS(1).transient_local(),
     [&](const std_msgs::msg::Bool::SharedPtr msg) {
       active_received = true;
@@ -198,7 +198,7 @@ TEST_F(PilotingModeTest, ActiveModeToggle)
 
   std::vector<bool> active_values;
   auto sub = helper_->create_subscription<std_msgs::msg::Bool>(
-    "/test_pm_node/piloting_mode/test_toggle/active",
+    "/piloting_mode/test_toggle/active",
     rclcpp::QoS(10).transient_local(),
     [&](const std_msgs::msg::Bool::SharedPtr msg) {
       active_values.push_back(msg->data);
@@ -229,14 +229,14 @@ TEST_F(PilotingModeTest, InactiveModeDoesNotForwardCommands)
   // Subscribe to helm output
   bool helm_received = false;
   auto helm_sub = helper_->create_subscription<marine_interfaces::msg::Helm>(
-    "/test_pm_node/out/helm", 1,
+    "/out/helm", 1,
     [&](const marine_interfaces::msg::Helm::SharedPtr) {
       helm_received = true;
     });
 
   // Publish a helm command to this mode's topic WITHOUT activating it
   auto helm_pub = helper_->create_publisher<marine_interfaces::msg::Helm>(
-    "/test_pm_node/piloting_mode/test_inactive_fwd/helm", 10);
+    "/piloting_mode/test_inactive_fwd/helm", 10);
 
   spinBoth(50ms);
 
@@ -258,17 +258,17 @@ TEST_F(PilotingModeTest, ActiveModeForwardsHelmCommands)
   bool helm_received = false;
   marine_interfaces::msg::Helm last_helm;
   auto helm_sub = helper_->create_subscription<marine_interfaces::msg::Helm>(
-    "/test_pm_node/out/helm", 1,
+    "/out/helm", 1,
     [&](const marine_interfaces::msg::Helm::SharedPtr msg) {
       helm_received = true;
       last_helm = *msg;
     });
 
   auto mode_pub = helper_->create_publisher<std_msgs::msg::String>(
-    "/test_pm_node/piloting_mode", 1);
+    "/piloting_mode", 1);
 
   auto helm_pub = helper_->create_publisher<marine_interfaces::msg::Helm>(
-    "/test_pm_node/piloting_mode/manual/helm", 10);
+    "/piloting_mode/manual/helm", 10);
 
   // Allow DDS discovery
   spinBoth(200ms);
@@ -297,17 +297,17 @@ TEST_F(PilotingModeTest, ActiveModeForwardsTwistCommands)
   bool helm_received = false;
   marine_interfaces::msg::Helm last_helm;
   auto helm_sub = helper_->create_subscription<marine_interfaces::msg::Helm>(
-    "/test_pm_node/out/helm", 1,
+    "/out/helm", 1,
     [&](const marine_interfaces::msg::Helm::SharedPtr msg) {
       helm_received = true;
       last_helm = *msg;
     });
 
   auto mode_pub = helper_->create_publisher<std_msgs::msg::String>(
-    "/test_pm_node/piloting_mode", 1);
+    "/piloting_mode", 1);
 
   auto twist_pub = helper_->create_publisher<geometry_msgs::msg::TwistStamped>(
-    "/test_pm_node/piloting_mode/manual/cmd_vel", 10);
+    "/piloting_mode/manual/cmd_vel", 10);
 
   // Allow DDS discovery
   spinBoth(200ms);
