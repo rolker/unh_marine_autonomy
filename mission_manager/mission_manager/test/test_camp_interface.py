@@ -486,7 +486,7 @@ class TestNavigatorDone(unittest.TestCase):
         self.ci.status_publisher = MagicMock()
 
     def test_done_with_none_result(self):
-        """navigatorDone with None result should still publish heartbeat."""
+        """Handle None result by still publishing a heartbeat."""
         with patch('mission_manager.camp_interface.KeyValue',
                    side_effect=MagicMock):
             with patch('mission_manager.camp_interface.Heartbeat',
@@ -495,7 +495,7 @@ class TestNavigatorDone(unittest.TestCase):
         self.ci.status_publisher.publish.assert_called_once()
 
     def test_done_with_result(self):
-        """navigatorDone with a result should publish heartbeat with tasks."""
+        """Publish heartbeat with tasks when a result is provided."""
         result = MagicMock()
         result.tasks = [MagicMock(id='t1', type='goto', done=True, status='')]
         with patch('mission_manager.camp_interface.KeyValue',
@@ -516,11 +516,11 @@ class TestAlignPoses(unittest.TestCase):
         self.ci = CampInterface(self.mm)
 
     def test_empty_poses(self):
-        """alignPoses with empty list should not raise."""
+        """Accept an empty list without raising."""
         self.ci.alignPoses([])  # Should not raise
 
     def test_single_pose(self):
-        """alignPoses with a single pose should not raise."""
+        """Accept a single pose without raising."""
         pose = MagicMock()
         pose.pose.position.x = 0.0
         pose.pose.position.y = 0.0

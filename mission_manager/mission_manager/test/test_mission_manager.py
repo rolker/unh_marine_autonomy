@@ -13,7 +13,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
-# Mock ROS / external modules before importing mission_manager
+# Mock ROS / external modules before importing mission_manager.
+# conftest.py also does this; setdefault makes duplicate calls harmless.
 # ---------------------------------------------------------------------------
 _MOCK_MODULES = [
     'rclpy', 'rclpy.action', 'rclpy.action.client',
@@ -32,8 +33,6 @@ _MOCK_MODULES = [
 for _mod in _MOCK_MODULES:
     sys.modules.setdefault(_mod, MagicMock())
 
-# We need the real CampInterface mock to avoid import issues
-# but we'll patch it out in tests
 from mission_manager.mission_manager import MissionManager  # noqa: E402
 
 
@@ -42,7 +41,7 @@ class TestMissionManagerInit(unittest.TestCase):
 
     @patch('mission_manager.mission_manager.CampInterface')
     def test_init_creates_camp_interface(self, mock_camp_cls):
-        """MissionManager should create a CampInterface on init."""
+        """Create a CampInterface during initialization."""
         mm = MissionManager('test_mm')
         mock_camp_cls.assert_called_once_with(mm)
 
@@ -78,34 +77,34 @@ class TestTaskOperations(unittest.TestCase):
         self.mm.get_logger = MagicMock(return_value=MagicMock())
 
     def test_replaceTasks_clears_and_adds(self):
-        """replaceTasks should clear all tasks then add new ones."""
+        """Clear all tasks then add new ones."""
         new_tasks = [MagicMock(), MagicMock()]
         self.mm.replaceTasks(new_tasks)
         self.mm.tasks.clear.assert_called_once()
         self.mm.tasks.addOrUpdateMany.assert_called_once_with(new_tasks)
 
     def test_appendTasks_adds_without_clearing(self):
-        """appendTasks should add tasks without clearing first."""
+        """Add tasks without clearing first."""
         new_tasks = [MagicMock()]
         self.mm.appendTasks(new_tasks)
         self.mm.tasks.clear.assert_not_called()
         self.mm.tasks.addOrUpdateMany.assert_called_once_with(new_tasks)
 
     def test_clearTasks_clears_and_adds_done_task(self):
-        """clearTasks should clear and re-add the done hover task."""
+        """Clear and re-add the done hover task."""
         self.mm.clearTasks()
         self.mm.tasks.clear.assert_called_once()
         # Should call appendTasks which calls addOrUpdateMany
         self.mm.tasks.addOrUpdateMany.assert_called()
 
     def test_clearTasks_no_done_task(self):
-        """clearTasks with no done_task_information should just clear."""
+        """Just clear when done_task_information is None."""
         self.mm.done_task_information = None
         self.mm.clearTasks()
         self.mm.tasks.clear.assert_called_once()
 
     def test_updateTasks(self):
-        """updateTasks should add or update tasks."""
+        """Add or update tasks in the task list."""
         new_tasks = [MagicMock()]
         self.mm.updateTasks(new_tasks)
         self.mm.tasks.addOrUpdateMany.assert_called_once_with(new_tasks)
