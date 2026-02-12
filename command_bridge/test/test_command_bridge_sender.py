@@ -391,7 +391,7 @@ class TestThreadSafety:
         sender.lock.__enter__.assert_called()
 
     def test_lock_held_during_update(self):
-        """update acquires the lock."""
+        """Update acquires the lock."""
         sender = _make_sender()
         sender.lock = MagicMock()
         sender.lock.__enter__ = MagicMock(return_value=None)

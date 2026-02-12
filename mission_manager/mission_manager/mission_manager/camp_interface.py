@@ -7,9 +7,9 @@ import math
 from typing import Optional
 
 from geometry_msgs.msg import PoseStamped, Quaternion
-from marine_nav_interfaces.msg import TaskInformation
 from marine_autonomy import nav
 from marine_interfaces.msg import BehaviorInformation, Heartbeat, KeyValue
+from marine_nav_interfaces.msg import TaskInformation
 from rclpy.lifecycle import Node, Publisher
 from rclpy.subscription import Subscription
 from std_msgs.msg import String

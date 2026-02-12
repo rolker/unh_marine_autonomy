@@ -28,11 +28,11 @@ _MOCK_MODULES = [
 for _mod in _MOCK_MODULES:
     sys.modules.setdefault(_mod, MagicMock())
 
+from mission_manager.camp_interface import CampInterface  # noqa: E402
+
 # We need *real* yaml for parseMission since it calls yaml.safe_load/safe_dump
 import yaml  # noqa: E402
 sys.modules['yaml'] = yaml
-
-from mission_manager.camp_interface import CampInterface  # noqa: E402
 
 # Provide a lightweight TaskInformation stand-in.
 # parseMission creates TaskInformation objects and sets attributes on them.
