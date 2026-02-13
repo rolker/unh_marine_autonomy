@@ -14,6 +14,7 @@ if(BUILD_TESTING)
     DESTINATION lib/${PROJECT_NAME}
   )
   add_launch_test(test/test_mission_command_flow.py)
+  add_launch_test(test/test_mission_navigation_flow.py)
 endif()
 
 ament_package()
