@@ -113,6 +113,7 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
+        # Ignore expected shutdown signals and proceed to clean up the node.
         pass
     finally:
         node.destroy_node()
