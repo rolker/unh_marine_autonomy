@@ -113,10 +113,9 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
-        node.get_logger().info('Shutting down MockNavigator')
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
 
 
 if __name__ == '__main__':

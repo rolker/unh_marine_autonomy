@@ -136,7 +136,12 @@ class TestMissionCommandFlow(unittest.TestCase):
         )
 
         # Wait for DDS discovery
-        self._wait_for_discovery()
+        discovered = self._wait_for_discovery()
+        self.assertTrue(
+            discovered,
+            'DDS discovery did not complete for "marine/send_command" '
+            'within 10 seconds; no subscribers were discovered.',
+        )
 
     def tearDown(self):
         """Destroy test node."""
@@ -148,8 +153,8 @@ class TestMissionCommandFlow(unittest.TestCase):
         while time.time() < end_time:
             rclpy.spin_once(self.node, timeout_sec=0.1)
             if self.send_command_pub.get_subscription_count() > 0:
-                return
-        # Don't fail here — let individual tests handle timeouts
+                return True
+        return False
 
     def _spin_until(self, predicate, timeout=15.0):
         """Spin the node until predicate returns True or timeout."""
@@ -264,5 +269,5 @@ class TestProcessOutput(unittest.TestCase):
         catch KeyboardInterrupt and exit via unhandled signal.
         """
         launch_testing.asserts.assertExitCodes(
-            proc_info, allowable_exit_codes=[0, -2, -15]
+            proc_info, allowable_exit_codes=[0, -2]
         )
