@@ -40,10 +40,10 @@ jobs:
       run: DEBIAN_FRONTEND=noninteractive rosdep install --from-paths src --ignore-src -r -y
     - name: Colcon build
       working-directory: ../jazzy_ws/
-      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy'
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests'
     - name: Colcon test
       working-directory: ../jazzy_ws/
-      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --packages-select marine_interfaces marine_autonomy helm_manager joy_to_helm command_bridge mission_manager mission_manager_interfaces --event-handlers console_direct+ --return-code-on-test-failure'
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --packages-select marine_interfaces marine_autonomy helm_manager joy_to_helm command_bridge mission_manager mission_manager_interfaces marine_autonomy_integration_tests --event-handlers console_direct+ --return-code-on-test-failure'
     - name: Test results
       working-directory: ../jazzy_ws/
       run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test-result --verbose'
