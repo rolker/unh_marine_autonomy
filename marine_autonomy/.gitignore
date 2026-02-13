@@ -1,6 +1,6 @@
-*.~
-*~
-*.pyc
+# KDevelop project files
 .kdev4/
 *.kdev4
+
+# Package-specific logs directory
 logs
