@@ -4,7 +4,7 @@
   <description>Integration tests for the marine autonomy framework</description>
   <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
 
-  <license>BSD</license>
+  <license>BSD-3-Clause</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>

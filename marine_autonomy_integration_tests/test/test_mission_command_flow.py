@@ -1,3 +1,6 @@
+# Copyright 2026 University of New Hampshire
+# SPDX-License-Identifier: BSD-3-Clause
+
 """Integration test: CAMP command flow through command_bridge to mission_manager.
 
 Tests the full pipeline:
@@ -13,13 +16,11 @@ import launch_ros.actions
 import launch_testing
 import launch_testing.actions
 from launch_ros.actions import LifecycleNode, LifecycleTransition
-from launch.substitutions import PythonExpression, LaunchConfiguration
 from lifecycle_msgs.msg import Transition
 
 import pytest
 
 import rclpy
-from rclpy.node import Node
 
 from marine_interfaces.msg import Heartbeat
 from std_msgs.msg import String
@@ -62,15 +63,7 @@ def generate_test_description():
     )
 
     mm_transition = LifecycleTransition(
-        lifecycle_node_names=(
-            PythonExpression(
-                expression=[
-                    '"',
-                    LaunchConfiguration('ros_namespace', default=''),
-                    '" + "/mission_manager"',
-                ],
-            ),
-        ),
+        lifecycle_node_names=['/mission_manager'],
         transition_ids=(
             Transition.TRANSITION_CONFIGURE,
             Transition.TRANSITION_ACTIVATE,

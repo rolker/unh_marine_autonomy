@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright 2026 University of New Hampshire
+# SPDX-License-Identifier: BSD-3-Clause
+
 """Mock navigator node for integration testing.
 
 Provides a RunTasks action server that accepts goals, publishes
@@ -77,7 +80,12 @@ class MockNavigator(Node):
             goal_handle.publish_feedback(feedback_msg)
             self.get_logger().info(
                 f'Published feedback {i + 1}/{feedback_count}')
-            time.sleep(feedback_interval)
+            elapsed = 0.0
+            while elapsed < feedback_interval:
+                if goal_handle.is_cancel_requested:
+                    break
+                time.sleep(0.05)
+                elapsed += 0.05
 
         goal_handle.succeed()
 
@@ -105,7 +113,7 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
-        pass
+        node.get_logger().info('Shutting down MockNavigator')
     finally:
         node.destroy_node()
 
