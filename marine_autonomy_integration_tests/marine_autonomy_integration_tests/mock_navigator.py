@@ -116,6 +116,7 @@ def main(args=None):
         node.get_logger().info('Shutting down MockNavigator')
     finally:
         node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':
