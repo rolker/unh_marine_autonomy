@@ -16,6 +16,8 @@ if(BUILD_TESTING)
   add_launch_test(test/test_mission_command_flow.py)
   add_launch_test(test/test_mission_navigation_flow.py)
   add_launch_test(test/test_mission_navigation_failure.py)
+  add_launch_test(test/test_mission_navigation_rejection.py)
+  add_launch_test(test/test_mission_navigation_override.py)
 endif()
 
 ament_package()
