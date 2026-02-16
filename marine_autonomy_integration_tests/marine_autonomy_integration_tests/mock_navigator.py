@@ -6,8 +6,15 @@
 
 Provides a RunTasks action server that accepts goals, publishes
 configurable feedback, and returns all tasks marked as done.
+
+Supports two modes:
+- "immediate": Publishes N identical feedback messages with the first task
+  as current, then returns all tasks done. (Original behavior from PR #59.)
+- "sequential": Processes tasks one at a time, updating current_navigation_task
+  and done flags progressively. Supports configurable failure and preemption.
 """
 
+import threading
 import time
 
 from marine_nav_interfaces.action import RunTasks
@@ -24,9 +31,23 @@ class MockNavigator(Node):
     def __init__(self):
         """Initialize mock navigator."""
         super().__init__('mock_navigator')
+
+        # Original parameters (PR #59)
         self.declare_parameter('feedback_count', 3)
         self.declare_parameter('feedback_interval', 0.5)
         self.declare_parameter('reject_goals', False)
+
+        # New parameters for sequential mode (issue #27)
+        self.declare_parameter('mode', 'immediate')
+        self.declare_parameter('per_task_feedback_count', 2)
+        self.declare_parameter('fail_task_index', -1)
+        self.declare_parameter('error_code', 9000)
+
+        # Preemption support: monotonic generation counter incremented on
+        # each accepted goal. Each execute_callback captures its generation
+        # at start and aborts when a newer goal has been accepted.
+        self._goal_generation = 0
+        self._goal_generation_lock = threading.Lock()
 
         self._action_server = ActionServer(
             self,
@@ -44,7 +65,9 @@ class MockNavigator(Node):
         if reject:
             self.get_logger().info('Rejecting goal')
             return GoalResponse.REJECT
-        self.get_logger().info('Accepting goal')
+        self.get_logger().info('Accepting goal — advancing generation')
+        with self._goal_generation_lock:
+            self._goal_generation += 1
         return GoalResponse.ACCEPT
 
     def cancel_callback(self, goal_handle):
@@ -55,10 +78,23 @@ class MockNavigator(Node):
     def execute_callback(self, goal_handle):
         """Execute the RunTasks action.
 
-        Publishes feedback messages and then succeeds with all tasks
-        marked as done.
+        Dispatches to immediate or sequential mode based on the 'mode'
+        parameter.
         """
-        self.get_logger().info('Executing goal...')
+        with self._goal_generation_lock:
+            my_generation = self._goal_generation
+        mode = self.get_parameter('mode').value
+        if mode == 'sequential':
+            return self._execute_sequential(goal_handle, my_generation)
+        return self._execute_immediate(goal_handle, my_generation)
+
+    def _execute_immediate(self, goal_handle, my_generation):
+        """Original execution mode from PR #59.
+
+        Publishes feedback_count identical feedback messages with the first
+        task as current, then returns all tasks marked as done.
+        """
+        self.get_logger().info('Executing goal (immediate mode)...')
         feedback_count = self.get_parameter('feedback_count').value
         feedback_interval = self.get_parameter('feedback_interval').value
 
@@ -66,11 +102,8 @@ class MockNavigator(Node):
         first_task_id = tasks[0].id if tasks else ''
 
         for i in range(feedback_count):
-            if goal_handle.is_cancel_requested:
-                goal_handle.canceled()
-                result = RunTasks.Result()
-                result.tasks = list(tasks)
-                return result
+            if self._should_stop(goal_handle, my_generation):
+                return self._abort_or_cancel(goal_handle, tasks, [])
 
             feedback_msg = RunTasks.Feedback()
             task_feedback = TaskFeedback()
@@ -80,29 +113,119 @@ class MockNavigator(Node):
             goal_handle.publish_feedback(feedback_msg)
             self.get_logger().info(
                 f'Published feedback {i + 1}/{feedback_count}')
-            elapsed = 0.0
-            while elapsed < feedback_interval:
-                if goal_handle.is_cancel_requested:
-                    break
-                time.sleep(0.05)
-                elapsed += 0.05
+            self._sleep_interruptible(
+                feedback_interval, goal_handle, my_generation)
 
         goal_handle.succeed()
+        return self._build_result(
+            tasks, done_indices=list(range(len(tasks))))
 
+    def _execute_sequential(self, goal_handle, my_generation):
+        """Sequential execution mode for issue #27.
+
+        Processes tasks one at a time: for each task, publishes
+        per_task_feedback_count feedback messages showing that task as
+        current, then marks it done before moving to the next. Supports
+        configurable failure at a specific task index and preemption.
+        """
+        self.get_logger().info('Executing goal (sequential mode)...')
+        feedback_interval = self.get_parameter('feedback_interval').value
+        per_task_count = self.get_parameter('per_task_feedback_count').value
+        fail_index = self.get_parameter('fail_task_index').value
+        error_code = self.get_parameter('error_code').value
+
+        tasks = list(goal_handle.request.tasks)
+        done_indices = []
+
+        for i, task in enumerate(tasks):
+            if self._should_stop(goal_handle, my_generation):
+                return self._abort_or_cancel(goal_handle, tasks, done_indices)
+
+            # Simulate failure at the configured task index.
+            if i == fail_index:
+                self.get_logger().info(
+                    f'Failing at task {i} ({task.id}) '
+                    f'with error_code={error_code}')
+                self._publish_feedback(
+                    goal_handle, tasks, done_indices, current_index=i)
+                goal_handle.abort()
+                return self._build_result(
+                    tasks, done_indices, error_code=error_code)
+
+            # Publish feedback cycles for this task.
+            for f in range(per_task_count):
+                if self._should_stop(goal_handle, my_generation):
+                    return self._abort_or_cancel(
+                        goal_handle, tasks, done_indices)
+                self._publish_feedback(
+                    goal_handle, tasks, done_indices, current_index=i)
+                self.get_logger().info(
+                    f'Task {task.id}: feedback {f + 1}/{per_task_count}')
+                self._sleep_interruptible(
+                    feedback_interval, goal_handle, my_generation)
+
+            done_indices.append(i)
+
+        goal_handle.succeed()
+        self.get_logger().info('Goal succeeded (sequential)')
+        return self._build_result(tasks, done_indices)
+
+    # -- Helpers --
+
+    def _should_stop(self, goal_handle, my_generation):
+        """Check if execution should stop due to preemption or cancel."""
+        with self._goal_generation_lock:
+            preempted = self._goal_generation != my_generation
+        return preempted or goal_handle.is_cancel_requested
+
+    def _abort_or_cancel(self, goal_handle, tasks, done_indices):
+        """Handle preemption or cancellation with partial results."""
+        if goal_handle.is_cancel_requested:
+            self.get_logger().info('Goal canceled')
+            goal_handle.canceled()
+        else:
+            self.get_logger().info('Goal preempted by new goal')
+            goal_handle.abort()
+        return self._build_result(tasks, done_indices)
+
+    def _publish_feedback(self, goal_handle, tasks, done_indices,
+                          current_index):
+        """Publish a feedback message with progressive task status."""
+        feedback_msg = RunTasks.Feedback()
+        tf = TaskFeedback()
+        tf.current_navigation_task = tasks[current_index].id
+        for j, t in enumerate(tasks):
+            ti = TaskInformation()
+            ti.id = t.id
+            ti.type = t.type
+            ti.priority = t.priority
+            ti.data = t.data
+            ti.done = (j in done_indices)
+            tf.tasks.append(ti)
+        feedback_msg.feedback = tf
+        goal_handle.publish_feedback(feedback_msg)
+
+    def _sleep_interruptible(self, duration, goal_handle, my_generation):
+        """Sleep in small increments, checking for preemption/cancel."""
+        elapsed = 0.0
+        while elapsed < duration:
+            if self._should_stop(goal_handle, my_generation):
+                break
+            time.sleep(0.05)
+            elapsed += 0.05
+
+    def _build_result(self, tasks, done_indices, error_code=0):
+        """Build a RunTasks.Result with specified done flags."""
         result = RunTasks.Result()
-        done_tasks = []
-        for t in tasks:
-            done_task = TaskInformation()
-            done_task.id = t.id
-            done_task.type = t.type
-            done_task.priority = t.priority
-            done_task.done = True
-            done_task.data = t.data
-            done_tasks.append(done_task)
-        result.tasks = done_tasks
-        result.error_code = 0
-
-        self.get_logger().info('Goal succeeded')
+        for i, t in enumerate(tasks):
+            ti = TaskInformation()
+            ti.id = t.id
+            ti.type = t.type
+            ti.priority = t.priority
+            ti.data = t.data
+            ti.done = (i in done_indices)
+            result.tasks.append(ti)
+        result.error_code = error_code
         return result
 
 
