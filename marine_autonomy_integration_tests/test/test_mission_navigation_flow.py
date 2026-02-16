@@ -170,9 +170,14 @@ class TestMissionNavigationFlow(unittest.TestCase):
         rclpy.spin_once(self.node, timeout_sec=0.1)
 
         # Wait for at least one done heartbeat from the done_hover cycle.
-        self._spin_until(
+        got_done = self._spin_until(
             lambda: self._has_heartbeat_kv('Navigator', 'done'),
             timeout=15.0,
+        )
+        self.assertTrue(
+            got_done,
+            'Timed out waiting for Navigator=done heartbeat during '
+            'mission clear.',
         )
 
         # Settle: let any remaining preempted goals complete.

@@ -141,12 +141,17 @@ class TestMissionNavigationOverride(unittest.TestCase):
 
     def _wait_for_idle(self):
         """Wait for activation goals to complete, then clear heartbeats."""
-        self._spin_until(
+        got_done = self._spin_until(
             lambda: any(
                 kv.key == 'Navigator' and kv.value == 'done'
                 for hb in self.heartbeats_rx for kv in hb.values
             ),
             timeout=15.0,
+        )
+        self.assertTrue(
+            got_done,
+            'Timed out waiting for Navigator=done heartbeat during '
+            'activation settle.',
         )
         settle_end = time.time() + 2.0
         while time.time() < settle_end:
