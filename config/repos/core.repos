@@ -1,4 +1,8 @@
 repositories:
+  manda_coverage:
+    type: git
+    url: https://github.com/rolker/manda_coverage.git
+    version: jazzy
   marine_ais:
     type: git
     url: https://github.com/rolker/marine_ais.git
