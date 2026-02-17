@@ -3,6 +3,10 @@ repositories:
     type: git
     url: https://github.com/rolker/ros2launch_gui.git
     version: jazzy
+  ros2launch_session:
+    type: git
+    url: https://github.com/rolker/ros2launch_session.git
+    version: jazzy
   geographic_info:
     type: git
     url: https://github.com/ros-geographic-info/geographic_info.git
