@@ -19,3 +19,11 @@ repositories:
     type: git
     url: https://github.com/rolker/unh_echoboats_project11.git
     version: jazzy
+  lr30_project11:
+    type: git
+    url: https://github.com/rolker/lr30_project11.git
+    version: jazzy
+  molab_description:
+    type: git
+    url: https://github.com/rolker/molab_description.git
+    version: jazzy

@@ -15,3 +15,15 @@ repositories:
     type: git
     url: https://github.com/rolker/audio_common.git
     version: port_sound_play_h_to_ros2
+  detection_visualizer:
+    type: git
+    url: https://github.com/rolker/detection_visualizer.git
+    version: support_rotation
+  nmea_navsat_driver:
+    type: git
+    url: https://github.com/rolker/nmea_navsat_driver.git
+    version: add_pashr
+  vrx:
+    type: git
+    url: https://github.com/rolker/vrx.git
+    version: add-santorini-seafloor
