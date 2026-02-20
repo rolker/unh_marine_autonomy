@@ -11,3 +11,23 @@ repositories:
     type: git
     url: https://github.com/rolker/unh_marine_perception.git
     version: jazzy
+  marine_tools:
+    type: git
+    url: https://github.com/rolker/marine_tools.git
+    version: jazzy
+  norbit:
+    type: git
+    url: https://github.com/rolker/norbit.git
+    version: jazzy
+  imagenex_deltat:
+    type: git
+    url: https://github.com/rolker/imagenex_deltat.git
+    version: jazzy
+  edgetech_sonar:
+    type: git
+    url: https://github.com/rolker/edgetech_sonar.git
+    version: jazzy
+  ros2sonic:
+    type: git
+    url: https://github.com/rolker/ros2sonic.git
+    version: jazzy
