@@ -19,6 +19,11 @@ rosidl_generate_interfaces(
 ament_export_dependencies(
     marine_nav_interfaces
     rosidl_default_runtime
-)   
+)
+
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  ament_lint_auto_find_test_dependencies()
+endif()
 
 ament_package()

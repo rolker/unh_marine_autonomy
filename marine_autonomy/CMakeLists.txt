@@ -59,4 +59,15 @@ ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(geographic_msgs geometry_msgs marine_interfaces tf2_geometry_msgs tf2_ros rclcpp_lifecycle)
 ament_export_include_directories("include/${PROJECT_NAME}")
 
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  set(AMENT_LINT_AUTO_EXCLUDE
+    ament_cmake_cpplint
+    ament_cmake_flake8
+    ament_cmake_pep257
+    ament_cmake_uncrustify
+  )
+  ament_lint_auto_find_test_dependencies()
+endif()
+
 ament_package()
