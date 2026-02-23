@@ -6,7 +6,7 @@
 
   <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
 
-  <license>BSD</license>
+  <license>BSD-3-Clause</license>
 
   <depend>rclpy</depend>
   <depend>marine_interfaces</depend>
