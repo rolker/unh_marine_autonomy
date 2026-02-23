@@ -4,7 +4,7 @@
   <description>The Project 11 package</description>
   <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
   
-  <license>BSD</license>
+  <license>BSD-3-Clause</license>
   
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
@@ -18,6 +18,9 @@
   <depend>tf2_geometry_msgs</depend>
   <depend>tf_transformations</depend>
   <depend>tf2_ros</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
