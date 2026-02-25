@@ -65,10 +65,15 @@ class JoyToHelm(Node):
         self.autonomous_button = 2
         self.standby_button = 1
 
+        self.left_thrust_axis = 1
+        self.right_thrust_axis = 4
+
         self.declare_parameter('allow_differential_drive', False)
         self.declare_parameter('throttle_axis', self.throttle_axis)
         self.declare_parameter('slow_mode_axis', self.slow_mode_axis)
         self.declare_parameter('rudder_axis', self.rudder_axis)
+        self.declare_parameter('left_thrust_axis', self.left_thrust_axis)
+        self.declare_parameter('right_thrust_axis', self.right_thrust_axis)
         self.declare_parameter('manual_button', self.manual_button)
         self.declare_parameter('autonomous_button', self.autonomous_button)
         self.declare_parameter('standby_button', self.standby_button)
@@ -111,6 +116,14 @@ class JoyToHelm(Node):
             self.get_parameter('rudder_axis')
             .get_parameter_value().integer_value)
 
+        self.left_thrust_axis = (
+            self.get_parameter('left_thrust_axis')
+            .get_parameter_value().integer_value)
+
+        self.right_thrust_axis = (
+            self.get_parameter('right_thrust_axis')
+            .get_parameter_value().integer_value)
+
         self.manual_button = (
             self.get_parameter('manual_button')
             .get_parameter_value().integer_value)
@@ -129,6 +142,10 @@ class JoyToHelm(Node):
             'rudder_axis: %s' % self.rudder_axis)
         self.get_logger().info(
             'slow_mode_axis: %s' % self.slow_mode_axis)
+        self.get_logger().info(
+            'left_thrust_axis: %s' % self.left_thrust_axis)
+        self.get_logger().info(
+            'right_thrust_axis: %s' % self.right_thrust_axis)
         self.get_logger().info(
             'manual_button: %s' % self.manual_button)
         self.get_logger().info(
@@ -173,10 +190,12 @@ class JoyToHelm(Node):
                 state_request = 'standby'
             if msg.buttons[9]:
                 self.drive_mode = 'helm'
-                print('drive_mode', self.drive_mode)
+                self.get_logger().info(
+                    'drive_mode %s' % self.drive_mode)
             if msg.buttons[10] and self.allow_differential_drive:
                 self.drive_mode = 'differential'
-                print('drive_mode', self.drive_mode)
+                self.get_logger().info(
+                    'drive_mode %s' % self.drive_mode)
             if state_request is not None and state_request != self.state:
                 piloting_mode_command = String()
                 piloting_mode_command.data = (
@@ -199,9 +218,9 @@ class JoyToHelm(Node):
                     self.helm_publisher.publish(helm)
                 if self.drive_mode == 'differential':
                     d = DifferentialDrive()
-                    d.header.stamp = self.get_clock().now()
-                    d.left_thrust = msg.axes[1]
-                    d.right_thrust = msg.axes[4]
+                    d.header.stamp = self.get_clock().now().to_msg()
+                    d.left_thrust = msg.axes[self.left_thrust_axis]
+                    d.right_thrust = msg.axes[self.right_thrust_axis]
                     self.dd_publisher.publish(d)
         except IndexError:
             pass
