@@ -816,3 +816,32 @@ TEST(GGGSCellAreaIterator, BoundsEntirelyRightOfGrid)
   gggs::CellAreaIterator it(gi, bounds);
   EXPECT_FALSE(it.valid());
 }
+
+// Bug 6: CellIndex public constructor now asserts on out-of-bounds row/column.
+// After Bug 5, no internal code passes out-of-bounds values.
+TEST(GGGSCellIndex, OutOfBoundsRowAssertsInDebug)
+{
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+#ifdef NDEBUG
+  // In release builds, assert is disabled; verify valid() returns false.
+  gggs::CellIndex ci(gi, gggs::cell_rows_per_grid, 0);
+  EXPECT_FALSE(ci.valid());
+#else
+  EXPECT_DEATH(gggs::CellIndex(gi, gggs::cell_rows_per_grid, 0),
+    "CellIndex row out of bounds");
+#endif
+}
+
+TEST(GGGSCellIndex, OutOfBoundsColumnAssertsInDebug)
+{
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+#ifdef NDEBUG
+  gggs::CellIndex ci(gi, 0, gggs::cell_columns_per_grid);
+  EXPECT_FALSE(ci.valid());
+#else
+  EXPECT_DEATH(gggs::CellIndex(gi, 0, gggs::cell_columns_per_grid),
+    "CellIndex column out of bounds");
+#endif
+}

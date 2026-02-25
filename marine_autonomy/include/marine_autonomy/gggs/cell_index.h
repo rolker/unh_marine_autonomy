@@ -29,6 +29,7 @@
 #ifndef PROJECT11_GGGS_CELL_INDEX_H
 #define PROJECT11_GGGS_CELL_INDEX_H
 
+#include <cassert>
 #include "level_spec.h"
 
 namespace gggs
@@ -49,6 +50,8 @@ public:
   CellIndex(GridIndex grid, uint16_t row, uint16_t column):
     grid_index_(grid), row_(row), column_(column)
   {
+    assert(row < cell_rows_per_grid && "CellIndex row out of bounds");
+    assert(column < cell_columns_per_grid && "CellIndex column out of bounds");
   }
 
   // CellIndex(double latitude, double longitude, GridIndex grid)
