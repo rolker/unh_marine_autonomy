@@ -49,31 +49,36 @@ TEST(GGGSCore, LatitudeScaleFactorMidLatitude)
 TEST(GGGSCore, LatitudeScaleFactorHighLatitude)
 {
   // 75 degrees N is between 72 and 80, should have scale factor 3
-  // BUG: Due to || instead of && in the condition, this returns 1 instead of 3.
-  // Correct value should be 3.
-  EXPECT_EQ(gggs::latitudeScaleFactor(75.0), 1);
+  EXPECT_EQ(gggs::latitudeScaleFactor(75.0), 3);
 }
 
 TEST(GGGSCore, LatitudeScaleFactorPolar)
 {
   // 85 degrees N is above 80, should have scale factor 9
-  // BUG: Same || vs && issue, this returns 1 instead of 9.
-  // Correct value should be 9.
-  EXPECT_EQ(gggs::latitudeScaleFactor(85.0), 1);
+  EXPECT_EQ(gggs::latitudeScaleFactor(85.0), 9);
 }
 
 TEST(GGGSCore, LatitudeScaleFactorSouthHighLatitude)
 {
   // -75 degrees is between -72 and -80, should have scale factor 3
-  // BUG: Same issue. Returns 1 instead of 3.
-  EXPECT_EQ(gggs::latitudeScaleFactor(-75.0), 1);
+  EXPECT_EQ(gggs::latitudeScaleFactor(-75.0), 3);
 }
 
 TEST(GGGSCore, LatitudeScaleFactorSouthPolar)
 {
   // -85 degrees is below -80, should have scale factor 9
-  // BUG: Same issue. Returns 1 instead of 9.
-  EXPECT_EQ(gggs::latitudeScaleFactor(-85.0), 1);
+  EXPECT_EQ(gggs::latitudeScaleFactor(-85.0), 9);
+}
+
+TEST(GGGSCore, LatitudeScaleFactorBoundaries)
+{
+  // Exact boundaries
+  EXPECT_EQ(gggs::latitudeScaleFactor(72.0), 3);
+  EXPECT_EQ(gggs::latitudeScaleFactor(-72.0), 3);
+  EXPECT_EQ(gggs::latitudeScaleFactor(80.0), 9);
+  EXPECT_EQ(gggs::latitudeScaleFactor(-80.0), 9);
+  EXPECT_EQ(gggs::latitudeScaleFactor(90.0), 9);
+  EXPECT_EQ(gggs::latitudeScaleFactor(-90.0), 9);
 }
 
 // ============================================================================
@@ -166,6 +171,24 @@ TEST(GGGSGridIndex, LongitudinalSpanMatchesEdges)
   EXPECT_NEAR(gi.longitudinalSpan(), gi.eastLongitude() - gi.westLongitude(), 1e-10);
 }
 
+TEST(GGGSGridIndex, PolarGridWiderLongitude)
+{
+  // At high latitudes, grids should be wider in longitude (3x at 72-80°)
+  gggs::Level level(3);
+  auto gi_equator = level.gridIndex(0.0, 0.0);
+  auto gi_polar = level.gridIndex(75.0, 0.0);
+  EXPECT_NEAR(gi_polar.longitudinalSpan(), 3.0 * gi_equator.longitudinalSpan(), 1e-10);
+}
+
+TEST(GGGSGridIndex, VeryHighLatitudeGrid)
+{
+  // At 85°, grids should be 9x wider in longitude
+  gggs::Level level(3);
+  auto gi_equator = level.gridIndex(0.0, 0.0);
+  auto gi_polar = level.gridIndex(85.0, 0.0);
+  EXPECT_NEAR(gi_polar.longitudinalSpan(), 9.0 * gi_equator.longitudinalSpan(), 1e-10);
+}
+
 // ============================================================================
 // GridIndex — comparisons
 // ============================================================================
@@ -192,11 +215,18 @@ TEST(GGGSGridIndex, DefaultConstructedEquality)
 {
   gggs::GridIndex gi1;
   gggs::GridIndex gi2;
-  // BUG: Two invalid GridIndex objects compare as not-equal because
-  // operator!= returns true when either operand is invalid.
-  // Correct behavior: two invalid objects should be equal.
-  EXPECT_FALSE(gi1 == gi2);
-  EXPECT_TRUE(gi1 != gi2);
+  // Two invalid (default-constructed) GridIndex objects should be equal
+  EXPECT_TRUE(gi1 == gi2);
+  EXPECT_FALSE(gi1 != gi2);
+}
+
+TEST(GGGSGridIndex, InvalidVsValidNotEqual)
+{
+  gggs::GridIndex invalid;
+  gggs::Level level(5);
+  auto valid = level.gridIndex(43.0, -70.5);
+  EXPECT_FALSE(invalid == valid);
+  EXPECT_TRUE(invalid != valid);
 }
 
 TEST(GGGSGridIndex, LessThanOrdering)
@@ -384,10 +414,19 @@ TEST(GGGSCellIndex, DefaultConstructedEquality)
 {
   gggs::CellIndex ci1;
   gggs::CellIndex ci2;
-  // BUG: Same issue as GridIndex — two invalid CellIndex objects compare as not-equal.
-  // Correct behavior: two invalid objects should be equal.
-  EXPECT_FALSE(ci1 == ci2);
-  EXPECT_TRUE(ci1 != ci2);
+  // Two invalid (default-constructed) CellIndex objects should be equal
+  EXPECT_TRUE(ci1 == ci2);
+  EXPECT_FALSE(ci1 != ci2);
+}
+
+TEST(GGGSCellIndex, InvalidVsValidNotEqual)
+{
+  gggs::CellIndex invalid;
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+  gggs::CellIndex valid(gi, 0, 0);
+  EXPECT_FALSE(invalid == valid);
+  EXPECT_TRUE(invalid != valid);
 }
 
 // ============================================================================
