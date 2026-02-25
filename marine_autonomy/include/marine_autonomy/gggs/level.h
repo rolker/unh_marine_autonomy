@@ -69,7 +69,7 @@ public:
   }
 
   /// Approximate cell size in meters
-  double cellSize() const
+  double cellSize() const noexcept
   {
     return levels[level_].nominal_cell_size;
   }
@@ -100,7 +100,7 @@ public:
 
   /// @brief Angular span of a cell
   /// @return Degrees (in latitude direction, not accounting for polar scales)
-  double cellAngularSpan() const
+  double cellAngularSpan() const noexcept
   {
     return levels[level_].cell_angular_span;
   }

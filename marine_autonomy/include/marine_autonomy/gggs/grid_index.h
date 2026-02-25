@@ -53,32 +53,32 @@ public:
 
   /// @brief Check if this index refers to an existing grid.
   /// @return true if level, row, and column are within valid ranges.
-  bool valid() const
+  bool valid() const noexcept
   {
     return level_ < levels.size() && row_ < levels[level_].row_count && column_ < levels[level_].columnCount(row_);
   }
 
-  uint8_t level() const
+  constexpr uint8_t level() const noexcept
   {
     return level_;
   }
 
-  const uint32_t &row() const
+  constexpr const uint32_t &row() const noexcept
   {
     return row_;
   }
 
-  const uint32_t &column() const
+  constexpr const uint32_t &column() const noexcept
   {
     return column_;
   }
 
-  static uint16_t cellRowCount()
+  static constexpr uint16_t cellRowCount() noexcept
   {
     return cell_rows_per_grid;
   }
 
-  static uint16_t cellColumnCount()
+  static constexpr uint16_t cellColumnCount() noexcept
   {
     return cell_columns_per_grid;
   }

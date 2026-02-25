@@ -44,7 +44,7 @@ public:
   /// @param level Quadtree level (0-20).
   LevelSpecs(uint8_t level):level(level)
   {
-    auto multiplier = pow(2, level);
+    uint32_t multiplier = 1u << level;
     row_count = level_0_row_count*multiplier;
     column_count = level_0_column_count*multiplier;
 
@@ -63,7 +63,7 @@ public:
   /// @brief Compute latitude scale factor from a grid row index.
   /// @param row Grid row at this level.
   /// @return 1, 3, or 9 depending on latitude band.
-  uint8_t latitudeScaleFactor(uint32_t row) const
+  uint8_t latitudeScaleFactor(uint32_t row) const noexcept
   {
     if(row >= row_minus_72 && row < row_plus_72)
       return 1;
@@ -75,7 +75,7 @@ public:
   /// @brief Longitudinal span of a grid in degrees at the given row.
   /// @param row Grid row at this level.
   /// @return Angular span in degrees (wider near the poles).
-  double gridLongitudinalSpan(uint32_t row) const
+  double gridLongitudinalSpan(uint32_t row) const noexcept
   {
     return grid_angular_span*latitudeScaleFactor(row);
   }
@@ -83,7 +83,7 @@ public:
   /// @brief Number of grid columns at the given row.
   /// @param row Grid row at this level.
   /// @return Column count (fewer near the poles due to wider grids).
-  uint32_t columnCount(uint32_t row) const
+  uint32_t columnCount(uint32_t row) const noexcept
   {
     return column_count/latitudeScaleFactor(row);
   }

@@ -73,27 +73,27 @@ public:
   }
 
   /// @brief Check if this cell index is valid.
-  bool valid() const
+  bool valid() const noexcept
   {
     return grid_index_.valid() && row_ < cell_rows_per_grid && column_ < cell_columns_per_grid;
   }
 
-  const GridIndex& grid() const
+  constexpr const GridIndex& grid() const noexcept
   {
     return grid_index_;
   }
 
-  uint8_t level() const
+  constexpr uint8_t level() const noexcept
   {
     return grid_index_.level();
   }
 
-  const uint16_t &row() const
+  constexpr const uint16_t &row() const noexcept
   {
     return row_;
   }
 
-  const uint16_t &column() const
+  constexpr const uint16_t &column() const noexcept
   {
     return column_;
   }
