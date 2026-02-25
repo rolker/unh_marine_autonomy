@@ -269,14 +269,29 @@ TEST(GGGSLevel, FromCellSizeRoundTrip)
   EXPECT_LE(level.cellSize(), 100.0);
 }
 
-// BUG: fromCellSize with very large cell sizes produces a negative value that
-// wraps to a huge uint8_t, causing out-of-bounds access. This will be fixed
-// with bounds checking in a later commit. Skipping this test for now.
-TEST(GGGSLevel, DISABLED_FromCellSizeVeryLarge)
+TEST(GGGSLevel, FromCellSizeVeryLarge)
 {
-  // Very large cell size should give level 0
+  // Very large cell size should clamp to level 0
   auto level = gggs::Level::fromCellSize(10000.0);
   EXPECT_NEAR(level.cellSize(), gggs::levels[0].nominal_cell_size, 0.01);
+}
+
+TEST(GGGSLevel, FromCellSizeVerySmall)
+{
+  // Very small cell size should clamp to max level 20
+  auto level = gggs::Level::fromCellSize(0.0001f);
+  EXPECT_NEAR(level.cellSize(), gggs::levels[20].nominal_cell_size, 0.001);
+}
+
+TEST(GGGSLevel, OutOfRangeLevelThrows)
+{
+  EXPECT_THROW(gggs::Level(21), std::out_of_range);
+  EXPECT_THROW(gggs::Level(255), std::out_of_range);
+}
+
+TEST(GGGSLevel, MaxValidLevel)
+{
+  EXPECT_NO_THROW(gggs::Level(20));
 }
 
 TEST(GGGSLevel, GridIndexEquator)

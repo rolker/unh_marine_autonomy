@@ -29,6 +29,8 @@
 #ifndef PROJECT11_GGGS_LEVEL_H
 #define PROJECT11_GGGS_LEVEL_H
 
+#include <algorithm>
+#include <string>
 #include "cell_index.h"
 
 namespace gggs
@@ -39,14 +41,21 @@ namespace gggs
 class Level
 {
 public:
-  Level(uint8_t level):level_(level){}
+  Level(uint8_t level):level_(level)
+  {
+    if (level_ >= levels.size())
+      throw std::out_of_range("GGGS level " + std::to_string(level_) +
+        " exceeds maximum level " + std::to_string(levels.size() - 1));
+  }
 
   /// Constructs an instance where the level supports requested cell_size
   /// or smaller
   static Level fromCellSize(float cell_size)
   {
     auto grid_size = cell_size * cell_rows_per_grid;
-    return Level(std::ceil(std::log2(level_0_grid_size / grid_size)));
+    auto raw = static_cast<int>(std::ceil(std::log2(level_0_grid_size / grid_size)));
+    uint8_t clamped = static_cast<uint8_t>(std::clamp(raw, 0, static_cast<int>(levels.size() - 1)));
+    return Level(clamped);
   }
 
   /// Approximate cell size in meters
