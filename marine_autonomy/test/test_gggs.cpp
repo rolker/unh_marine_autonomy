@@ -28,6 +28,7 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <type_traits>
 #include "marine_autonomy/gggs.h"
 
 // ============================================================================
@@ -713,4 +714,11 @@ TEST(GGGSGridIndex, NorthLatitudeClampedAt90)
   ASSERT_TRUE(gi.valid());
   EXPECT_LE(gi.northLatitude(), 90.0);
   EXPECT_GE(gi.southLatitude(), -90.0);
+}
+
+// Bug 3: levels array is not const, allowing accidental mutation.
+TEST(GGGSLevelSpecs, LevelsArrayIsConst)
+{
+  static_assert(std::is_const_v<std::remove_reference_t<decltype(gggs::levels)>>,
+    "gggs::levels should be const");
 }
