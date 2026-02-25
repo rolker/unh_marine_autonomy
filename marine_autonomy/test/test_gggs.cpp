@@ -722,3 +722,44 @@ TEST(GGGSLevelSpecs, LevelsArrayIsConst)
   static_assert(std::is_const_v<std::remove_reference_t<decltype(gggs::levels)>>,
     "gggs::levels should be const");
 }
+
+// Bug 4: operator< inconsistent with operator== for invalid indices.
+// operator== treats all invalid indices as equal, but operator< compared raw
+// fields, breaking strict-weak-ordering guarantees.
+
+TEST(GGGSGridIndex, LessThanBothInvalid)
+{
+  gggs::GridIndex a;
+  gggs::GridIndex b;
+  // Both invalid: neither should be less than the other
+  EXPECT_FALSE(a < b);
+  EXPECT_FALSE(b < a);
+}
+
+TEST(GGGSGridIndex, LessThanInvalidVsValid)
+{
+  gggs::GridIndex invalid;
+  gggs::Level level(5);
+  auto valid = level.gridIndex(43.0, -70.5);
+  // Invalid sorts before valid (invalid < valid is true)
+  EXPECT_TRUE(invalid < valid);
+  EXPECT_FALSE(valid < invalid);
+}
+
+TEST(GGGSCellIndex, LessThanBothInvalid)
+{
+  gggs::CellIndex a;
+  gggs::CellIndex b;
+  EXPECT_FALSE(a < b);
+  EXPECT_FALSE(b < a);
+}
+
+TEST(GGGSCellIndex, LessThanInvalidVsValid)
+{
+  gggs::CellIndex invalid;
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+  gggs::CellIndex valid(gi, 0, 0);
+  EXPECT_TRUE(invalid < valid);
+  EXPECT_FALSE(valid < invalid);
+}

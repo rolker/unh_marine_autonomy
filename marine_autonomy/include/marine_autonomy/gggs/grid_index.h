@@ -125,8 +125,15 @@ public:
   }
 
   /// Less than operator allowing use as std::map key.
+  /// Invalid indices sort before all valid indices.
   friend bool operator<(const GridIndex& lhs, const GridIndex& rhs)
   {
+    if (!lhs.valid() && !rhs.valid())
+      return false;
+    if (!lhs.valid())
+      return true;
+    if (!rhs.valid())
+      return false;
     if (lhs.level_ != rhs.level_)
       return lhs.level_ < rhs.level_;
     if (lhs.row_ != rhs.row_)
