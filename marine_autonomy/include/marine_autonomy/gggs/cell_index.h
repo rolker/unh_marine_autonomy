@@ -52,7 +52,6 @@ public:
   CellIndex(GridIndex grid, const gz4d::PositionDegrees &position):
     grid_index_(grid)
   {
-    grid_index_ = grid;
 
     // Note, we constrain to 1.0, but what we really need is up to 1.0.
     double row_p = std::max(0.0, std::min(1.0, position.latitude-grid_index_.southLatitude())/grid_index_.latitudinalSpan());
@@ -107,15 +106,19 @@ public:
     return lhs.column_ < rhs.column_;
   }
 
-  friend bool operator!=(const CellIndex& lhs, const CellIndex& rhs)
-  {
-    return !lhs.valid() || !rhs.valid() || lhs.grid_index_ != rhs.grid_index_ ||
-      lhs.row_ != rhs.row_ || lhs.column_ != rhs.column_;
-  }
-
   friend bool operator==(const CellIndex& lhs, const CellIndex& rhs)
   {
-    return !(lhs != rhs);
+    if (!lhs.valid() && !rhs.valid())
+      return true;
+    if (!lhs.valid() || !rhs.valid())
+      return false;
+    return lhs.grid_index_ == rhs.grid_index_ &&
+      lhs.row_ == rhs.row_ && lhs.column_ == rhs.column_;
+  }
+
+  friend bool operator!=(const CellIndex& lhs, const CellIndex& rhs)
+  {
+    return !(lhs == rhs);
   }
 
 

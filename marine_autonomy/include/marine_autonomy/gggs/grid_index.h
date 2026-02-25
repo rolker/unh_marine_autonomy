@@ -125,15 +125,19 @@ public:
     return lhs.column_ < rhs.column_;
   }
 
-  friend bool operator!=(const GridIndex& lhs, const GridIndex& rhs)
-  {
-    return !lhs.valid() || !rhs.valid() || lhs.level_ != rhs.level_ ||
-      lhs.row_ != rhs.row_ || lhs.column_ != rhs.column_;
-  }
-
   friend bool operator==(const GridIndex& lhs, const GridIndex& rhs)
   {
-    return !(lhs != rhs);
+    if (!lhs.valid() && !rhs.valid())
+      return true;
+    if (!lhs.valid() || !rhs.valid())
+      return false;
+    return lhs.level_ == rhs.level_ &&
+      lhs.row_ == rhs.row_ && lhs.column_ == rhs.column_;
+  }
+
+  friend bool operator!=(const GridIndex& lhs, const GridIndex& rhs)
+  {
+    return !(lhs == rhs);
   }
 
   friend GridIndex max(const GridIndex& lhs, const GridIndex& rhs)

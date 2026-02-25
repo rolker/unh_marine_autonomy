@@ -31,7 +31,7 @@
 
 #include <cstdint>
 #include <cmath>
-//#include <ostream>
+#include <sstream>
 
 #include "marine_autonomy/utils.h"
 
@@ -63,11 +63,11 @@ constexpr uint32_t level_0_column_count = 45; // 360/8;
 
 /// Calculate grid width factor to account for longitudes
 /// bunching up near the poles.
-inline static uint8_t latitudeScaleFactor(double latitude)
+inline uint8_t latitudeScaleFactor(double latitude)
 {
-  if (latitude < 72.0 || latitude > -72.0)
+  if (std::abs(latitude) < 72.0)
     return 1;
-  if (latitude < 80.0 || latitude > -80.0)
+  if (std::abs(latitude) < 80.0)
     return 3;
   return 9;
 }

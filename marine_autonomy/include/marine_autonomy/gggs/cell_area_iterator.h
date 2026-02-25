@@ -73,7 +73,7 @@ public:
     
     auto to_column = to.column();
     if(to.grid().column() < grid.column())
-      to_column = cell_rows_per_grid;
+      to_column = cell_columns_per_grid;
     if(to.grid().column() > grid.column())
       to_column = cell_columns_per_grid - 1;
 
