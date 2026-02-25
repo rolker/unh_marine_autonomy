@@ -29,6 +29,7 @@
 #ifndef PROJECT11_GGGS_CELL_AREA_ITERATOR_H
 #define PROJECT11_GGGS_CELL_AREA_ITERATOR_H
 
+#include <algorithm>
 #include "cell_index.h"
 
 namespace gggs
@@ -66,13 +67,13 @@ public:
     double max_lon = bounds.maximum().longitude;
 
     // Check if bounds are entirely outside the grid in any direction.
-    if(max_lat <= grid.southLatitude())
+    if(max_lat < grid.southLatitude())
       return;  // bounds entirely south of grid
-    if(min_lat >= grid.northLatitude())
+    if(min_lat > grid.northLatitude())
       return;  // bounds entirely north of grid
-    if(max_lon <= grid.westLongitude())
+    if(max_lon < grid.westLongitude())
       return;  // bounds entirely west of grid
-    if(min_lon >= grid.eastLongitude())
+    if(min_lon > grid.eastLongitude())
       return;  // bounds entirely east of grid
 
     // Clamp the bounds to the grid extent, then compute cell indices.

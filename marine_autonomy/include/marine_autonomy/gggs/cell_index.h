@@ -29,6 +29,7 @@
 #ifndef PROJECT11_GGGS_CELL_INDEX_H
 #define PROJECT11_GGGS_CELL_INDEX_H
 
+#include <algorithm>
 #include <cassert>
 #include "level_spec.h"
 

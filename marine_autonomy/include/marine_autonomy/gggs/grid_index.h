@@ -116,7 +116,7 @@ public:
 
   double latitudinalSpan() const
   {
-    return levels[level_].grid_angular_span;
+    return northLatitude() - southLatitude();
   }
 
   double longitudinalSpan() const
