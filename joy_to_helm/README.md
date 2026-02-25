@@ -62,9 +62,9 @@ Rudder is always passed through at full scale (negated from the joystick axis).
 ros2 launch joy_to_helm joy_to_helm_launch.py
 ```
 
-**Launch with parameter overrides:**
+**Run with parameter overrides:**
 ```bash
-ros2 launch joy_to_helm joy_to_helm_launch.py --ros-args \
+ros2 run joy_to_helm joy_to_helm --ros-args \
   -p throttle_axis:=3 \
   -p rudder_axis:=0 \
   -p allow_differential_drive:=true
