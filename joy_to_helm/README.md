@@ -48,10 +48,10 @@ Commands are only published when the piloting mode is `manual`.
 
 ## Slow Mode
 
-In helm mode, throttle is scaled by a limit factor:
+In helm mode, throttle is scaled by a limit factor based on the value of the configured slow-mode axis:
 
-- **Slow mode** (default): Throttle is multiplied by **0.35** when `slow_mode_axis >= 0`.
-- **Full mode**: Throttle is unscaled (factor **1.0**) when `slow_mode_axis < 0`.
+- **Slow mode** (default): Throttle is multiplied by **0.35** when the slow-mode axis value is >= 0.
+- **Full mode**: Throttle is unscaled (factor **1.0**) when the slow-mode axis value is < 0.
 
 Rudder is always passed through at full scale (negated from the joystick axis).
 

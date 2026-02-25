@@ -56,6 +56,7 @@ class JoyToHelm(Node):
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self.state = 'standby'
         self.drive_mode = 'helm'
+        self.allow_differential_drive = False
 
         self.throttle_axis = 1
         self.slow_mode_axis = 2
