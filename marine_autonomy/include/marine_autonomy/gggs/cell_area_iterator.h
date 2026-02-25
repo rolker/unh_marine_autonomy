@@ -34,10 +34,16 @@
 namespace gggs
 {
 
-/// @brief  Iterates over rectangular area of CellIndexes within a grid at given GridIndex.
+/// @brief Iterates over a rectangular area of cells within a single grid.
+///
+/// Traverses cells row by row within the specified GridIndex. Can iterate
+/// over the full grid (960x960 cells) or a sub-region defined by geographic
+/// bounds. Cell indices in the range are inclusive.
 class CellAreaIterator
 {
 public:
+  /// @brief Iterate over all cells in the grid.
+  /// @param grid The grid to iterate.
   CellAreaIterator(GridIndex grid)
   {
     from_ = CellIndex(grid, 0, 0);
@@ -45,7 +51,12 @@ public:
     current_ = from_;
   }
 
-  /// Indicies are inclusive, so "to" is included and not considered past the array like std containers end().
+  /// @brief Iterate over cells within a geographic bounding box.
+  ///
+  /// Indices are inclusive — the "to" cell is visited. If the bounds
+  /// fall outside the grid, the iterator may be empty (invalid from start).
+  /// @param grid The grid to iterate within.
+  /// @param bounds Geographic bounding box to restrict iteration.
   CellAreaIterator(GridIndex grid, const gz4d::BoundsDegrees& bounds)
   {
     CellIndex from(grid, bounds.minimum());
@@ -73,7 +84,7 @@ public:
     
     auto to_column = to.column();
     if(to.grid().column() < grid.column())
-      to_column = cell_rows_per_grid;
+      to_column = cell_columns_per_grid;
     if(to.grid().column() > grid.column())
       to_column = cell_columns_per_grid - 1;
 

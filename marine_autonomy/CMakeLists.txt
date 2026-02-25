@@ -68,6 +68,10 @@ if(BUILD_TESTING)
     ament_cmake_uncrustify
   )
   ament_lint_auto_find_test_dependencies()
+
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_gggs test/test_gggs.cpp)
+  target_link_libraries(test_gggs ${PROJECT_NAME})
 endif()
 
 ament_package()

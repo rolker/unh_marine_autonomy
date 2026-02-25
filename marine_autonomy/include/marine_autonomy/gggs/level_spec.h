@@ -33,10 +33,15 @@
 
 namespace gggs
 {
-/// Metadata for a given level in the quadtree
+/// @brief Pre-computed metadata for a single quadtree level.
+///
+/// Stores angular spans, nominal sizes, row/column counts, and polar-boundary
+/// row indices to avoid repeated computation during grid lookups.
 class LevelSpecs
 {
 public:
+  /// @brief Compute and cache all metadata for the given level.
+  /// @param level Quadtree level (0-20).
   LevelSpecs(uint8_t level):level(level)
   {
     auto multiplier = pow(2, level);
@@ -55,6 +60,9 @@ public:
     row_plus_80 = (80.0+96.0)/grid_angular_span;
   }
 
+  /// @brief Compute latitude scale factor from a grid row index.
+  /// @param row Grid row at this level.
+  /// @return 1, 3, or 9 depending on latitude band.
   uint8_t latitudeScaleFactor(uint32_t row) const
   {
     if(row >= row_minus_72 && row < row_plus_72)
@@ -64,39 +72,40 @@ public:
     return 9;
   }
 
+  /// @brief Longitudinal span of a grid in degrees at the given row.
+  /// @param row Grid row at this level.
+  /// @return Angular span in degrees (wider near the poles).
   double gridLongitudinalSpan(uint32_t row) const
   {
     return grid_angular_span*latitudeScaleFactor(row);
   }
 
+  /// @brief Number of grid columns at the given row.
+  /// @param row Grid row at this level.
+  /// @return Column count (fewer near the poles due to wider grids).
   uint32_t columnCount(uint32_t row) const
   {
     return column_count/latitudeScaleFactor(row);
   }
 
-  uint8_t level;
+  uint8_t level;                 ///< Quadtree level (0-20).
 
-  // How many degrees a grid spans at this level
-  double grid_angular_span;
+  double grid_angular_span;      ///< Angular span of a grid in degrees.
+  double cell_angular_span;      ///< Angular span of a cell in degrees.
 
-  // How many degrees a grid cell spans at this level
-  double cell_angular_span;
+  double nominal_grid_size;      ///< Approximate grid size in meters at the equator.
+  double nominal_cell_size;      ///< Approximate cell size in meters at the equator.
 
-  // Estimate of the size in meters of a grid at this level
-  double nominal_grid_size;
-  // Estimate of the size in meters of a grid cell at this level
-  double nominal_cell_size;
+  uint32_t row_count;            ///< Total number of grid rows at this level.
+  uint32_t column_count;         ///< Total number of grid columns at the equator.
 
-  uint32_t row_count;
-  uint32_t column_count;
-
-  uint32_t row_minus_80;
-  uint32_t row_minus_72;
-  uint32_t row_plus_72;
-  uint32_t row_plus_80;
+  uint32_t row_minus_80;         ///< Row index of the -80° latitude boundary.
+  uint32_t row_minus_72;         ///< Row index of the -72° latitude boundary.
+  uint32_t row_plus_72;          ///< Row index of the +72° latitude boundary.
+  uint32_t row_plus_80;          ///< Row index of the +80° latitude boundary.
 };
 
-// cache the metadata speed up index calculations
+/// @brief Pre-computed metadata for all 21 quadtree levels (0-20).
 inline std::array<LevelSpecs, 21> levels = {{
   LevelSpecs(0),  LevelSpecs(1),  LevelSpecs(2),  LevelSpecs(3),  LevelSpecs(4),  LevelSpecs(5),
   LevelSpecs(6),  LevelSpecs(7),  LevelSpecs(8),  LevelSpecs(9),  LevelSpecs(10), LevelSpecs(11),

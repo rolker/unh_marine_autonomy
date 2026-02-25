@@ -34,14 +34,22 @@
 namespace gggs
 {
 
+/// @brief Axis-aligned bounding box over GridIndex values at a single level.
+///
+/// Tracks the minimum and maximum grid row/column as grids are added
+/// via expand(). All grids must be at the same quadtree level.
 class GridBounds
 {
 public:
+  /// @brief Check if bounds contain at least one valid grid.
   bool valid() const
   {
     return min_.valid() && max_.valid() && min_.level() == max_.level();
   }
 
+  /// @brief Expand bounds to include the given grid.
+  /// @param index Grid to include. Must be at the same level as existing bounds.
+  /// @throws std::out_of_range if levels differ.
   void expand(const GridIndex& index)
   {
     if(index.valid())
