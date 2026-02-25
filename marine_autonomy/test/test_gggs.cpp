@@ -763,3 +763,56 @@ TEST(GGGSCellIndex, LessThanInvalidVsValid)
   EXPECT_TRUE(invalid < valid);
   EXPECT_FALSE(valid < invalid);
 }
+
+// Bug 5: CellAreaIterator asymmetric invalid marking.
+// When bounds are entirely outside the target grid, some directions left a
+// corrupted range that iterates 961 rows instead of producing an empty iterator.
+
+TEST(GGGSCellAreaIterator, BoundsEntirelyBelowGrid)
+{
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+  // Create bounds entirely south of the grid
+  double south = gi.southLatitude();
+  gz4d::PositionDegrees sw(south - 2.0, gi.westLongitude());
+  gz4d::PositionDegrees ne(south - 1.0, gi.eastLongitude());
+  gz4d::BoundsDegrees bounds(sw, ne);
+  gggs::CellAreaIterator it(gi, bounds);
+  EXPECT_FALSE(it.valid());
+}
+
+TEST(GGGSCellAreaIterator, BoundsEntirelyAboveGrid)
+{
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+  double north = gi.northLatitude();
+  gz4d::PositionDegrees sw(north + 1.0, gi.westLongitude());
+  gz4d::PositionDegrees ne(north + 2.0, gi.eastLongitude());
+  gz4d::BoundsDegrees bounds(sw, ne);
+  gggs::CellAreaIterator it(gi, bounds);
+  EXPECT_FALSE(it.valid());
+}
+
+TEST(GGGSCellAreaIterator, BoundsEntirelyLeftOfGrid)
+{
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+  double west = gi.westLongitude();
+  gz4d::PositionDegrees sw(gi.southLatitude(), west - 2.0);
+  gz4d::PositionDegrees ne(gi.northLatitude(), west - 1.0);
+  gz4d::BoundsDegrees bounds(sw, ne);
+  gggs::CellAreaIterator it(gi, bounds);
+  EXPECT_FALSE(it.valid());
+}
+
+TEST(GGGSCellAreaIterator, BoundsEntirelyRightOfGrid)
+{
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+  double east = gi.eastLongitude();
+  gz4d::PositionDegrees sw(gi.southLatitude(), east + 1.0);
+  gz4d::PositionDegrees ne(gi.northLatitude(), east + 2.0);
+  gz4d::BoundsDegrees bounds(sw, ne);
+  gggs::CellAreaIterator it(gi, bounds);
+  EXPECT_FALSE(it.valid());
+}

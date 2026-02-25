@@ -59,40 +59,30 @@ public:
   /// @param bounds Geographic bounding box to restrict iteration.
   CellAreaIterator(GridIndex grid, const gz4d::BoundsDegrees& bounds)
   {
-    CellIndex from(grid, bounds.minimum());
-    CellIndex to(grid, bounds.maximum());
+    // Extract bound coordinates as doubles for comparison with grid edges.
+    double min_lat = bounds.minimum().latitude;
+    double max_lat = bounds.maximum().latitude;
+    double min_lon = bounds.minimum().longitude;
+    double max_lon = bounds.maximum().longitude;
 
-    auto from_row = from.row();
-    if(from.grid().row() < grid.row())
-      from_row = 0;
-    if(from.grid().row() > grid.row())
-      from_row = cell_rows_per_grid;
-    
-    auto from_column = from.column();
-    if(from.grid().column() < grid.column())
-      from_column = 0;
-    if(from.grid().column() > grid.column())
-      from_column = cell_columns_per_grid;
+    // Check if bounds are entirely outside the grid in any direction.
+    if(max_lat <= grid.southLatitude())
+      return;  // bounds entirely south of grid
+    if(min_lat >= grid.northLatitude())
+      return;  // bounds entirely north of grid
+    if(max_lon <= grid.westLongitude())
+      return;  // bounds entirely west of grid
+    if(min_lon >= grid.eastLongitude())
+      return;  // bounds entirely east of grid
 
-    from_ = CellIndex(grid, from_row, from_column);
+    // Clamp the bounds to the grid extent, then compute cell indices.
+    double from_lat = std::max(min_lat, grid.southLatitude());
+    double to_lat = std::min(max_lat, grid.northLatitude());
+    double from_lon = std::max(min_lon, grid.westLongitude());
+    double to_lon = std::min(max_lon, grid.eastLongitude());
 
-    auto to_row = to.row();
-    if(to.grid().row() < grid.row())
-      to_row = cell_rows_per_grid;
-    if(to.grid().row() > grid.row())
-      to_row = cell_rows_per_grid - 1;
-    
-    auto to_column = to.column();
-    if(to.grid().column() < grid.column())
-      to_column = cell_columns_per_grid;
-    if(to.grid().column() > grid.column())
-      to_column = cell_columns_per_grid - 1;
-
-    to_ = CellIndex(grid, to_row, to_column);
-
-    if(to_row < from_row || to_column < from_column)
-      from_ = CellIndex(grid); // invalid index
-
+    from_ = CellIndex(grid, gz4d::PositionDegrees(from_lat, from_lon));
+    to_ = CellIndex(grid, gz4d::PositionDegrees(to_lat, to_lon));
     current_ = from_;
   }
 
