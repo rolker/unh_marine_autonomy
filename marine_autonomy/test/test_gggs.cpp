@@ -676,3 +676,27 @@ TEST(GGGSLevel, GridIndexLatitudeMinus91Throws)
   gggs::Level level(5);
   EXPECT_THROW(level.gridIndex(-91.0, 0.0), std::out_of_range);
 }
+
+// ============================================================================
+// Bug-fix regression tests (Issue #77)
+// ============================================================================
+
+// Bug 1: CellIndex position constructor parenthesization
+// std::min(1.0, delta_lat) clamps before dividing by span, giving wrong row
+// at level 0 (8° span).
+TEST(GGGSCellIndex, PositionConstructorLevel0)
+{
+  gggs::Level level(0);
+  // Level 0 grid_angular_span = 8.0°
+  // Place a grid whose south edge is at some known latitude.
+  // gridIndex(0.0, 0.0) → south edge at 0° (row 12, south = -96+12*8 = 0)
+  auto gi = level.gridIndex(0.0, 0.0);
+  ASSERT_TRUE(gi.valid());
+  double south = gi.southLatitude();
+  // Position 4° above the south edge of the grid
+  gz4d::PositionDegrees pos(south + 4.0, gi.westLongitude() + 1.0);
+  gggs::CellIndex ci(gi, pos);
+  ASSERT_TRUE(ci.valid());
+  // 4° into an 8° span = 50% → row ≈ 480
+  EXPECT_NEAR(ci.row(), 480, 2);
+}

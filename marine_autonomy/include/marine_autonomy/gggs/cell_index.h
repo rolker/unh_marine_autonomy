@@ -64,7 +64,7 @@ public:
   {
 
     // Note, we constrain to 1.0, but what we really need is up to 1.0.
-    double row_p = std::max(0.0, std::min(1.0, position.latitude-grid_index_.southLatitude())/grid_index_.latitudinalSpan());
+    double row_p = std::max(0.0, std::min(1.0, (position.latitude-grid_index_.southLatitude())/grid_index_.latitudinalSpan()));
     // This std::min should filter out 1.0 from above
     row_ = std::min<uint16_t>(cell_rows_per_grid-1, cell_rows_per_grid*row_p);
 
