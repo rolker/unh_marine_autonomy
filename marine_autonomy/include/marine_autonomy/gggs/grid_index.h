@@ -33,10 +33,16 @@
 
 namespace gggs
 {
-// Index for a Global Geographic Grid System grid.
+/// @brief Index identifying a single grid in the GGGS quadtree.
+///
+/// A GridIndex uniquely identifies a grid by its quadtree level, row, and column.
+/// Rows are numbered from south to north starting at -96° latitude; columns
+/// are numbered from west to east starting at -180° longitude. A default-
+/// constructed GridIndex is invalid (sentinel value).
 class GridIndex
 {
 public:
+  /// @brief Construct an invalid (sentinel) GridIndex.
   GridIndex(){}
 
   // GridIndex(double latitude, double longitude, uint8_t level) : level_(level)
@@ -45,6 +51,8 @@ public:
   //   column_ = (longitude + 180.0) / (levels[level].grid_angular_span * latitudeScaleFactor(latitude));
   // }
 
+  /// @brief Check if this index refers to an existing grid.
+  /// @return true if level, row, and column are within valid ranges.
   bool valid() const
   {
     return level_ < levels.size() && row_ < levels[level_].row_count && column_ < levels[level_].columnCount(row_);

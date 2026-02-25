@@ -34,10 +34,18 @@
 namespace gggs
 {
 
-/// Iterates over a rectangular area of GridIndexs.
+/// @brief Iterates over a rectangular area of GridIndex values.
+///
+/// Traverses all grids in the rectangle defined by two corner GridIndex
+/// values (inclusive), row by row from south-west to north-east.
+/// Both corners must be at the same quadtree level.
 class GridAreaIterator
 {
 public:
+  /// @brief Construct an iterator over grids from @p from to @p to (inclusive).
+  /// @param from South-west corner grid.
+  /// @param to North-east corner grid.
+  /// @throws std::out_of_range if levels differ.
   GridAreaIterator(GridIndex from, GridIndex to):
     from_(from), to_(to), current_(from)
   {
@@ -54,12 +62,15 @@ public:
     return &current_;
   }
 
+  /// @brief Reset to the first grid in the rectangle.
+  /// @return true if the iterator is valid after reset.
   bool reset()
   {
     current_ = from_;
     return valid();
   }
 
+  /// @brief Check if the iterator points to a valid grid.
   bool valid() const
   {
     if(current_.valid())
@@ -73,6 +84,8 @@ public:
     return false;
   }
 
+  /// @brief Advance to the next grid.
+  /// @return true if the iterator is valid after advancing.
   bool next()
   {
     if(valid())

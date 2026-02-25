@@ -26,6 +26,35 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+/// @file gggs.h
+/// @brief Umbrella header for the Global Geographic Grid System (GGGS).
+///
+/// Include this single header to access all GGGS types. Typical usage:
+///
+/// @code
+/// #include "marine_autonomy/gggs.h"
+///
+/// // Pick a level based on desired cell resolution (~1 m cells)
+/// auto level = gggs::Level::fromCellSize(1.0);
+///
+/// // Get the grid containing a geographic position
+/// auto grid = level.gridIndex(43.07, -70.76);
+///
+/// // Get the specific cell within that grid
+/// gz4d::PositionDegrees pos(43.07, -70.76);
+/// auto cell = level.cellIndex(pos);
+///
+/// // Iterate over all grids in a bounding box
+/// auto from = level.gridIndex(43.0, -71.0);
+/// auto to   = level.gridIndex(44.0, -70.0);
+/// for (gggs::GridAreaIterator git(from, to); git.valid(); git.next()) {
+///   // Iterate over cells within each grid
+///   for (gggs::CellAreaIterator cit(*git); cit.valid(); cit.next()) {
+///     // Process cell at cit->row(), cit->column()
+///   }
+/// }
+/// @endcode
+
 #ifndef PROJECT11_GGGS_H
 #define PROJECT11_GGGS_H
 
@@ -37,14 +66,5 @@
 #include "gggs/level.h"
 #include "gggs/grid_area_iterator.h"
 #include "gggs/cell_area_iterator.h"
-
-// based on "A global geographic grid system for visualizing bathymetry" by Colin Ware et al.
-// https://gi.copernicus.org/articles/9/375/2020/
-//
-// A system for indexing tiles in a quad tree using geographic coordinates.
-// At level 0, tiles are 8x8 degrees for most of the earth. Tiles at or above
-// 72 degrees of latitude cover 24 degrees of longitude while tiles at or
-// above 80 degrees of latitude cover 72 degrees of longitude. Similar
-// scale changes are also applied towards the south pole.
 
 #endif
