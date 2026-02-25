@@ -700,3 +700,17 @@ TEST(GGGSCellIndex, PositionConstructorLevel0)
   // 4° into an 8° span = 50% → row ≈ 480
   EXPECT_NEAR(ci.row(), 480, 2);
 }
+
+// Bug 2: northLatitude() can exceed +90°
+// grid_index.h used std::max(-90.0, ...) but no upper clamp. The topmost
+// level-0 grid returns northLatitude() = 96.0.
+TEST(GGGSGridIndex, NorthLatitudeClampedAt90)
+{
+  gggs::Level level(0);
+  // Row 23 is the topmost level-0 row. south = -96+23*8 = 88°, north = 96°
+  // but it should be clamped to 90°.
+  auto gi = level.gridIndex(89.0, 0.0);
+  ASSERT_TRUE(gi.valid());
+  EXPECT_LE(gi.northLatitude(), 90.0);
+  EXPECT_GE(gi.southLatitude(), -90.0);
+}

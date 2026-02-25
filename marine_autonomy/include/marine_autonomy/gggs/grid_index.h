@@ -29,6 +29,7 @@
 #ifndef PROJECT11_GGGS_GRID_INDEX_H
 #define PROJECT11_GGGS_GRID_INDEX_H
 
+#include <algorithm>
 #include "level_spec.h"
 
 namespace gggs
@@ -85,12 +86,12 @@ public:
 
   double northLatitude() const
   {
-    return std::max(-90.0, -96.0+(row_+1)*levels[level_].grid_angular_span);
+    return std::clamp(-96.0+(row_+1)*levels[level_].grid_angular_span, -90.0, 90.0);
   }
 
   double southLatitude() const
   {
-    return std::max(-90.0, -96.0+row_*levels[level_].grid_angular_span);
+    return std::clamp(-96.0+row_*levels[level_].grid_angular_span, -90.0, 90.0);
   }
 
   double eastLongitude() const
