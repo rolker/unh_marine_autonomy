@@ -30,6 +30,7 @@
 #define PROJECT11_GGGS_LEVEL_H
 
 #include <algorithm>
+#include <stdexcept>
 #include <string>
 #include "cell_index.h"
 
@@ -78,8 +79,21 @@ public:
   /// @param latitude Latitude in degrees.
   /// @param longitude Longitude in degrees.
   /// @return GridIndex for the grid containing (latitude, longitude).
+  /// @throws std::out_of_range if latitude is more than 1e-6° outside [-90, 90].
   GridIndex gridIndex(double latitude, double longitude) const
   {
+    // Wrap longitude into [-180, 180).
+    longitude = std::fmod(longitude + 180.0, 360.0);
+    if (longitude < 0.0) longitude += 360.0;
+    longitude -= 180.0;
+
+    // Clamp latitude for small floating-point overshoot; throw for clearly invalid values.
+    constexpr double lat_epsilon = 1e-6;
+    if (latitude > 90.0 + lat_epsilon || latitude < -90.0 - lat_epsilon)
+      throw std::out_of_range("GGGS latitude " + std::to_string(latitude) +
+        " is out of range [-90, 90]");
+    latitude = std::clamp(latitude, -90.0, 90.0);
+
     uint32_t row = (latitude + 96.0) / levels[level_].grid_angular_span;
     uint32_t column = (longitude + 180.0) / (levels[level_].grid_angular_span * latitudeScaleFactor(latitude));
 
