@@ -29,6 +29,8 @@
 #ifndef PROJECT11_GGGS_CELL_INDEX_H
 #define PROJECT11_GGGS_CELL_INDEX_H
 
+#include <algorithm>
+#include <cassert>
 #include "level_spec.h"
 
 namespace gggs
@@ -49,6 +51,8 @@ public:
   CellIndex(GridIndex grid, uint16_t row, uint16_t column):
     grid_index_(grid), row_(row), column_(column)
   {
+    assert(row < cell_rows_per_grid && "CellIndex row out of bounds");
+    assert(column < cell_columns_per_grid && "CellIndex column out of bounds");
   }
 
   // CellIndex(double latitude, double longitude, GridIndex grid)
@@ -64,7 +68,7 @@ public:
   {
 
     // Note, we constrain to 1.0, but what we really need is up to 1.0.
-    double row_p = std::max(0.0, std::min(1.0, position.latitude-grid_index_.southLatitude())/grid_index_.latitudinalSpan());
+    double row_p = std::max(0.0, std::min(1.0, (position.latitude-grid_index_.southLatitude())/grid_index_.latitudinalSpan()));
     // This std::min should filter out 1.0 from above
     row_ = std::min<uint16_t>(cell_rows_per_grid-1, cell_rows_per_grid*row_p);
 
@@ -110,8 +114,15 @@ public:
   }
 
   /// Less than operator allowing use as std::map key.
+  /// Invalid indices sort before all valid indices.
   friend bool operator<(const CellIndex& lhs, const CellIndex& rhs)
   {
+    if (!lhs.valid() && !rhs.valid())
+      return false;
+    if (!lhs.valid())
+      return true;
+    if (!rhs.valid())
+      return false;
     if (lhs.grid_index_ != rhs.grid_index_)
       return lhs.grid_index_ < rhs.grid_index_;
     if (lhs.row_ != rhs.row_)

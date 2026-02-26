@@ -28,6 +28,7 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <type_traits>
 #include "marine_autonomy/gggs.h"
 
 // ============================================================================
@@ -675,4 +676,172 @@ TEST(GGGSLevel, GridIndexLatitudeMinus91Throws)
   // Latitude clearly outside [-90, 90] on the south side should throw std::out_of_range.
   gggs::Level level(5);
   EXPECT_THROW(level.gridIndex(-91.0, 0.0), std::out_of_range);
+}
+
+// ============================================================================
+// Bug-fix regression tests (Issue #77)
+// ============================================================================
+
+// Bug 1: CellIndex position constructor parenthesization
+// std::min(1.0, delta_lat) clamps before dividing by span, giving wrong row
+// at level 0 (8° span).
+TEST(GGGSCellIndex, PositionConstructorLevel0)
+{
+  gggs::Level level(0);
+  // Level 0 grid_angular_span = 8.0°
+  // Place a grid whose south edge is at some known latitude.
+  // gridIndex(0.0, 0.0) → south edge at 0° (row 12, south = -96+12*8 = 0)
+  auto gi = level.gridIndex(0.0, 0.0);
+  ASSERT_TRUE(gi.valid());
+  double south = gi.southLatitude();
+  // Position 4° above the south edge of the grid
+  gz4d::PositionDegrees pos(south + 4.0, gi.westLongitude() + 1.0);
+  gggs::CellIndex ci(gi, pos);
+  ASSERT_TRUE(ci.valid());
+  // 4° into an 8° span = 50% → row ≈ 480
+  EXPECT_NEAR(ci.row(), 480, 2);
+}
+
+// Bug 2: northLatitude() can exceed +90°
+// grid_index.h used std::max(-90.0, ...) but no upper clamp. The topmost
+// level-0 grid returns northLatitude() = 96.0.
+TEST(GGGSGridIndex, NorthLatitudeClampedAt90)
+{
+  gggs::Level level(0);
+  // Row 23 is the topmost level-0 row. south = -96+23*8 = 88°, north = 96°
+  // but it should be clamped to 90°.
+  auto gi = level.gridIndex(89.0, 0.0);
+  ASSERT_TRUE(gi.valid());
+  EXPECT_LE(gi.northLatitude(), 90.0);
+  EXPECT_GE(gi.southLatitude(), -90.0);
+}
+
+// Bug 3: levels array is not const, allowing accidental mutation.
+TEST(GGGSLevelSpecs, LevelsArrayIsConst)
+{
+  static_assert(std::is_const_v<std::remove_reference_t<decltype(gggs::levels)>>,
+    "gggs::levels should be const");
+}
+
+// Bug 4: operator< inconsistent with operator== for invalid indices.
+// operator== treats all invalid indices as equal, but operator< compared raw
+// fields, breaking strict-weak-ordering guarantees.
+
+TEST(GGGSGridIndex, LessThanBothInvalid)
+{
+  gggs::GridIndex a;
+  gggs::GridIndex b;
+  // Both invalid: neither should be less than the other
+  EXPECT_FALSE(a < b);
+  EXPECT_FALSE(b < a);
+}
+
+TEST(GGGSGridIndex, LessThanInvalidVsValid)
+{
+  gggs::GridIndex invalid;
+  gggs::Level level(5);
+  auto valid = level.gridIndex(43.0, -70.5);
+  // Invalid sorts before valid (invalid < valid is true)
+  EXPECT_TRUE(invalid < valid);
+  EXPECT_FALSE(valid < invalid);
+}
+
+TEST(GGGSCellIndex, LessThanBothInvalid)
+{
+  gggs::CellIndex a;
+  gggs::CellIndex b;
+  EXPECT_FALSE(a < b);
+  EXPECT_FALSE(b < a);
+}
+
+TEST(GGGSCellIndex, LessThanInvalidVsValid)
+{
+  gggs::CellIndex invalid;
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+  gggs::CellIndex valid(gi, 0, 0);
+  EXPECT_TRUE(invalid < valid);
+  EXPECT_FALSE(valid < invalid);
+}
+
+// Bug 5: CellAreaIterator asymmetric invalid marking.
+// When bounds are entirely outside the target grid, some directions left a
+// corrupted range that iterates 961 rows instead of producing an empty iterator.
+
+TEST(GGGSCellAreaIterator, BoundsEntirelyBelowGrid)
+{
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+  // Create bounds entirely south of the grid
+  double south = gi.southLatitude();
+  gz4d::PositionDegrees sw(south - 2.0, gi.westLongitude());
+  gz4d::PositionDegrees ne(south - 1.0, gi.eastLongitude());
+  gz4d::BoundsDegrees bounds(sw, ne);
+  gggs::CellAreaIterator it(gi, bounds);
+  EXPECT_FALSE(it.valid());
+}
+
+TEST(GGGSCellAreaIterator, BoundsEntirelyAboveGrid)
+{
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+  double north = gi.northLatitude();
+  gz4d::PositionDegrees sw(north + 1.0, gi.westLongitude());
+  gz4d::PositionDegrees ne(north + 2.0, gi.eastLongitude());
+  gz4d::BoundsDegrees bounds(sw, ne);
+  gggs::CellAreaIterator it(gi, bounds);
+  EXPECT_FALSE(it.valid());
+}
+
+TEST(GGGSCellAreaIterator, BoundsEntirelyLeftOfGrid)
+{
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+  double west = gi.westLongitude();
+  gz4d::PositionDegrees sw(gi.southLatitude(), west - 2.0);
+  gz4d::PositionDegrees ne(gi.northLatitude(), west - 1.0);
+  gz4d::BoundsDegrees bounds(sw, ne);
+  gggs::CellAreaIterator it(gi, bounds);
+  EXPECT_FALSE(it.valid());
+}
+
+TEST(GGGSCellAreaIterator, BoundsEntirelyRightOfGrid)
+{
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+  double east = gi.eastLongitude();
+  gz4d::PositionDegrees sw(gi.southLatitude(), east + 1.0);
+  gz4d::PositionDegrees ne(gi.northLatitude(), east + 2.0);
+  gz4d::BoundsDegrees bounds(sw, ne);
+  gggs::CellAreaIterator it(gi, bounds);
+  EXPECT_FALSE(it.valid());
+}
+
+// Bug 6: CellIndex public constructor now asserts on out-of-bounds row/column.
+// After Bug 5, no internal code passes out-of-bounds values.
+TEST(GGGSCellIndex, OutOfBoundsRowAssertsInDebug)
+{
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+#ifdef NDEBUG
+  // In release builds, assert is disabled; verify valid() returns false.
+  gggs::CellIndex ci(gi, gggs::cell_rows_per_grid, 0);
+  EXPECT_FALSE(ci.valid());
+#else
+  EXPECT_DEATH(gggs::CellIndex(gi, gggs::cell_rows_per_grid, 0),
+    "CellIndex row out of bounds");
+#endif
+}
+
+TEST(GGGSCellIndex, OutOfBoundsColumnAssertsInDebug)
+{
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+#ifdef NDEBUG
+  gggs::CellIndex ci(gi, 0, gggs::cell_columns_per_grid);
+  EXPECT_FALSE(ci.valid());
+#else
+  EXPECT_DEATH(gggs::CellIndex(gi, 0, gggs::cell_columns_per_grid),
+    "CellIndex column out of bounds");
+#endif
 }

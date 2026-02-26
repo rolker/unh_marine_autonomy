@@ -106,7 +106,7 @@ public:
 };
 
 /// @brief Pre-computed metadata for all 21 quadtree levels (0-20).
-inline std::array<LevelSpecs, 21> levels = {{
+inline const std::array<LevelSpecs, 21> levels = {{
   LevelSpecs(0),  LevelSpecs(1),  LevelSpecs(2),  LevelSpecs(3),  LevelSpecs(4),  LevelSpecs(5),
   LevelSpecs(6),  LevelSpecs(7),  LevelSpecs(8),  LevelSpecs(9),  LevelSpecs(10), LevelSpecs(11),
   LevelSpecs(12), LevelSpecs(13), LevelSpecs(14), LevelSpecs(15), LevelSpecs(16), LevelSpecs(17),
