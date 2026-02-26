@@ -12,7 +12,7 @@
 | `joy_to_helm` | Python | Converts joystick input to helm commands for manual piloting |
 | `marine_autonomy` | C++/Python | Meta-package with launch files, geodesic utilities, and system configuration |
 | `marine_autonomy_integration_tests` | Python (CMake) | Cross-package integration tests for mission and navigation flows |
-| `marine_interfaces` | C++ (IDL) | ROS 2 message definitions for helm commands, heartbeats, navigation, and sensor data (22 msg types) |
+| `marine_interfaces` | C++ (IDL) | ROS 2 message definitions for helm commands, heartbeats, navigation, and sensor data (34 msg types) |
 | `mission_manager` | Python | Converts mission plans from CAMP GCS into navigation tasks and manages task execution |
 | `mission_manager_interfaces` | C++ (IDL) | Service definitions for task manipulation (3 srv types) |
 
@@ -46,7 +46,7 @@ unh_marine_autonomy/
 ├── marine_autonomy_integration_tests/
 │   └── test/                   # Launch-based integration tests
 ├── marine_interfaces/
-│   ├── msg/                    # 22 message definitions
+│   ├── msg/                    # 34 message definitions
 │   └── bmr/                    # Bag migration rules
 ├── mission_manager/
 │   ├── mission_manager/
@@ -61,12 +61,20 @@ unh_marine_autonomy/
 
 ## Architecture Overview
 
-The system follows a layered command flow: **CAMP** (ground control station, separate
-repo) sends mission plans through the **command bridge** (reliable delivery over lossy
-networks) to the **mission manager** (task decomposition), which delegates to the
-navigation stack (separate `unh_marine_navigation` repo) for path execution. The
-**helm manager** arbitrates between manual (joystick) and autonomous control sources,
-enforcing single-active-mode safety.
+This repository provides the **robot-side autonomy stack** — everything needed to
+receive missions, arbitrate control, and drive the vehicle. It is self-contained
+and can be deployed to a robot without operator-side dependencies.
+
+The internal command flow: the **mission manager** decomposes mission plans into
+navigation tasks, which are executed by the navigation stack. The **helm manager**
+arbitrates between manual (joystick) and autonomous control sources, enforcing
+single-active-mode safety. The **command bridge** provides reliable command delivery
+over lossy radio/satellite links.
+
+The full system includes external components in other repositories:
+- **CAMP** (ground control station, in `camp` repo) — operator UI for mission planning
+- **unh_marine_navigation** — path planning and task execution
+- **Platform drivers** — vehicle-specific hardware interfaces
 
 Key architectural patterns:
 - **Send-until-ack**: Command bridge uses timestamp-based deduplication for reliable

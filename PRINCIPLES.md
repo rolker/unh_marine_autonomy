@@ -26,10 +26,9 @@ and `udp_bridge` are designed for community reuse outside this framework.
 
 ## Simulation-First Validation
 
-No behavior reaches the water without passing through simulation. The workspace
-layers (`unh_marine_simulation` in the simulation layer, `vrx` in the underlay)
-provide a Gazebo-based test environment where missions, safety behaviors, and new
-algorithms are validated before field trials.
+No behavior reaches the water without passing through simulation. The
+`unh_marine_simulation` package provides a simulation environment where missions,
+safety behaviors, and new algorithms are validated before field trials.
 
 ## Iterative, Validated Evolution
 
