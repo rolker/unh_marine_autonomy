@@ -27,6 +27,16 @@ This repository is typically part of a layered workspace setup.
 colcon build --symlink-install
 ```
 
+### Workspace Integration
+
+This repository works standalone — clone it, build with `colcon`, and run. It can
+also be used with the
+[ros2_agent_workspace](https://github.com/rolker/ros2_agent_workspace), which
+provides layered workspace management, CI tooling, and AI-agent support. The
+`config/` directory contains `.repos` files that the workspace uses to pull in
+dependencies across six layers (underlay, core, platforms, sensors, simulation, ui).
+See the workspace repo for setup instructions.
+
 ### Community & Contributing
 Contributions from the marine robotics community are welcome.
 - **Issues**: Please use GitHub Issues for bug reports and feature requests.
