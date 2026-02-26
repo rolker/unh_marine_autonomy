@@ -591,3 +591,88 @@ TEST(GGGSCore, VerifySameLevelNoThrowOnMatch)
   auto gi2 = l5.gridIndex(44.0, -69.0);
   EXPECT_NO_THROW(gggs::verifySameLevel(gi1, gi2));
 }
+
+// ============================================================================
+// Level::gridIndex — longitude wrapping and latitude clamping/validation
+// ============================================================================
+
+TEST(GGGSLevel, GridIndexLongitude180WrapsToNeg180)
+{
+  // +180° and -180° are the same meridian; the result should be the same grid.
+  gggs::Level level(5);
+  auto gi_pos = level.gridIndex(0.0, 180.0);
+  auto gi_neg = level.gridIndex(0.0, -180.0);
+  EXPECT_TRUE(gi_pos.valid());
+  EXPECT_EQ(gi_pos, gi_neg);
+}
+
+TEST(GGGSLevel, GridIndexLongitude360WrapsToZero)
+{
+  // 360° should wrap to 0°.
+  gggs::Level level(5);
+  auto gi_360 = level.gridIndex(0.0, 360.0);
+  auto gi_0   = level.gridIndex(0.0, 0.0);
+  EXPECT_TRUE(gi_360.valid());
+  EXPECT_EQ(gi_360, gi_0);
+}
+
+TEST(GGGSLevel, GridIndexLongitudeNeg180Point0001Wraps)
+{
+  // -180.0001 wraps to ~179.9999 and should produce a valid grid.
+  gggs::Level level(5);
+  auto gi = level.gridIndex(0.0, -180.0001);
+  EXPECT_TRUE(gi.valid());
+  auto gi_ref = level.gridIndex(0.0, 179.9999);
+  EXPECT_EQ(gi, gi_ref);
+}
+
+TEST(GGGSLevel, GridIndexLatitude90Valid)
+{
+  // Latitude exactly at the north pole should return a valid grid.
+  gggs::Level level(5);
+  auto gi = level.gridIndex(90.0, 0.0);
+  EXPECT_TRUE(gi.valid());
+}
+
+TEST(GGGSLevel, GridIndexLatitudeNearPoleClamps)
+{
+  // A tiny overshoot above 90° (within epsilon) should clamp to the pole.
+  gggs::Level level(5);
+  auto gi_clamped = level.gridIndex(90.0 + 1e-10, 0.0);
+  auto gi_exact   = level.gridIndex(90.0, 0.0);
+  EXPECT_TRUE(gi_clamped.valid());
+  EXPECT_EQ(gi_clamped, gi_exact);
+}
+
+TEST(GGGSLevel, GridIndexLatitude91Throws)
+{
+  // Latitude clearly outside [-90, 90] should throw std::out_of_range.
+  gggs::Level level(5);
+  EXPECT_THROW(level.gridIndex(91.0, 0.0), std::out_of_range);
+}
+
+TEST(GGGSLevel, GridIndexLatitudeMinus90Valid)
+{
+  // Latitude exactly at the south pole should return a valid grid.
+  gggs::Level level(5);
+  auto gi = level.gridIndex(-90.0, 0.0);
+  EXPECT_TRUE(gi.valid());
+}
+
+TEST(GGGSLevel, GridIndexLatitudeNearSouthPoleClamps)
+{
+  // A tiny overshoot below -90° (within epsilon) should clamp to the pole.
+  gggs::Level level(5);
+  auto gi_clamped = level.gridIndex(-90.0 - 1e-10, 0.0);
+  auto gi_exact   = level.gridIndex(-90.0, 0.0);
+  EXPECT_TRUE(gi_clamped.valid());
+  EXPECT_TRUE(gi_exact.valid());
+  EXPECT_EQ(gi_clamped, gi_exact);
+}
+
+TEST(GGGSLevel, GridIndexLatitudeMinus91Throws)
+{
+  // Latitude clearly outside [-90, 90] on the south side should throw std::out_of_range.
+  gggs::Level level(5);
+  EXPECT_THROW(level.gridIndex(-91.0, 0.0), std::out_of_range);
+}
