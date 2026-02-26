@@ -136,10 +136,10 @@ defines the `.repos` files that pull in all project repos across 6 layers:
 
 | Layer | Config File | Repos |
 |-------|-------------|-------|
-| underlay | `config/repos/underlay.repos` | geographic_info, vrx, nmea_navsat_driver, + 4 more |
+| underlay | `config/repos/underlay.repos` | geographic_info, vrx, norbit, ros2sonic, + 5 more |
 | core | `config/repos/core.repos` | unh_marine_navigation, udp_bridge, marine_ais, + 3 more |
 | platforms | `config/repos/platforms.repos` | mru_transform, ben_project11, + 5 more |
-| sensors | `config/repos/sensors.repos` | unh_marine_radar, cube_bathymetry, + 6 more |
+| sensors | `config/repos/sensors.repos` | unh_marine_radar, cube_bathymetry, + 4 more |
 | simulation | `config/repos/simulation.repos` | unh_marine_simulation |
 | ui | `config/repos/ui.repos` | camp, rqt_marine_radar, + 2 more |
 
