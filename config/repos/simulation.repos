@@ -1,4 +1,8 @@
 repositories:
+  ben_gazebo:
+    type: git
+    url: https://github.com/rolker/ben_gazebo.git
+    version: jazzy
   unh_marine_simulation:
     type: git
     url: https://github.com/rolker/unh_marine_simulation.git
