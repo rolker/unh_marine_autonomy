@@ -1,4 +1,4 @@
-# Research Digest: Project
+# Research Digest: Marine Robotics
 
 <!-- Last updated: 2026-02-27 -->
 <!-- If older than 30 days, consider running /research --refresh; entries older than 90 days should be flagged for review -->
@@ -9,7 +9,7 @@
 
 Key takeaways:
 - ROS 2 is the dominant framework for ASV software stacks, with competition teams (RoboBoat, RoboSub) building full autonomy pipelines on ROS 2 Jazzy
-- The ROS Maritime Robotics Working Group maintains shared packages for USVs and UUVs covering controls, simulation, and drivers
+- The ROS Maritime Working Group maintains shared packages for USVs and UUVs covering controls, simulation, and drivers
 - Reinforcement learning approaches for ASV decision-making and control are an active research area, with recent work on distributional RL for integrated planning and control
 
 **Relevance**: Direct alignment with this project's ASV platforms (EchoBoats, BEN); ROS Maritime packages may offer reusable components for navigation and control
