@@ -12,10 +12,10 @@ layers above it in this list:
 
 | Layer | Directory | Repos | Packages | Purpose |
 |-------|-----------|-------|----------|---------|
-| underlay | `underlay_ws` | 8 | 20 | Third-party and foundational dependencies |
+| underlay | `underlay_ws` | 9 | 22 | Third-party and foundational dependencies |
 | core | `core_ws` | 6 | 24 | Core autonomy, navigation, interfaces |
-| platforms | `platforms_ws` | 7 | 10 | Vehicle-specific configurations and drivers |
-| sensors | `sensors_ws` | 6 | 11 | Sensor drivers and perception |
+| platforms | `platforms_ws` | 7 | 9 | Vehicle-specific configurations and drivers |
+| sensors | `sensors_ws` | 6 | 10 | Sensor drivers and perception |
 | simulation | `simulation_ws` | 2 | 7 | Simulation environments and models |
 | ui | `ui_ws` | 4 | 4 | Operator GUIs and visualization |
 
