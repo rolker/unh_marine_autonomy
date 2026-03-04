@@ -23,6 +23,10 @@ repositories:
     type: git
     url: https://github.com/rolker/lr30_project11.git
     version: jazzy
+  drix_description:
+    type: git
+    url: https://github.com/rolker/drix_description.git
+    version: jazzy
   molab_description:
     type: git
     url: https://github.com/rolker/molab_description.git
