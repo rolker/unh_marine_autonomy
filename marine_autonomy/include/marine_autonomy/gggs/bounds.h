@@ -105,12 +105,12 @@ public:
 
   uint64_t cellRowCount() const
   {
-    return gridRowCount() * cell_rows_per_grid;
+    return static_cast<uint64_t>(gridRowCount()) * cell_rows_per_grid;
   }
 
   uint64_t cellColumnCount(uint32_t row) const
   {
-    return gridColumnCount(row) * cell_columns_per_grid;
+    return static_cast<uint64_t>(gridColumnCount(row)) * cell_columns_per_grid;
   }
 
   friend std::ostream& operator<< (std::ostream& stream, const GridBounds& bounds)
