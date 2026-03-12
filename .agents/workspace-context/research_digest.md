@@ -119,3 +119,10 @@ Possible implementation approach:
 3. Upload the world SDF via the web form or automate via Fuel REST API
 4. Optionally factor out common feature types (buoy models, beacon models) into reusable Fuel models referenced by `<include>` instead of inline — this would reduce world SDF size and enable model reuse across worlds
 5. Add a `--fuel-upload` flag or post-generation script to `marine_charts_to_gazebo_world`
+
+Existing Fuel models relevant to `marine_charts_to_gazebo_world`:
+- **Buoys** (13 models): VRX/RobotX marker buoys (`mb_marker_buoy_{red,black,green,white}`, `mb_round_buoy_{orange,black}` by OpenRobotics; `surmark950410`, `surmark46104{white,black}` by ngxingyu) — mesh-based, colored; could replace parametric cylinder+cone buoys
+- **Coastal environment**: `Coast Waves`/`Coast Water` (6km wave visuals), `Dock` (MBZIRC), `Pier` (wooden pier), `Beach` (5.9km environment) — all by OpenRobotics
+- **Structures**: `Water tower`, `Radio tower`, `Tower crane`, `Truss bridge`, `Office Building`, `Apartment`, `Depot` — generic but usable for landmark features
+- **Bathymetric heightmaps**: `Monterey Bay` (GEBCO bathymetry, by jennuine), `Portuguese Ledge` (MBARI seafloor data, by OpenRobotics) — validates that sharing bathymetric terrain tiles on Fuel is an established pattern
+- **Gaps — no Fuel models exist for**: navigation beacons, navigation lights/lighthouses, shore constructions (breakwaters, seawalls, groynes, rip-rap), pontoons/floating docks, mooring facilities (bollards, dolphins), piles/posts, or realistic S57 BOYSHP-accurate buoy shapes (conical, can, pillar, spar)
