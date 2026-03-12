@@ -91,3 +91,31 @@ Key takeaways:
 - **Anchorage areas**: could be rendered as marked zones in the simulation world
 - **Prominent features**: Coast Pilot describes towers, tanks, stacks, and other landmarks with locations — could improve feature placement beyond what S57 provides
 - **Implementation approach**: a Coast Pilot XML parser would need (1) XML download/cache by volume+chapter, (2) `<CP_GEO_LOC>` extraction for spatial indexing, (3) regex/NLP extraction of numeric values from `<paraText>` for bridge clearances, wharf dimensions, and facility heights, (4) spatial matching to existing S57 features by proximity
+
+---
+
+## Gazebo Fuel — Sharing Generated Worlds
+
+**Added**: 2026-03-12 | **Sources**: [Fuel portal](https://app.gazebosim.org), [About Fuel](https://gazebosim.org/docs/latest/fuel/), [gz-fuel-tools](https://github.com/gazebosim/gz-fuel-tools), [Contributing a world](https://gazebosim.org/docs/latest/fuel_contributing_world/), [Importing a mesh to Fuel](https://gazebosim.org/api/sim/7/meshtofuel.html), [fuel_tools library](https://gazebosim.org/libs/fuel_tools/)
+
+Key takeaways:
+- Gazebo Fuel (app.gazebosim.org) is a community repository for sharing simulation **models** and **worlds**; both asset types are supported
+- **Model upload**: via CLI (`gz fuel upload -m ~/path --header 'Private-token: <TOKEN>'`) or web UI drag-and-drop; requires `model.config` + `model.sdf` + meshes/textures in a standard directory layout; thumbnails (5 PNGs) recommended
+- **World upload**: via web form only (`app.gazebosim.org/fuel/worlds/upload`); accepts name, description, tags, and world SDF file; no CLI world upload documented as of gz-fuel-tools 10
+- **Authentication**: access tokens generated at `app.gazebosim.org/settings#access_tokens`; stored in `~/.gz/fuel/config.yaml` for automatic use
+- **World referencing models**: worlds on Fuel typically reference models by Fuel URI (`https://fuel.gazebosim.org/1.0/<owner>/models/<name>`); Gazebo auto-downloads referenced models at runtime
+- **Self-contained worlds**: worlds with inline `<model>` elements and local heightmaps work but require `GZ_SIM_RESOURCE_PATH` to be set for resource discovery — not ideal for Fuel distribution
+
+Challenges for `marine_charts_to_gazebo_world` (rolker/unh_marine_simulation#42):
+- **Terrain heightmaps are separate model directories**: the generator outputs terrain as `terrain_{name}/` with `model.config`, `model.sdf`, and `heightmap.png`; the world SDF references these via `<include><uri>model://terrain_{name}</uri></include>` — these would need to be uploaded as separate Fuel models first
+- **Feature models are inline**: buildings, buoys, bridges, and shore constructions are generated as inline `<model>` elements in the world SDF (not separate model directories) — this is compatible with Fuel world upload but means thousands of inline models in a single SDF file
+- **No mesh files**: all geometry is parametric (cylinders, cones, boxes, polylines) — no COLLADA/OBJ meshes, so the standard Fuel model structure (meshes/ directory) doesn't apply
+- **Generated textures**: terrain textures are simple 16x16 PNGs embedded in the terrain model directory; these would transfer to Fuel with the terrain model upload
+- **Reproducibility vs. sharing**: worlds are deterministically generated from S57 charts + parameters, so sharing the generation recipe (region bounds, flags) may be more useful than sharing the output — but pre-built worlds lower the barrier for users without ENC data access
+
+Possible implementation approach:
+1. Upload terrain heightmap models to Fuel as individual models (each with `model.config` + `model.sdf` + `heightmap.png` + textures)
+2. Rewrite terrain `<include>` URIs in the world SDF to point to Fuel model URIs instead of local `model://` paths
+3. Upload the world SDF via the web form or automate via Fuel REST API
+4. Optionally factor out common feature types (buoy models, beacon models) into reusable Fuel models referenced by `<include>` instead of inline — this would reduce world SDF size and enable model reuse across worlds
+5. Add a `--fuel-upload` flag or post-generation script to `marine_charts_to_gazebo_world`
