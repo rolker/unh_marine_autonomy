@@ -36,15 +36,16 @@ namespace gggs
 
 /// @brief Axis-aligned bounding box over GridIndex values at a single level.
 ///
-/// Tracks the minimum and maximum grid row/column as grids are added
-/// via expand(). All grids must be at the same quadtree level.
+/// Tracks row range and geographic longitude extent as grids are added
+/// via expand(). Uses per-row column counts to correctly handle polar
+/// latitude bands where column counts change.
 class GridBounds
 {
 public:
   /// @brief Check if bounds contain at least one valid grid.
   bool valid() const
   {
-    return min_.valid() && max_.valid() && min_.level() == max_.level();
+    return level_ < levels.size();
   }
 
   /// @brief Expand bounds to include the given grid.
@@ -56,60 +57,93 @@ public:
     {
       if(valid())
       {
-        min_ = min(min_, index);
-        max_ = max(max_, index);
+        verifySameLevel(minimum(), index);
+        min_row_ = std::min(min_row_, index.row());
+        max_row_ = std::max(max_row_, index.row());
+        west_lon_ = std::min(west_lon_, index.westLongitude());
+        east_lon_ = std::max(east_lon_, index.eastLongitude());
       }
       else
       {
-        min_ = index;
-        max_ = index;
+        level_ = index.level();
+        min_row_ = index.row();
+        max_row_ = index.row();
+        west_lon_ = index.westLongitude();
+        east_lon_ = index.eastLongitude();
       }
     }
   }
 
-  const GridIndex& minimum() const
+  GridIndex minimum() const
   {
-    return min_;
+    if(!valid())
+      return GridIndex();
+    return GridIndex(level_, min_row_, firstColumn(min_row_));
   }
 
-  const GridIndex& maximum() const
+  GridIndex maximum() const
   {
-    return max_;
+    if(!valid())
+      return GridIndex();
+    return GridIndex(level_, max_row_, lastColumn(max_row_));
   }
 
   uint32_t gridRowCount() const
   {
-    return 1+max_.row()-min_.row();
+    if(!valid())
+      return 0;
+    return 1 + max_row_ - min_row_;
   }
 
-  uint32_t gridColumnCount() const
+  uint32_t gridColumnCount(uint32_t row) const
   {
-    if(min_.valid())
-      return 1+max_.column()-min_.column();
-    return 0;
+    if(!valid())
+      return 0;
+    return 1 + lastColumn(row) - firstColumn(row);
   }
 
   uint64_t cellRowCount() const
   {
-    return gridRowCount()*cell_rows_per_grid;
+    return gridRowCount() * cell_rows_per_grid;
   }
 
-  uint64_t cellColumnCount() const
+  uint64_t cellColumnCount(uint32_t row) const
   {
-    return gridColumnCount()*cell_columns_per_grid;
+    return gridColumnCount(row) * cell_columns_per_grid;
   }
 
   friend std::ostream& operator<< (std::ostream& stream, const GridBounds& bounds)
   {
-    stream << "min: " << bounds.min_ << " max: " << bounds.max_;
+    if(bounds.valid())
+      stream << "min: " << bounds.minimum() << " max: " << bounds.maximum();
+    else
+      stream << "invalid GridBounds";
     return stream;
   }
 
-
 private:
-  GridIndex min_;
-  GridIndex max_;
+  uint32_t firstColumn(uint32_t row) const
+  {
+    double span = levels[level_].gridLongitudinalSpan(row);
+    return static_cast<uint32_t>((west_lon_ + 180.0) / span);
+  }
 
+  uint32_t lastColumn(uint32_t row) const
+  {
+    double span = levels[level_].gridLongitudinalSpan(row);
+    uint32_t col = static_cast<uint32_t>((east_lon_ + 180.0) / span);
+    // east_lon_ is the east edge of a grid; if it falls exactly on a boundary,
+    // it belongs to the previous column
+    if(east_lon_ + 180.0 > 0.0 && std::fmod(east_lon_ + 180.0, span) < 1e-10)
+      col--;
+    return col;
+  }
+
+  uint8_t level_ = 255;
+  uint32_t min_row_ = 0;
+  uint32_t max_row_ = 0;
+  double west_lon_ = 0.0;
+  double east_lon_ = 0.0;
 };
 
 }

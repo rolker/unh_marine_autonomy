@@ -38,18 +38,27 @@ namespace gggs
 ///
 /// Traverses all grids in the rectangle defined by two corner GridIndex
 /// values (inclusive), row by row from south-west to north-east.
-/// Both corners must be at the same quadtree level.
+/// Uses longitude-based per-row column ranges to correctly handle
+/// polar latitude bands where column counts change.
 class GridAreaIterator
 {
 public:
   /// @brief Construct an iterator over grids from @p from to @p to (inclusive).
-  /// @param from South-west corner grid.
-  /// @param to North-east corner grid.
+  /// @param from One corner grid.
+  /// @param to Opposite corner grid.
   /// @throws std::out_of_range if levels differ.
-  GridAreaIterator(GridIndex from, GridIndex to):
-    from_(from), to_(to), current_(from)
+  GridAreaIterator(GridIndex from, GridIndex to)
   {
     verifySameLevel(from, to);
+    level_ = from.level();
+    from_row_ = std::min(from.row(), to.row());
+    to_row_ = std::max(from.row(), to.row());
+    west_lon_ = std::min(from.westLongitude(), to.westLongitude());
+    east_lon_ = std::max(from.eastLongitude(), to.eastLongitude());
+    current_row_ = from_row_;
+    computeRowColumns(current_row_);
+    current_col_ = row_first_col_;
+    updateCurrent();
   }
 
   const GridIndex& operator*() const
@@ -66,48 +75,63 @@ public:
   /// @return true if the iterator is valid after reset.
   bool reset()
   {
-    current_ = from_;
+    current_row_ = from_row_;
+    computeRowColumns(current_row_);
+    current_col_ = row_first_col_;
+    updateCurrent();
     return valid();
   }
 
   /// @brief Check if the iterator points to a valid grid.
   bool valid() const
   {
-    if(current_.valid())
-    {
-      return
-        current_.row() >= from_.row() &&
-        current_.column() >= from_.column() &&
-        current_.row() <= to_.row() &&
-        current_.column() <= to_.column();
-    }
-    return false;
+    return current_.valid() && current_row_ <= to_row_;
   }
 
   /// @brief Advance to the next grid.
   /// @return true if the iterator is valid after advancing.
   bool next()
   {
-    if(valid())
+    if(!valid())
+      return false;
+    current_col_++;
+    if(current_col_ > row_last_col_)
     {
-      auto new_row = current_.row();
-      auto new_column = current_.column()+1;
-      if(new_column > to_.column())
+      current_row_++;
+      if(current_row_ > to_row_)
       {
-        new_row += 1;
-        new_column = from_.column();
-      }
-      if(new_row > to_.row())
         current_ = GridIndex();
-      else
-        current_ = GridIndex(current_.level_, new_row, new_column);
+        return false;
+      }
+      computeRowColumns(current_row_);
+      current_col_ = row_first_col_;
     }
+    updateCurrent();
     return valid();
   }
 
 private:
-  GridIndex from_;
-  GridIndex to_;
+  void computeRowColumns(uint32_t row)
+  {
+    double span = levels[level_].gridLongitudinalSpan(row);
+    row_first_col_ = static_cast<uint32_t>((west_lon_ + 180.0) / span);
+    row_last_col_ = static_cast<uint32_t>((east_lon_ + 180.0) / span);
+    // east_lon_ is the east edge; if it falls exactly on a grid boundary,
+    // it belongs to the previous column
+    if(east_lon_ + 180.0 > 0.0 && std::fmod(east_lon_ + 180.0, span) < 1e-10)
+      row_last_col_--;
+  }
+
+  void updateCurrent()
+  {
+    current_ = GridIndex(level_, current_row_, current_col_);
+  }
+
+  uint8_t level_;
+  uint32_t from_row_, to_row_;
+  double west_lon_, east_lon_;
+  uint32_t current_row_, current_col_;
+  uint32_t row_first_col_, row_last_col_;
   GridIndex current_;
 };
 
