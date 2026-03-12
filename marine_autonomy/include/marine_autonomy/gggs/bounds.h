@@ -97,7 +97,7 @@ public:
 
   uint32_t gridColumnCount(uint32_t row) const
   {
-    if(!valid())
+    if(!valid() || row < min_row_ || row > max_row_)
       return 0;
     return 1 + lastColumn(row) - firstColumn(row);
   }
@@ -125,7 +125,9 @@ private:
   uint32_t firstColumn(uint32_t row) const
   {
     double span = levels[level_].gridLongitudinalSpan(row);
-    return static_cast<uint32_t>((west_lon_ + 180.0) / span);
+    uint32_t col = static_cast<uint32_t>((west_lon_ + 180.0) / span);
+    uint32_t max_col = levels[level_].columnCount(row) - 1;
+    return std::min(col, max_col);
   }
 
   uint32_t lastColumn(uint32_t row) const
@@ -136,7 +138,8 @@ private:
     // it belongs to the previous column
     if(east_lon_ + 180.0 > 0.0 && std::fmod(east_lon_ + 180.0, span) < 1e-10)
       col--;
-    return col;
+    uint32_t max_col = levels[level_].columnCount(row) - 1;
+    return std::min(col, max_col);
   }
 
   uint8_t level_ = 255;

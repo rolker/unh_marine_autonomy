@@ -50,6 +50,8 @@ public:
   GridAreaIterator(GridIndex from, GridIndex to)
   {
     verifySameLevel(from, to);
+    if(!from.valid() || !to.valid())
+      return;  // current_ stays default-invalid
     level_ = from.level();
     from_row_ = std::min(from.row(), to.row());
     to_row_ = std::max(from.row(), to.row());
@@ -120,6 +122,10 @@ private:
     // it belongs to the previous column
     if(east_lon_ + 180.0 > 0.0 && std::fmod(east_lon_ + 180.0, span) < 1e-10)
       row_last_col_--;
+    // Clamp to valid column range
+    uint32_t max_col = levels[level_].columnCount(row) - 1;
+    row_first_col_ = std::min(row_first_col_, max_col);
+    row_last_col_ = std::min(row_last_col_, max_col);
   }
 
   void updateCurrent()
@@ -127,11 +133,11 @@ private:
     current_ = GridIndex(level_, current_row_, current_col_);
   }
 
-  uint8_t level_;
-  uint32_t from_row_, to_row_;
-  double west_lon_, east_lon_;
-  uint32_t current_row_, current_col_;
-  uint32_t row_first_col_, row_last_col_;
+  uint8_t level_ = 255;
+  uint32_t from_row_ = 0, to_row_ = 0;
+  double west_lon_ = 0.0, east_lon_ = 0.0;
+  uint32_t current_row_ = 1, current_col_ = 0;
+  uint32_t row_first_col_ = 0, row_last_col_ = 0;
   GridIndex current_;
 };
 

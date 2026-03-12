@@ -27,6 +27,7 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 #include <gtest/gtest.h>
+#include <climits>
 #include <cmath>
 #include <type_traits>
 #include "marine_autonomy/gggs.h"
@@ -865,16 +866,43 @@ TEST(GGGSGridAreaIterator, CrossBand72)
   ASSERT_TRUE(gi1.valid());
   ASSERT_TRUE(gi2.valid());
 
+  uint32_t expected_min_row = std::min(gi1.row(), gi2.row());
+  uint32_t expected_max_row = std::max(gi1.row(), gi2.row());
+
   gggs::GridAreaIterator it(gi1, gi2);
   uint32_t count = 0;
+  uint32_t min_visited_row = UINT32_MAX;
+  uint32_t max_visited_row = 0;
   while(it.valid())
   {
     EXPECT_TRUE(it->valid()) << "Invalid index at row " << it->row()
       << " col " << it->column();
+    min_visited_row = std::min(min_visited_row, it->row());
+    max_visited_row = std::max(max_visited_row, it->row());
     count++;
     if(!it.next()) break;
   }
   EXPECT_GT(count, 0u);
+  EXPECT_EQ(min_visited_row, expected_min_row);
+  EXPECT_EQ(max_visited_row, expected_max_row);
+
+  // Verify count matches sum of per-row column counts
+  uint32_t expected_count = 0;
+  double west = std::min(gi1.westLongitude(), gi2.westLongitude());
+  double east = std::max(gi1.eastLongitude(), gi2.eastLongitude());
+  for(uint32_t r = expected_min_row; r <= expected_max_row; ++r)
+  {
+    double span = gggs::levels[0].gridLongitudinalSpan(r);
+    uint32_t first = static_cast<uint32_t>((west + 180.0) / span);
+    uint32_t last = static_cast<uint32_t>((east + 180.0) / span);
+    if(east + 180.0 > 0.0 && std::fmod(east + 180.0, span) < 1e-10)
+      last--;
+    uint32_t max_col = gggs::levels[0].columnCount(r) - 1;
+    first = std::min(first, max_col);
+    last = std::min(last, max_col);
+    expected_count += 1 + last - first;
+  }
+  EXPECT_EQ(count, expected_count);
 }
 
 TEST(GGGSGridAreaIterator, CrossBand80)
@@ -887,16 +915,43 @@ TEST(GGGSGridAreaIterator, CrossBand80)
   ASSERT_TRUE(gi1.valid());
   ASSERT_TRUE(gi2.valid());
 
+  uint32_t expected_min_row = std::min(gi1.row(), gi2.row());
+  uint32_t expected_max_row = std::max(gi1.row(), gi2.row());
+
   gggs::GridAreaIterator it(gi1, gi2);
   uint32_t count = 0;
+  uint32_t min_visited_row = UINT32_MAX;
+  uint32_t max_visited_row = 0;
   while(it.valid())
   {
     EXPECT_TRUE(it->valid()) << "Invalid index at row " << it->row()
       << " col " << it->column();
+    min_visited_row = std::min(min_visited_row, it->row());
+    max_visited_row = std::max(max_visited_row, it->row());
     count++;
     if(!it.next()) break;
   }
   EXPECT_GT(count, 0u);
+  EXPECT_EQ(min_visited_row, expected_min_row);
+  EXPECT_EQ(max_visited_row, expected_max_row);
+
+  // Verify count matches sum of per-row column counts
+  uint32_t expected_count = 0;
+  double west = std::min(gi1.westLongitude(), gi2.westLongitude());
+  double east = std::max(gi1.eastLongitude(), gi2.eastLongitude());
+  for(uint32_t r = expected_min_row; r <= expected_max_row; ++r)
+  {
+    double span = gggs::levels[0].gridLongitudinalSpan(r);
+    uint32_t first = static_cast<uint32_t>((west + 180.0) / span);
+    uint32_t last = static_cast<uint32_t>((east + 180.0) / span);
+    if(east + 180.0 > 0.0 && std::fmod(east + 180.0, span) < 1e-10)
+      last--;
+    uint32_t max_col = gggs::levels[0].columnCount(r) - 1;
+    first = std::min(first, max_col);
+    last = std::min(last, max_col);
+    expected_count += 1 + last - first;
+  }
+  EXPECT_EQ(count, expected_count);
 }
 
 TEST(GGGSGridAreaIterator, CrossBothBands)
@@ -909,8 +964,13 @@ TEST(GGGSGridAreaIterator, CrossBothBands)
   ASSERT_TRUE(gi1.valid());
   ASSERT_TRUE(gi2.valid());
 
+  uint32_t expected_min_row = std::min(gi1.row(), gi2.row());
+  uint32_t expected_max_row = std::max(gi1.row(), gi2.row());
+
   gggs::GridAreaIterator it(gi1, gi2);
   uint32_t count = 0;
+  uint32_t min_visited_row = UINT32_MAX;
+  uint32_t max_visited_row = 0;
   bool saw_scale_1 = false;
   bool saw_scale_3 = false;
   bool saw_scale_9 = false;
@@ -918,6 +978,8 @@ TEST(GGGSGridAreaIterator, CrossBothBands)
   {
     EXPECT_TRUE(it->valid()) << "Invalid index at row " << it->row()
       << " col " << it->column();
+    min_visited_row = std::min(min_visited_row, it->row());
+    max_visited_row = std::max(max_visited_row, it->row());
     auto sf = gggs::levels[0].latitudeScaleFactor(it->row());
     if(sf == 1) saw_scale_1 = true;
     if(sf == 3) saw_scale_3 = true;
@@ -929,6 +991,8 @@ TEST(GGGSGridAreaIterator, CrossBothBands)
   EXPECT_TRUE(saw_scale_1) << "Should visit scale-1 rows";
   EXPECT_TRUE(saw_scale_3) << "Should visit scale-3 rows";
   EXPECT_TRUE(saw_scale_9) << "Should visit scale-9 rows";
+  EXPECT_EQ(min_visited_row, expected_min_row);
+  EXPECT_EQ(max_visited_row, expected_max_row);
 }
 
 TEST(GGGSGridAreaIterator, SouthernHemisphere)
@@ -941,14 +1005,21 @@ TEST(GGGSGridAreaIterator, SouthernHemisphere)
   ASSERT_TRUE(gi1.valid());
   ASSERT_TRUE(gi2.valid());
 
+  uint32_t expected_min_row = std::min(gi1.row(), gi2.row());
+  uint32_t expected_max_row = std::max(gi1.row(), gi2.row());
+
   gggs::GridAreaIterator it(gi1, gi2);
   uint32_t count = 0;
+  uint32_t min_visited_row = UINT32_MAX;
+  uint32_t max_visited_row = 0;
   bool saw_scale_1 = false;
   bool saw_scale_3 = false;
   while(it.valid())
   {
     EXPECT_TRUE(it->valid()) << "Invalid index at row " << it->row()
       << " col " << it->column();
+    min_visited_row = std::min(min_visited_row, it->row());
+    max_visited_row = std::max(max_visited_row, it->row());
     auto sf = gggs::levels[0].latitudeScaleFactor(it->row());
     if(sf == 1) saw_scale_1 = true;
     if(sf == 3) saw_scale_3 = true;
@@ -958,6 +1029,26 @@ TEST(GGGSGridAreaIterator, SouthernHemisphere)
   EXPECT_GT(count, 0u);
   EXPECT_TRUE(saw_scale_1) << "Should visit scale-1 rows";
   EXPECT_TRUE(saw_scale_3) << "Should visit scale-3 rows";
+  EXPECT_EQ(min_visited_row, expected_min_row);
+  EXPECT_EQ(max_visited_row, expected_max_row);
+
+  // Verify count matches sum of per-row column counts
+  uint32_t expected_count = 0;
+  double west = std::min(gi1.westLongitude(), gi2.westLongitude());
+  double east = std::max(gi1.eastLongitude(), gi2.eastLongitude());
+  for(uint32_t r = expected_min_row; r <= expected_max_row; ++r)
+  {
+    double span = gggs::levels[0].gridLongitudinalSpan(r);
+    uint32_t first = static_cast<uint32_t>((west + 180.0) / span);
+    uint32_t last = static_cast<uint32_t>((east + 180.0) / span);
+    if(east + 180.0 > 0.0 && std::fmod(east + 180.0, span) < 1e-10)
+      last--;
+    uint32_t max_col = gggs::levels[0].columnCount(r) - 1;
+    first = std::min(first, max_col);
+    last = std::min(last, max_col);
+    expected_count += 1 + last - first;
+  }
+  EXPECT_EQ(count, expected_count);
 }
 
 TEST(GGGSGridBounds, CrossBand)
