@@ -27,7 +27,6 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 #include <gtest/gtest.h>
-#include <climits>
 #include <cmath>
 #include <type_traits>
 #include "marine_autonomy/gggs.h"

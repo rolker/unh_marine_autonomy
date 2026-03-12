@@ -77,6 +77,8 @@ public:
   /// @return true if the iterator is valid after reset.
   bool reset()
   {
+    if(level_ >= levels.size())
+      return false;
     current_row_ = from_row_;
     computeRowColumns(current_row_);
     current_col_ = row_first_col_;
