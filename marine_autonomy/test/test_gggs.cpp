@@ -992,6 +992,24 @@ TEST(GGGSGridAreaIterator, CrossBothBands)
   EXPECT_TRUE(saw_scale_9) << "Should visit scale-9 rows";
   EXPECT_EQ(min_visited_row, expected_min_row);
   EXPECT_EQ(max_visited_row, expected_max_row);
+
+  // Verify count matches sum of per-row column counts
+  uint32_t expected_count = 0;
+  double west = std::min(gi1.westLongitude(), gi2.westLongitude());
+  double east = std::max(gi1.eastLongitude(), gi2.eastLongitude());
+  for(uint32_t r = expected_min_row; r <= expected_max_row; ++r)
+  {
+    double span = gggs::levels[0].gridLongitudinalSpan(r);
+    uint32_t first = static_cast<uint32_t>((west + 180.0) / span);
+    uint32_t last = static_cast<uint32_t>((east + 180.0) / span);
+    if(east + 180.0 > 0.0 && std::fmod(east + 180.0, span) < 1e-10)
+      last--;
+    uint32_t max_col = gggs::levels[0].columnCount(r) - 1;
+    first = std::min(first, max_col);
+    last = std::min(last, max_col);
+    expected_count += 1 + last - first;
+  }
+  EXPECT_EQ(count, expected_count);
 }
 
 TEST(GGGSGridAreaIterator, SouthernHemisphere)

@@ -57,7 +57,8 @@ public:
     {
       if(valid())
       {
-        verifySameLevel(minimum(), index);
+        if(index.level() != level_)
+          throw std::out_of_range("GridBounds: level mismatch");
         min_row_ = std::min(min_row_, index.row());
         max_row_ = std::max(max_row_, index.row());
         west_lon_ = std::min(west_lon_, index.westLongitude());
