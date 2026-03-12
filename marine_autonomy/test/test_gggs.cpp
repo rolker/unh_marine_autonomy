@@ -320,7 +320,7 @@ TEST(GGGSGridBounds, ExpandSingleGrid)
   bounds.expand(gi);
   EXPECT_TRUE(bounds.valid());
   EXPECT_EQ(bounds.gridRowCount(), 1u);
-  EXPECT_EQ(bounds.gridColumnCount(), 1u);
+  EXPECT_EQ(bounds.gridColumnCount(gi.row()), 1u);
 }
 
 TEST(GGGSGridBounds, ExpandMultipleGrids)
@@ -333,7 +333,8 @@ TEST(GGGSGridBounds, ExpandMultipleGrids)
   bounds.expand(gi2);
   EXPECT_TRUE(bounds.valid());
   EXPECT_GE(bounds.gridRowCount(), 1u);
-  EXPECT_GE(bounds.gridColumnCount(), 1u);
+  // Per-row column count; both grids are in the same latitude band
+  EXPECT_GE(bounds.gridColumnCount(gi1.row()), 1u);
 }
 
 TEST(GGGSGridBounds, CellCounts)
@@ -343,7 +344,7 @@ TEST(GGGSGridBounds, CellCounts)
   gggs::GridBounds bounds;
   bounds.expand(gi);
   EXPECT_EQ(bounds.cellRowCount(), static_cast<uint64_t>(gggs::cell_rows_per_grid));
-  EXPECT_EQ(bounds.cellColumnCount(), static_cast<uint64_t>(gggs::cell_columns_per_grid));
+  EXPECT_EQ(bounds.cellColumnCount(gi.row()), static_cast<uint64_t>(gggs::cell_columns_per_grid));
 }
 
 TEST(GGGSGridBounds, LevelMismatchThrows)
@@ -472,20 +473,24 @@ TEST(GGGSGridAreaIterator, MultipleGrids)
     // Same grid, skip count test
     return;
   }
-  uint32_t expected_rows = 1 + gi2.row() - gi1.row();
-  uint32_t expected_cols = 1 + gi2.column() - gi1.column();
-  if (gi1.row() > gi2.row()) expected_rows = 1 + gi1.row() - gi2.row();
-  if (gi1.column() > gi2.column()) expected_cols = 1 + gi1.column() - gi2.column();
-
-  auto from = min(gi1, gi2);
-  auto to = max(gi1, gi2);
-  gggs::GridAreaIterator it(from, to);
+  // Both points are in the same latitude band (scale factor 1),
+  // so column count is uniform across all rows in this range.
+  gggs::GridAreaIterator it(gi1, gi2);
   uint32_t count = 0;
   if (it.valid())
   {
     count = 1;
     while (it.next()) count++;
   }
+  // Compute expected count: the iterator extracts longitude range from the
+  // two GridIndex corners, so it covers the correct rectangular area.
+  uint32_t min_row = std::min(gi1.row(), gi2.row());
+  uint32_t max_row = std::max(gi1.row(), gi2.row());
+  uint32_t expected_rows = 1 + max_row - min_row;
+  // Same band, so column count is the same for all rows
+  uint32_t min_col = std::min(gi1.column(), gi2.column());
+  uint32_t max_col = std::max(gi1.column(), gi2.column());
+  uint32_t expected_cols = 1 + max_col - min_col;
   EXPECT_EQ(count, expected_rows * expected_cols);
 }
 
@@ -844,4 +849,269 @@ TEST(GGGSCellIndex, OutOfBoundsColumnAssertsInDebug)
   EXPECT_DEATH(gggs::CellIndex(gi, 0, gggs::cell_columns_per_grid),
     "CellIndex column out of bounds");
 #endif
+}
+
+// ============================================================================
+// Cross-polar GridAreaIterator tests (Issue #78)
+// ============================================================================
+
+TEST(GGGSGridAreaIterator, CrossBand72)
+{
+  // Iterate from 71 to 73 latitude at level 0.
+  // This crosses the 72-degree boundary where scale factor changes from 1 to 3.
+  gggs::Level level(0);
+  auto gi1 = level.gridIndex(71.0, 0.0);
+  auto gi2 = level.gridIndex(73.0, 0.0);
+  ASSERT_TRUE(gi1.valid());
+  ASSERT_TRUE(gi2.valid());
+
+  uint32_t expected_min_row = std::min(gi1.row(), gi2.row());
+  uint32_t expected_max_row = std::max(gi1.row(), gi2.row());
+
+  gggs::GridAreaIterator it(gi1, gi2);
+  uint32_t count = 0;
+  uint32_t min_visited_row = UINT32_MAX;
+  uint32_t max_visited_row = 0;
+  while(it.valid())
+  {
+    EXPECT_TRUE(it->valid()) << "Invalid index at row " << it->row()
+      << " col " << it->column();
+    min_visited_row = std::min(min_visited_row, it->row());
+    max_visited_row = std::max(max_visited_row, it->row());
+    count++;
+    if(!it.next()) break;
+  }
+  EXPECT_GT(count, 0u);
+  EXPECT_EQ(min_visited_row, expected_min_row);
+  EXPECT_EQ(max_visited_row, expected_max_row);
+
+  // Verify count matches sum of per-row column counts
+  uint32_t expected_count = 0;
+  double west = std::min(gi1.westLongitude(), gi2.westLongitude());
+  double east = std::max(gi1.eastLongitude(), gi2.eastLongitude());
+  for(uint32_t r = expected_min_row; r <= expected_max_row; ++r)
+  {
+    double span = gggs::levels[0].gridLongitudinalSpan(r);
+    uint32_t first = static_cast<uint32_t>((west + 180.0) / span);
+    uint32_t last = static_cast<uint32_t>((east + 180.0) / span);
+    if(east + 180.0 > 0.0 && std::fmod(east + 180.0, span) < 1e-10)
+      last--;
+    uint32_t max_col = gggs::levels[0].columnCount(r) - 1;
+    first = std::min(first, max_col);
+    last = std::min(last, max_col);
+    expected_count += 1 + last - first;
+  }
+  EXPECT_EQ(count, expected_count);
+}
+
+TEST(GGGSGridAreaIterator, CrossBand80)
+{
+  // Iterate from 79 to 81 latitude at level 0.
+  // This crosses the 80-degree boundary where scale factor changes from 3 to 9.
+  gggs::Level level(0);
+  auto gi1 = level.gridIndex(79.0, 0.0);
+  auto gi2 = level.gridIndex(81.0, 0.0);
+  ASSERT_TRUE(gi1.valid());
+  ASSERT_TRUE(gi2.valid());
+
+  uint32_t expected_min_row = std::min(gi1.row(), gi2.row());
+  uint32_t expected_max_row = std::max(gi1.row(), gi2.row());
+
+  gggs::GridAreaIterator it(gi1, gi2);
+  uint32_t count = 0;
+  uint32_t min_visited_row = UINT32_MAX;
+  uint32_t max_visited_row = 0;
+  while(it.valid())
+  {
+    EXPECT_TRUE(it->valid()) << "Invalid index at row " << it->row()
+      << " col " << it->column();
+    min_visited_row = std::min(min_visited_row, it->row());
+    max_visited_row = std::max(max_visited_row, it->row());
+    count++;
+    if(!it.next()) break;
+  }
+  EXPECT_GT(count, 0u);
+  EXPECT_EQ(min_visited_row, expected_min_row);
+  EXPECT_EQ(max_visited_row, expected_max_row);
+
+  // Verify count matches sum of per-row column counts
+  uint32_t expected_count = 0;
+  double west = std::min(gi1.westLongitude(), gi2.westLongitude());
+  double east = std::max(gi1.eastLongitude(), gi2.eastLongitude());
+  for(uint32_t r = expected_min_row; r <= expected_max_row; ++r)
+  {
+    double span = gggs::levels[0].gridLongitudinalSpan(r);
+    uint32_t first = static_cast<uint32_t>((west + 180.0) / span);
+    uint32_t last = static_cast<uint32_t>((east + 180.0) / span);
+    if(east + 180.0 > 0.0 && std::fmod(east + 180.0, span) < 1e-10)
+      last--;
+    uint32_t max_col = gggs::levels[0].columnCount(r) - 1;
+    first = std::min(first, max_col);
+    last = std::min(last, max_col);
+    expected_count += 1 + last - first;
+  }
+  EXPECT_EQ(count, expected_count);
+}
+
+TEST(GGGSGridAreaIterator, CrossBothBands)
+{
+  // Iterate from 71 to 81 latitude at level 0.
+  // This crosses both the 72-degree and 80-degree boundaries.
+  gggs::Level level(0);
+  auto gi1 = level.gridIndex(71.0, 0.0);
+  auto gi2 = level.gridIndex(81.0, 0.0);
+  ASSERT_TRUE(gi1.valid());
+  ASSERT_TRUE(gi2.valid());
+
+  uint32_t expected_min_row = std::min(gi1.row(), gi2.row());
+  uint32_t expected_max_row = std::max(gi1.row(), gi2.row());
+
+  gggs::GridAreaIterator it(gi1, gi2);
+  uint32_t count = 0;
+  uint32_t min_visited_row = UINT32_MAX;
+  uint32_t max_visited_row = 0;
+  bool saw_scale_1 = false;
+  bool saw_scale_3 = false;
+  bool saw_scale_9 = false;
+  while(it.valid())
+  {
+    EXPECT_TRUE(it->valid()) << "Invalid index at row " << it->row()
+      << " col " << it->column();
+    min_visited_row = std::min(min_visited_row, it->row());
+    max_visited_row = std::max(max_visited_row, it->row());
+    auto sf = gggs::levels[0].latitudeScaleFactor(it->row());
+    if(sf == 1) saw_scale_1 = true;
+    if(sf == 3) saw_scale_3 = true;
+    if(sf == 9) saw_scale_9 = true;
+    count++;
+    if(!it.next()) break;
+  }
+  EXPECT_GT(count, 0u);
+  EXPECT_TRUE(saw_scale_1) << "Should visit scale-1 rows";
+  EXPECT_TRUE(saw_scale_3) << "Should visit scale-3 rows";
+  EXPECT_TRUE(saw_scale_9) << "Should visit scale-9 rows";
+  EXPECT_EQ(min_visited_row, expected_min_row);
+  EXPECT_EQ(max_visited_row, expected_max_row);
+
+  // Verify count matches sum of per-row column counts
+  uint32_t expected_count = 0;
+  double west = std::min(gi1.westLongitude(), gi2.westLongitude());
+  double east = std::max(gi1.eastLongitude(), gi2.eastLongitude());
+  for(uint32_t r = expected_min_row; r <= expected_max_row; ++r)
+  {
+    double span = gggs::levels[0].gridLongitudinalSpan(r);
+    uint32_t first = static_cast<uint32_t>((west + 180.0) / span);
+    uint32_t last = static_cast<uint32_t>((east + 180.0) / span);
+    if(east + 180.0 > 0.0 && std::fmod(east + 180.0, span) < 1e-10)
+      last--;
+    uint32_t max_col = gggs::levels[0].columnCount(r) - 1;
+    first = std::min(first, max_col);
+    last = std::min(last, max_col);
+    expected_count += 1 + last - first;
+  }
+  EXPECT_EQ(count, expected_count);
+}
+
+TEST(GGGSGridAreaIterator, SouthernHemisphere)
+{
+  // Iterate from -73 to -71 latitude at level 0.
+  // This crosses the -72 degree boundary (symmetric with northern hemisphere).
+  gggs::Level level(0);
+  auto gi1 = level.gridIndex(-73.0, 0.0);
+  auto gi2 = level.gridIndex(-71.0, 0.0);
+  ASSERT_TRUE(gi1.valid());
+  ASSERT_TRUE(gi2.valid());
+
+  uint32_t expected_min_row = std::min(gi1.row(), gi2.row());
+  uint32_t expected_max_row = std::max(gi1.row(), gi2.row());
+
+  gggs::GridAreaIterator it(gi1, gi2);
+  uint32_t count = 0;
+  uint32_t min_visited_row = UINT32_MAX;
+  uint32_t max_visited_row = 0;
+  bool saw_scale_1 = false;
+  bool saw_scale_3 = false;
+  while(it.valid())
+  {
+    EXPECT_TRUE(it->valid()) << "Invalid index at row " << it->row()
+      << " col " << it->column();
+    min_visited_row = std::min(min_visited_row, it->row());
+    max_visited_row = std::max(max_visited_row, it->row());
+    auto sf = gggs::levels[0].latitudeScaleFactor(it->row());
+    if(sf == 1) saw_scale_1 = true;
+    if(sf == 3) saw_scale_3 = true;
+    count++;
+    if(!it.next()) break;
+  }
+  EXPECT_GT(count, 0u);
+  EXPECT_TRUE(saw_scale_1) << "Should visit scale-1 rows";
+  EXPECT_TRUE(saw_scale_3) << "Should visit scale-3 rows";
+  EXPECT_EQ(min_visited_row, expected_min_row);
+  EXPECT_EQ(max_visited_row, expected_max_row);
+
+  // Verify count matches sum of per-row column counts
+  uint32_t expected_count = 0;
+  double west = std::min(gi1.westLongitude(), gi2.westLongitude());
+  double east = std::max(gi1.eastLongitude(), gi2.eastLongitude());
+  for(uint32_t r = expected_min_row; r <= expected_max_row; ++r)
+  {
+    double span = gggs::levels[0].gridLongitudinalSpan(r);
+    uint32_t first = static_cast<uint32_t>((west + 180.0) / span);
+    uint32_t last = static_cast<uint32_t>((east + 180.0) / span);
+    if(east + 180.0 > 0.0 && std::fmod(east + 180.0, span) < 1e-10)
+      last--;
+    uint32_t max_col = gggs::levels[0].columnCount(r) - 1;
+    first = std::min(first, max_col);
+    last = std::min(last, max_col);
+    expected_count += 1 + last - first;
+  }
+  EXPECT_EQ(count, expected_count);
+}
+
+TEST(GGGSGridBounds, CrossBand)
+{
+  // Expand bounds across the 72-degree boundary.
+  gggs::Level level(0);
+  auto gi1 = level.gridIndex(71.0, 0.0);
+  auto gi2 = level.gridIndex(73.0, 0.0);
+
+  gggs::GridBounds bounds;
+  bounds.expand(gi1);
+  bounds.expand(gi2);
+  EXPECT_TRUE(bounds.valid());
+
+  // Per-row column counts should differ across the band boundary
+  uint32_t cols_at_71_row = bounds.gridColumnCount(gi1.row());
+  uint32_t cols_at_73_row = bounds.gridColumnCount(gi2.row());
+  // The scale-1 row should have more columns than the scale-3 row for the
+  // same longitude range (or the same if the range is narrow enough to fit
+  // in one grid on both sides)
+  EXPECT_GE(cols_at_71_row, cols_at_73_row);
+}
+
+TEST(GGGSGridBounds, PerRowColumnCount)
+{
+  // Single-band bounds: verify gridColumnCount(row) matches old behavior
+  gggs::Level level(5);
+  auto gi1 = level.gridIndex(43.0, -71.0);
+  auto gi2 = level.gridIndex(43.5, -70.0);
+
+  gggs::GridBounds bounds;
+  bounds.expand(gi1);
+  bounds.expand(gi2);
+  EXPECT_TRUE(bounds.valid());
+
+  // Both grids are in the same band (scale factor 1), so gridColumnCount
+  // should be the same for any row in the bounds
+  uint32_t cols = bounds.gridColumnCount(gi1.row());
+  EXPECT_GE(cols, 1u);
+
+  // All rows in the bounds should have the same column count
+  auto min_gi = bounds.minimum();
+  auto max_gi = bounds.maximum();
+  for(uint32_t r = min_gi.row(); r <= max_gi.row(); ++r)
+  {
+    EXPECT_EQ(bounds.gridColumnCount(r), cols)
+      << "Column count should be uniform in same band at row " << r;
+  }
 }

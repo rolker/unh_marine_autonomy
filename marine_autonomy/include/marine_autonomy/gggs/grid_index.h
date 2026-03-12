@@ -156,19 +156,6 @@ public:
     return !(lhs == rhs);
   }
 
-  friend GridIndex max(const GridIndex& lhs, const GridIndex& rhs)
-  {
-    verifySameLevel(lhs, rhs);
-    return GridIndex(lhs.level_, std::max(lhs.row_, rhs.row_), std::max(lhs.column_, rhs.column_));
-  }
-
-  friend GridIndex min(const GridIndex& lhs, const GridIndex& rhs)
-  {
-    verifySameLevel(lhs, rhs);
-    return GridIndex(lhs.level_, std::min(lhs.row_, rhs.row_), std::min(lhs.column_, rhs.column_));
-  }
-
-
   friend std::ostream& operator<< (std::ostream& stream, const GridIndex& index)
   {
     stream << "GridIndex level " << int(index.level_) << " row: " << index.row_ << " col: " << index.column_;
@@ -182,6 +169,7 @@ private:
 
   friend class Level;
   friend class GridAreaIterator;
+  friend class GridBounds;
 
   /// Level of the quad tree where 0 is top with 8 degree tiles
   uint8_t level_ = 255;
