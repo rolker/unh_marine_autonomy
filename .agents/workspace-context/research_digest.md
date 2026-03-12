@@ -1,6 +1,6 @@
 # Research Digest: Marine Robotics
 
-<!-- Last updated: 2026-02-27 -->
+<!-- Last updated: 2026-03-12 -->
 <!-- If older than 30 days, consider running /research --refresh; entries older than 90 days should be flagged for review -->
 
 ## ROS 2 Autonomous Surface Vehicles (ASVs)
@@ -69,3 +69,25 @@ Key takeaways:
 - The combination leverages MOOS-IvP for mission planning/behavior arbitration and ROS 2 for communications, perception, and low-level control
 
 **Relevance**: Relevant to `unh_marine_autonomy`'s mission management architecture; MOOS-IvP integration patterns could inform behavior planning approaches
+
+---
+
+## NOAA Coast Pilot — Structured Marine Data for World Generation
+
+**Added**: 2026-03-12 | **Sources**: [Coast Pilot portal](https://nauticalcharts.noaa.gov/publications/coast-pilot/index.html), [Coast Pilot XML viewer](https://nauticalcharts.noaa.gov/publications/coast-pilot/xml2html.html?book=2), [Coast Pilot e-Publishing (PDF)](https://ocsdata.ncd.noaa.gov/media/noaa-industry-day/2017/01_03_Coast_Pilot_Software_Integration.pdf), [InPort metadata](https://www.fisheries.noaa.gov/inport/item/39970), [XML example (CP5 Ch6)](https://nauticalcharts.noaa.gov/publications/coast-pilot/files/cp5/CPB5_C06_WEB.xml)
+
+Key takeaways:
+- The U.S. Coast Pilot is a 10-volume NOAA publication supplementing nautical charts with data that is difficult to portray on a chart: bridge clearances, wharf dimensions, anchorage depths, prominent features, pilotage, weather, ice conditions, and facility descriptions
+- **XML format available**: chapters are published as XML alongside PDF/HTML; URL pattern `files/cp{N}/CPB{N}_C{NN}_WEB.xml`; weekly updates
+- **Geotagged features**: `<CP_GEO_LOC>` elements carry `lat_dec`/`long_dec` decimal coordinates, GNIS source IDs, feature class (Bay, Building, Tower, etc.), and state/county
+- **Bridge data**: `<bridge bridgeid="...">` elements link to clearance values in surrounding text; vertical and horizontal clearances are described in prose, not structured attributes — NLP extraction needed
+- **Wharf/facility dimensions**: lengths, depths alongside, and construction materials are embedded in `<paraText>` prose, not machine-structured fields
+- **Volume 1** covers Maine to Cape Cod (including NH/Portsmouth); **Volume 2** covers Cape Cod to Sandy Hook — these are the primary volumes for UNH operations
+- The main extraction challenge is that numeric data (heights, clearances, depths) is in natural-language paragraphs, not dedicated XML attributes; the `<CP_GEO_LOC>` tags provide spatial anchoring but the measurements require text parsing
+
+**Relevance to `marine_charts_to_gazebo_world`** (rolker/unh_marine_simulation#40):
+- **Bridge enrichment**: S57 BRIDGE features often lack vertical clearance (VERCLR); Coast Pilot provides specific clearance values that could fill these gaps
+- **Building/wharf heights**: the package currently uses hardcoded heights (12m buildings, 2.5m wharves); Coast Pilot describes actual wharf lengths, depths, and sometimes heights
+- **Anchorage areas**: could be rendered as marked zones in the simulation world
+- **Prominent features**: Coast Pilot describes towers, tanks, stacks, and other landmarks with locations — could improve feature placement beyond what S57 provides
+- **Implementation approach**: a Coast Pilot XML parser would need (1) XML download/cache by volume+chapter, (2) `<CP_GEO_LOC>` extraction for spatial indexing, (3) regex/NLP extraction of numeric values from `<paraText>` for bridge clearances, wharf dimensions, and facility heights, (4) spatial matching to existing S57 features by proximity
