@@ -1,0 +1,3 @@
+# Layers that are allowed to fail during setup (e.g., private repos).
+# One layer name per line. Blank lines and comments (#) are ignored.
+site
