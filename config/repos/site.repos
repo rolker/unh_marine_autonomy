@@ -1,5 +1,5 @@
 repositories:
   ccomjhc_project11:
     type: git
-    url: git@github.com:rolker/ccomjhc_project11.git
+    url: git@github.com:CCOMJHC/ccomjhc_project11.git
     version: jazzy
