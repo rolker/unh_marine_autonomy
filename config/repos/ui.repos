@@ -3,6 +3,10 @@ repositories:
     type: git
     url: https://github.com/rolker/camp.git
     version: jazzy
+  rqt_operator_tools:
+    type: git
+    url: https://github.com/rolker/rqt_operator_tools.git
+    version: jazzy
   rqt_marine_radar:
     type: git
     url: https://github.com/rolker/rqt_marine_radar.git
