@@ -1,6 +1,6 @@
 # Research Digest: Marine Robotics
 
-<!-- Last updated: 2026-03-12 -->
+<!-- Last updated: 2026-03-31 -->
 <!-- If older than 30 days, consider running /research --refresh; entries older than 90 days should be flagged for review -->
 
 ## ROS 2 Autonomous Surface Vehicles (ASVs)
@@ -126,3 +126,74 @@ Existing Fuel models relevant to `marine_charts_to_gazebo_world`:
 - **Structures**: `Water tower`, `Radio tower`, `Tower crane`, `Truss bridge`, `Office Building`, `Apartment`, `Depot` — generic but usable for landmark features
 - **Bathymetric heightmaps**: `Monterey Bay` (GEBCO bathymetry, by jennuine), `Portuguese Ledge` (MBARI seafloor data, by OpenRobotics) — validates that sharing bathymetric terrain tiles on Fuel is an established pattern
 - **Gaps — no Fuel models exist for**: navigation beacons, navigation lights/lighthouses, shore constructions (breakwaters, seawalls, groynes, rip-rap), pontoons/floating docks, mooring facilities (bollards, dolphins), piles/posts, or realistic S57 BOYSHP-accurate buoy shapes (conical, can, pillar, spar)
+
+---
+
+## ArduRover Failsafe Configuration for Over-the-Horizon ASV Operations
+
+**Added**: 2026-03-31 | **Sources**: [Rover Failsafes](https://ardupilot.org/rover/docs/rover-failsafes.html), [Boat Configuration](https://ardupilot.org/rover/docs/boat-configuration.html), [Cylindrical Fence](https://ardupilot.org/rover/docs/common-ac2_simple_geofence.html), [QGC Safety Setup](https://docs.qgroundcontrol.com/Stable_V4.3/en/qgc-user-guide/setup_view/safety_ardupilot.html)
+
+Key takeaways:
+- **FS_ACTION** applies to radio, battery, and GCS failsafes: 1=RTL, 2=Hold, 3=SmartRTL→RTL, 4=SmartRTL→Hold, 5=Disarm, 6=Loiter→Hold. For over-the-horizon ASV with backseat driver, SmartRTL→Hold (4) is safest — tries SmartRTL path back, falls back to hold-position if path is too long
+- **GCS failsafe** (`FS_GCS_ENABLE=1`, `FS_GCS_TIMEOUT=5s`): triggers when no MAVLink heartbeat received. Critical for backseat-driver architecture — if companion computer (running mavros/ROS) stops sending heartbeats, FCU acts autonomously
+- **Battery failsafe** is two-stage: `BATT_FS_LOW_ACT` (warning, e.g., RTL) and `BATT_FS_CRT_ACT` (critical, e.g., Hold). Set voltage and/or mAh thresholds with `BATT_LOW_TIMER=10s` debounce
+- **EKF failsafe** (`FS_EKF_ACTION`): when GPS degrades and EKF variance exceeds `FS_EKF_THRESH`, vehicle switches to Hold. With geofence enabled, this is critical — EKF failure means position is unknown
+- **Geofence**: cylindrical fence (`FENCE_ENABLE=1`, `FENCE_RADIUS`). Breach action is RTL or report-only. Minimum radius 30m. Requires good GPS — do not disable GPS arming check with fence enabled
+- **FS_OPTIONS bitmask**: bit 0 enables failsafe recognition in Hold mode — without this, a vehicle in Hold ignores further failsafes
+- **Crash detection** (`FS_CRASH_CHECK`): switches to Hold or Hold+Disarm if roll/pitch exceeds `CRASH_ANGLE`. Useful for capsize detection on surface boats
+
+**Relevance**: BizzyBoat currently has ALL failsafes disabled (`ARMING_CHECK=0, FS_ACTION=0`). For over-the-horizon ops, minimum recommended: GCS failsafe (SmartRTL→Hold), battery failsafe (two-stage), EKF failsafe, and a geofence. The GCS failsafe is the primary safety net when the ROS 2 companion computer fails.
+
+---
+
+## ArduPilot Lua Scripting for Onboard Failsafes
+
+**Added**: 2026-03-31 | **Sources**: [Lua Scripts (Rover)](https://ardupilot.org/rover/docs/common-lua-scripts.html), [Lua Failsafe APIs discussion](https://discuss.ardupilot.org/t/lua-failsafe-apis/127439), [Lua API docs](https://github.com/ArduPilot/ardupilot/blob/master/libraries/AP_Scripting/docs/docs.lua), [GSoC 2026 Companion Health Monitoring](https://discuss.ardupilot.org/t/gsoc-2026-real-time-companion-computer-health-monitoring-failsafe-ram-yatishwar/143158)
+
+Key takeaways:
+- **Lua runs on the FCU** (Cube Orange), sandboxed, in parallel with flight code. Scripts on SD card under `/APM/scripts/`. Ideal for safety logic that must work when companion computer is dead
+- **Key APIs**: `gcs:last_seen()` returns ms since last GCS heartbeat; `rc:has_valid_input()` checks RC signal; `battery:has_failsafed()` detects battery failsafe; `vehicle:set_mode(N)` changes flight mode; `arming:disarm()` disarms
+- **No direct failsafe state bindings** — cannot query "is GCS failsafe active?" from Lua. Workaround: monitor `gcs:last_seen()` with custom timeout logic
+- **Companion computer watchdog pattern**: poll `gcs:last_seen()` every 500ms; if exceeds threshold (e.g., 10s), call `vehicle:set_mode(HOLD_MODE)`. Provides defense-in-depth independent of built-in GCS failsafe
+- **Limitations**: scripts run at low priority (not guaranteed schedule); memory constrained (43–204KB heap); cannot override core failsafes
+- **GSoC 2026 project** (in progress): `AP_CompanionMonitor` C++ library monitoring CPU/RAM/disk via MAVLink `NAMED_VALUE_FLOAT` at 1Hz, with 3-tier state machine (HEALTHY→WARN→CRIT→LOST) and configurable heartbeat timeout. Not yet merged but indicates ArduPilot's direction
+
+**Relevance**: Lua watchdog scripts provide a second safety layer for BizzyBoat. The companion computer (ROS 2/mavros) is a single point of failure — FCU's built-in GCS failsafe is first defense, Lua watchdog is second. A simple watchdog script monitoring `gcs:last_seen()` should be deployed before over-the-horizon ops.
+
+---
+
+## MAVROS 2 / ROS 2 Jazzy Integration Patterns and Pitfalls
+
+**Added**: 2026-03-31 | **Sources**: [mavros Jazzy docs](https://docs.ros.org/en/jazzy/p/mavros/), [mavros README](https://github.com/mavlink/mavros/blob/ros2/mavros/README.md), [ArduPilot ROS 2 guide](https://ardupilot.org/dev/docs/ros.html), [BlueROV2 timesync discussion](https://discuss.bluerobotics.com/t/bluerov2-mavros-rtt-too-high-for-timesync-warning/21021), [ROS 2 Jazzy QoS docs](https://docs.ros.org/en/jazzy/Concepts/Intermediate/About-Quality-of-Service-Settings.html)
+
+Key takeaways:
+- **MAVROS vs DDS**: ArduPilot 4.5+ supports direct DDS interface (no mavros needed). Mavros is more mature for ArduRover with richer topic coverage. DDS is better for low-latency. Current BizzyBoat mavros setup is appropriate
+- **Timesync**: `timesync_rate: 0.0` (disabled) is correct for ArduPilot — causes "RTT too high" warnings and clock drift. ArduPilot uses GPS-disciplined clock. BizzyBoat config already correct
+- **GeographicLib datasets**: mavros_node **will not start** without geoid datasets. Run `install_geographiclib_datasets.sh` on every new machine. Document in deployment checklist
+- **TF frames**: mavros translates NED↔ENU. Common error: disconnected TF trees. BizzyBoat disables mavros TF publishing (`global_position.tf.send: false`) to avoid conflicts with URDF — correct approach
+- **QoS**: publisher/subscriber QoS must match or connection silently fails. Mavros defaults to RELIABLE/VOLATILE. Silent QoS mismatches are a common debugging headache
+- **Stream rate**: call `mavros/set_stream_rate` at startup for desired telemetry rate. Without this, defaults may be too low for real-time control
+- **setpoint_velocity**: `mav_frame: "BODY_NED"` for skid-steer boats commanding forward speed + yaw rate — correct for BizzyBoat
+
+**Relevance**: BizzyBoat's mavros configuration is mostly correct. Key deployment checklist items: GeographicLib datasets installed, timesync disabled, TF publishing disabled, stream rate requested at startup. Main pitfall is silent QoS mismatches.
+
+---
+
+## CUAV C-RTK 2HP Dual-Antenna RTK GPS Configuration
+
+**Added**: 2026-03-31 | **Sources**: [C-RTK2 HP guide (Rover)](https://ardupilot.org/rover/docs/common-cuav-c-rtk2-hp.html), [GPS for Yaw (Rover)](https://ardupilot.org/rover/docs/common-gps-for-yaw.html), [CUAV users manual](https://doc.cuav.net/gps/c-rtk-series/en/c-rtk2-hp/users-manual.html)
+
+Key takeaways:
+- **Single-unit dual-antenna**: C-RTK 2HP handles moving baseline internally (one module, two antennas). Simpler than dual-unit F9P setups
+- **DroneCAN config** (recommended): `GPS1_TYPE=9`, `CAN_P1_DRIVER=1`, `GPS_AUTO_CONFIG=2`. Both CAN ports should connect via splitter
+- **EKF3 for GPS heading**: `AHRS_EKF_TYPE=3`, `EK3_ENABLE=1`, `EK2_ENABLE=0`, `EK3_SRC1_YAW=2` (GPS only) or `3` (GPS with compass fallback)
+- **Antenna offsets**: `GPS1_MB_TYPE=1` enables master-slave offsets. `GPS1_MB_OFS_X/Y/Z` define master position relative to slave. **Critical**: positive X = master forward of slave. BizzyBoat has fore/aft antennas — measure carefully
+- **GPS position offsets** (`GPS1_POS_X/Y/Z`): antenna position relative to vehicle CG — different from MB offsets. Used for attitude-correction compensation
+- **Validation**: GPS yaw only activates with RTK fixed (type 6), inter-antenna distance within 20% of configured, height differential within 20%. Failure = no heading
+- **Minimum antenna separation**: 30cm (BizzyBoat baseline ~1.67m — well above)
+- **Do NOT use `GPS_AUTO_SWITCH=2`** (Blend) with moving baseline
+- **Heading accuracy**: 0.1° RMS at 1m baseline; BizzyBoat's 1.67m should be better
+- **C-RTK 2HP includes RM3100 magnetometer** — could be enabled as compass fallback if calibrated
+- **When GPS yaw lost** with `EK3_SRC1_YAW=2` (no fallback): **no heading source** — vehicle must hold position. This makes EKF failsafe critical
+
+**Relevance**: BizzyBoat uses C-RTK 2HP via DroneCAN with compass disabled and GPS heading as sole yaw source. For over-the-horizon ops, lack of heading fallback is a risk — if RTK degrades (poor sky view, NTRIP dropout), vehicle loses heading. Consider enabling the built-in RM3100 as compass fallback (`EK3_SRC1_YAW=3`) for safety margin. Antenna offsets need careful measurement.
