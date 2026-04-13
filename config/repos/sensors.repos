@@ -23,3 +23,11 @@ repositories:
     type: git
     url: https://github.com/rolker/edgetech_sonar.git
     version: jazzy
+  starlink_stats_ros:
+    type: git
+    url: https://github.com/rolker/starlink_stats_ros.git
+    version: jazzy
+  ros2_network_monitor:
+    type: git
+    url: https://github.com/rolker/ros2_network_monitor.git
+    version: jazzy
