@@ -39,6 +39,7 @@ set(MSG_FILES
   msg/Platform.msg
   msg/PlatformList.msg
   msg/RangeBearing.msg
+  msg/SoundSpeed.msg
   # Formerly project11_nav_msgs
   msg/BoundingBox.msg
   msg/Curve.msg
