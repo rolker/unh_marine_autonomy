@@ -19,3 +19,7 @@ repositories:
     type: git
     url: https://github.com/rolker/rviz_sonar_image.git
     version: jazzy
+  marine_perception_tools:
+    type: git
+    url: https://github.com/rolker/marine_perception_tools.git
+    version: jazzy
