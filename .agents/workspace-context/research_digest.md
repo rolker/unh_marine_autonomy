@@ -1,6 +1,6 @@
 # Research Digest: Marine Robotics
 
-<!-- Last updated: 2026-03-31 -->
+<!-- Last updated: 2026-06-02 -->
 <!-- If older than 30 days, consider running /research --refresh; entries older than 90 days should be flagged for review -->
 
 ## ROS 2 Autonomous Surface Vehicles (ASVs)
@@ -197,3 +197,43 @@ Key takeaways:
 - **When GPS yaw lost** with `EK3_SRC1_YAW=2` (no fallback): **no heading source** — vehicle must hold position. This makes EKF failsafe critical
 
 **Relevance**: BizzyBoat uses C-RTK 2HP via DroneCAN with compass disabled and GPS heading as sole yaw source. For over-the-horizon ops, lack of heading fallback is a risk — if RTK degrades (poor sky view, NTRIP dropout), vehicle loses heading. Consider enabling the built-in RM3100 as compass fallback (`EK3_SRC1_YAW=3`) for safety margin. Antenna offsets need careful measurement.
+
+---
+
+## Camera–IMU Time Synchronization & Temporal Calibration
+
+**Added**: 2026-06-02 | **Sources**: [message_filters ApproximateTime (Jazzy)](https://docs.ros.org/en/jazzy/p/message_filters/doc/Tutorials/Approximate-Synchronizer-Cpp.html), [Kalibr cam-IMU wiki](https://github.com/ethz-asl/kalibr/wiki/camera-imu-calibration), [Online Temporal Calibration for VIO (arXiv:1808.00692)](https://arxiv.org/pdf/1808.00692), [Universal Online Temporal Calibration (arXiv:2501.01788)](https://arxiv.org/pdf/2501.01788), [Timestamp Offset under Interval Uncertainty (Voges 2018)](https://raphael-voges.de/publication/voges-2018-b/voges-2018-b.pdf), [ROS cam-IMU hardware sync](https://grauonline.de/wordpress/?page_id=1951), [depthai-ros HW timestamp #56](https://github.com/luxonis/depthai-ros/issues/56)
+
+Problem: an image header stamp is "slightly off" relative to the IMU because each
+sensor has distinct triggering, exposure/readout, transport, and clock-offset
+delays (images take tens of ms to move; IMU < 1 ms). Fix by *type of* offset:
+
+Key takeaways:
+- **Characterize first** — cross-correlate camera-derived angular rate vs IMU
+  gyro (Kalibr's initial-guess method) to measure the lag and see if it's a
+  **constant** or **jitter/drift**.
+- **Constant offset → subtract a fixed delta** from the image stamp, ideally in
+  the driver or a thin relay node. Simplest and robust.
+- **Fuse by interpolating the high-rate IMU to the (corrected) image time** — not
+  the image to IMU time (the latter discards information).
+- **ROS-level pairing**: `message_filters` **ApproximateTime** associates
+  nearest-in-time messages (tune `setMaxIntervalDuration()` / inter-message
+  bounds). Associates, does **not** correct the physical offset.
+- **Unknown / drifting offset → estimate it online** as a state variable:
+  VINS-Mono `estimate_td:1` (feature image-plane velocity model; consistent
+  within ≈±75–85 ms), OpenVINS/MSCKF online temporal calibration.
+- **Offline ground truth**: **Kalibr** (continuous-time B-spline, max-likelihood)
+  estimates the cam↔IMU time offset + extrinsics to ~ms — use it to *measure* the
+  constant for the fixed-offset correction above.
+- **Best: hardware-trigger + hardware timestamps** (e.g. IMU emits `TimeReference`,
+  camera reconstructs capture time). A device HW stamp beats host `Time::now()`,
+  which bakes in transport delay.
+
+**Relevance**: BizzyBoat fuses OAK camera imagery with IMU (SBG/mavros) for the
+segmentation→costmap/reflex pipeline; `depthai-ros` has a documented history of
+not surfacing the OAK device hardware timestamp into the ROS header
+(luxonis/depthai-ros#56), so first verify whether image stamps are device-time or
+host-time. Marine dynamics are slow, so a fixed tens-of-ms offset is cm-level on
+the perception projection — usually tolerable, and a *constant* offset is nearly
+free to correct. Most relevant to the `unh_marine_perception` pipeline and any
+future visual-inertial work on the EchoBoat platform.
