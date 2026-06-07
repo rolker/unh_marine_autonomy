@@ -23,3 +23,7 @@ repositories:
     type: git
     url: https://github.com/rolker/marine_perception_tools.git
     version: jazzy
+  marine_colormap:
+    type: git
+    url: https://github.com/rolker/marine_colormap.git
+    version: jazzy
