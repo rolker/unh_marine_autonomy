@@ -26,9 +26,16 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>"
 )
+# marine_autonomy + geographic_msgs are in the public headers (GGGS / GeoPoint);
+# GDAL is used only inside tile_io.cpp, so it is PRIVATE. It is still exported as
+# a dependency below because this is a static library — CMake propagates the
+# private link to consumers as $<LINK_ONLY:GDAL::GDAL>, so they must be able to
+# resolve the GDAL target via find_package(marine_bathymetry_store).
 target_link_libraries(${PROJECT_NAME} PUBLIC
   marine_autonomy::marine_autonomy
   ${geographic_msgs_TARGETS}
+)
+target_link_libraries(${PROJECT_NAME} PRIVATE
   GDAL::GDAL
 )
 
@@ -41,7 +48,7 @@ install(TARGETS ${PROJECT_NAME}
 )
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(marine_autonomy geographic_msgs)
+ament_export_dependencies(marine_autonomy geographic_msgs GDAL)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
