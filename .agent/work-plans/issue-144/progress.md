@@ -28,6 +28,6 @@ issue: 144
 **Verdict**: changes-requested
 
 ### Findings
-- [ ] (must-fix) cube `geo_grid.cpp:73,77` consumes BOTH changing APIs — `CellAreaIterator(grid, BoundsDegrees)` ctor and `CellIndex::position()` return, then calls `gz4d::Position::distanceFrom` (GeoPoint has none). Won't compile post-swap. Add to cube #41 scope; pick local-gz4d-convert vs geodesy Vincenty inverse. — `plan.md` §B
-- [ ] (must-fix) Correct the false "no external consumer per audit" (CellAreaIterator) and "none found" (return positions) claims in plan §B + Files-to-Change AND in the cube_bathymetry#41 issue body. — `plan.md` §B
-- [ ] (suggestion) `geographic_msgs` is already a marine_autonomy dep (CMakeLists find_package + ament_export_dependencies) — downgrade the "add dep" step to "verify package.xml". — `plan.md` Approach step 4 / Files-to-Change
+- [x] (must-fix) cube `geo_grid.cpp:73,77` consumes BOTH changing APIs — `CellAreaIterator(grid, BoundsDegrees)` ctor and `CellIndex::position()` return, then calls `gz4d::Position::distanceFrom` (GeoPoint has none). Won't compile post-swap. **Resolved (`9baacf9`): both sites added to plan §B + cube #41 scope; distance → geodesy Vincenty inverse (Roland's call).**
+- [x] (must-fix) Correct the false "no external consumer per audit" (CellAreaIterator) and "none found" (return positions) claims. **Resolved (`9baacf9`): plan Context/§B/Files-to-Change corrected; cube_bathymetry#41 issue body corrected.**
+- [x] (suggestion) `geographic_msgs` already a marine_autonomy dep. **Resolved (`9baacf9`): plan downgraded to "verify package.xml".**
