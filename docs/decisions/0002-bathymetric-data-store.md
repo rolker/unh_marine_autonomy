@@ -110,10 +110,18 @@ and confines datum logic to the importers.
 
 ### D5 — Persistence: one GeoTIFF per dirty GGGS tile
 
-Persist each dirty tile as a **multi-band GeoTIFF** (bands: depth, uncertainty,
-source, timestamp) named by its `GridIndex`. Rationale: GDAL is already a
-dependency (used by the bathy-BAG / GeoTIFF importers); GeoTIFF carries its own
-georeferencing; per-tile files make incremental ("save only dirty tiles") and
+Persist each dirty tile as a **multi-band GeoTIFF** named by its `GridIndex`.
+The bands are **depth, uncertainty, timestamp** (3 bands); the **source layer is
+not a band** — it is encoded as the on-disk subdirectory (`processed/`,
+`draft/`), because a tile is single-layer by construction (the store keeps one
+tile map per layer, D3), so a per-cell source band would be a constant and pure
+overhead. (As-built in the Phase-1 store, #141; this supersedes an earlier draft
+of this section that listed a 4th `source` band.) Bands are `Float64` so the
+absolute-Unix-seconds timestamp keeps usable precision — a single GeoTIFF has one
+band data type, so depth/uncertainty ride along as `Float64` too. Rationale: GDAL
+is already a dependency (used by the bathy-BAG / GeoTIFF importers); GeoTIFF
+carries its own georeferencing; per-tile files make incremental ("save only dirty
+tiles") and
 the distribution manifest (D6) fall out naturally — the manifest is
 `{GridIndex → version}`, and **version is a content hash of the tile's cell
 data** (not file mtime: mtime is unreliable across the clock-skewed robot and
