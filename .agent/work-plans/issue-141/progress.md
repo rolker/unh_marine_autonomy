@@ -54,3 +54,24 @@ issue: 141
 - (Copilot) `GetRasterBand` null / timestamp-band no-data / `GDALAllRegister` per-call / accepting >3 bands — bands 1-3 always valid; no NaN timestamps written; idempotent idiom; intentional forward-compat.
 
 **Static analysis**: clean (copyright/cpplint/cppcheck/uncrustify/xmllint all pass).
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-11 (America/New_York)
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #143 at `13488ef` (fixes pushed as `63a312f`)
+**Sources**: 2 (Copilot R1 @ `13488ef`; Local Review (Pre-Push) @ `b8d1058`)
+**Cross-source confirmations**: 0
+**CI**: build FAILURE — flaky/unrelated (see below); marine_bathymetry_store built + passed in CI
+
+### Findings
+- [x] (valid, Copilot) `tile_io.hpp:40` governance: PR closes #141 but ships 3-band + directory-source while #141/ADR §D5 said a 4th `source` band. **Resolved (`63a312f`/ADR `a244be3`): recorded the 3-band directory-source decision in ADR-0002 §D5 (PR #142) + #141 issue body — a tile is single-layer, so a source band is redundant.**
+- [x] (valid, Copilot) `bathymetry_store.hpp:55` `fromCellSize()` doc backwards (GGGS picks coarsest level with cells ≤ request). **Fixed (`63a312f`).**
+- [x] (valid, Copilot) `plan.md:58` stale `GDT_Float32` (impl is Float64). **Fixed (`63a312f`).**
+
+### False positives
+- (Copilot) `tile_io.cpp:166` `GDALClose()` "is void in common releases, won't compile" — disproven: jazzy GDAL 3.8.4 declares `CPLErr GDALClose` (gdal.h:1114); **CI compiled the package and ran 469 tests**; void-return is GDAL <3.7 (Humble-era), not a workspace target (ADR-0008: jazzy/rolling). Added a clarifying comment, no functional change.
+
+### CI note
+- `build` failure = `marine_autonomy_integration_tests.test_mission_command_flow` ("Expected Heartbeat with Navigator=active, got heartbeats: []") — a launch/timing mission-flow test, flaky and unrelated to #141 (a new package + a constexpr accessor can't affect mission_manager↔navigator). Re-triggered by the `63a312f` push.
