@@ -63,16 +63,20 @@ public:
   /// @brief Construct a CellIndex from a geographic position within a grid.
   /// @param grid The grid containing the position.
   /// @param position Geographic coordinates (latitude, longitude).
-  CellIndex(GridIndex grid, const gz4d::PositionDegrees &position):
+  CellIndex(GridIndex grid, const geographic_msgs::msg::GeoPoint &position):
     grid_index_(grid)
   {
+    // Wrap longitude into [-180, 180) so positions near the antimeridian
+    // resolve relative to the grid's western edge (GeoPoint, unlike the
+    // previous angle-aware type, does not self-normalize).
+    const double longitude = normalizeLongitude(position.longitude);
 
     // Note, we constrain to 1.0, but what we really need is up to 1.0.
     double row_p = std::max(0.0, std::min(1.0, (position.latitude-grid_index_.southLatitude())/grid_index_.latitudinalSpan()));
     // This std::min should filter out 1.0 from above
     row_ = std::min<uint16_t>(cell_rows_per_grid-1, cell_rows_per_grid*row_p);
 
-    double column_p = std::max(0.0, (position.longitude-grid_index_.westLongitude())/grid_index_.longitudinalSpan());
+    double column_p = std::max(0.0, (longitude-grid_index_.westLongitude())/grid_index_.longitudinalSpan());
     column_ = std::min<uint16_t>(cell_columns_per_grid-1, cell_columns_per_grid*column_p);
   }
 
@@ -104,13 +108,13 @@ public:
 
   /// @brief Compute the geographic position of this cell's south-west corner.
   /// @return Position in degrees.
-  gz4d::PositionDegrees position() const
+  geographic_msgs::msg::GeoPoint position() const
   {
     double row_p = row_/double(cell_rows_per_grid);
     double column_p = column_/double(cell_columns_per_grid);
     auto latitude = grid_index_.southLatitude()+row_p*grid_index_.latitudinalSpan();
     auto longitude = grid_index_.westLongitude()+column_p*grid_index_.longitudinalSpan();
-    return gz4d::PositionDegrees(latitude, longitude);
+    return geoPoint(latitude, longitude);
   }
 
   /// Less than operator allowing use as std::map key.

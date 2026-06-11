@@ -34,9 +34,13 @@ with the ROS-standard `geographic_msgs::msg::GeoPoint` (the `geodesy` convention
 
 1. **Inputs → `GeoPoint`.** Keep the `(double,double)` primitives untouched. Replace
    the `gz4d::PositionDegrees` input overloads (`Level::gridIndex/cellIndex`,
-   `CellIndex(grid, position)`) with `geographic_msgs::msg::GeoPoint` overloads that
-   **normalize longitude to ±180°** (replicating gz4d's `Angle` wraparound — see
-   Caveat) then delegate to the double primitive.
+   `CellIndex(grid, position)`) with `geographic_msgs::msg::GeoPoint` overloads.
+   **Longitude normalization** (replicating gz4d's `Angle` wraparound — see Caveat):
+   `gridIndex(double,double)` already wrapped longitude into [-180,180), refactored to
+   a shared `gggs::normalizeLongitude()` helper (in `core.h`); the `CellIndex(grid,
+   GeoPoint)` ctor now applies the same wrap (its column math previously relied on the
+   angle type self-normalizing). A `gggs::geoPoint(lat, lon)` builder also lives in
+   `core.h`.
 2. **Outputs → `GeoPoint`.** Change return type of `GridIndex::southWestPosition()`,
    `northEastPosition()`, and `CellIndex::position()` from `gz4d::PositionDegrees` to
    `GeoPoint` (built from the existing double corner accessors; can't overload by
@@ -45,11 +49,13 @@ with the ROS-standard `geographic_msgs::msg::GeoPoint` (the `geodesy` convention
    `GeoPoint` corners. **This ctor IS consumed externally** — `cube_bathymetry`
    `geo_grid.cpp:73` constructs it (handled in §B). Avoid a new bespoke bounds type
    unless needed.
-4. **De-gz4d the four headers' API.** Ensure `cell_index.h`, `grid_index.h`,
-   `level.h`, `cell_area_iterator.h` reference no `gz4d` in signatures. `gz4d_geo.h`
-   stays vendored (still used by `utils.h`). `geographic_msgs` is **already** a
-   marine_autonomy dependency (`CMakeLists.txt:13` `find_package` +
-   `ament_export_dependencies`) — just verify `package.xml` lists it; no dep to add.
+4. **De-gz4d the four headers' API.** `cell_index.h`, `grid_index.h`, `level.h`,
+   `cell_area_iterator.h` (+ the `gggs.h` doc example) reference no `gz4d` in
+   signatures. `gz4d_geo.h` stays vendored (still used by `utils.h`). **Dependency
+   fix:** `geographic_msgs` was in `CMakeLists.txt` (`find_package` +
+   `ament_export_dependencies`) but **missing from `package.xml` `<depend>` and from
+   the target's `target_link_libraries`** — added both (`${geographic_msgs_TARGETS}`)
+   so the `GeoPoint` headers resolve for the library and its consumers.
 5. **Update `test_gggs.cpp`** to the new types; **add an antimeridian test** (a
    GeoPoint with lon just past ±180 normalizes correctly).
 
@@ -80,12 +86,15 @@ with the ROS-standard `geographic_msgs::msg::GeoPoint` (the `geodesy` convention
 
 | File | Change |
 |------|--------|
-| `marine_autonomy/include/marine_autonomy/gggs/level.h` | gz4d→GeoPoint input overloads (normalize lon); keep double primitives |
-| `.../gggs/cell_index.h` | `CellIndex(grid, GeoPoint)` ctor + `position()→GeoPoint` |
+| `.../gggs/core.h` | add `geoPoint()` + `normalizeLongitude()` helpers + `geo_point.hpp` include |
+| `.../gggs/level.h` | gz4d→GeoPoint input overloads; double primitive uses `normalizeLongitude()` |
+| `.../gggs/cell_index.h` | `CellIndex(grid, GeoPoint)` ctor (normalizes lon) + `position()→GeoPoint` |
 | `.../gggs/grid_index.h` | `southWestPosition()/northEastPosition()→GeoPoint` |
-| `.../gggs/cell_area_iterator.h` | bounds ctor takes GeoPoint corners |
-| `marine_autonomy/package.xml` | verify `geographic_msgs` listed (already in `CMakeLists.txt`) |
-| `marine_autonomy/test/test_gggs.cpp` | new types + antimeridian normalization test |
+| `.../gggs/cell_area_iterator.h` | bounds ctor takes two `GeoPoint` corners |
+| `.../gggs.h` | doc-example uses `geoPoint()` |
+| `marine_autonomy/package.xml` | add `<depend>geographic_msgs</depend>` (was missing) |
+| `marine_autonomy/CMakeLists.txt` | add `${geographic_msgs_TARGETS}` to `target_link_libraries` (was missing) |
+| `marine_autonomy/test/test_gggs.cpp` | new types + `geoPoint`/`normalizeLongitude`/antimeridian tests |
 | `cube_bathymetry/src/geo_map_sheet.cpp` (separate PR) | `gridIndex` double overload at :71-72 |
 | `cube_bathymetry/src/geo_grid.cpp` (separate PR) | `CellAreaIterator` GeoPoint-corner ctor (:73) + `distanceFrom`→geodesy Vincenty inverse (:77) |
 

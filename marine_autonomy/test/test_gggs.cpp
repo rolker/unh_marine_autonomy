@@ -381,7 +381,7 @@ TEST(GGGSCellIndex, ConstructFromGridIsValid)
 TEST(GGGSCellIndex, PositionRoundTrip)
 {
   gggs::Level level(5);
-  gz4d::PositionDegrees pos(43.0, -70.5);
+  auto pos = gggs::geoPoint(43.0, -70.5);
   auto ci = level.cellIndex(pos);
   EXPECT_TRUE(ci.valid());
 
@@ -396,7 +396,7 @@ TEST(GGGSCellIndex, PositionRoundTrip)
 TEST(GGGSCellIndex, RowColumnWithinBounds)
 {
   gggs::Level level(5);
-  gz4d::PositionDegrees pos(43.0, -70.5);
+  auto pos = gggs::geoPoint(43.0, -70.5);
   auto ci = level.cellIndex(pos);
   EXPECT_LT(ci.row(), gggs::cell_rows_per_grid);
   EXPECT_LT(ci.column(), gggs::cell_columns_per_grid);
@@ -420,7 +420,7 @@ TEST(GGGSCellIndex, EdgesConsistent)
 TEST(GGGSCellIndex, EqualityForSameCell)
 {
   gggs::Level level(5);
-  gz4d::PositionDegrees pos(43.0, -70.5);
+  auto pos = gggs::geoPoint(43.0, -70.5);
   auto ci1 = level.cellIndex(pos);
   auto ci2 = level.cellIndex(pos);
   EXPECT_TRUE(ci1 == ci2);
@@ -534,8 +534,7 @@ TEST(GGGSCellAreaIterator, SingleCell)
   // position() returns the SW corner of the cell, which when used to create
   // a new CellIndex, may map to the cell below/left due to floating-point
   // truncation. The CellIndex from position maps to (99, 199).
-  gz4d::BoundsDegrees bounds(pos, pos);
-  gggs::CellAreaIterator it(gi, bounds);
+  gggs::CellAreaIterator it(gi, pos, pos);
   EXPECT_TRUE(it.valid());
   EXPECT_EQ(it->row(), 99);
   EXPECT_EQ(it->column(), 199);
@@ -549,8 +548,7 @@ TEST(GGGSCellAreaIterator, SubRegion)
   // Create bounds that span a portion of the grid
   auto sw = gggs::CellIndex(gi, 10, 20).position();
   auto ne = gggs::CellIndex(gi, 14, 24).position();
-  gz4d::BoundsDegrees bounds(sw, ne);
-  gggs::CellAreaIterator it(gi, bounds);
+  gggs::CellAreaIterator it(gi, sw, ne);
 
   uint32_t count = 0;
   if (it.valid())
@@ -568,8 +566,7 @@ TEST(GGGSCellAreaIterator, Reset)
   auto gi = level.gridIndex(43.0, -70.5);
   gggs::CellIndex ci(gi, 100, 200);
   auto pos = ci.position();
-  gz4d::BoundsDegrees bounds(pos, pos);
-  gggs::CellAreaIterator it(gi, bounds);
+  gggs::CellAreaIterator it(gi, pos, pos);
   EXPECT_TRUE(it.valid());
   it.next();
   EXPECT_FALSE(it.valid());
@@ -700,7 +697,7 @@ TEST(GGGSCellIndex, PositionConstructorLevel0)
   ASSERT_TRUE(gi.valid());
   double south = gi.southLatitude();
   // Position 4° above the south edge of the grid
-  gz4d::PositionDegrees pos(south + 4.0, gi.westLongitude() + 1.0);
+  auto pos = gggs::geoPoint(south + 4.0, gi.westLongitude() + 1.0);
   gggs::CellIndex ci(gi, pos);
   ASSERT_TRUE(ci.valid());
   // 4° into an 8° span = 50% → row ≈ 480
@@ -779,10 +776,9 @@ TEST(GGGSCellAreaIterator, BoundsEntirelyBelowGrid)
   auto gi = level.gridIndex(43.0, -70.5);
   // Create bounds entirely south of the grid
   double south = gi.southLatitude();
-  gz4d::PositionDegrees sw(south - 2.0, gi.westLongitude());
-  gz4d::PositionDegrees ne(south - 1.0, gi.eastLongitude());
-  gz4d::BoundsDegrees bounds(sw, ne);
-  gggs::CellAreaIterator it(gi, bounds);
+  auto sw = gggs::geoPoint(south - 2.0, gi.westLongitude());
+  auto ne = gggs::geoPoint(south - 1.0, gi.eastLongitude());
+  gggs::CellAreaIterator it(gi, sw, ne);
   EXPECT_FALSE(it.valid());
 }
 
@@ -791,10 +787,9 @@ TEST(GGGSCellAreaIterator, BoundsEntirelyAboveGrid)
   gggs::Level level(5);
   auto gi = level.gridIndex(43.0, -70.5);
   double north = gi.northLatitude();
-  gz4d::PositionDegrees sw(north + 1.0, gi.westLongitude());
-  gz4d::PositionDegrees ne(north + 2.0, gi.eastLongitude());
-  gz4d::BoundsDegrees bounds(sw, ne);
-  gggs::CellAreaIterator it(gi, bounds);
+  auto sw = gggs::geoPoint(north + 1.0, gi.westLongitude());
+  auto ne = gggs::geoPoint(north + 2.0, gi.eastLongitude());
+  gggs::CellAreaIterator it(gi, sw, ne);
   EXPECT_FALSE(it.valid());
 }
 
@@ -803,10 +798,9 @@ TEST(GGGSCellAreaIterator, BoundsEntirelyLeftOfGrid)
   gggs::Level level(5);
   auto gi = level.gridIndex(43.0, -70.5);
   double west = gi.westLongitude();
-  gz4d::PositionDegrees sw(gi.southLatitude(), west - 2.0);
-  gz4d::PositionDegrees ne(gi.northLatitude(), west - 1.0);
-  gz4d::BoundsDegrees bounds(sw, ne);
-  gggs::CellAreaIterator it(gi, bounds);
+  auto sw = gggs::geoPoint(gi.southLatitude(), west - 2.0);
+  auto ne = gggs::geoPoint(gi.northLatitude(), west - 1.0);
+  gggs::CellAreaIterator it(gi, sw, ne);
   EXPECT_FALSE(it.valid());
 }
 
@@ -815,11 +809,60 @@ TEST(GGGSCellAreaIterator, BoundsEntirelyRightOfGrid)
   gggs::Level level(5);
   auto gi = level.gridIndex(43.0, -70.5);
   double east = gi.eastLongitude();
-  gz4d::PositionDegrees sw(gi.southLatitude(), east + 1.0);
-  gz4d::PositionDegrees ne(gi.northLatitude(), east + 2.0);
-  gz4d::BoundsDegrees bounds(sw, ne);
-  gggs::CellAreaIterator it(gi, bounds);
+  auto sw = gggs::geoPoint(gi.southLatitude(), east + 1.0);
+  auto ne = gggs::geoPoint(gi.northLatitude(), east + 2.0);
+  gggs::CellAreaIterator it(gi, sw, ne);
   EXPECT_FALSE(it.valid());
+}
+
+// ============================================================================
+// core.h — geoPoint / normalizeLongitude helpers and antimeridian handling
+// ============================================================================
+
+TEST(GGGSCore, GeoPointSetsFields)
+{
+  auto p = gggs::geoPoint(43.0, -70.5);
+  EXPECT_DOUBLE_EQ(p.latitude, 43.0);
+  EXPECT_DOUBLE_EQ(p.longitude, -70.5);
+  EXPECT_DOUBLE_EQ(p.altitude, 0.0);
+}
+
+TEST(GGGSCore, NormalizeLongitudeWraps)
+{
+  // In-range values are unchanged.
+  EXPECT_DOUBLE_EQ(gggs::normalizeLongitude(-70.5), -70.5);
+  EXPECT_DOUBLE_EQ(gggs::normalizeLongitude(0.0), 0.0);
+  EXPECT_DOUBLE_EQ(gggs::normalizeLongitude(179.0), 179.0);
+  // Just past the antimeridian wraps to the western hemisphere and vice versa.
+  EXPECT_DOUBLE_EQ(gggs::normalizeLongitude(181.0), -179.0);
+  EXPECT_DOUBLE_EQ(gggs::normalizeLongitude(-181.0), 179.0);
+  // The half-open convention: ±180 maps to -180.
+  EXPECT_DOUBLE_EQ(gggs::normalizeLongitude(180.0), -180.0);
+  EXPECT_DOUBLE_EQ(gggs::normalizeLongitude(-180.0), -180.0);
+  // Multiple wraps.
+  EXPECT_DOUBLE_EQ(gggs::normalizeLongitude(540.0 + 1.0), -179.0);
+}
+
+// The previous angle-aware position type self-normalized longitude; GeoPoint
+// does not, so the GGGS API must restore that behavior at its boundary. An
+// un-normalized longitude must resolve to the same grid/cell as its wrapped
+// equivalent.
+TEST(GGGSAntimeridian, GridIndexNormalizesLongitude)
+{
+  gggs::Level level(5);
+  auto wrapped = level.gridIndex(43.0, 181.0);
+  auto direct = level.gridIndex(43.0, -179.0);
+  EXPECT_TRUE(wrapped.valid());
+  EXPECT_EQ(wrapped, direct);
+}
+
+TEST(GGGSAntimeridian, CellIndexNormalizesLongitude)
+{
+  gggs::Level level(5);
+  auto wrapped = level.cellIndex(gggs::geoPoint(43.0, 181.0));
+  auto direct = level.cellIndex(gggs::geoPoint(43.0, -179.0));
+  EXPECT_TRUE(wrapped.valid());
+  EXPECT_EQ(wrapped, direct);
 }
 
 // Bug 6: CellIndex public constructor now asserts on out-of-bounds row/column.

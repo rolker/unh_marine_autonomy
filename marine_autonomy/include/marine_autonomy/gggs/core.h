@@ -33,6 +33,8 @@
 #include <cmath>
 #include <sstream>
 
+#include <geographic_msgs/msg/geo_point.hpp>
+
 #include "marine_autonomy/utils.h"
 
 /// @file core.h
@@ -98,6 +100,35 @@ inline uint8_t latitudeScaleFactor(double latitude)
   if (std::abs(latitude) < 80.0)
     return 3;
   return 9;
+}
+
+/// @brief Wrap a longitude in degrees into the half-open range [-180, 180).
+///
+/// GGGS positions are carried as plain doubles / @c geographic_msgs::msg::GeoPoint,
+/// which (unlike the previous angle-aware type) do not self-normalize. This
+/// helper restores that behavior at the API boundary so positions near the
+/// antimeridian resolve to the correct grid and cell.
+/// @param longitude Longitude in degrees (any range).
+/// @return Equivalent longitude in [-180, 180).
+inline double normalizeLongitude(double longitude)
+{
+  longitude = std::fmod(longitude + 180.0, 360.0);
+  if (longitude < 0.0)
+    longitude += 360.0;
+  return longitude - 180.0;
+}
+
+/// @brief Build a @c geographic_msgs::msg::GeoPoint from latitude/longitude.
+/// @param latitude Latitude in degrees.
+/// @param longitude Longitude in degrees.
+/// @return GeoPoint with the given latitude/longitude and altitude 0.
+inline geographic_msgs::msg::GeoPoint geoPoint(double latitude, double longitude)
+{
+  geographic_msgs::msg::GeoPoint point;
+  point.latitude = latitude;
+  point.longitude = longitude;
+  point.altitude = 0.0;
+  return point;
 }
 
 /// @brief Verify that two GGGS objects are at the same quadtree level.
