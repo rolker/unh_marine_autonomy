@@ -54,7 +54,8 @@ Two layering facts shape the design:
    No-data returns an explicit "unknown" (so the future costmap can treat unknown
    as not-safe — ADR §D7). Pure, headless-unit-testable.
 6. **Persistence** (`tile_io.{hpp,cpp}`, GDAL) — one **3-band GeoTIFF per dirty
-   tile** (depth/uncertainty/timestamp), `GTiff` driver, `GDT_Float32`, NaN nodata,
+   tile** (depth/uncertainty/timestamp), `GTiff` driver, **`GDT_Float64`** (so the
+   absolute-Unix-seconds timestamp band keeps precision — see §2), NaN nodata,
    `SetGeoTransform` from the tile's `GridIndex` corners
    (`south/west/north/eastLongitude()`), mirroring `cube_bathymetry/src/bag_to_geotiff.cpp`.
    Filename encodes `level/row/column`; layer = subdirectory. `save(dir)` writes

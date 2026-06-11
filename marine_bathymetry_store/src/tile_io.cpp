@@ -159,6 +159,8 @@ void saveTile(const BathymetryTile & tile, const std::string & path)
   // clears the tile's dirty flag once this returns. (The DatasetCloser stays
   // as an exception-safety net for the error paths above; releasing the
   // handle here prevents a double close.)
+  // GDALClose returns CPLErr since GDAL 3.7; the workspace targets GDAL >= 3.8
+  // (ROS 2 jazzy / rolling), so checking it here is well-defined.
   GDALDataset * ds = out.ds;
   out.ds = nullptr;
   if (GDALClose(ds) != CE_None) {

@@ -52,7 +52,8 @@ public:
   explicit BathymetryStore(uint8_t gggs_level)
   : level_(gggs_level) {}
 
-  /// @brief Construct a store at the finest GGGS level with cells ≥ @p cell_size_m.
+  /// @brief Construct a store at the coarsest GGGS level whose cells are no
+  ///        larger than @p cell_size_m (clamped to the finest level, 20).
   static BathymetryStore fromCellSize(float cell_size_m)
   {
     return BathymetryStore(gggs::Level::fromCellSize(cell_size_m).level());
