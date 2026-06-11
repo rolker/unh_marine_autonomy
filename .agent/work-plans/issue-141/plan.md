@@ -19,8 +19,11 @@ Two layering facts shape the design:
   **cannot** `#include` cube. The store defines its **own** cell record; it does
   **not** reuse `cube::DepthAndUncertainty`. CUBE import (Phase 2) is designed
   later, cube-side or via `marine_interfaces`.
-- **GGGS's public API returns `gz4d` types** (`gz4d::PositionDegrees`,
-  `BoundsDegrees`). ADR-0002 §D8 says new code uses `geodesy`. See Open Questions.
+- **GGGS's public API is being migrated off `gz4d`** (→ `geographic_msgs::GeoPoint`)
+  in [#144](https://github.com/rolker/unh_marine_autonomy/issues/144), a
+  **prerequisite for this issue** (ADR-0002 §D8 decision). Phase 1 targets the
+  post-migration GGGS API (`GeoPoint`-typed); if #144 hasn't landed when coding
+  starts, gate on it or rebase onto its branch — do **not** add new `gz4d` usage.
 
 ## Approach
 
@@ -100,9 +103,10 @@ Two layering facts shape the design:
 
 ## Open Questions
 
-- **gz4d at the GGGS boundary (ADR §D8).** GGGS returns `gz4d::PositionDegrees`/`BoundsDegrees`.
-  Proposal: confine gz4d to a thin GGGS-adapter; keep store types plain/`geodesy`.
-  Is migrating GGGS's own API to `geodesy` in scope anywhere, or explicitly out? (Recommend out for Phase 1.)
+- ~~gz4d at the GGGS boundary (ADR §D8).~~ **Resolved (Roland, 2026-06-10): migrate
+  the GGGS public API off gz4d → `geographic_msgs::GeoPoint` first** —
+  [#144](https://github.com/rolker/unh_marine_autonomy/issues/144), a prerequisite
+  for this issue. Phase 1 targets the post-migration GGGS API; no new gz4d usage.
 - **Timestamp granularity.** Per-cell (ADR §D3 literal, +1 dense band ≈ +3.7 MB/tile)
   vs per-tile last-update. Plan assumes **per-cell**; confirm acceptable.
 - **Tile storage = dense** (≈12 MB/allocated tile, 3 float bands). Fine for survey-scale
@@ -113,4 +117,6 @@ Two layering facts shape the design:
 ## Estimated Scope
 
 Single PR (`feature/issue-141 → jazzy`). New package, ~8 source files + 3 test files.
-Independent of the ADR PR (#142) and of the mru_transform datum work.
+Independent of the ADR PR (#142) and of the mru_transform datum work. **Depends on
+the GGGS gz4d→`GeoPoint` migration ([#144](https://github.com/rolker/unh_marine_autonomy/issues/144))**
+— land or stack on it before coding so the store targets the gz4d-free GGGS API.

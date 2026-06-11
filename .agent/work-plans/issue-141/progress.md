@@ -14,7 +14,7 @@ issue: 141
 **Phases**: single PR (Phase 1 of the #86 epic)
 
 ### Open questions
-- [ ] gz4d at the GGGS boundary: GGGS's public API returns `gz4d` types vs ADR-0002 §D8 "use geodesy" — confine gz4d to a GGGS adapter, or migrate GGGS's API (recommend out of scope for Phase 1)?
+- [x] gz4d at the GGGS boundary — **resolved (Roland, 2026-06-10): migrate GGGS public API → `geographic_msgs::GeoPoint` first (#144), prerequisite for #141.** Phase 1 targets the gz4d-free GGGS API.
 - [ ] Timestamp granularity: per-cell (ADR §D3 literal, +1 dense band ≈ +3.7 MB/tile) vs per-tile last-update.
 - [ ] Tile storage dense (≈12 MB/allocated tile) — OK for survey-scale; revisit if very sparse wide-area coverage expected.
 - [ ] `shallowestReliable` reliability-threshold default deferred to costmap phase; OK as caller-supplied param in Phase 1?
