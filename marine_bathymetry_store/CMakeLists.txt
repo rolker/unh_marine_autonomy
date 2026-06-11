@@ -24,7 +24,7 @@ add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-  "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>"
+  "$<INSTALL_INTERFACE:include>"
 )
 # marine_autonomy + geographic_msgs are in the public headers (GGGS / GeoPoint);
 # GDAL is used only inside tile_io.cpp, so it is PRIVATE. It is still exported as
@@ -39,7 +39,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   GDAL::GDAL
 )
 
-install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
+# Headers are laid out as include/${PROJECT_NAME}/*.hpp, so install the include/
+# tree to `include` (not include/${PROJECT_NAME}) to avoid a doubled
+# include/${PROJECT_NAME}/${PROJECT_NAME}/ path; the INSTALL_INTERFACE above is
+# `include` to match.
+install(DIRECTORY include/ DESTINATION include)
 install(TARGETS ${PROJECT_NAME}
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib

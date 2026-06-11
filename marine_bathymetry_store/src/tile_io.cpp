@@ -132,8 +132,9 @@ void saveTile(const BathymetryTile & tile, const std::string & path)
   CPLFree(wkt);
   checkCE(projection_result, "set projection");
 
-  // No-data is metadata only — NaN round-trips through the Float64 bands
-  // regardless — so its result is intentionally not treated as fatal.
+  // The depth/uncertainty no-data value is metadata only — NaN round-trips
+  // through the Float64 bands regardless — so its result is intentionally not
+  // treated as fatal. The timestamp band has no no-data (0 = unset, never NaN).
   const double nan = std::numeric_limits<double>::quiet_NaN();
   out.ds->GetRasterBand(kDepthBand)->SetNoDataValue(nan);
   out.ds->GetRasterBand(kUncertaintyBand)->SetNoDataValue(nan);
