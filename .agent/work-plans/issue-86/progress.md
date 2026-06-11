@@ -21,3 +21,21 @@ issue: 86
 - [ ] Keep Distribution (Phase 6) deferred past June 15; `clear_grid` is the agreed interim for the #250 udp_bridge grid-size failure.
 - [ ] Confirm `geodesy` covers the resampling/conversion math the gz4d retirement assumes before committing to it in the ADR.
 - [ ] Define conservative no-data / stale-tile / uncertainty-above-threshold behavior for the costmap + "shallowest reliable depth" query (Safety First); validate consumers in sim before water (Simulation-First).
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-10 (America/New_York)
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #142 at `fe8edb1`
+**Sources**: 1 (Copilot R1 @ `fe8edb1`; no local review-type entries for #86)
+**Cross-source confirmations**: 0
+**CI**: all-pass (build ✅, copilot-pull-request-reviewer ✅)
+
+### Findings
+- [ ] (valid, Copilot) §D5/§D6 tile `version` is "content hash **or** mtime" — ambiguous sync key; mtime unreliable across clock-skewed machines. Pin to content hash; mtime at most a local dirty-check. — `docs/decisions/0002-bathymetric-data-store.md`
+- [ ] (valid, Copilot) §D8 "gz4d no longer checked out as a source package" is misleading — `gz4d_geo.h` is vendored in `marine_autonomy` and used by GGGS headers (cell_index/level/grid_index/cell_area_iterator). Reword: retirement applies to new store code; gz4d stays at the GGGS boundary. Aligns with #141 open question. — same file
+- [ ] (valid, Copilot) Consequences cite "ADR-0008" but this repo holds only ADR-0001/0002; it's the **workspace** ADR. Qualify/link as workspace ADR-0008 (ROS 2 conventions) or reference REP-105 + Standards Compliance directly. — same file
+
+### False positives
+- None — all three are accurate and improve the decision record's precision.
