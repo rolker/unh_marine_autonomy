@@ -79,7 +79,8 @@ BathymetryTile loadTile(const std::string & path, const gggs::Level & level);
 /// Layout: `<dir>/<layer>/<level>_<row>_<col>.tif`. Creates directories as
 /// needed. Clean tiles are skipped (incremental save).
 /// @return The number of tiles written.
-/// @throws std::runtime_error on any GDAL/filesystem failure.
+/// @throws std::runtime_error on any GDAL failure; std::filesystem::filesystem_error
+///         (a std::runtime_error subclass) on a directory-creation failure.
 std::size_t save(BathymetryStore & store, const std::string & dir);
 
 /// @brief Load every tile found under @p dir into @p store.
@@ -88,7 +89,9 @@ std::size_t save(BathymetryStore & store, const std::string & dir);
 /// at the level the tiles were written at (loadTile enforces per-file).
 /// Loaded tiles are clean.
 /// @return The number of tiles loaded.
-/// @throws std::runtime_error on any GDAL/filesystem failure or level mismatch.
+/// @throws std::runtime_error on any GDAL failure or level mismatch;
+///         std::filesystem::filesystem_error (a std::runtime_error subclass) on a
+///         directory-iteration failure.
 std::size_t load(BathymetryStore & store, const std::string & dir);
 
 }  // namespace marine_bathymetry_store

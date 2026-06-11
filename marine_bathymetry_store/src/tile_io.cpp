@@ -183,6 +183,18 @@ BathymetryTile loadTile(const std::string & path, const gggs::Level & level)
     throw std::runtime_error("loadTile: unexpected dimensions/bands in " + path);
   }
 
+  // The grid recovery below interprets the geotransform as degrees, so the file
+  // must be a geographic WGS84 raster. Reject a projected (e.g. UTM, coordinates
+  // in metres) or otherwise non-WGS84 file — accidental copy, corruption — rather
+  // than silently misreading its coordinates as lat/lon.
+  const OGRSpatialReference * srs = in.ds->GetSpatialRef();
+  OGRErr axis_error = OGRERR_NONE;
+  if (srs == nullptr || !srs->IsGeographic() ||
+    std::abs(srs->GetSemiMajor(&axis_error) - 6378137.0) > 1.0 || axis_error != OGRERR_NONE)
+  {
+    throw std::runtime_error("loadTile: not a geographic WGS84 raster: " + path);
+  }
+
   double geo_transform[6];
   if (in.ds->GetGeoTransform(geo_transform) != CE_None) {
     throw std::runtime_error("loadTile: missing geotransform in " + path);
@@ -237,7 +249,10 @@ std::size_t save(BathymetryStore & store, const std::string & dir)
   for (const SourceLayer layer : source_layers_by_priority) {
     const fs::path layer_dir = fs::path(dir) / layerDirName(layer);
     bool created_dir = false;
-    // Collect dirty grids first (we re-fetch mutably to clear their flags).
+    // Iterate the layer's tiles (a const view) and write each dirty one. The
+    // dirty flag is cleared via getOrCreateTile() on the same (existing) key:
+    // that's a lookup, not an insert, and clearDirty() only flips a bool on the
+    // tile value — neither mutates the map, so the iterator stays valid.
     for (const auto & [grid, tile] : store.tiles(layer)) {
       if (!tile.dirty()) {
         continue;
