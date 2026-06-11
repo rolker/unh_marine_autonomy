@@ -865,6 +865,37 @@ TEST(GGGSAntimeridian, CellIndexNormalizesLongitude)
   EXPECT_EQ(wrapped, direct);
 }
 
+// The CellAreaIterator bounds ctor must normalize its corner longitudes too,
+// matching gridIndex() and the CellIndex(grid, GeoPoint) ctor. Corners shifted
+// by a full turn (+360°) must iterate the identical cells, not be rejected as
+// outside the grid. (Regression: the iterator originally read raw longitudes
+// while the other two paths normalized — an antimeridian asymmetry.)
+TEST(GGGSAntimeridian, CellAreaIteratorNormalizesCornerLongitude)
+{
+  gggs::Level level(5);
+  auto gi = level.gridIndex(43.0, -70.5);
+  // Interior fractions of the grid (deliberately off cell boundaries so a
+  // +360° round-trip's floating-point rounding can't nudge a corner into an
+  // adjacent cell). Before the iterator ctor normalized its corners, the
+  // raw >180° longitudes were rejected as "east of grid" → empty iterator.
+  const double lat0 = gi.southLatitude() + gi.latitudinalSpan() * 0.317;
+  const double lat1 = gi.southLatitude() + gi.latitudinalSpan() * 0.583;
+  const double lon0 = gi.westLongitude() + gi.longitudinalSpan() * 0.317;
+  const double lon1 = gi.westLongitude() + gi.longitudinalSpan() * 0.583;
+
+  gggs::CellAreaIterator ref(gi, gggs::geoPoint(lat0, lon0), gggs::geoPoint(lat1, lon1));
+  gggs::CellAreaIterator wrapped(gi,
+    gggs::geoPoint(lat0, lon0 + 360.0), gggs::geoPoint(lat1, lon1 + 360.0));
+
+  uint32_t ref_count = 0;
+  if (ref.valid()) { ref_count = 1; while (ref.next()) ref_count++; }
+  uint32_t wrapped_count = 0;
+  if (wrapped.valid()) { wrapped_count = 1; while (wrapped.next()) wrapped_count++; }
+
+  EXPECT_GT(ref_count, 0u);
+  EXPECT_EQ(wrapped_count, ref_count);
+}
+
 // Bug 6: CellIndex public constructor now asserts on out-of-bounds row/column.
 // After Bug 5, no internal code passes out-of-bounds values.
 TEST(GGGSCellIndex, OutOfBoundsRowAssertsInDebug)

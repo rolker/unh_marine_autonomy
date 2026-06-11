@@ -64,10 +64,15 @@ public:
     const geographic_msgs::msg::GeoPoint& maximum)
   {
     // Extract bound coordinates as doubles for comparison with grid edges.
+    // Normalize each corner's longitude into [-180, 180) so the
+    // outside-grid checks and clamp below compare against grid edges on the
+    // same scale — matching gridIndex() and the CellIndex(grid, GeoPoint)
+    // ctor. (GeoPoint, unlike the previous angle-aware type, does not
+    // self-normalize, so a corner at e.g. 181° must be read as -179°.)
     double min_lat = minimum.latitude;
     double max_lat = maximum.latitude;
-    double min_lon = minimum.longitude;
-    double max_lon = maximum.longitude;
+    double min_lon = normalizeLongitude(minimum.longitude);
+    double max_lon = normalizeLongitude(maximum.longitude);
 
     // Check if bounds are entirely outside the grid in any direction.
     if(max_lat < grid.southLatitude())
