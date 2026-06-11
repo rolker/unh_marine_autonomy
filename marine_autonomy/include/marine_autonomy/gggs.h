@@ -41,8 +41,7 @@
 /// auto grid = level.gridIndex(43.07, -70.76);
 ///
 /// // Get the specific cell within that grid
-/// gz4d::PositionDegrees pos(43.07, -70.76);
-/// auto cell = level.cellIndex(pos);
+/// auto cell = level.cellIndex(gggs::geoPoint(43.07, -70.76));
 ///
 /// // Iterate over all grids in a bounding box
 /// auto from = level.gridIndex(43.0, -71.0);
