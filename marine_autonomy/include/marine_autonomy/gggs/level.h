@@ -69,6 +69,12 @@ public:
     return Level(clamped);
   }
 
+  /// @brief The quadtree level number (0-20).
+  constexpr uint8_t level() const noexcept
+  {
+    return level_;
+  }
+
   /// Approximate cell size in meters
   double cellSize() const noexcept
   {

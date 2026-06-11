@@ -19,22 +19,27 @@ Two layering facts shape the design:
   **cannot** `#include` cube. The store defines its **own** cell record; it does
   **not** reuse `cube::DepthAndUncertainty`. CUBE import (Phase 2) is designed
   later, cube-side or via `marine_interfaces`.
-- **GGGS's public API is being migrated off `gz4d`** (→ `geographic_msgs::GeoPoint`)
-  in [#144](https://github.com/rolker/unh_marine_autonomy/issues/144), a
-  **prerequisite for this issue** (ADR-0002 §D8 decision). Phase 1 targets the
-  post-migration GGGS API (`GeoPoint`-typed); if #144 hasn't landed when coding
-  starts, gate on it or rebase onto its branch — do **not** add new `gz4d` usage.
+- **GGGS's public API was migrated off `gz4d`** (→ `geographic_msgs::GeoPoint`) in
+  [#144](https://github.com/rolker/unh_marine_autonomy/issues/144), **MERGED
+  2026-06-11** (`426bbd7`) and merged into this branch. Phase 1 targets that
+  gz4d-free GGGS API; no new `gz4d` usage.
 
 ## Approach
 
 1. **New package `marine_bathymetry_store`** (ament_cmake, in this repo) — depends
-   on `marine_autonomy` (GGGS) and `GDAL` (system). Library only; no ROS node this
-   phase. Clean `ament_export` (GGGS + geodesy only; no consumer coupling).
-2. **Per-cell record** (`bathy_cell.hpp`) — `depth` (float, ellipsoidal m, WGS84,
-   NaN = no-data), `uncertainty` (float), `timestamp` (`builtin_interfaces`/seconds
-   as float band). Source is implied by which layer holds the cell (step 4).
+   on `marine_autonomy` (GGGS), `geographic_msgs` (`GeoPoint` for the region query),
+   and `GDAL` (system). Library only; no ROS node this phase. Clean `ament_export`.
+   (No `geodesy`: Phase-1 queries are GGGS-index-typed and persistence uses GridIndex
+   corners — geodesy enters only with the later map-frame query variants. Per
+   review-plan.) Also adds a one-line `gggs::Level::level()` accessor to
+   `marine_autonomy` (same repo) — the store needs the level number to validate cells.
+2. **Per-cell record** (`bathy_cell.hpp`) — `depth`, `uncertainty`, `timestamp`,
+   all **`double`** (NaN depth = no-data). Double (and a Float64 GeoTIFF) is
+   deliberate: a `float` timestamp band coarsens absolute Unix seconds to ~128 s,
+   silently degrading staleness info (ADR §D7). Per review-plan. Source is implied
+   by which layer holds the cell (step 4).
 3. **`BathymetryTile`** — one GGGS grid (960×960) of cells stored as **dense
-   column-major float arrays** (depth, uncertainty, timestamp), lazily allocated on
+   row-major double arrays** (depth, uncertainty, timestamp), lazily allocated on
    first write (GeoMapSheet's create-on-demand pattern). Dirty flag per tile.
    Cell addressing via `gggs::CellIndex` row/column.
 4. **`BathymetryStore`** — `enum class SourceLayer { Processed, Draft }` (Chart in
@@ -65,7 +70,8 @@ Two layering facts shape the design:
 
 | File | Change |
 |------|--------|
-| `marine_bathymetry_store/package.xml` | New ament package; deps `marine_autonomy`, `geodesy`, GDAL, ament_cmake_gtest |
+| `marine_bathymetry_store/package.xml` | New ament package; deps `marine_autonomy`, `geographic_msgs`, GDAL (`libgdal-dev`), ament_cmake_gtest |
+| `marine_autonomy/include/marine_autonomy/gggs/level.h` | Add `Level::level()` accessor (store needs the level number) |
 | `marine_bathymetry_store/CMakeLists.txt` | Library target + GDAL link + gtests (model cube CMake) |
 | `.../include/marine_bathymetry_store/bathy_cell.hpp` | Per-cell record + SourceLayer enum |
 | `.../include/marine_bathymetry_store/bathymetry_tile.hpp` | Dense 960×960 tile, dirty flag |
@@ -103,20 +109,41 @@ Two layering facts shape the design:
 
 ## Open Questions
 
-- ~~gz4d at the GGGS boundary (ADR §D8).~~ **Resolved (Roland, 2026-06-10): migrate
-  the GGGS public API off gz4d → `geographic_msgs::GeoPoint` first** —
-  [#144](https://github.com/rolker/unh_marine_autonomy/issues/144), a prerequisite
-  for this issue. Phase 1 targets the post-migration GGGS API; no new gz4d usage.
-- **Timestamp granularity.** Per-cell (ADR §D3 literal, +1 dense band ≈ +3.7 MB/tile)
-  vs per-tile last-update. Plan assumes **per-cell**; confirm acceptable.
-- **Tile storage = dense** (≈12 MB/allocated tile, 3 float bands). Fine for survey-scale
-  tile counts; flag if very sparse wide-area coverage is expected (→ sparse cell map).
-- **`reliable` threshold default** for shallowestReliable — API takes a param; default
-  value deferred to the costmap phase. OK to leave unset (caller-supplied) in Phase 1?
+- ~~gz4d at the GGGS boundary (ADR §D8).~~ **Resolved: #144 (GGGS gz4d→GeoPoint)
+  MERGED 2026-06-11** (`426bbd7`); merged into this branch. Phase 1 targets the
+  gz4d-free GGGS API.
+- ~~Timestamp granularity / precision.~~ **Resolved (review-plan): per-cell, stored
+  as `double` (Float64 GeoTIFF band)** — avoids the float ~128 s coarsening without
+  per-tile epoch bookkeeping.
+- ~~Tile storage = dense.~~ **Resolved: dense, all-`double` (≈22 MB/allocated tile,
+  lazily allocated).** Fine at survey scale; a sparse cell map remains the escape
+  hatch if very-sparse wide-area coverage shows up (not Phase 1).
+- **`reliable` threshold** for `shallowestReliable` — kept **caller-supplied** in
+  Phase 1 (no default); the costmap phase will set the policy. (Confirmed acceptable.)
 
 ## Estimated Scope
 
-Single PR (`feature/issue-141 → jazzy`). New package, ~8 source files + 3 test files.
-Independent of the ADR PR (#142) and of the mru_transform datum work. **Depends on
-the GGGS gz4d→`GeoPoint` migration ([#144](https://github.com/rolker/unh_marine_autonomy/issues/144))**
-— land or stack on it before coding so the store targets the gz4d-free GGGS API.
+Single PR (`feature/issue-141 → jazzy`). New `marine_bathymetry_store` package
+(5 headers, 3 sources, 3 gtests, README) + a one-line `gggs::Level::level()` accessor
+in `marine_autonomy`. Independent of the ADR PR (#142) and the mru_transform datum
+work; #144 (its prerequisite) is merged.
+
+## Implementation Notes
+
+- **All-`double` tile / Float64 GeoTIFF** (not float): resolves the review-plan
+  timestamp-precision finding. A single GeoTIFF has one band data type, so depth and
+  uncertainty ride along as Float64 too (lossless). Cost: denser tiles (~22 MB
+  allocated), accepted at survey scale; dense→sparse is a future option.
+- **Source not stored per-cell**: encoded as the per-layer tile map (and the
+  persistence layer subdirectory), so the GeoTIFF is **3 bands, not ADR §D5's 4**.
+  Cleaner than a redundant per-cell field; a one-line ADR-0002 §D3/§D5 cross-ref
+  addendum (ADR-0012) should record the deviation.
+- **`gggs::Level::level()` accessor** added to `marine_autonomy`: the store validates
+  that a `CellIndex` passed to `set()` is at the store's level, which needs the level
+  number (previously not exposed). Trivial, broadly useful, same repo.
+- **`GridIndex` reconstruction on load**: GGGS's `GridIndex(level,row,col)` ctor is
+  private (Level-friend), so `loadTile` recovers the grid from the file geotransform
+  (`level.gridIndex(center)`) and rejects geotransforms that don't match a grid at the
+  store's level — which also catches loading tiles saved at a different level.
+- **Depth = ellipsoidal height (up-positive)**, so `shallowestReliable` returns the
+  **greatest** height (shallowest/most hazardous), not the minimum. Documented + tested.
