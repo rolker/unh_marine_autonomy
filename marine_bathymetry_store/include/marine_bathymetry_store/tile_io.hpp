@@ -42,6 +42,14 @@
 /// `Float64` (not `Float32`) is deliberate: the timestamp band holds absolute
 /// Unix seconds, which `float` cannot represent at usable resolution. A single
 /// GeoTIFF has one band data type, so all three bands are `Float64`.
+///
+/// @note Round-trip persistence is validated for **non-polar** latitudes
+/// (|lat| < 72°), the intended lake/coastal survey envelope. Near GGGS's polar
+/// longitude-scaling boundaries (±72°, ±80°) and the ±90° latitude clamp, a
+/// grid's per-cell angular extent diverges from the single uniform pixel size a
+/// GeoTIFF geotransform can express, so the linear geotransform becomes an
+/// approximation and the level-match check on load may mis-fire. Polar tiles are
+/// out of scope for this phase.
 
 namespace marine_bathymetry_store
 {

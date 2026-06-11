@@ -118,15 +118,22 @@ void saveTile(const BathymetryTile & tile, const std::string & path)
   const double pixel_x = grid.longitudinalSpan() / kEdge;
   const double pixel_y = -grid.latitudinalSpan() / kEdge;   // negative: north-up
   double geo_transform[6] = {west, pixel_x, 0.0, north, 0.0, pixel_y};
-  out.ds->SetGeoTransform(geo_transform);
+  // The geotransform is load-bearing: loadTile recovers the GridIndex from it.
+  checkCE(out.ds->SetGeoTransform(geo_transform), "set geotransform");
 
   OGRSpatialReference srs;
   srs.SetWellKnownGeogCS("WGS84");
   char * wkt = nullptr;
-  srs.exportToWkt(&wkt);
-  out.ds->SetProjection(wkt);
+  if (srs.exportToWkt(&wkt) != OGRERR_NONE || wkt == nullptr) {
+    CPLFree(wkt);
+    throw std::runtime_error("saveTile: could not build WGS84 WKT for " + path);
+  }
+  const CPLErr projection_result = out.ds->SetProjection(wkt);
   CPLFree(wkt);
+  checkCE(projection_result, "set projection");
 
+  // No-data is metadata only — NaN round-trips through the Float64 bands
+  // regardless — so its result is intentionally not treated as fatal.
   const double nan = std::numeric_limits<double>::quiet_NaN();
   out.ds->GetRasterBand(kDepthBand)->SetNoDataValue(nan);
   out.ds->GetRasterBand(kUncertaintyBand)->SetNoDataValue(nan);
@@ -144,6 +151,18 @@ void saveTile(const BathymetryTile & tile, const std::string & path)
       out.ds->GetRasterBand(band_index)->RasterIO(
         GF_Write, 0, 0, kEdge, kEdge, raster.data(), kEdge, kEdge, GDT_Float64, 0, 0),
       "write band");
+  }
+
+  // Close explicitly and check the result. For a GTiff the (LZW-compressed)
+  // raster and directory are flushed to disk on close, so a disk-full / I/O
+  // failure surfaces only here — and saveTile must report it, because save()
+  // clears the tile's dirty flag once this returns. (The DatasetCloser stays
+  // as an exception-safety net for the error paths above; releasing the
+  // handle here prevents a double close.)
+  GDALDataset * ds = out.ds;
+  out.ds = nullptr;
+  if (GDALClose(ds) != CE_None) {
+    throw std::runtime_error("saveTile: failed to flush/close " + path);
   }
 }
 
