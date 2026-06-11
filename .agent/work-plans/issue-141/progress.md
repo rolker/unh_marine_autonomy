@@ -33,3 +33,24 @@ issue: 141
 - [ ] (suggestion) `timestamp` as float32 band loses precision — Unix seconds (~1.78e9) in GDT_Float32 = ~128 s ulp; feeds future costmap staleness (ADR §D7). Use GDT_Float64 or a relative epoch. — `plan.md` Approach §2/§6
 - [ ] (watch) ADR-literal deviations (defensible): source encoded as per-layer map not a per-cell field (§D3); 3 GeoTIFF bands + layer-subdirectory not 4 bands incl. source (§D5). Add a one-line note / ADR-0012 cross-ref addendum. — `plan.md` Approach §2/§6
 - [ ] (note) Context still says "gate on #144"; #144 merged (426bbd7) — update inline during impl. — `plan.md` Context
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-11 (America/New_York)
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: approved (must-fix found and fixed in-session)
+
+**Branch**: feature/issue-141 at `b8d1058`
+**Mode**: pre-push
+**Depth**: Deep (reason: new package, GDAL/file-I/O, cross-layer, ~1100 lines)
+**Must-fix**: 1 | **Suggestions**: 1
+
+### Findings
+- [x] (must-fix, cross-confirmed Claude+Copilot) `saveTile` silent data loss: `SetGeoTransform`/`SetProjection` returns ignored + `DatasetCloser` swallowed `GDALClose`'s `CPLErr` (GTiff flushes at close, after `save()` clears dirty). **Fixed (`b8d1058`): check those returns + explicit checked `GDALClose` before return.** — `tile_io.cpp` saveTile
+- [x] (suggestion) Polar edge cases (±72/±80 longitude scaling, ±90 clamp) make the linear geotransform approximate. **Addressed (`b8d1058`): documented non-polar (|lat|<72) limitation.** — `tile_io.hpp`
+
+### Dismissed (false positives)
+- (Copilot) `load()` silently loses data if `getOrCreateTile` throws — no try/catch, exceptions propagate (fail-loud); also unreachable (loadTile builds grid at store level).
+- (Copilot) `GetRasterBand` null / timestamp-band no-data / `GDALAllRegister` per-call / accepting >3 bands — bands 1-3 always valid; no NaN timestamps written; idempotent idiom; intentional forward-compat.
+
+**Static analysis**: clean (copyright/cpplint/cppcheck/uncrustify/xmllint all pass).
