@@ -49,3 +49,13 @@ issue: 144
 - [ ] (suggestion) `CellIndex(grid, GeoPoint)` at exactly lon 180.0 → -180.0 (half-open convention), opposite column vs old at an antimeridian-abutting grid. Consistent with `gridIndex` normalization; defensible. — `cell_index.h:72`
 
 **Static analysis**: only pre-existing ament-cpplint style (PROJECT11_ guards, non-explicit ctors, namespace terminators, >100-char lines); no new violations introduced by this diff.
+
+## Implementation
+**Status**: complete (both sides implemented; awaiting review + merge-together)
+**When**: 2026-06-11 (America/New_York)
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**marine_autonomy (this PR)**: GGGS API gz4d→GeoPoint. PR #145 (draft), head `ef78c12` pushed. Build + 132 tests pass.
+**cube_bathymetry (lockstep)**: [rolker/cube_bathymetry#42](https://github.com/rolker/cube_bathymetry/pull/42) (closes cube#41), branch `feature/issue-41`. geo_map_sheet `gridIndex` double overload; geo_grid `CellAreaIterator` GeoPoint corners + `distanceFrom`→`geodesy::wgs84::inverse`; geodesy dep added. Built against this branch's marine_autonomy (overlay); 221 cube tests pass incl. `test_geo_grid.MultipleSoundingsConverge` (distance-equivalence evidence).
+
+**Merge order**: merge #145, then #42 immediately after. Per Roland's rule, wait for a clean Copilot round on #145 before merging.
