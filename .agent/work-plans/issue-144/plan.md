@@ -37,7 +37,7 @@ with the ROS-standard `geographic_msgs::msg::GeoPoint` (the `geodesy` convention
 2. **Outputs → `GeoPoint`.** Change return type of `GridIndex::southWestPosition()`,
    `northEastPosition()`, and `CellIndex::position()` from `gz4d::PositionDegrees` to
    `GeoPoint` (built from the existing double corner accessors; can't overload by
-   return type, so this is a direct swap — see Open Questions).
+   return type, so this is a direct swap — decided).
 3. **Bounds input.** `CellAreaIterator(grid, gz4d::BoundsDegrees)` → take two
    `GeoPoint` corners (no external consumer per audit, so minimal blast). Avoid a new
    bespoke bounds type unless needed.
@@ -48,7 +48,7 @@ with the ROS-standard `geographic_msgs::msg::GeoPoint` (the `geodesy` convention
 5. **Update `test_gggs.cpp`** to the new types; **add an antimeridian test** (a
    GeoPoint with lon just past ±180 normalizes correctly).
 
-**B. cube_bathymetry (separate issue + PR in that repo, sensors_ws) — coordinated**
+**B. cube_bathymetry ([cube_bathymetry#41](https://github.com/rolker/cube_bathymetry/issues/41), separate PR, sensors_ws) — coordinated**
 
 6. At `geo_map_sheet.cpp:71-72`, call `gridIndex(min.latitude, min.longitude)` (the
    double overload) instead of passing `gz4d::PositionDegrees`. Audit for any GGGS
@@ -95,17 +95,22 @@ with the ROS-standard `geographic_msgs::msg::GeoPoint` (the `geodesy` convention
 | Drop gz4d from GGGS headers | cube's transitive `gz4d_geo.h` include may vanish | Yes — add explicit include if build shows it |
 | `marine_autonomy` gains `geographic_msgs` dep | rosdep / package.xml | Yes |
 
+## Decisions (resolved 2026-06-10, Roland)
+
+- **Output methods: direct return-type swap.** `southWestPosition()` /
+  `northEastPosition()` / `CellIndex::position()` change return type
+  `gz4d::PositionDegrees → geographic_msgs::msg::GeoPoint`, same names. No
+  deprecated/parallel accessors.
+- **cube_bathymetry tracked by its own issue:**
+  [rolker/cube_bathymetry#41](https://github.com/rolker/cube_bathymetry/issues/41)
+  (`Part of #144`) — separate worktree + PR.
+- **Merge ordering: stage cube ready, merge both together.** No transitional gz4d
+  overloads kept; cube PR is review-clean before the marine_autonomy PR merges, then
+  cube merges immediately after.
+
 ## Open Questions
 
-- **Output methods: direct return-type swap vs new-named accessors?** Recommend the
-  **direct swap** (gz4d::PositionDegrees → GeoPoint on `southWestPosition()` etc.) —
-  trivial, no lingering deprecated API, and no GGGS-return consumers found in cube.
-  Confirm acceptable (it is a breaking signature change cube must move with).
-- **cube_bathymetry issue.** This needs its own issue in the `cube_bathymetry` repo
-  for the lockstep PR (`Part of rolker/unh_marine_autonomy#144`). OK to open it?
-- **Merge ordering.** marine_autonomy PR and cube PR must merge together (cube won't
-  build against the new GGGS API until its conversion lands). Stage cube ready first,
-  then merge both. Acceptable?
+- None outstanding — plan is review-plan-ready.
 
 ## Estimated Scope
 

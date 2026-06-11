@@ -14,6 +14,6 @@ issue: 144
 **Phases**: two coordinated PRs (marine_autonomy + cube_bathymetry)
 
 ### Open questions
-- [ ] Output methods: direct return-type swap (gz4d→GeoPoint on southWestPosition()/position()) vs new-named accessors — recommend direct swap (no GGGS-return consumers found in cube). Confirm.
-- [ ] Open a `cube_bathymetry` issue for the lockstep conversion PR (`Part of #144`)?
-- [ ] Merge ordering: stage cube PR ready, then merge both together (cube won't build against new GGGS API until its PR lands). Acceptable?
+- [x] Output methods → **direct return-type swap** (gz4d→GeoPoint, same names). Decided 2026-06-10.
+- [x] cube lockstep → own issue **rolker/cube_bathymetry#41** (`Part of #144`). Decided 2026-06-10.
+- [x] Merge ordering → **stage cube ready, merge both together**; no transitional gz4d overloads. Decided 2026-06-10.
