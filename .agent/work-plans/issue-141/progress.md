@@ -109,3 +109,21 @@ issue: 141
 
 ### Note
 Round 3 findings are packaging/comment hygiene only — substantive bugs (silent GDAL data loss, antimeridian, GDAL-private export) were caught in earlier rounds. Diminishing returns; PR is substantively complete.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-11 (America/New_York)
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #143 at `4cb7a80` (round 4; fixes pushed `f63ecd9`)
+**Sources**: Copilot R4 @ `4cb7a80` (+ R1-R3 stale, resolved)
+**Cross-source confirmations**: 0
+**CI**: all-pass (build ✅, copilot ✅)
+
+### Findings
+- [x] (valid, Copilot R4) `loadTile` didn't validate WGS84-geographic CRS before reading the geotransform as degrees. **Fixed (`f63ecd9`): reject non-geographic/non-WGS84 rasters (GetSpatialRef + IsGeographic + semi-major axis).**
+- [x] (valid, Copilot R4) `save()` "collect dirty grids first" comment inaccurate. **Fixed: explains why mid-iteration clearDirty is safe.**
+- [x] (valid, Copilot R4) `save()`/`load()` @throws docs didn't name filesystem_error (which is a runtime_error subclass). **Fixed: named explicitly.**
+
+### Note
+Round 4 = one robustness check + doc accuracy. Continuing to wind down.
