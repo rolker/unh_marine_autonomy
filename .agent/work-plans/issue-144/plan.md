@@ -19,11 +19,14 @@ with the ROS-standard `geographic_msgs::msg::GeoPoint` (the `geodesy` convention
   `gridIndex(const gz4d::PositionDegrees&)` just calls `gridIndex(p.latitude, p.longitude)`.
   Same for `cellIndex`. So swapping the typed overload carries no algorithmic risk.
 - **`cube_bathymetry` (sensors_ws) is the only external consumer of the gz4d-typed
-  GGGS API**, and only at two sites (`grid_level_.gridIndex(bounds.minimum()/maximum())`,
-  `geo_map_sheet.cpp:71-72`). It can switch to the `(double,double)` overload it
-  already has the values for. cube's *internal* gz4d (`GeoSounding : public
+  GGGS API** (verified: `marine_nav` and `camp` use gz4d but never the GGGS
+  Position/Bounds API). It consumes it at **three** sites in two files:
+  `geo_map_sheet.cpp:71-72` (`gridIndex(min/max)`) and `geo_grid.cpp:73,77` (the CUBE
+  insert hot loop — `CellAreaIterator(grid, BoundsDegrees)` ctor **and**
+  `CellIndex::position().distanceFrom(...)`, which relies on a gz4d-only method).
+  See §B for the per-site migration. cube's *internal* gz4d (`GeoSounding : public
   gz4d::PositionDegrees`, `gz4d::BoundsDegrees::radiusFromCenter`) is **out of scope** —
-  that's a separate, deeper cube gz4d-retirement, not forced by this API change.
+  a separate, deeper cube gz4d-retirement, not forced by this API change.
 
 ## Approach
 
@@ -39,23 +42,39 @@ with the ROS-standard `geographic_msgs::msg::GeoPoint` (the `geodesy` convention
    `GeoPoint` (built from the existing double corner accessors; can't overload by
    return type, so this is a direct swap — decided).
 3. **Bounds input.** `CellAreaIterator(grid, gz4d::BoundsDegrees)` → take two
-   `GeoPoint` corners (no external consumer per audit, so minimal blast). Avoid a new
-   bespoke bounds type unless needed.
+   `GeoPoint` corners. **This ctor IS consumed externally** — `cube_bathymetry`
+   `geo_grid.cpp:73` constructs it (handled in §B). Avoid a new bespoke bounds type
+   unless needed.
 4. **De-gz4d the four headers' API.** Ensure `cell_index.h`, `grid_index.h`,
    `level.h`, `cell_area_iterator.h` reference no `gz4d` in signatures. `gz4d_geo.h`
-   stays vendored (still used by `utils.h`); add `geometry/geographic_msgs` dep to
-   `package.xml` + `CMakeLists.txt`.
+   stays vendored (still used by `utils.h`). `geographic_msgs` is **already** a
+   marine_autonomy dependency (`CMakeLists.txt:13` `find_package` +
+   `ament_export_dependencies`) — just verify `package.xml` lists it; no dep to add.
 5. **Update `test_gggs.cpp`** to the new types; **add an antimeridian test** (a
    GeoPoint with lon just past ±180 normalizes correctly).
 
 **B. cube_bathymetry ([cube_bathymetry#41](https://github.com/rolker/cube_bathymetry/issues/41), separate PR, sensors_ws) — coordinated**
 
-6. At `geo_map_sheet.cpp:71-72`, call `gridIndex(min.latitude, min.longitude)` (the
-   double overload) instead of passing `gz4d::PositionDegrees`. Audit for any GGGS
-   *return*-position consumers (none found in grep) and adapt if present.
-7. Add explicit `#include "marine_autonomy/gz4d_geo.h"` if cube's transitive include
-   of it disappears (verify at build; cube keeps internal gz4d).
-8. Build + run cube tests.
+6. **`geo_map_sheet.cpp:71-72`** — call `gridIndex(min.latitude, min.longitude)` (the
+   double overload) instead of passing `gz4d::PositionDegrees`.
+7. **`geo_grid.cpp:73,77`** (the CUBE insert hot loop) — this site consumes **both**
+   changing APIs and must be migrated:
+   - line 73: `gggs::CellAreaIterator i(index_, bounds)` where `bounds` is
+     `gz4d::BoundsDegrees::radiusFromCenter(...)` → construct the iterator from two
+     `GeoPoint` corners (derive from cube's radius/center; cube keeps its internal
+     gz4d for `radiusFromCenter` if convenient, converting corners to `GeoPoint` at
+     the ctor call).
+   - line 77: `i->position().distanceFrom(geo_sounding)` — `CellIndex::position()`
+     now returns `GeoPoint`, which has no `distanceFrom`. Replace with **`geodesy`'s
+     Vincenty inverse** (`geodesy/geodesics.h` → `AzimuthDistance{azimuth, distance}`),
+     computing metres between the cell `GeoPoint` and `geo_sounding`. This advances
+     the gz4d retirement rather than re-introducing a gz4d convert, and discharges
+     ADR-0002 §D8's "confirm geodesy exposes the needed functions."
+8. Add explicit `#include "marine_autonomy/gz4d_geo.h"` if cube's transitive include
+   of it disappears (verify at build; cube keeps internal gz4d for `GeoSounding` /
+   `radiusFromCenter`).
+9. Build + run cube tests; confirm the distance values match (Vincenty vs gz4d's
+   `ellipsoid::inverse`, both WGS84 — should agree to numerical tolerance).
 
 ## Files to Change
 
@@ -65,15 +84,16 @@ with the ROS-standard `geographic_msgs::msg::GeoPoint` (the `geodesy` convention
 | `.../gggs/cell_index.h` | `CellIndex(grid, GeoPoint)` ctor + `position()→GeoPoint` |
 | `.../gggs/grid_index.h` | `southWestPosition()/northEastPosition()→GeoPoint` |
 | `.../gggs/cell_area_iterator.h` | bounds ctor takes GeoPoint corners |
-| `marine_autonomy/package.xml`, `CMakeLists.txt` | add `geographic_msgs` dep |
+| `marine_autonomy/package.xml` | verify `geographic_msgs` listed (already in `CMakeLists.txt`) |
 | `marine_autonomy/test/test_gggs.cpp` | new types + antimeridian normalization test |
-| `cube_bathymetry` (separate repo/PR) | call double `gridIndex` overload; build/test |
+| `cube_bathymetry/src/geo_map_sheet.cpp` (separate PR) | `gridIndex` double overload at :71-72 |
+| `cube_bathymetry/src/geo_grid.cpp` (separate PR) | `CellAreaIterator` GeoPoint-corner ctor (:73) + `distanceFrom`→geodesy Vincenty inverse (:77) |
 
 ## Principles Self-Check
 
 | Principle | Consideration |
 |---|---|
-| Improve incrementally | API swap leans on existing double primitives; cube change is 2 sites. No big rewrite. |
+| Improve incrementally | API swap leans on existing double primitives; cube change is 3 sites in 2 files. No big rewrite. |
 | Only what's needed | Replaces 2 types; does not chase cube's internal gz4d or the other gz4d copies (marine_nav_utilities, camp). |
 | A change includes its consequences | cube PR lands in lockstep; antimeridian test added for the dropped Angle semantics. |
 | Standards Compliance (project) / ADR-0008 | `geographic_msgs::GeoPoint` is the ROS-standard geo type; no bespoke position type invented. |
@@ -91,9 +111,9 @@ with the ROS-standard `geographic_msgs::msg::GeoPoint` (the `geodesy` convention
 
 | If we change... | Also update... | Included? |
 |---|---|---|
-| GGGS public API (gz4d→GeoPoint) | `cube_bathymetry` (only external consumer) | Yes — coordinated PR (needs its own cube issue) |
+| GGGS public API (gz4d→GeoPoint) | `cube_bathymetry` (only external consumer; 3 sites, incl. `distanceFrom`→geodesy Vincenty) | Yes — coordinated PR ([cube#41](https://github.com/rolker/cube_bathymetry/issues/41)) |
 | Drop gz4d from GGGS headers | cube's transitive `gz4d_geo.h` include may vanish | Yes — add explicit include if build shows it |
-| `marine_autonomy` gains `geographic_msgs` dep | rosdep / package.xml | Yes |
+| `marine_autonomy` uses `GeoPoint` in public headers | `geographic_msgs` — already a dep (verify package.xml) | Yes |
 
 ## Decisions (resolved 2026-06-10, Roland)
 
@@ -115,5 +135,6 @@ with the ROS-standard `geographic_msgs::msg::GeoPoint` (the `geodesy` convention
 ## Estimated Scope
 
 **Two coordinated PRs** (one per repo): `marine_autonomy` (this issue, the bulk) +
-`cube_bathymetry` (small, ~2 call sites). Each modest; the cross-repo coordination is
-the only complexity. Unblocks #141.
+`cube_bathymetry` (3 sites in 2 files; the `distanceFrom`→geodesy Vincenty swap is the
+only non-mechanical part). Each modest; cross-repo coordination is the main complexity.
+Unblocks #141.
