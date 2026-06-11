@@ -115,7 +115,11 @@ source, timestamp) named by its `GridIndex`. Rationale: GDAL is already a
 dependency (used by the bathy-BAG / GeoTIFF importers); GeoTIFF carries its own
 georeferencing; per-tile files make incremental ("save only dirty tiles") and
 the distribution manifest (D6) fall out naturally — the manifest is
-`{GridIndex → version}`, and version is the tile file's content hash or mtime.
+`{GridIndex → version}`, and **version is a content hash of the tile's cell
+data** (not file mtime: mtime is unreliable across the clock-skewed robot and
+operator machines that D6 sync compares, so it cannot be the interoperability
+key). An mtime check may still be used as a cheap *local* dirty-detection
+optimization, but the hash is the authoritative sync version.
 On startup, load persisted tiles; save incrementally as data arrives. A raw
 binary tile format is the fallback **only if** GeoTIFF write amplification proves
 too costly; that change would not alter the manifest contract. This decision is
@@ -151,13 +155,27 @@ layer is additive.
 Eventually S57 depths flow *through* the store rather than directly to the
 costmap; that reroute of `s57_tools` is a later phase, flagged not done here.
 
-### D8 — Coordinate math uses `geodesy`, not `gz4d`
+### D8 — Coordinate math uses `geodesy`, not `gz4d`; migrate the GGGS API first
 
-New code uses the underlay `geodesy` package for ellipsoid math (spans, Vincenty
-geodesics, ECEF), continuing the `gz4d` retirement. (`gz4d` is no longer checked
-out as a source package.) Before committing importer/resampling code to
-`geodesy`, confirm it exposes the needed functions — recorded as an
-implementation precondition, not assumed.
+New store code uses the underlay `geodesy` package for ellipsoid math (spans,
+Vincenty geodesics, ECEF), continuing the `gz4d` retirement. `gz4d` is **not** a
+standalone package — it is vendored as headers in `marine_autonomy`
+(`gz4d_geo.h`) and is currently exposed by the **GGGS public API** itself: GGGS
+returns/accepts `gz4d::PositionDegrees` and `gz4d::BoundsDegrees`
+(`Level`/`GridIndex`/`CellIndex`/`CellAreaIterator`). (A second, independent copy
+of `gz4d` also lives in `marine_nav_utilities`, and `camp` uses `gz4d`; full
+retirement is a multi-repo effort beyond this store.)
+
+Decision: **migrate the GGGS public API off `gz4d` before Phase 1**, so the store
+consumes a `gz4d`-free GGGS rather than adapting `gz4d` types at its seam. The
+GGGS surface is narrow — those two value types replaced by
+`geographic_msgs::msg::GeoPoint` plus a small lat/lon bounds type, preserving
+`gz4d`'s longitude-normalization at the boundary, with `cube_bathymetry` updated
+in lockstep. Tracked as
+[#144](https://github.com/rolker/unh_marine_autonomy/issues/144); it is a
+prerequisite for [#141](https://github.com/rolker/unh_marine_autonomy/issues/141).
+Before committing importer/resampling code to `geodesy`, confirm it exposes the
+needed functions — an implementation precondition, not assumed.
 
 ### D9 — Package placement and phasing
 
@@ -189,9 +207,11 @@ waits on it.
 - **Cost:** a new package and a new persistence path to maintain; a real
   inter-package contract (the per-cell record, the manifest format, the query
   API) that downstream consumers pin to. New `.msg`/`.srv` for the query
-  interface carry the usual downstream-update obligation (ADR-0008; REP-105 for
-  frames). The costmap consumer touches collision avoidance, so its no-data /
-  staleness policy is safety-relevant and must be validated in simulation.
+  interface carry the usual downstream-update obligation (ROS 2 conventions — see
+  this repo's **Standards Compliance** principle and the workspace
+  [ADR-0008](https://github.com/rolker/ros2_agent_workspace/blob/main/docs/decisions/0008-follow-ros2-official-conventions.md);
+  REP-105 for frames). The costmap consumer touches collision avoidance, so its
+  no-data / staleness policy is safety-relevant and must be validated in simulation.
 - **Sequencing risk if ignored:** building import/query/costmap/distribution
   before the core + one real consumer exist would be speculative (workspace
   "Only what's needed"). The phase split (D9) is the mitigation; each phase lands
