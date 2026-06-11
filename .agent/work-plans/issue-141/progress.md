@@ -92,3 +92,20 @@ issue: 141
 
 ### False positives
 - (Copilot R1 @ `13488ef`, stale) GDALClose "won't compile" — already dismissed last round (CI compiled it; jazzy GDAL 3.8.4 returns CPLErr); Copilot dropped it in R2.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-11 (America/New_York)
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #143 at `0422236` (round 3; fixes pushed `0a832f3`)
+**Sources**: Copilot R3 @ `0422236` (+ R1/R2 stale, all resolved)
+**Cross-source confirmations**: 0
+**CI**: build pending on new head; prior head green
+
+### Findings
+- [x] (valid, Copilot R3) `CMakeLists.txt` doubled header install path (`include/<pkg>/<pkg>/`). **Fixed (`0a832f3`): DESTINATION/INTERFACE → `include` (single-nested, verified). marine_autonomy has the same quirk — separate optional cleanup.**
+- [x] (valid, Copilot R3) `tile_io.cpp:140` no-data comment implied all bands; only depth/uncertainty get it. **Fixed: clarified (timestamp = 0 unset, never NaN).**
+
+### Note
+Round 3 findings are packaging/comment hygiene only — substantive bugs (silent GDAL data loss, antimeridian, GDAL-private export) were caught in earlier rounds. Diminishing returns; PR is substantively complete.
