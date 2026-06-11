@@ -57,14 +57,22 @@ public:
   /// Indices are inclusive — the "to" cell is visited. If the bounds
   /// fall outside the grid, the iterator may be empty (invalid from start).
   /// @param grid The grid to iterate within.
-  /// @param bounds Geographic bounding box to restrict iteration.
-  CellAreaIterator(GridIndex grid, const gz4d::BoundsDegrees& bounds)
+  /// @param minimum South-west corner of the bounding box.
+  /// @param maximum North-east corner of the bounding box.
+  CellAreaIterator(GridIndex grid,
+    const geographic_msgs::msg::GeoPoint& minimum,
+    const geographic_msgs::msg::GeoPoint& maximum)
   {
     // Extract bound coordinates as doubles for comparison with grid edges.
-    double min_lat = bounds.minimum().latitude;
-    double max_lat = bounds.maximum().latitude;
-    double min_lon = bounds.minimum().longitude;
-    double max_lon = bounds.maximum().longitude;
+    // Normalize each corner's longitude into [-180, 180) so the
+    // outside-grid checks and clamp below compare against grid edges on the
+    // same scale — matching gridIndex() and the CellIndex(grid, GeoPoint)
+    // ctor. (GeoPoint, unlike the previous angle-aware type, does not
+    // self-normalize, so a corner at e.g. 181° must be read as -179°.)
+    double min_lat = minimum.latitude;
+    double max_lat = maximum.latitude;
+    double min_lon = normalizeLongitude(minimum.longitude);
+    double max_lon = normalizeLongitude(maximum.longitude);
 
     // Check if bounds are entirely outside the grid in any direction.
     if(max_lat < grid.southLatitude())
@@ -82,8 +90,8 @@ public:
     double from_lon = std::max(min_lon, grid.westLongitude());
     double to_lon = std::min(max_lon, grid.eastLongitude());
 
-    from_ = CellIndex(grid, gz4d::PositionDegrees(from_lat, from_lon));
-    to_ = CellIndex(grid, gz4d::PositionDegrees(to_lat, to_lon));
+    from_ = CellIndex(grid, geoPoint(from_lat, from_lon));
+    to_ = CellIndex(grid, geoPoint(to_lat, to_lon));
     current_ = from_;
   }
 
