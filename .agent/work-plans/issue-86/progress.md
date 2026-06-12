@@ -33,9 +33,9 @@ issue: 86
 **CI**: all-pass (build ✅, copilot-pull-request-reviewer ✅)
 
 ### Findings
-- [ ] (valid, Copilot) §D5/§D6 tile `version` is "content hash **or** mtime" — ambiguous sync key; mtime unreliable across clock-skewed machines. Pin to content hash; mtime at most a local dirty-check. — `docs/decisions/0002-bathymetric-data-store.md`
-- [ ] (valid, Copilot) §D8 "gz4d no longer checked out as a source package" is misleading — `gz4d_geo.h` is vendored in `marine_autonomy` and used by GGGS headers (cell_index/level/grid_index/cell_area_iterator). Reword: retirement applies to new store code; gz4d stays at the GGGS boundary. Aligns with #141 open question. — same file
-- [ ] (valid, Copilot) Consequences cite "ADR-0008" but this repo holds only ADR-0001/0002; it's the **workspace** ADR. Qualify/link as workspace ADR-0008 (ROS 2 conventions) or reference REP-105 + Standards Compliance directly. — same file
+- [x] (valid, Copilot) §D5/§D6 tile `version` is "content hash **or** mtime" — ambiguous sync key; mtime unreliable across clock-skewed machines. Pin to content hash; mtime at most a local dirty-check. — `docs/decisions/0002-bathymetric-data-store.md` (done in `a65098f`)
+- [x] (valid, Copilot) §D8 "gz4d no longer checked out as a source package" is misleading — `gz4d_geo.h` is vendored in `marine_autonomy` and used by GGGS headers (cell_index/level/grid_index/cell_area_iterator). Reword: retirement applies to new store code; gz4d stays at the GGGS boundary. Aligns with #141 open question. — same file (done in `a65098f`)
+- [x] (valid, Copilot) Consequences cite "ADR-0008" but this repo holds only ADR-0001/0002; it's the **workspace** ADR. Qualify/link as workspace ADR-0008 (ROS 2 conventions) or reference REP-105 + Standards Compliance directly. — same file (done in `a65098f`)
 
 ### False positives
 - None — all three are accurate and improve the decision record's precision.
@@ -51,7 +51,7 @@ issue: 86
 **CI**: all-pass (build ✅)
 
 ### Findings
-- [ ] (minor, Copilot R2) Prior Integrated Review's 3 findings are still `[ ]` in `progress.md` but were all applied in `a65098f`; mark them `[x]` so the entry doesn't read as open must-fixes. — `.agent/work-plans/issue-86/progress.md`
+- [x] (minor, Copilot R2) Prior Integrated Review's 3 findings are still `[ ]` in `progress.md` but were all applied in `a65098f`; mark them `[x]` so the entry doesn't read as open must-fixes. — `.agent/work-plans/issue-86/progress.md`
 
 ### Addressed since Copilot R1 (fixed in `a65098f`, verified at head `a244be3`)
 - (Copilot R1) §D6 tile `version` ambiguity (content-hash vs mtime) — ADR now pins content hash as authoritative; mtime is a local dirty-check only.
