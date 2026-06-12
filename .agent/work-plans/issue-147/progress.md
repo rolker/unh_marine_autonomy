@@ -71,6 +71,28 @@ evenings, dev replays the day's bags → compacted epoch → copied back (Phase-
 sync later). The concrete path + `store_dir` parameter land in `bizzyboat.yaml`
 with the Phase-3 node — record it as a config item in that sub-issue.
 
+### Distribution transport decision (Roland, 2026-06-12) — for the Phase-6 sub-issue
+
+Per ADR-0002 §D6, robot and operator each hold a **full independent store**;
+sync is manifest-diff (`{layer/epoch/GridIndex → content-hash}`), single-writer
+per epoch (draft = boat-produced, processed = operator/dev-produced — no merge
+case), and epochs are immutable after compaction so only today's live-fused
+epoch is ever hot. Transport in two stages:
+
+- **Interim / dockside: rsync (or plain cp).** The store is directories of
+  immutable files — rsync is already a correct sync protocol for it, zero
+  code. Compacted epochs ride the evening bag-offload, copy back the same way.
+- **Phase 6 / underway: ROS-msg protocol over udp_bridge.** During ops
+  udp_bridge is the managed link (rate-limited, prioritized); a node pair does
+  manifest exchange + tile chunks as messages, idempotent by content-hash.
+  "rsync semantics, udp_bridge transport." This is the bounded, change-only
+  payload that durably fixes the unh_echoboats_project11#250 monolithic-grid
+  downlink failure (`clear_grid` stays the interim until then).
+
+Nothing in the tile format, layout, or epoch rules changes for Phase 6 — the
+sync layer is additive, and camp#90's directory watcher works identically
+whichever transport filled the operator store.
+
 ### Tooling gotchas found driving the corpus (2026-06-12)
 
 - `detections_to_pointcloud` is a **lifecycle node**: replay harnesses must
