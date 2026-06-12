@@ -15,7 +15,7 @@ issue: 86
 
 ### Actions
 - [x] Reclassify #86 as an epic/tracking issue; open per-phase sub-issues (`Part of #86`), starting with Phase 1 (store core + persistence). — Phase 1 sub-issue #141 / PR #143 merged.
-- [x] Write a project ADR in `docs/decisions/` capturing the store architecture (source-layer priority, WGS84-ellipsoid datum strategy, persistence format, gz4d→geodesy migration, distribution-by-tile-manifest) — issue body is the draft. (Capture-decisions principle; ADR-0001/ADR-0008.) — this PR.
+- [x] Write a project ADR in `docs/decisions/` capturing the store architecture (source-layer priority, WGS84-ellipsoid datum strategy, persistence format, gz4d→geodesy migration, distribution-by-tile-manifest) — issue body is the draft. (Capture-decisions principle; ADR-0001 / workspace ADR-0008.) — this PR.
 - [x] State explicitly that Phase 1 does NOT block on mru_transform#7/#8; only the chart/S57 layer does. — §D9 / Consequences.
 - [x] Pin the persistence format (GeoTIFF vs binary) in the ADR — it constrains the Phase-6 sync manifest (`GridIndex` + version). — §D5 (per-tile multi-band GeoTIFF).
 - [x] Keep Distribution (Phase 6) deferred past June 15; `clear_grid` is the agreed interim for the #250 udp_bridge grid-size failure. — deferral recorded in ADR.
