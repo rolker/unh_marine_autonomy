@@ -30,6 +30,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -242,28 +243,80 @@ BathymetryTile loadTile(const std::string & path, const gggs::Level & level)
   return tile;
 }
 
+namespace
+{
+
+constexpr const char * kProvenanceSidecar = "provenance";
+
+/// Write the epoch's provenance sidecar (one token + newline).
+void writeProvenance(const std::filesystem::path & epoch_dir, Provenance provenance)
+{
+  const std::filesystem::path path = epoch_dir / kProvenanceSidecar;
+  std::ofstream out(path);
+  out << provenanceToken(provenance) << '\n';
+  if (!out) {
+    throw std::runtime_error("save: could not write " + path.string());
+  }
+}
+
+/// Read an epoch's provenance sidecar. A missing or unreadable sidecar is
+/// conservatively `LiveFused` — the lower rank, so a later compaction can
+/// still supersede the epoch (ADR-0002 §A1.2).
+Provenance readProvenance(const std::filesystem::path & epoch_dir)
+{
+  std::ifstream in(epoch_dir / kProvenanceSidecar);
+  std::string token;
+  if (!in || !std::getline(in, token)) {
+    return Provenance::LiveFused;
+  }
+  try {
+    return provenanceFromToken(token);
+  } catch (const std::invalid_argument &) {
+    return Provenance::LiveFused;
+  }
+}
+
+}  // namespace
+
 std::size_t save(BathymetryStore & store, const std::string & dir)
 {
   namespace fs = std::filesystem;
   std::size_t written = 0;
   for (const SourceLayer layer : source_layers_by_priority) {
     const fs::path layer_dir = fs::path(dir) / layerDirName(layer);
-    bool created_dir = false;
-    // Iterate the layer's tiles (a const view) and write each dirty one. The
-    // dirty flag is cleared via getOrCreateTile() on the same (existing) key:
-    // that's a lookup, not an insert, and clearDirty() only flips a bool on the
-    // tile value — neither mutates the map, so the iterator stays valid.
-    for (const auto & [grid, tile] : store.tiles(layer)) {
-      if (!tile.dirty()) {
-        continue;
+    // Iterate the layer's epochs (a const view) and write each epoch's dirty
+    // tiles. Flags are cleared via getOrCreateTile()/getOrCreateEpoch() on the
+    // same (existing) keys: those are lookups, not inserts, and flipping a bool
+    // on the value mutates neither map, so the iterators stay valid.
+    for (const auto & [epoch, epoch_tiles] : store.epochs(layer)) {
+      const fs::path epoch_dir = layer_dir / epoch;
+      const bool supersedes = epoch_tiles.supersedes_disk;
+      if (supersedes) {
+        // A wholesale import may cover fewer grids than the surface it
+        // replaced; clear the directory so stale tiles can't be resurrected.
+        fs::remove_all(epoch_dir);
       }
-      if (!created_dir) {
-        fs::create_directories(layer_dir);
-        created_dir = true;
+      bool wrote_any = false;
+      for (const auto & [grid, tile] : epoch_tiles.tiles) {
+        if (!supersedes && !tile.dirty()) {
+          continue;
+        }
+        if (!wrote_any) {
+          fs::create_directories(epoch_dir);
+        }
+        saveTile(tile, (epoch_dir / tileFilename(grid)).string());
+        store.getOrCreateTile(layer, epoch, grid).clearDirty();
+        ++written;
+        wrote_any = true;
       }
-      saveTile(tile, (layer_dir / tileFilename(grid)).string());
-      store.getOrCreateTile(layer, grid).clearDirty();
-      ++written;
+      if (wrote_any || supersedes) {
+        // (Re)write the sidecar — compaction changes the provenance. Ensure
+        // the directory exists even for a superseding epoch with no tiles.
+        fs::create_directories(epoch_dir);
+        writeProvenance(epoch_dir, epoch_tiles.provenance);
+        store.getOrCreateEpoch(layer, epoch, epoch_tiles.provenance)
+        .supersedes_disk = false;
+      }
     }
   }
   return written;
@@ -278,13 +331,24 @@ std::size_t load(BathymetryStore & store, const std::string & dir)
     if (!fs::is_directory(layer_dir)) {
       continue;
     }
-    for (const auto & entry : fs::directory_iterator(layer_dir)) {
-      if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
-        continue;
+    for (const auto & epoch_entry : fs::directory_iterator(layer_dir)) {
+      if (!epoch_entry.is_directory()) {
+        continue;   // epochs are subdirectories; skip stray files
       }
-      BathymetryTile tile = loadTile(entry.path().string(), store.level());
-      store.getOrCreateTile(layer, tile.index()) = std::move(tile);
-      ++loaded;
+      const Epoch epoch = epoch_entry.path().filename().string();
+      validateEpochLabel(epoch);
+      const Provenance provenance = readProvenance(epoch_entry.path());
+      // Create the epoch even if it turns out to hold no tiles, so its
+      // provenance is represented in memory.
+      store.getOrCreateEpoch(layer, epoch, provenance);
+      for (const auto & entry : fs::directory_iterator(epoch_entry.path())) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
+          continue;
+        }
+        BathymetryTile tile = loadTile(entry.path().string(), store.level());
+        store.getOrCreateTile(layer, epoch, tile.index()) = std::move(tile);
+        ++loaded;
+      }
     }
   }
   return loaded;

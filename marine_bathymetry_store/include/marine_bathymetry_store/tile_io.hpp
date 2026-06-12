@@ -29,13 +29,19 @@
 #include "marine_bathymetry_store/bathy_cell.hpp"
 #include "marine_bathymetry_store/bathymetry_store.hpp"
 #include "marine_bathymetry_store/bathymetry_tile.hpp"
+#include "marine_bathymetry_store/epoch.hpp"
 
 /// @file
-/// @brief Per-tile GeoTIFF persistence (ADR-0002 §D5).
+/// @brief Per-tile GeoTIFF persistence (ADR-0002 §D5, epochs per §A1).
 ///
 /// Each tile is one 3-band `Float64` GeoTIFF (depth, uncertainty, timestamp),
 /// WGS84-georeferenced from its GGGS grid corners. The file carries no source
-/// field — the layer is encoded as the subdirectory (`processed/`, `draft/`).
+/// or epoch field — both are encoded in the directory layout:
+/// `<dir>/<layer>/<epoch>/<tile>.tif` (e.g. `draft/2026-06-10/20_...tif`).
+/// Each epoch directory also holds a one-line `provenance` sidecar
+/// (`"live-fused"` / `"replayed"`, see `Provenance`); an epoch flagged
+/// `supersedes_disk` (a wholesale import) has its directory cleared before
+/// saving, so tiles of the surface it replaced cannot be resurrected on load.
 /// The GeoTIFF is written north-up (raster row 0 = north), so persistence flips
 /// rows relative to the in-memory GGGS cell order (row 0 = south).
 ///
@@ -76,8 +82,11 @@ BathymetryTile loadTile(const std::string & path, const gggs::Level & level);
 /// @brief Persist every **dirty** tile of @p store under @p dir, then clear
 ///        their dirty flags.
 ///
-/// Layout: `<dir>/<layer>/<level>_<row>_<col>.tif`. Creates directories as
-/// needed. Clean tiles are skipped (incremental save).
+/// Layout: `<dir>/<layer>/<epoch>/<level>_<row>_<col>.tif`, plus a
+/// `provenance` sidecar per epoch directory. Creates directories as needed.
+/// Clean tiles are skipped (incremental save) — except for an epoch flagged
+/// `supersedes_disk` (a wholesale import), whose directory is removed and
+/// rewritten in full so stale tiles of the replaced surface cannot linger.
 /// @return The number of tiles written.
 /// @throws std::runtime_error on any GDAL failure; std::filesystem::filesystem_error
 ///         (a std::runtime_error subclass) on a directory-creation failure.
@@ -85,13 +94,17 @@ std::size_t save(BathymetryStore & store, const std::string & dir);
 
 /// @brief Load every tile found under @p dir into @p store.
 ///
-/// Scans `<dir>/<layer>/*.tif` for each known layer. @p store must already be
-/// at the level the tiles were written at (loadTile enforces per-file).
-/// Loaded tiles are clean.
+/// Scans `<dir>/<layer>/<epoch>/*.tif` for each known layer, creating each
+/// epoch with the provenance read from its sidecar (a missing or unreadable
+/// sidecar is conservatively treated as `LiveFused`, the lower rank — so a
+/// later compaction can still supersede it). @p store must already be at the
+/// level the tiles were written at (loadTile enforces per-file). Loaded tiles
+/// are clean.
 /// @return The number of tiles loaded.
 /// @throws std::runtime_error on any GDAL failure or level mismatch;
-///         std::filesystem::filesystem_error (a std::runtime_error subclass) on a
-///         directory-iteration failure.
+///         std::invalid_argument on an epoch directory whose name is not a
+///         valid epoch label; std::filesystem::filesystem_error (a
+///         std::runtime_error subclass) on a directory-iteration failure.
 std::size_t load(BathymetryStore & store, const std::string & dir);
 
 }  // namespace marine_bathymetry_store

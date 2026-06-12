@@ -29,15 +29,52 @@ namespace marine_bathymetry_store
 namespace
 {
 
-/// Resolve a single layer's sample at a cell, or nullopt if it has no usable data.
+/// Look up a cell in one epoch's tile map, or nullopt if absent.
+std::optional<BathyCell> cellIn(
+  const EpochTiles & epoch_tiles, const gggs::CellIndex & cell)
+{
+  const auto it = epoch_tiles.tiles.find(cell.grid());
+  if (it == epoch_tiles.tiles.end()) {
+    return std::nullopt;
+  }
+  return it->second.get(cell.row(), cell.column());
+}
+
+/// Resolve a single layer's sample at a cell: newest epoch with usable data
+/// (ADR-0002 §A1.3 default resolution), or nullopt if none.
 std::optional<DepthSample> sampleFor(
   const BathymetryStore & store, SourceLayer layer, const gggs::CellIndex & cell)
 {
-  const auto c = store.get(layer, cell);
-  if (!c || !c->hasData()) {
-    return std::nullopt;
+  const auto & epochs_map = store.epochs(layer);
+  for (auto it = epochs_map.rbegin(); it != epochs_map.rend(); ++it) {
+    const auto c = cellIn(it->second, cell);
+    if (c && c->hasData()) {
+      return DepthSample{c->depth, c->uncertainty, c->timestamp, layer, it->first};
+    }
   }
-  return DepthSample{c->depth, c->uncertainty, c->timestamp, layer};
+  return std::nullopt;
+}
+
+/// Resolve a single layer's *reliable* sample at a cell: newest epoch whose
+/// value passes the uncertainty gate (ADR-0002 §A1.3 safety walk) — a noisy
+/// fresh epoch is skipped, falling through to an older confident one.
+std::optional<DepthSample> reliableSampleFor(
+  const BathymetryStore & store, SourceLayer layer, const gggs::CellIndex & cell,
+  double max_uncertainty)
+{
+  const auto & epochs_map = store.epochs(layer);
+  for (auto it = epochs_map.rbegin(); it != epochs_map.rend(); ++it) {
+    const auto c = cellIn(it->second, cell);
+    if (!c || !c->hasData()) {
+      continue;
+    }
+    // A NaN uncertainty is never reliable; otherwise require it within tolerance.
+    if (std::isnan(c->uncertainty) || c->uncertainty > max_uncertainty) {
+      continue;
+    }
+    return DepthSample{c->depth, c->uncertainty, c->timestamp, layer, it->first};
+  }
+  return std::nullopt;
 }
 
 }  // namespace
@@ -58,12 +95,8 @@ std::optional<DepthSample> shallowestReliable(
 {
   std::optional<DepthSample> shallowest;
   for (const SourceLayer layer : source_layers_by_priority) {
-    const auto sample = sampleFor(store, layer, cell);
+    const auto sample = reliableSampleFor(store, layer, cell, max_uncertainty);
     if (!sample) {
-      continue;
-    }
-    // A NaN uncertainty is never reliable; otherwise require it within tolerance.
-    if (std::isnan(sample->uncertainty) || sample->uncertainty > max_uncertainty) {
       continue;
     }
     // depth is ellipsoidal height (up-positive): shallower == greater height.
@@ -92,6 +125,46 @@ void forEachCellBestSource(
       visitor(*cell_it, bestSource(store, *cell_it));
     }
   }
+}
+
+std::size_t forEachChangedCell(
+  const BathymetryStore & store, SourceLayer layer,
+  const Epoch & epoch_a, const Epoch & epoch_b,
+  const std::function<void(const gggs::CellIndex &,
+  const BathyCell &, const BathyCell &)> & visitor)
+{
+  const auto & epochs_map = store.epochs(layer);
+  const auto a_it = epochs_map.find(epoch_a);
+  const auto b_it = epochs_map.find(epoch_b);
+  if (a_it == epochs_map.end() || b_it == epochs_map.end()) {
+    return 0;
+  }
+
+  std::size_t visited = 0;
+  // Iterate grids present in both epochs; a grid covered by only one is
+  // coverage change, not depth change.
+  for (const auto & [grid, tile_a] : a_it->second.tiles) {
+    const auto tile_b_it = b_it->second.tiles.find(grid);
+    if (tile_b_it == b_it->second.tiles.end()) {
+      continue;
+    }
+    const BathymetryTile & tile_b = tile_b_it->second;
+    for (uint16_t row = 0; row < BathymetryTile::edge; ++row) {
+      for (uint16_t col = 0; col < BathymetryTile::edge; ++col) {
+        const BathyCell a = tile_a.get(row, col);
+        if (!a.hasData()) {
+          continue;
+        }
+        const BathyCell b = tile_b.get(row, col);
+        if (!b.hasData()) {
+          continue;
+        }
+        visitor(gggs::CellIndex(grid, row, col), a, b);
+        ++visited;
+      }
+    }
+  }
+  return visited;
 }
 
 }  // namespace marine_bathymetry_store
