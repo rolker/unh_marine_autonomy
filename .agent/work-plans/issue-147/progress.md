@@ -36,10 +36,31 @@ fusion rule (ADR-0002 A1.2); the three days exercise the multi-day epoch model.
   projects on mercat (`mercat/QPS-Projects`, not ROS bags) and would enter the
   store as processed-layer products (BAG/GeoTIFF export), not via bag replay.
 
-### Open verification items (next step)
+### Verification items — both PASS (2026-06-11)
 
-- [ ] Confirm `/tf` in these bags carries the earth-frame chain needed to
-  georeference a cold CUBE replay (cube pose source = TF + odom per cube#31/#33).
-- [ ] Confirm which input `cube_bathymetry` consumes (SonarDetections vs
-  PointCloud2 soundings) and whether sound-speed is applied upstream or needed
-  at replay.
+- [x] **Earth-frame chain present in bags.** June-10 bag's `/tf` carries
+  `earth -> bizzy/map` plus the full cube pose chain
+  (`bizzy/map -> bizzy/base_link_north_up` level frame,
+  `bizzy/odom -> bizzy/map_tide` tide frame) and `/tf_static` has the sensor
+  mounts (`bizzy/base_link -> bizzy/m3`). A cold replay georeferences from the
+  bag alone. (Boat config: `map_frame: bizzy/map`; georeferencing goes through
+  the ECEF `earth` frame — same pattern `bag_to_geotiff.cpp:280,314` uses.)
+- [x] **Pipeline inputs confirmed.** `detections_to_pointcloud` consumes
+  `SonarDetections` + `Odometry` and produces PointCloud2 `soundings`;
+  `cube_bathymetry_node` consumes `soundings` and transforms into `map_frame`.
+  Sound speed is embedded per-ping (`ping_info.sound_speed` in
+  `SonarDetections`) — no external sound-speed feed needed at replay. June-9
+  bag also recorded the pre-projected `soundings` topic; June-10/11 bags need
+  the detections→soundings stage re-run.
+
+### Key discovery
+
+`cube_bathymetry` already ships **`bag_to_geotiff`** — an offline multi-bag
+reader (merges bags by timestamp, builds a `GeoMapSheet` via the bag's
+earth-frame TF, exports GeoTIFF). The boat config comment confirms the intent:
+"Logging detections lets soundings + grid be re-derived offline by replaying
+through the pipeline." The Phase-2 replay harness should extend or mirror this
+tool (adding epoch-tagged store import per ADR-0002 A1) rather than starting
+from scratch. Note layering: the store cannot depend on cube (ADR-0002), so the
+harness lives cube-side or as a bridge package, importing into the store via
+its public API.
