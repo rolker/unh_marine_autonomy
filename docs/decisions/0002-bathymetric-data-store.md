@@ -118,8 +118,9 @@ tile map per layer, D3), so a per-cell source band would be a constant and pure
 overhead. (As-built in the Phase-1 store, #141; this supersedes an earlier draft
 of this section that listed a 4th `source` band.) Bands are `Float64` so the
 absolute-Unix-seconds timestamp keeps usable precision — a single GeoTIFF has one
-band data type, so depth/uncertainty ride along as `Float64` too. Rationale: GDAL
-is already a dependency (used by the bathy-BAG / GeoTIFF importers); GeoTIFF
+band data type, so depth/uncertainty ride along as `Float64` too. Rationale:
+GeoTIFF I/O relies on GDAL, which the bathy-BAG / GeoTIFF importer tooling
+already uses (Phase 1 brings that dependency into the store itself); GeoTIFF
 carries its own georeferencing; per-tile files make incremental ("save only dirty
 tiles") and
 the distribution manifest (D6) fall out naturally — the manifest is
