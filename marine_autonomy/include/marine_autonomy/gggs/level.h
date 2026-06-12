@@ -69,6 +69,12 @@ public:
     return Level(clamped);
   }
 
+  /// @brief The quadtree level number (0-20).
+  constexpr uint8_t level() const noexcept
+  {
+    return level_;
+  }
+
   /// Approximate cell size in meters
   double cellSize() const noexcept
   {
@@ -83,9 +89,7 @@ public:
   GridIndex gridIndex(double latitude, double longitude) const
   {
     // Wrap longitude into [-180, 180).
-    longitude = std::fmod(longitude + 180.0, 360.0);
-    if (longitude < 0.0) longitude += 360.0;
-    longitude -= 180.0;
+    longitude = normalizeLongitude(longitude);
 
     // Clamp latitude for small floating-point overshoot; throw for clearly invalid values.
     constexpr double lat_epsilon = 1e-6;
@@ -101,13 +105,13 @@ public:
   }
 
   /// @brief Get the GridIndex containing the given position.
-  GridIndex gridIndex(const gz4d::PositionDegrees & position) const
+  GridIndex gridIndex(const geographic_msgs::msg::GeoPoint & position) const
   {
     return gridIndex(position.latitude, position.longitude);
   }
 
   /// @brief Get the CellIndex for a position (grid + cell within that grid).
-  CellIndex cellIndex(const gz4d::PositionDegrees & position) const
+  CellIndex cellIndex(const geographic_msgs::msg::GeoPoint & position) const
   {
     return CellIndex(gridIndex(position), position);
   }

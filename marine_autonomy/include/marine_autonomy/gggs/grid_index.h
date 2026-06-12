@@ -104,14 +104,14 @@ public:
     return -180.0+column_*levels[level_].gridLongitudinalSpan(row_);
   }
 
-  gz4d::PositionDegrees southWestPosition() const
+  geographic_msgs::msg::GeoPoint southWestPosition() const
   {
-    return gz4d::PositionDegrees(southLatitude(), westLongitude());
+    return geoPoint(southLatitude(), westLongitude());
   }
 
-  gz4d::PositionDegrees northEastPosition() const
+  geographic_msgs::msg::GeoPoint northEastPosition() const
   {
-    return gz4d::PositionDegrees(northLatitude(), eastLongitude());
+    return geoPoint(northLatitude(), eastLongitude());
   }
 
   double latitudinalSpan() const
