@@ -104,6 +104,35 @@ whichever transport filled the operator store.
   reader, in-process, deterministic — required for content-hash-stable
   compaction per ADR-0002 §D6).
 
+### First end-to-end run (2026-06-12, overnight)
+
+Bags → per-day CUBE replay → `import_geotiff` → epoch store → change maps,
+all real data:
+
+- **Pier store** (`~/data/logs/analysis/2026-06-11_pier_grid/store`): three
+  replayed draft epochs — 2026-06-09 (133,406 cells), -10 (274,573), -11
+  (215,228; both sessions through ONE CUBE run = A1.2 compaction), 8 tiles,
+  15 MB. Conversions ran ≥99.9% faithful at 5x replay.
+- **Change maps**: 09→10 = 59k doubly-observed cells, median +0.08 m,
+  95th |Δ| 0.39 m. 10→11 = 134k cells, median +0.14 m, 95th |Δ| 2.26 m
+  (June-11 includes the sidescan/range-experiment sessions — noisier).
+  Small positive medians look like day-to-day datum/tide residual — exactly
+  the systematic signal the epoch model is meant to expose.
+- **No cross-day combined CUBE run was made — deliberately**: the "all data
+  combined" view is the store's newest-epoch composite (369k cells), per
+  A1.1; fusing days in CUBE would violate the model.
+- **Lake Massabesic store** (`~/data/bathymetry/massabesic/store`):
+  chart/2026-06-12 prior from the CCOMJHC/ccomjhc_project11#55 contour
+  GeoTIFF — 69,157,035 cells, 142 tiles, 242 MB, uncertainty 3.0 m const,
+  `--depth-scale -1`. **OPEN: --depth-offset 0** — chart heights are
+  lake-surface-relative until day-1 M3-vs-prior change-map calibration
+  measures the surface's ellipsoidal height; then re-import (one command).
+- Import guard added en route: non-positive uncertainty = missing (real
+  June-9 product had 5,971 cells with uncertainty 0).
+
+Renders: `pier_epochs_and_change.png`, `june09_pier_0.5m.png` (analysis dir),
+`store_chart_preview.png` (massabesic dir).
+
 ### Key discovery
 
 `cube_bathymetry` already ships **`bag_to_geotiff`** — an offline multi-bag
