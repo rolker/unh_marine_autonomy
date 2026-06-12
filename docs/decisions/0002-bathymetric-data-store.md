@@ -169,8 +169,8 @@ costmap; that reroute of `s57_tools` is a later phase, flagged not done here.
 New store code uses the underlay `geodesy` package for ellipsoid math (spans,
 Vincenty geodesics, ECEF), continuing the `gz4d` retirement. `gz4d` is **not** a
 standalone package — it is vendored as headers in `marine_autonomy`
-(`gz4d_geo.h`) and is currently exposed by the **GGGS public API** itself: GGGS
-returns/accepts `gz4d::PositionDegrees` and `gz4d::BoundsDegrees`
+(`gz4d_geo.h`) and, when this ADR was drafted, was exposed by the **GGGS public
+API** itself: GGGS returned/accepted `gz4d::PositionDegrees` and `gz4d::BoundsDegrees`
 (`Level`/`GridIndex`/`CellIndex`/`CellAreaIterator`). (A second, independent copy
 of `gz4d` also lives in `marine_nav_utilities`, and `camp` uses `gz4d`; full
 retirement is a multi-repo effort beyond this store.)
@@ -181,8 +181,11 @@ GGGS surface is narrow — those two value types replaced by
 `geographic_msgs::msg::GeoPoint` plus a small lat/lon bounds type, preserving
 `gz4d`'s longitude-normalization at the boundary, with `cube_bathymetry` updated
 in lockstep. Tracked as
-[#144](https://github.com/rolker/unh_marine_autonomy/issues/144); it is a
-prerequisite for [#141](https://github.com/rolker/unh_marine_autonomy/issues/141).
+[#144](https://github.com/rolker/unh_marine_autonomy/issues/144), a
+prerequisite for [#141](https://github.com/rolker/unh_marine_autonomy/issues/141);
+**completed** in [PR #145](https://github.com/rolker/unh_marine_autonomy/pull/145)
+(with `cube_bathymetry` updated via cube#42), so GGGS no longer exports `gz4d`
+types.
 Before committing importer/resampling code to `geodesy`, confirm it exposes the
 needed functions — an implementation precondition, not assumed.
 
