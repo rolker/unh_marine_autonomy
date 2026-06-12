@@ -60,3 +60,26 @@ issue: 86
 
 ### False positives
 - None — all four Copilot comments were accurate when written.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-11 20:50 -0400
+**By**: Claude Code Agent (Fable 5)
+
+**PR**: #142 at `3b91bc6`
+**Sources**: 4 Copilot rounds this session (R3 @ `253fe6f`, R4 @ `0dc17de`, R5 @ `ac74fe9`, R6/R7 @ `3b91bc6`) + prior Integrated Reviews @ `fe8edb1`/`a244be3`
+**Cross-source confirmations**: 0
+**CI**: build green at each merged round (final head pending at triage time)
+
+### Findings
+- [x] (valid, Copilot R3) "GDAL is already a dependency" overstated this repo's state — reworded to attribute GDAL to importer tooling / Phase 1. — `docs/decisions/0002-bathymetric-data-store.md` (fixed in `ebaf408`)
+- [x] (valid, Copilot R3) Issue Review action items completed by this PR/Phase-1 still unchecked — ticked, except the sim-validation-before-water gate, deliberately left open. — `.agent/work-plans/issue-86/progress.md` (fixed in `0dc17de`)
+- [x] (valid, Copilot R4) §D2 cited `std::map<gggs::GridIndex, GeoGrid>` but `geo_map_sheet.h:76` holds `std::map<gggs::GridIndex, std::shared_ptr<GeoGrid>>` — corrected, verified against source. — same file (fixed in `3086dd5`)
+- [x] (valid, Copilot R4) Bare "ADR-0008" in progress action item implied an in-repo ADR — qualified as workspace ADR. — `.agent/work-plans/issue-86/progress.md` (fixed in `ddfb4d1`)
+- [x] (valid, Copilot R5) §D8 "currently exposed by the GGGS public API" stale after #145 merged — reworded to past tense + completion note. — same file (fixed in `ac74fe9`)
+- [x] (valid-minor, Copilot R6) Header citations (`gggs/core.h`, `cell_index.h`, unscoped `geo_map_sheet.h`) not resolvable as repo paths — fully qualified. — same file (fixed in `3b91bc6`)
+
+### False positives
+- (Copilot R3) §D5 "As-built in the Phase-1 store, #141" implies implementation exists — it does: #141 closed by merged PR #143 (`marine_bathymetry_store` on jazzy). The PR being docs-only doesn't make the cross-reference an overclaim.
+- (Copilot R7) "GGGS headers still expose gz4d types" — true only of this branch's stale tree (29 behind jazzy, branched pre-#145); origin/jazzy GGGS headers contain zero gz4d references. Resolved by syncing the branch with jazzy, not by rewording the ADR.
+- (Copilot R7) "no bathymetric-store package present in the current repo checkout" — same stale-tree artifact; `marine_bathymetry_store` exists on origin/jazzy (PR #143 merged). Resolved by the same branch sync.
