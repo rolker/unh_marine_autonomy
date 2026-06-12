@@ -60,8 +60,10 @@ struct GeoTiffImportOptions
   /// the file has none (cells then get `default_uncertainty`).
   int uncertainty_band = 2;
   /// Uncertainty assigned when `uncertainty_band == 0` or the band reads
-  /// non-finite. NaN (the default) makes such cells never-reliable in the
-  /// safety query — the conservative choice for an unattributed source.
+  /// non-finite **or non-positive** (zero uncertainty is treated as missing,
+  /// not perfect — it would pass every reliability gate and carry infinite
+  /// weight in 1/sigma^2 fusion). NaN (the default) makes such cells
+  /// never-reliable in the safety query — the conservative choice.
   double default_uncertainty = std::numeric_limits<double>::quiet_NaN();
   /// Acquisition time (Unix seconds) recorded on every imported cell — a
   /// whole-file product carries no per-cell time. 0 = unset.

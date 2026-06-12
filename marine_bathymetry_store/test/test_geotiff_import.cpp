@@ -298,6 +298,37 @@ TEST_F(GeoTiffImportTest, CoarserInputFillsPixelFootprint)
   EXPECT_FLOAT_EQ(static_cast<float>(got->depth), -30.0f);
 }
 
+TEST_F(GeoTiffImportTest, ZeroUncertaintyIsMissingNotPerfect)
+{
+  // A source cell with uncertainty 0 must not import as "perfectly certain"
+  // — it gets default_uncertainty (NaN here), so it never passes a gate.
+  BathymetryStore store(11);
+  const std::vector<float> depth{-30.0f, -31.0f};
+  const std::vector<float> unc{0.0f, 0.4f};
+  const auto tif = writeTestTiff(dir_ / "zerounc.tif", store.level(), 2, 1, depth, unc);
+
+  const auto imported = importGeoTiff(
+    store, SourceLayer::Draft, kDay1, tif, Provenance::Replayed);
+  ASSERT_TRUE(imported.has_value());
+  EXPECT_EQ(*imported, 2u);   // both cells import (depth is real)
+
+  const gggs::GridIndex grid = store.level().gridIndex(43.0, -70.5);
+  const double cell_x = grid.longitudinalSpan() / gggs::cell_rows_per_grid;
+  const double cell_y = grid.latitudinalSpan() / gggs::cell_rows_per_grid;
+  const auto zero_cell = store.cellIndex(
+    grid.northLatitude() - 0.5 * cell_y, grid.westLongitude() + 0.5 * cell_x);
+  const auto good_cell = store.cellIndex(
+    grid.northLatitude() - 0.5 * cell_y, grid.westLongitude() + 1.5 * cell_x);
+
+  const auto zero = store.get(SourceLayer::Draft, kDay1, zero_cell);
+  ASSERT_TRUE(zero.has_value());
+  EXPECT_TRUE(std::isnan(zero->uncertainty));   // missing, not 0
+
+  const auto good = store.get(SourceLayer::Draft, kDay1, good_cell);
+  ASSERT_TRUE(good.has_value());
+  EXPECT_FLOAT_EQ(static_cast<float>(good->uncertainty), 0.4f);
+}
+
 TEST_F(GeoTiffImportTest, MissingFileThrows)
 {
   BathymetryStore store(11);

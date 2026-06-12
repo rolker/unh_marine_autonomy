@@ -123,8 +123,14 @@ std::optional<std::size_t> importGeoTiff(
       }
       // Vertical conversion at import (§D4): pixel value -> ellipsoidal height.
       const double depth = options.depth_scale * depth_row[x] + options.depth_offset;
+      // A non-finite OR non-positive uncertainty is *missing*, not perfect:
+      // zero would pass every reliability gate and carry infinite weight in
+      // 1/sigma^2 fusion. Such cells get default_uncertainty (NaN by default
+      // = never reliable — conservative).
       double uncertainty = options.default_uncertainty;
-      if (options.uncertainty_band > 0 && std::isfinite(uncertainty_row[x])) {
+      if (options.uncertainty_band > 0 && std::isfinite(uncertainty_row[x]) &&
+        uncertainty_row[x] > 0.0)
+      {
         uncertainty = uncertainty_row[x];
       }
       const double longitude = gt[0] + (x + 0.5) * gt[1];
