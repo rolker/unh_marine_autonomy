@@ -37,18 +37,24 @@ namespace marine_bathymetry_store
 /// deliberate, cleaner realization of ADR-0002 §D3's "each cell stores a
 /// source layer": the layer is the map it lives in.
 ///
-/// The numeric value is the priority rank (0 = highest). `Chart` is reserved
-/// for a later phase (it depends on the mru_transform vertical-datum work) and
-/// is intentionally not yet a member.
+/// The numeric value is the priority rank (0 = highest).
+///
+/// `Chart` holds cartographic priors — S57 depths, contour-derived lake
+/// bathymetry — broad but coarse, so it ranks *below* survey data: any
+/// surveyed cell beats it, and it fills cells nothing else covers. Datum
+/// conversion happens at import (ADR-0002 §D4): a constant offset suffices
+/// for lake sources; tidal S57 imports stay gated on the mru_transform
+/// vertical-datum work.
 enum class SourceLayer : uint8_t
 {
   Processed = 0,  ///< Externally produced grids (bathy-BAG / GeoTIFF). Highest confidence.
   Draft = 1,      ///< Real-time CUBE output. Valuable but potentially noisy.
+  Chart = 2,      ///< Cartographic priors (S57 / contour-derived). Broad but coarse.
 };
 
 /// @brief Source layers in descending priority order — iterate for best-source.
-inline constexpr std::array<SourceLayer, 2> source_layers_by_priority{
-  SourceLayer::Processed, SourceLayer::Draft};
+inline constexpr std::array<SourceLayer, 3> source_layers_by_priority{
+  SourceLayer::Processed, SourceLayer::Draft, SourceLayer::Chart};
 
 /// @brief Number of source layers present in this phase.
 inline constexpr std::size_t source_layer_count = source_layers_by_priority.size();

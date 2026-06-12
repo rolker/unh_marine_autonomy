@@ -63,6 +63,14 @@ struct GeoTiffImportOptions
   /// Acquisition time (Unix seconds) recorded on every imported cell — a
   /// whole-file product carries no per-cell time. 0 = unset.
   double timestamp = 0.0;
+  /// Vertical conversion applied at import (ADR-0002 §D4):
+  /// `height = depth_scale * pixel + depth_offset`. The defaults pass
+  /// store-convention inputs (ellipsoidal height, up-positive) through
+  /// unchanged. A positive-down depths-below-lake-surface product imports
+  /// with `depth_scale = -1` and `depth_offset` = the lake surface's
+  /// ellipsoidal height.
+  double depth_scale = 1.0;
+  double depth_offset = 0.0;
 };
 
 /// @brief Import @p path as the **whole content** of @p layer's @p epoch.

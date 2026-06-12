@@ -91,6 +91,7 @@ std::string layerDirName(SourceLayer layer)
   switch (layer) {
     case SourceLayer::Processed: return "processed";
     case SourceLayer::Draft: return "draft";
+    case SourceLayer::Chart: return "chart";
   }
   throw std::runtime_error("layerDirName: unknown SourceLayer");
 }

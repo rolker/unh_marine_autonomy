@@ -211,6 +211,43 @@ TEST_F(GeoTiffImportTest, MissingUncertaintyBandUsesDefault)
   EXPECT_DOUBLE_EQ(got->uncertainty, 3.5);
 }
 
+TEST_F(GeoTiffImportTest, DepthScaleOffsetAndFiniteNoData)
+{
+  // A lake-prior product: depths positive-down below the surface, with a
+  // FINITE no-data value (-9999) that must not import as a 9 km depth.
+  BathymetryStore store(11);
+  const std::vector<float> depth{4.0f, -9999.0f};   // 4 m of water; one no-data
+  const std::vector<float> unc{0.0f, 0.0f};         // source has no real band
+  const auto tif = writeTestTiff(dir_ / "lake.tif", store.level(), 2, 1, depth, unc);
+  {
+    GDALAllRegister();
+    GDALDataset * ds = GDALDataset::FromHandle(GDALOpen(tif.c_str(), GA_Update));
+    ASSERT_NE(ds, nullptr);
+    ds->GetRasterBand(1)->SetNoDataValue(-9999.0);
+    GDALClose(ds);
+  }
+
+  GeoTiffImportOptions options;
+  options.uncertainty_band = 0;
+  options.default_uncertainty = 3.0;
+  options.depth_scale = -1.0;       // positive-down -> up-positive
+  options.depth_offset = -20.0;     // lake surface ellipsoidal height
+  const auto imported = importGeoTiff(
+    store, SourceLayer::Chart, kDay1, tif, Provenance::Replayed, options);
+  ASSERT_TRUE(imported.has_value());
+  EXPECT_EQ(*imported, 1u);         // the -9999 pixel was skipped
+
+  const gggs::GridIndex grid = store.level().gridIndex(43.0, -70.5);
+  const double cell_x = grid.longitudinalSpan() / gggs::cell_rows_per_grid;
+  const double cell_y = grid.latitudinalSpan() / gggs::cell_rows_per_grid;
+  const auto cell = store.cellIndex(
+    grid.northLatitude() - 0.5 * cell_y, grid.westLongitude() + 0.5 * cell_x);
+  const auto got = store.get(SourceLayer::Chart, kDay1, cell);
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, -24.0);          // -1 * 4 + (-20)
+  EXPECT_DOUBLE_EQ(got->uncertainty, 3.0);
+}
+
 TEST_F(GeoTiffImportTest, MissingFileThrows)
 {
   BathymetryStore store(11);

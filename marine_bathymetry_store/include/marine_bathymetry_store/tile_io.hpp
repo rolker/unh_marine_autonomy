@@ -63,7 +63,7 @@ namespace marine_bathymetry_store
 /// @brief GeoTIFF filename (no directory) for a grid: `<level>_<row>_<col>.tif`.
 std::string tileFilename(const gggs::GridIndex & grid);
 
-/// @brief Subdirectory name for a source layer (`"processed"` / `"draft"`).
+/// @brief Subdirectory name for a source layer (`"processed"` / `"draft"` / `"chart"`).
 std::string layerDirName(SourceLayer layer);
 
 /// @brief Write one tile as a 3-band Float64 GeoTIFF at @p path.

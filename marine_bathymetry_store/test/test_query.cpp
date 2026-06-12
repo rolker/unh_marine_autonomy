@@ -219,6 +219,33 @@ TEST(Query, ChangedCellsVisitsOnlyDoublyObserved)
   EXPECT_DOUBLE_EQ(delta, 2.0);    // shoaled by 2 m between the days
 }
 
+TEST(Query, ChartLayerRanksBelowDraftAndFillsGaps)
+{
+  // The chart prior must never shadow survey data, but must answer where
+  // nothing else does.
+  BathymetryStore store(5);
+  const auto surveyed = store.cellIndex(43.0, -70.5);
+  const auto unsurveyed = store.cellIndex(43.2, -70.2);
+  store.set(SourceLayer::Chart, kDay1, surveyed, BathyCell{-10.0, 3.0, 1.0});
+  store.set(SourceLayer::Chart, kDay1, unsurveyed, BathyCell{-8.0, 3.0, 1.0});
+  store.set(SourceLayer::Draft, kDay2, surveyed, BathyCell{-12.0, 0.3, 2.0});
+
+  const auto at_surveyed = bestSource(store, surveyed);
+  ASSERT_TRUE(at_surveyed.has_value());
+  EXPECT_EQ(at_surveyed->source, SourceLayer::Draft);   // survey beats prior
+  EXPECT_DOUBLE_EQ(at_surveyed->depth, -12.0);
+
+  const auto at_unsurveyed = bestSource(store, unsurveyed);
+  ASSERT_TRUE(at_unsurveyed.has_value());
+  EXPECT_EQ(at_unsurveyed->source, SourceLayer::Chart);  // prior fills the gap
+  EXPECT_DOUBLE_EQ(at_unsurveyed->depth, -8.0);
+
+  // Under a strict gate the high-uncertainty prior is not "reliable".
+  EXPECT_FALSE(shallowestReliable(store, unsurveyed, 1.0).has_value());
+  // Under a gate that admits it, it answers.
+  EXPECT_TRUE(shallowestReliable(store, unsurveyed, 5.0).has_value());
+}
+
 TEST(Query, ChangedCellsMissingEpochIsEmpty)
 {
   BathymetryStore store(5);

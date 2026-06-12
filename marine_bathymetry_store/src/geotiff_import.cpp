@@ -90,6 +90,12 @@ std::optional<std::size_t> importGeoTiff(
     throw std::runtime_error("importGeoTiff: rotated geotransform unsupported in " + path);
   }
 
+  // Honor a declared no-data value: it may be finite (e.g. -9999), which the
+  // isfinite() skip below would happily import as a 9 km depth.
+  int has_nodata = 0;
+  const double nodata =
+    in.ds->GetRasterBand(options.depth_band)->GetNoDataValue(&has_nodata);
+
   const gggs::Level & level = store.level();
   std::map<gggs::GridIndex, BathymetryTile> tiles;
   std::size_t imported = 0;
@@ -112,10 +118,11 @@ std::optional<std::size_t> importGeoTiff(
     }
     const double latitude = gt[3] + (y + 0.5) * gt[5];
     for (int x = 0; x < width; ++x) {
-      const double depth = depth_row[x];
-      if (!std::isfinite(depth)) {
+      if (!std::isfinite(depth_row[x]) || (has_nodata && depth_row[x] == nodata)) {
         continue;   // no-data pixel
       }
+      // Vertical conversion at import (§D4): pixel value -> ellipsoidal height.
+      const double depth = options.depth_scale * depth_row[x] + options.depth_offset;
       double uncertainty = options.default_uncertainty;
       if (options.uncertainty_band > 0 && std::isfinite(uncertainty_row[x])) {
         uncertainty = uncertainty_row[x];

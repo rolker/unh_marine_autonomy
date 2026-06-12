@@ -49,13 +49,20 @@ void usage()
   std::cout <<
     "usage: import_geotiff <store_dir> <layer> <epoch> <provenance> <geotiff>\n"
     "                      [--cell-size m] [--timestamp unix_seconds]\n"
-    "  layer:      processed | draft\n"
+    "                      [--uncertainty m] [--depth-scale s] [--depth-offset m]\n"
+    "  layer:      processed | draft | chart\n"
     "  epoch:      label, conventionally the acquisition date (YYYY-MM-DD)\n"
     "  provenance: live-fused | replayed\n"
     "  --cell-size: store cell size in metres (default 0.5; must match any\n"
     "               existing store under <store_dir>)\n"
     "  --timestamp: per-cell acquisition time; defaults to midnight UTC of an\n"
-    "               ISO-date epoch label, else 0\n";
+    "               ISO-date epoch label, else 0\n"
+    "  --uncertainty: ignore the file's uncertainty band and assign this\n"
+    "               constant 1-sigma value (for sources without one)\n"
+    "  --depth-scale / --depth-offset: vertical conversion at import,\n"
+    "               height = scale*pixel + offset (defaults 1, 0). A\n"
+    "               positive-down depths-below-lake-surface product imports\n"
+    "               with scale -1 and offset = lake surface ellipsoidal height\n";
   exit(1);
 }
 
@@ -67,7 +74,10 @@ marine_bathymetry_store::SourceLayer layerFromName(const std::string & name)
   if (name == "draft") {
     return marine_bathymetry_store::SourceLayer::Draft;
   }
-  std::cerr << "unknown layer '" << name << "' (expected processed|draft)\n";
+  if (name == "chart") {
+    return marine_bathymetry_store::SourceLayer::Chart;
+  }
+  std::cerr << "unknown layer '" << name << "' (expected processed|draft|chart)\n";
   exit(1);
 }
 
@@ -91,12 +101,21 @@ int main(int argc, char * argv[])
   int n_positional = 0;
   double cell_size = 0.5;
   double timestamp = -1.0;   // sentinel: derive from the epoch label
+  double constant_uncertainty = -1.0;   // sentinel: use the file's band
+  double depth_scale = 1.0;
+  double depth_offset = 0.0;
 
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--cell-size") == 0 && i + 1 < argc) {
       cell_size = std::stod(argv[++i]);
     } else if (std::strcmp(argv[i], "--timestamp") == 0 && i + 1 < argc) {
       timestamp = std::stod(argv[++i]);
+    } else if (std::strcmp(argv[i], "--uncertainty") == 0 && i + 1 < argc) {
+      constant_uncertainty = std::stod(argv[++i]);
+    } else if (std::strcmp(argv[i], "--depth-scale") == 0 && i + 1 < argc) {
+      depth_scale = std::stod(argv[++i]);
+    } else if (std::strcmp(argv[i], "--depth-offset") == 0 && i + 1 < argc) {
+      depth_offset = std::stod(argv[++i]);
     } else if (n_positional < 5) {
       positional[n_positional++] = argv[i];
     } else {
@@ -124,6 +143,12 @@ int main(int argc, char * argv[])
 
   marine_bathymetry_store::GeoTiffImportOptions options;
   options.timestamp = timestamp;
+  options.depth_scale = depth_scale;
+  options.depth_offset = depth_offset;
+  if (constant_uncertainty >= 0.0) {
+    options.uncertainty_band = 0;
+    options.default_uncertainty = constant_uncertainty;
+  }
   const auto imported = marine_bathymetry_store::importGeoTiff(
     store, layer, epoch, geotiff, provenance, options);
   if (!imported) {
