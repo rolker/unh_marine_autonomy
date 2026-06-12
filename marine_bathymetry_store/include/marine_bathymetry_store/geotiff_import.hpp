@@ -35,9 +35,12 @@
 ///
 /// Imports a depth/uncertainty GeoTIFF — a `cube_bathymetry` `bag_to_geotiff`
 /// replay product, or any north-up geographic WGS84 raster — as **one epoch**
-/// of a source layer. Each pixel center is mapped to the store-level GGGS cell
-/// containing it; when the input lattice is GGGS-aligned at the store's level
-/// (cube products are), this is a cell-exact copy with no resampling.
+/// of a source layer. Each pixel fills its **footprint** of store-level GGGS
+/// cells: when the input lattice is GGGS-aligned at the store's level (cube
+/// products are) that is a cell-exact copy with no resampling; a coarser
+/// source (e.g. a 5 m contour prior into a 0.5 m store) nearest-neighbour
+/// fills every cell it covers; a finer source resolves per cell by lowest
+/// uncertainty.
 ///
 /// One epoch = one import call: the epoch is replaced **wholesale**
 /// (`BathymetryStore::importEpoch`), per the ADR-0002 §A1.2 compaction

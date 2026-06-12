@@ -248,6 +248,56 @@ TEST_F(GeoTiffImportTest, DepthScaleOffsetAndFiniteNoData)
   EXPECT_DOUBLE_EQ(got->uncertainty, 3.0);
 }
 
+TEST_F(GeoTiffImportTest, CoarserInputFillsPixelFootprint)
+{
+  // A 5x-coarser pixel must fill its whole footprint of store cells —
+  // coverage, not isolated dots (the contour-prior case). The helper only
+  // does integer pixels-per-cell, so build the 1x1 raster with a 5-cell
+  // pixel directly.
+  BathymetryStore store(11);
+  const std::vector<float> depth{-30.0f};
+  const std::vector<float> unc{3.0f};
+  const gggs::GridIndex grid = store.level().gridIndex(43.0, -70.5);
+  const double cell_x = grid.longitudinalSpan() / gggs::cell_rows_per_grid;
+  const double cell_y = grid.latitudinalSpan() / gggs::cell_rows_per_grid;
+  const auto path = (dir_ / "coarse.tif").string();
+  {
+    GDALAllRegister();
+    GDALDriver * driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    GDALDataset * ds = driver->Create(path.c_str(), 1, 1, 2, GDT_Float32, nullptr);
+    double gt[6] = {grid.westLongitude(), 5.0 * cell_x, 0.0,
+      grid.northLatitude(), 0.0, -5.0 * cell_y};
+    ds->SetGeoTransform(gt);
+    OGRSpatialReference srs;
+    srs.SetWellKnownGeogCS("WGS84");
+    char * wkt = nullptr;
+    srs.exportToWkt(&wkt);
+    ds->SetProjection(wkt);
+    CPLFree(wkt);
+    ASSERT_EQ(
+      ds->GetRasterBand(1)->RasterIO(
+        GF_Write, 0, 0, 1, 1, const_cast<float *>(depth.data()), 1, 1, GDT_Float32, 0, 0),
+      CE_None);
+    ASSERT_EQ(
+      ds->GetRasterBand(2)->RasterIO(
+        GF_Write, 0, 0, 1, 1, const_cast<float *>(unc.data()), 1, 1, GDT_Float32, 0, 0),
+      CE_None);
+    GDALClose(ds);
+  }
+
+  const auto imported = importGeoTiff(
+    store, SourceLayer::Chart, kDay1, path, Provenance::Replayed);
+  ASSERT_TRUE(imported.has_value());
+  EXPECT_EQ(*imported, 25u);   // 5x5 store cells under the one pixel
+
+  // Every cell of the footprint carries the value — spot-check a middle one.
+  const auto mid = store.cellIndex(
+    grid.northLatitude() - 2.5 * cell_y, grid.westLongitude() + 2.5 * cell_x);
+  const auto got = store.get(SourceLayer::Chart, kDay1, mid);
+  ASSERT_TRUE(got.has_value());
+  EXPECT_FLOAT_EQ(static_cast<float>(got->depth), -30.0f);
+}
+
 TEST_F(GeoTiffImportTest, MissingFileThrows)
 {
   BathymetryStore store(11);

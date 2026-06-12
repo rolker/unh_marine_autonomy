@@ -128,35 +128,56 @@ std::optional<std::size_t> importGeoTiff(
         uncertainty = uncertainty_row[x];
       }
       const double longitude = gt[0] + (x + 0.5) * gt[1];
-      const gggs::CellIndex cell = level.cellIndex(gggs::geoPoint(latitude, longitude));
-      if (!cell.valid()) {
-        continue;   // outside GGGS's usable envelope
-      }
-      auto tile_it = tiles.find(cell.grid());
-      if (tile_it == tiles.end()) {
-        tile_it = tiles.emplace(cell.grid(), BathymetryTile(cell.grid())).first;
-      }
-      // Several input pixels can land in one cell when the input is finer
-      // than the store level: keep the lowest-uncertainty value (a finite
-      // uncertainty always beats NaN; ties keep the first read).
-      const BathyCell existing = tile_it->second.get(cell.row(), cell.column());
-      if (existing.hasData()) {
-        const bool existing_unc_finite = std::isfinite(existing.uncertainty);
-        const bool new_unc_finite = std::isfinite(uncertainty);
-        if (!new_unc_finite && existing_unc_finite) {
-          continue;
+      // Fill the pixel's full FOOTPRINT of store cells, not just the cell
+      // under its centre — a coarser-than-store source (e.g. a 5 m contour
+      // prior into a 0.5 m store) must produce coverage, not isolated dots.
+      // The box is shrunk by a hair so adjacent pixels never contend for the
+      // cells on their shared boundary; for aligned or finer inputs it
+      // therefore covers exactly the one containing cell.
+      const double half_lon = 0.495 * std::abs(gt[1]);
+      const double half_lat = 0.495 * std::abs(gt[5]);
+      const auto box_min = gggs::geoPoint(latitude - half_lat, longitude - half_lon);
+      const auto box_max = gggs::geoPoint(latitude + half_lat, longitude + half_lon);
+      gggs::GridAreaIterator grid_it(
+        level.gridIndex(box_min.latitude, box_min.longitude),
+        level.gridIndex(box_max.latitude, box_max.longitude));
+      for (; grid_it.valid(); grid_it.next()) {
+        auto tile_it = tiles.find(*grid_it);
+        for (gggs::CellAreaIterator cell_it(*grid_it, box_min, box_max);
+          cell_it.valid(); cell_it.next())
+        {
+          const gggs::CellIndex & cell = *cell_it;
+          if (!cell.valid()) {
+            continue;   // outside GGGS's usable envelope
+          }
+          if (tile_it == tiles.end()) {
+            tile_it = tiles.emplace(cell.grid(), BathymetryTile(cell.grid())).first;
+          }
+          // Several input pixels can land in one cell when the input is finer
+          // than the store level: keep the lowest-uncertainty value (a finite
+          // uncertainty always beats NaN; ties keep the first read).
+          const BathyCell existing = tile_it->second.get(cell.row(), cell.column());
+          if (existing.hasData()) {
+            const bool existing_unc_finite = std::isfinite(existing.uncertainty);
+            const bool new_unc_finite = std::isfinite(uncertainty);
+            if (!new_unc_finite && existing_unc_finite) {
+              continue;
+            }
+            if (new_unc_finite && existing_unc_finite &&
+              uncertainty >= existing.uncertainty)
+            {
+              continue;
+            }
+            if (!new_unc_finite && !existing_unc_finite) {
+              continue;   // tie among NaNs: keep the first read
+            }
+          } else {
+            ++imported;   // a new cell (replacements don't recount)
+          }
+          tile_it->second.set(cell.row(), cell.column(), BathyCell{depth, uncertainty,
+              options.timestamp});
         }
-        if (new_unc_finite && existing_unc_finite && uncertainty >= existing.uncertainty) {
-          continue;
-        }
-        if (!new_unc_finite && !existing_unc_finite) {
-          continue;   // tie among NaNs: keep the first read
-        }
-      } else {
-        ++imported;   // a new cell (replacements don't recount)
       }
-      tile_it->second.set(cell.row(), cell.column(), BathyCell{depth, uncertainty,
-          options.timestamp});
     }
   }
 
