@@ -44,7 +44,7 @@ The spatial-indexing substrate already exists and is already shared:
 `marine_autonomy`'s **GGGS** (`gggs::Level` / `GridIndex` / `CellIndex`, 960×960
 cells per grid — verified in `gggs/core.h`, `cell_index.h`), and
 `cube_bathymetry`'s `GeoMapSheet` already keys its grids by `gggs::GridIndex`
-(`geo_map_sheet.h` holds `std::map<gggs::GridIndex, GeoGrid>`). The store is the
+(`geo_map_sheet.h` holds `std::map<gggs::GridIndex, std::shared_ptr<GeoGrid>>`). The store is the
 missing layer that turns per-source, in-memory, single-datum grids into one
 persistent, multi-source, queryable surface.
 
