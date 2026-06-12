@@ -53,6 +53,35 @@ fusion rule (ADR-0002 A1.2); the three days exercise the multi-day epoch model.
   bag also recorded the pre-projected `soundings` topic; June-10/11 bags need
   the detections→soundings stage re-run.
 
+### Boat layout decision (Roland, 2026-06-12)
+
+Store root is a **sibling of the log root, not nested in it** — bags are the
+append-only raw record, the store is derived working knowledge (re-derivable
+from bags, so no special backup discipline):
+
+```
+<data root>/logs/...                 # existing per-session bags, untouched
+<data root>/bathymetry/store/        # persists across sessions & reboots
+    draft/<date>/                    # today live-fused; past dates compacted
+    processed/<date>/
+```
+
+Flow: underway, live importer (Phase 3) writes `draft/<today>/` incrementally;
+evenings, dev replays the day's bags → compacted epoch → copied back (Phase-6
+sync later). The concrete path + `store_dir` parameter land in `bizzyboat.yaml`
+with the Phase-3 node — record it as a config item in that sub-issue.
+
+### Tooling gotchas found driving the corpus (2026-06-12)
+
+- `detections_to_pointcloud` is a **lifecycle node**: replay harnesses must
+  configure+activate it or it records nothing, silently (cost a 25-min no-op).
+  Conversion script fixed; durable fix is the projection-refactor
+  (rolker/cube_bathymetry#43) which removes the live-replay step entirely.
+- Replay rate is capped (~5x) by the node's best-effort `SensorDataQoS` — no
+  backpressure, silent drops. Same refactor removes the cap (direct bag
+  reader, in-process, deterministic — required for content-hash-stable
+  compaction per ADR-0002 §D6).
+
 ### Key discovery
 
 `cube_bathymetry` already ships **`bag_to_geotiff`** — an offline multi-bag
