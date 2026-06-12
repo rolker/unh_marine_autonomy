@@ -1,0 +1,162 @@
+// Copyright 2026 Center for Coastal and Ocean Mapping & NOAA-UNH Joint
+// Hydrographic Center, University of New Hampshire
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+#include "marine_bathymetry_store/geotiff_import.hpp"
+
+#include <gdal_priv.h>
+#include <ogr_spatialref.h>
+
+#include <cmath>
+#include <map>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace marine_bathymetry_store
+{
+
+namespace
+{
+
+/// RAII wrapper so a thrown exception still closes the GDAL dataset.
+struct DatasetCloser
+{
+  GDALDataset * ds = nullptr;
+  ~DatasetCloser() {if (ds) {GDALClose(ds);}}
+};
+
+}  // namespace
+
+std::optional<std::size_t> importGeoTiff(
+  BathymetryStore & store, SourceLayer layer, const Epoch & epoch,
+  const std::string & path, Provenance provenance,
+  const GeoTiffImportOptions & options)
+{
+  validateEpochLabel(epoch);
+  if (options.depth_band < 1) {
+    throw std::invalid_argument("importGeoTiff: depth_band must be >= 1");
+  }
+  if (options.uncertainty_band < 0) {
+    throw std::invalid_argument("importGeoTiff: uncertainty_band must be >= 0 (0 = none)");
+  }
+
+  GDALAllRegister();
+  DatasetCloser in;
+  in.ds = GDALDataset::FromHandle(GDALOpen(path.c_str(), GA_ReadOnly));
+  if (in.ds == nullptr) {
+    throw std::runtime_error("importGeoTiff: could not open " + path);
+  }
+  const int width = in.ds->GetRasterXSize();
+  const int height = in.ds->GetRasterYSize();
+  const int band_count = in.ds->GetRasterCount();
+  if (options.depth_band > band_count || options.uncertainty_band > band_count) {
+    throw std::runtime_error("importGeoTiff: band index beyond raster bands in " + path);
+  }
+
+  // The pixel-center mapping below interprets the geotransform as degrees, so
+  // the file must be a geographic WGS84 raster (same guard as tile_io's load).
+  const OGRSpatialReference * srs = in.ds->GetSpatialRef();
+  OGRErr axis_error = OGRERR_NONE;
+  if (srs == nullptr || !srs->IsGeographic() ||
+    std::abs(srs->GetSemiMajor(&axis_error) - 6378137.0) > 1.0 || axis_error != OGRERR_NONE)
+  {
+    throw std::runtime_error("importGeoTiff: not a geographic WGS84 raster: " + path);
+  }
+
+  double gt[6];
+  if (in.ds->GetGeoTransform(gt) != CE_None) {
+    throw std::runtime_error("importGeoTiff: missing geotransform in " + path);
+  }
+  if (gt[2] != 0.0 || gt[4] != 0.0) {
+    throw std::runtime_error("importGeoTiff: rotated geotransform unsupported in " + path);
+  }
+
+  const gggs::Level & level = store.level();
+  std::map<gggs::GridIndex, BathymetryTile> tiles;
+  std::size_t imported = 0;
+
+  std::vector<double> depth_row(width);
+  std::vector<double> uncertainty_row(width);
+  for (int y = 0; y < height; ++y) {
+    if (in.ds->GetRasterBand(options.depth_band)->RasterIO(
+        GF_Read, 0, y, width, 1, depth_row.data(), width, 1, GDT_Float64, 0, 0) != CE_None)
+    {
+      throw std::runtime_error("importGeoTiff: depth read failed in " + path);
+    }
+    if (options.uncertainty_band > 0) {
+      if (in.ds->GetRasterBand(options.uncertainty_band)->RasterIO(
+          GF_Read, 0, y, width, 1, uncertainty_row.data(), width, 1, GDT_Float64, 0, 0) !=
+        CE_None)
+      {
+        throw std::runtime_error("importGeoTiff: uncertainty read failed in " + path);
+      }
+    }
+    const double latitude = gt[3] + (y + 0.5) * gt[5];
+    for (int x = 0; x < width; ++x) {
+      const double depth = depth_row[x];
+      if (!std::isfinite(depth)) {
+        continue;   // no-data pixel
+      }
+      double uncertainty = options.default_uncertainty;
+      if (options.uncertainty_band > 0 && std::isfinite(uncertainty_row[x])) {
+        uncertainty = uncertainty_row[x];
+      }
+      const double longitude = gt[0] + (x + 0.5) * gt[1];
+      const gggs::CellIndex cell = level.cellIndex(gggs::geoPoint(latitude, longitude));
+      if (!cell.valid()) {
+        continue;   // outside GGGS's usable envelope
+      }
+      auto tile_it = tiles.find(cell.grid());
+      if (tile_it == tiles.end()) {
+        tile_it = tiles.emplace(cell.grid(), BathymetryTile(cell.grid())).first;
+      }
+      // Several input pixels can land in one cell when the input is finer
+      // than the store level: keep the lowest-uncertainty value (a finite
+      // uncertainty always beats NaN; ties keep the first read).
+      const BathyCell existing = tile_it->second.get(cell.row(), cell.column());
+      if (existing.hasData()) {
+        const bool existing_unc_finite = std::isfinite(existing.uncertainty);
+        const bool new_unc_finite = std::isfinite(uncertainty);
+        if (!new_unc_finite && existing_unc_finite) {
+          continue;
+        }
+        if (new_unc_finite && existing_unc_finite && uncertainty >= existing.uncertainty) {
+          continue;
+        }
+        if (!new_unc_finite && !existing_unc_finite) {
+          continue;   // tie among NaNs: keep the first read
+        }
+      } else {
+        ++imported;   // a new cell (replacements don't recount)
+      }
+      tile_it->second.set(cell.row(), cell.column(), BathyCell{depth, uncertainty,
+          options.timestamp});
+    }
+  }
+
+  if (!store.importEpoch(layer, epoch, std::move(tiles), provenance)) {
+    return std::nullopt;
+  }
+  return imported;
+}
+
+}  // namespace marine_bathymetry_store

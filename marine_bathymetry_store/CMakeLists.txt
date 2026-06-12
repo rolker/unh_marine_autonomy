@@ -17,6 +17,7 @@ find_package(GDAL CONFIG REQUIRED)
 
 add_library(${PROJECT_NAME}
   src/bathymetry_store.cpp
+  src/geotiff_import.cpp
   src/query.cpp
   src/tile_io.cpp
 )
@@ -43,12 +44,18 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 # tree to `include` (not include/${PROJECT_NAME}) to avoid a doubled
 # include/${PROJECT_NAME}/${PROJECT_NAME}/ path; the INSTALL_INTERFACE above is
 # `include` to match.
+add_executable(import_geotiff src/import_geotiff_main.cpp)
+target_link_libraries(import_geotiff ${PROJECT_NAME})
+
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS ${PROJECT_NAME}
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
+)
+install(TARGETS import_geotiff
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
@@ -67,6 +74,11 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_tile_io test/test_tile_io.cpp)
   target_link_libraries(test_tile_io ${PROJECT_NAME})
+
+  # The test writes synthetic GeoTIFFs itself, so it links GDAL directly
+  # (the library keeps GDAL private).
+  ament_add_gtest(test_geotiff_import test/test_geotiff_import.cpp)
+  target_link_libraries(test_geotiff_import ${PROJECT_NAME} GDAL::GDAL)
 endif()
 
 ament_package()
