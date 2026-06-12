@@ -233,9 +233,66 @@ waits on it.
 - **Datum coupling is explicit:** the chart layer cannot land before
   mru_transform#7/#8; isolating it to one layer (D4) keeps the rest moving.
 
+## Amendment A1 — Per-day epochs (2026-06-11)
+
+Decided with Phase 2
+([#147](https://github.com/rolker/unh_marine_autonomy/issues/147)); amends
+D3, D5, D6, and D7. Motivation: repeat surveys of the same area on different
+days carry information in their *differences* (shoaling detection, survey QC);
+a single-valued cell would average that change away or silently discard it.
+
+### A1.1 — Epochs
+
+A **layer is held as dated instances ("epochs"), one per local acquisition
+date**. A cell surveyed on N days keeps N (depth, uncertainty) records — one
+per epoch. **Epochs are never fused across days**; differencing two epochs
+yields a change map, normalized by combined uncertainty. The per-cell record
+(D3) and the 3-band tile GeoTIFF (D5) are unchanged; the epoch is one more
+level of the on-disk encoding alongside the source layer
+(`draft/2026-06-12/<GridIndex>.tif`), and the D6 manifest key generalizes to
+`{layer/epoch/GridIndex → content-hash}`. The day boundary is the local
+acquisition date stored as a **labeled key**, so the span could change later
+without a format migration.
+
+### A1.2 — Within-epoch update rules
+
+- Successive snapshots of the **same** CUBE session are cumulative
+  refinements: plain replace. Grid imports therefore carry a **session
+  identity** tag to distinguish this case from the next.
+- Across **different** live sessions in one epoch (node relaunch, mid-day
+  restart): **variance-weighted fusion (1/σ²)** per cell. This is safe within
+  the epoch by construction — the 1-day span is the declared
+  seafloor-stability window; cross-day change remains visible because epochs
+  are never fused.
+- **End-of-day compaction**: replaying the full day's data through a single
+  CUBE run produces the authoritative epoch, which **supersedes the epoch
+  wholesale** (never per-cell — mixing live-fused and replayed values in one
+  epoch would create a surface with two inconsistent provenances). Provenance
+  ordering: `replayed` beats `live-fused` for the same epoch, never the
+  reverse. Epochs become **immutable after compaction** (not at creation);
+  the D6 content-hash manifest absorbs the one extra sync this implies.
+
+### A1.3 — Queries over epochs
+
+- Default query: **latest epoch** per cell.
+- **Shallowest-reliable (D7) walks epochs newest-first and returns the first
+  value passing the uncertainty gate.** A fresh noisy pass fails the gate and
+  falls through to the prior epoch's confident value, so a recently observed
+  shoal keeps protecting navigation without any cross-epoch fusion.
+
+### A1.4 — CUBE is not seeded with prior epochs (deliberate non-decision)
+
+Estimator-level seeding (initializing CUBE with the previous epoch's surface)
+would anchor each day's estimates to the prior day's, biasing change maps
+toward zero and slow-rolling detection of real change — defeating the purpose
+of A1.1. "Seeding the day's survey" therefore means **query-layer fallback**
+(display, planning, and the costmap read latest-reliable per A1.3), not CUBE
+priors. CUBE starts each day cold; the store provides the continuity.
+
 ## References
 
 - Umbrella / design: [rolker/unh_marine_autonomy#86](https://github.com/rolker/unh_marine_autonomy/issues/86)
+- Phase 2 / epoch model (Amendment A1): [rolker/unh_marine_autonomy#147](https://github.com/rolker/unh_marine_autonomy/issues/147)
 - Datum frames / VDatum: [rolker/mru_transform#8](https://github.com/rolker/mru_transform/issues/8),
   [rolker/mru_transform#7](https://github.com/rolker/mru_transform/issues/7)
 - CUBE draft-tile persistence: [rolker/cube_bathymetry#21](https://github.com/rolker/cube_bathymetry/issues/21)
