@@ -23,6 +23,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -237,4 +238,32 @@ TEST_F(TileIoTest, MissingProvenanceSidecarLoadsAsLiveFused)
   marine_bathymetry_store::load(reloaded, dir_.string());
   EXPECT_EQ(
     reloaded.epochs(SourceLayer::Draft).at(kDay1).provenance, Provenance::LiveFused);
+}
+
+TEST_F(TileIoTest, CrlfProvenanceSidecarStillLoadsAsReplayed)
+{
+  // A sidecar written with CRLF line endings (e.g. on a Windows host) leaves a
+  // trailing '\r' on the token. readProvenance() must trim it — otherwise the
+  // exact-match parse fails and the epoch silently downgrades to LiveFused,
+  // allowing live writes over replayed data after reload.
+  BathymetryStore store(5);
+  const auto cell = store.cellIndex(43.0, -70.5);
+  ASSERT_TRUE(
+    store.importEpoch(
+      SourceLayer::Draft, kDay1, oneTile(cell, BathyCell{-28.0, 0.2, 2.0}),
+      Provenance::Replayed));
+  marine_bathymetry_store::save(store, dir_.string());
+
+  // Rewrite the sidecar with a CRLF line ending.
+  {
+    std::ofstream out(dir_ / "draft" / kDay1 / "provenance", std::ios::binary);
+    out << "replayed\r\n";
+  }
+
+  BathymetryStore reloaded(5);
+  marine_bathymetry_store::load(reloaded, dir_.string());
+  EXPECT_EQ(
+    reloaded.epochs(SourceLayer::Draft).at(kDay1).provenance, Provenance::Replayed);
+  // Still refuses live writes after the CRLF round-trip.
+  EXPECT_FALSE(reloaded.set(SourceLayer::Draft, kDay1, cell, BathyCell{-50.0, 5.0, 3.0}));
 }

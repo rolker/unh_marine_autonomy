@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -270,6 +271,15 @@ Provenance readProvenance(const std::filesystem::path & epoch_dir)
   if (!in || !std::getline(in, token)) {
     return Provenance::LiveFused;
   }
+  // Trim trailing whitespace before parsing: a sidecar written with CRLF
+  // line endings (e.g. on a Windows host) leaves a '\r' on the token, which
+  // would otherwise fail the exact-match parse and silently downgrade a
+  // Replayed epoch to LiveFused — allowing live writes over replayed data.
+  token.erase(
+    std::find_if(
+      token.rbegin(), token.rend(),
+      [](unsigned char c) {return !std::isspace(c);}).base(),
+    token.end());
   try {
     return provenanceFromToken(token);
   } catch (const std::invalid_argument &) {
