@@ -144,3 +144,35 @@ tool (adding epoch-tagged store import per ADR-0002 A1) rather than starting
 from scratch. Note layering: the store cannot depend on cube (ADR-0002), so the
 harness lives cube-side or as a bridge package, importing into the store via
 its public API.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-13 05:17 -0400
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #148 at `a5a2824`
+**Sources**: 1 (Copilot @ `a5a2824`)
+**Cross-source confirmations**: 0 (no prior Local Review entries on the timeline)
+**CI**: all-pass (build success)
+
+### Findings
+- [x] (high, Copilot) `readProvenance()` treated a CRLF sidecar (`\r`) as a parse
+  failure → silently downgraded a Replayed epoch to LiveFused, allowing live writes
+  over replayed data after reload — `src/tile_io.cpp`. Fixed: trim trailing
+  whitespace + CRLF round-trip regression test.
+- [x] (med, Copilot) `importEpoch()` validated the map key grid but not that the
+  tile was built for the same grid → file-name/georef mismatch corruption on
+  `load()` — `src/bathymetry_store.cpp`. Fixed: explicit `tile.index() == grid`
+  check (throws) + test.
+- [x] (med, Copilot) `import_geotiff` called `provenanceFromToken()` unguarded →
+  uncaught `std::invalid_argument` on bad CLI input — `src/import_geotiff_main.cpp`.
+  Fixed: guard parse, print expected values, exit 1 (matches `layerFromName`).
+- [x] (med, Copilot) `writeTestTiff()` dereferenced GDAL driver/dataset with no
+  null-check → test-runner crash on GDAL failure; also missing `<stdexcept>` —
+  `test/test_geotiff_import.cpp`. Fixed: null-checks that throw + explicit include.
+- [x] (low, Copilot) `DepthSample` doc said "tagged with its provenance" but the
+  struct carries source + epoch — `include/marine_bathymetry_store/query.hpp`.
+  Fixed: reworded comment.
+
+### False positives
+- (none)
