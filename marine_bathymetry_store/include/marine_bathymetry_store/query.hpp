@@ -34,7 +34,9 @@
 namespace marine_bathymetry_store
 {
 
-/// @brief A depth value resolved from the store, tagged with its provenance.
+/// @brief A depth value resolved from the store, tagged with its source layer
+///        and epoch. (Provenance — live-fused vs replayed — is a property of
+///        the epoch's tiles, not of an individual sample.)
 ///
 /// `depth` is **ellipsoidal height** (WGS84, metres, up-positive): a seafloor
 /// below the ellipsoid has a negative value, and a *shallower* seafloor has a
