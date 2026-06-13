@@ -35,6 +35,7 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 
 #include "marine_bathymetry_store/bathymetry_store.hpp"
@@ -128,7 +129,14 @@ int main(int argc, char * argv[])
   const std::string & store_dir = positional[0];
   const auto layer = layerFromName(positional[1]);
   const std::string & epoch = positional[2];
-  const auto provenance = marine_bathymetry_store::provenanceFromToken(positional[3]);
+  marine_bathymetry_store::Provenance provenance;
+  try {
+    provenance = marine_bathymetry_store::provenanceFromToken(positional[3]);
+  } catch (const std::invalid_argument &) {
+    std::cerr << "unknown provenance '" << positional[3]
+              << "' (expected live-fused|replayed)\n";
+    return 1;
+  }
   const std::string & geotiff = positional[4];
   if (timestamp < 0.0) {
     timestamp = timestampFromEpochLabel(epoch);
