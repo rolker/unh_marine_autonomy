@@ -95,7 +95,13 @@ bool BathymetryStore::importEpoch(
   validateEpochLabel(epoch);
   for (const auto & [grid, tile] : tiles) {
     requireGridAtLevel(grid, "BathymetryStore::importEpoch");
-    static_cast<void>(tile);
+    // The map key and the tile's own index must agree: persistence
+    // georeferences by tile.index() but names the file by the key, so a
+    // mismatch produces a tile that load() silently re-keys elsewhere.
+    if (tile.index() != grid) {
+      throw std::invalid_argument(
+              "BathymetryStore::importEpoch: tile.index() does not match its map key");
+    }
   }
 
   auto & epochs_map = layerMap(layer);

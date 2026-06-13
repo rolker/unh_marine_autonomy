@@ -255,3 +255,21 @@ TEST(Store, ImportEpochWrongLevelTileThrows)
       Provenance::Replayed),
     std::invalid_argument);
 }
+
+TEST(Store, ImportEpochMismatchedTileKeyThrows)
+{
+  // The map key and the tile's own index must agree: persistence georeferences
+  // by tile.index() but names the file by the key, so a mismatch would produce
+  // a tile that load() silently re-keys elsewhere. Both grids are at the store
+  // level (so the level check passes) but key the wrong tile.
+  BathymetryStore store(5);
+  const auto cell_a = store.cellIndex(43.0, -70.5);
+  const auto cell_b = store.cellIndex(44.0, -71.0);   // a different grid
+  std::map<gggs::GridIndex, BathymetryTile> tiles;
+  BathymetryTile tile_b(cell_b.grid());
+  tile_b.set(cell_b.row(), cell_b.column(), BathyCell{-29.5, 0.2, 2.0});
+  tiles.emplace(cell_a.grid(), std::move(tile_b));   // keyed under cell_a's grid
+  EXPECT_THROW(
+    store.importEpoch(SourceLayer::Draft, kDay1, std::move(tiles), Provenance::Replayed),
+    std::invalid_argument);
+}
