@@ -27,6 +27,7 @@
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -64,8 +65,14 @@ std::string writeTestTiff(
 
   GDALAllRegister();
   GDALDriver * driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+  if (driver == nullptr) {
+    throw std::runtime_error("writeTestTiff: GTiff driver unavailable");
+  }
   GDALDataset * ds = driver->Create(path.string().c_str(), width, height, 2, GDT_Float32,
     nullptr);
+  if (ds == nullptr) {
+    throw std::runtime_error("writeTestTiff: could not create " + path.string());
+  }
   double gt[6] = {grid.westLongitude(), px, 0.0, grid.northLatitude(), 0.0, -py};
   ds->SetGeoTransform(gt);
   OGRSpatialReference srs;
