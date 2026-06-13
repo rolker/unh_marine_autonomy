@@ -76,7 +76,7 @@ of scope and not worth the churn. **Accept exactly one duplicate** (radar) and
 make everything new use `marine_control`. Do not retrofit radar onto the new
 contract.
 
-### D3 — New generic `marine_control_msgs`, modeled on the radar messages
+### D3 — New generic `marine_control_interfaces`, modeled on the radar messages
 
 A `ControlSet` / `ControlValue` pair modeled closely on `RadarControlSet` /
 `RadarControlValue` so the mental model transfers, with deliberate additions the
@@ -99,7 +99,7 @@ by these requirements.
 
 Following the ADR-0001 / `marine_colormap` precedent:
 
-- **`marine_control`** (new standalone repo): `marine_control_msgs` + the
+- **`marine_control`** (new standalone repo): `marine_control_interfaces` + the
   device-side library. **No Qt, no rqt, no UI** dependency — `ament_export`
   stays clean so the boat links only messages + the helper lib.
 - **`marine_control_widgets`** (Qt lib) + a generic **`rqt_marine_control`**
