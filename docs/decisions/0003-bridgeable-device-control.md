@@ -223,38 +223,54 @@ So an operator-side client (`rqt_marine_control`, or a small coordinator) wires
 **both directions with two service calls to its own local bridge** — no
 boat-side platform YAML per device.
 
-### Discovery via `bridge_info`
+### Discovery via the per-remote `bridge_info` topic
 
-`udp_bridge` publishes a latched `BridgeInfo` (`~/<node>/bridge_info`) listing
-each bridged topic with its **datatype**, and a remote's `bridge_info` propagates
-to the operator. A client discovers device panels by filtering
-`bridge_info.topics[]` for `datatype == marine_control_interfaces/ControlSet`,
-then wires the matching `state`/`change` pair.
+`udp_bridge` publishes a `BridgeInfo` whose `topics[]` enumerates **every** topic
+on that node — `sendBridgeInfo()` iterates `get_topic_names_and_types()` and pushes
+a `TopicInfo` (with `datatype`) for *all* topics, not only bridged ones; the
+per-topic `remotes[]` sub-field is simply empty for un-bridged topics
+(`udp_bridge/src/udp_bridge.cpp` `sendBridgeInfo`). Each node sends its
+`BridgeInfo` to its peers, and the receiving bridge **republishes each remote's**
+`BridgeInfo` as a **latched ROS topic**:
 
-**Bootstrap caveat:** `bridge_info` lists topics *already being bridged*, not the
-boat's full graph. For a device to be discoverable, its `control/state` must be
-advertised on the boat side first. Options (decision point):
+```
+<bridge_node>/remotes/<remote_topic_name>/bridge_info   (transient_local, latched)
+```
 
-1. **Self-advertise** — the boat-side `ControlServer` calls its local bridge's
-   `remote_advertise` for its own `control/state` on startup (most automatic;
-   couples the no-Qt device lib to `udp_bridge` service clients).
-2. **Static advertise pattern** — one platform-config entry advertises
-   `*/control/state` by convention (keeps the device lib bridge-agnostic; one
-   line covers all current and future devices).
-3. **Registry/coordinator** — a small boat-side node advertises all ControlSet
-   topics and republishes a manifest.
+(`udp_bridge/src/remote_node.cpp` — the per-remote `bridge_info_publisher_`.)
 
-Recommendation: option 2 for the bootstrap (one generic, bridge-agnostic line),
-with the operator client doing the per-device `remote_subscribe`/`remote_advertise`
-on demand. Keeps the device library free of `udp_bridge` dependencies (consistent
-with D4's Qt-free, dependency-minimal ethos).
+So the operator-side client discovers **available controllable devices** by
+subscribing to the remote's `bridge_info` topic and filtering its `topics[]` for
+`datatype == marine_control_interfaces/ControlSet` (the `state` topics) and the
+matching `ControlValue` `change` topics. **No boat-side pre-advertise is needed** —
+the device's topics appear in `bridge_info` as soon as the `ControlServer` is up,
+because `bridge_info` reflects the full node graph, not just what is bridged. The
+`remotes[]` sub-field additionally tells the client whether a given control topic
+is *already* bridged and on which connection. (This corrects an earlier draft that
+assumed `bridge_info` listed only already-bridged topics; it does not.)
+
+### No auto-connect — discovery is passive, bridging is on explicit request
+
+Reading `bridge_info` to **list** available devices is passive, cheap, and
+automatic. **Setting up the bridge** for a device — the `remote_subscribe`
+(pull `state`) + `remote_advertise` (push `change`) calls, which consume link
+bandwidth — must be triggered by an **explicit connection request**, never
+automatically on discovery or panel-open. The client presents the discovered
+devices; the operator explicitly requests "connect" for the one(s) they want,
+and only then are the bridge service calls issued. A matching "disconnect" tears
+the bridge down. This keeps the wifi link carrying only the control traffic the
+operator has actually asked for, and keeps bridge setup an intentional act rather
+than a side effect of opening a panel.
 
 ### Ephemerality / re-establish
 
 Runtime-added bridges are **in-memory only** — lost if a bridge restarts. The
-client must watch `bridge_info` and re-establish its subscriptions on
-reconnect/restart. This is client logic the static YAML does not need, and is the
-main added complexity of the dynamic approach.
+client tracks the set of devices the operator has **explicitly connected**, and
+re-establishes *those* (not all discovered devices) when `bridge_info` shows the
+bridge restarted or the topic dropped. Re-establishing the operator's existing
+intent on reconnect is not the same as auto-connecting on discovery — the former
+restores a requested state, the latter is the side effect we are avoiding. This
+re-establish logic is the main added complexity vs. static YAML.
 
 ### Safety carve-out (interacts with D8.3)
 
@@ -273,12 +289,14 @@ is proven; this amendment applies it to marine_control specifically.
 
 ### Open decision points (for review)
 
-1. Bootstrap advertise: self-advertise (1) vs static `*/control/state` (2) vs
-   registry (3). (Recommend 2.)
-2. Robustness: the `remote_subscribe` request travels over lossy UDP — confirm
-   retry-until-`bridge_info`-confirms behavior, or add client-side retry.
-3. Ownership: does `rqt_marine_control` wire on panel-open, or a dedicated
-   coordinator wire all discovered devices?
+1. ~~Bootstrap advertise~~ — **resolved**: discovery reads the remote's
+   `bridge_info` (lists all topics), so no pre-advertise is needed.
+2. Connect UX: where the explicit connect/disconnect request lives — a control in
+   `rqt_marine_control`, or a separate connection manager that several clients
+   share. (Discovery is passive; only connect/disconnect issues service calls.)
+3. Robustness: the `remote_subscribe` request travels over lossy UDP — confirm
+   retry-until-`bridge_info`-confirms behavior, or add client-side retry, so an
+   explicit connect reliably takes effect.
 4. Sequencing vs June 15: interim static `bizzyboat.yaml` wiring for sidescan is
    compatible with current D7 and can be retired once D7-dyn lands.
 
