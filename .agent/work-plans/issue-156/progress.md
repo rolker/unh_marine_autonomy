@@ -15,7 +15,8 @@ issue: 156
 
 ### Actions
 - [ ] Split into coordinated PRs/sub-issues by repo, ordered to avoid build breaks: (A) additive new-message PR in `marine_interfaces` → (B) camp dead-code cleanup (`ui_ws/src/camp`) → (C) delete legacy `Contact.msg` → (D) migrate `marine_radar_tracker` (`unh_marine_radar`) + retire `Detect`. Open sub-issues in `camp` and `unh_marine_radar` referencing #156.
-- [ ] Resolve the `KeyValue` choice before defining the message: reuse `marine_interfaces/KeyValue` (which exists to avoid a `diagnostic_msgs` dependency) or document why the dependency-minimization decision is being reversed.
+- [ ] `KeyValue` choice DECIDED ([comment](https://github.com/rolker/unh_marine_autonomy/issues/156#issuecomment-4702236131)): `Contact.attributes` uses `diagnostic_msgs/KeyValue`, not a clone — `diagnostic_msgs` is a core `common_interfaces` package already in the `core_ws` build (via `udp_bridge`), so the dependency is free, and cloning produces a distinct, non-interoperable DDS type. Add `diagnostic_msgs` to `marine_interfaces` `package.xml`/`CMakeLists.txt`.
+- [ ] Follow-up issue (NOT in #156): migrate `Heartbeat`/`Detect` off the local `marine_interfaces/KeyValue` and retire the clone, so the package has one `KeyValue` type. Touches the live helm path — own change.
 - [ ] Add a project ADR-0004 capturing the Autoware-modeled design, the no-detect/contact-split decision, and the `Contact` name reuse.
 - [ ] Confirm no out-of-workspace consumers (operator/boat manifests, gitcloud repos) of legacy `Contact`/`Detect` before deleting + redefining `Contact`.
 - [ ] Carry consequences in-PR: `package.xml` + `CMakeLists.txt` (new rosidl entries, `diagnostic_msgs` dep if kept), `.agents/README.md` msg count/inventory, package README, camp dead-code removal, radar tracker docs/tests.
