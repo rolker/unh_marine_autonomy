@@ -137,6 +137,12 @@ bridged the right way in the platform config (e.g. `bizzyboat.yaml`):
 **supersedes the partial approach in `marine_tools#31`**. An adoption PR that
 ships the messages but not the bridge wiring is incomplete.
 
+> **Proposed amendment (#159):** static platform-config wiring does not scale and
+> bridges control topics for unused devices. See
+> [Proposed Amendment 1 — Dynamic, self-configuring bridge wiring](#proposed-amendment-1--dynamic-self-configuring-bridge-wiring-d7-dyn-159)
+> for evolving D7 to client-driven `udp_bridge` service calls + `bridge_info`
+> discovery, keeping static wiring as the floor for safety-critical controls.
+
 ### D8 — Adoption phasing
 
 Sequence the first adopters so the mechanism is proven on the simplest case
@@ -180,3 +186,104 @@ first:
   generalizes.
 - marine_tools#31 — the partial sidescan-controls-over-the-bridge attempt this
   supersedes (D7).
+
+## Proposed Amendment 1 — Dynamic, self-configuring bridge wiring (D7-dyn) [#159]
+
+**Status: proposed (draft, for review).** Refines D7; does not reverse it. Static
+wiring remains valid and is the required floor for safety-critical controls.
+
+### Problem with static-only D7
+
+D7 as written wires every device's `state`/`change` topics in the platform
+config (`bizzyboat.yaml`). Two costs:
+
+- **Doesn't scale** — each new controlled device edits platform YAML, and the
+  edit is easy to get wrong (the #250 gap was exactly a missing/one-directional
+  bridge entry).
+- **Always-on bandwidth** — statically bridged control topics consume the wifi
+  link even for devices the operator is not currently using.
+
+### Mechanism (`udp_bridge` already supports this)
+
+`udp_bridge` exposes runtime, per-topic bridging services and a discovery topic,
+all already exercised by `rqt_udp_bridge`:
+
+- `~/remote_subscribe` — ask a remote to start sending a topic (pull). The
+  operator's bridge calls this to receive a device's `control/state`
+  (boat→operator).
+- `~/remote_advertise` — push a local topic to a remote. The operator's bridge
+  calls this to send `control/change` (operator→boat).
+- Both accept **per-topic QoS** (`reliability` / `durability` / `history`), so
+  the D5 contract (state RELIABLE + VOLATILE, never `TRANSIENT_LOCAL`) is honored
+  at bridge setup.
+- The operator↔boat peer connection already exists, so a device reuses it
+  (`add_remote` is not needed per device).
+
+So an operator-side client (`rqt_marine_control`, or a small coordinator) wires
+**both directions with two service calls to its own local bridge** — no
+boat-side platform YAML per device.
+
+### Discovery via `bridge_info`
+
+`udp_bridge` publishes a latched `BridgeInfo` (`~/<node>/bridge_info`) listing
+each bridged topic with its **datatype**, and a remote's `bridge_info` propagates
+to the operator. A client discovers device panels by filtering
+`bridge_info.topics[]` for `datatype == marine_control_interfaces/ControlSet`,
+then wires the matching `state`/`change` pair.
+
+**Bootstrap caveat:** `bridge_info` lists topics *already being bridged*, not the
+boat's full graph. For a device to be discoverable, its `control/state` must be
+advertised on the boat side first. Options (decision point):
+
+1. **Self-advertise** — the boat-side `ControlServer` calls its local bridge's
+   `remote_advertise` for its own `control/state` on startup (most automatic;
+   couples the no-Qt device lib to `udp_bridge` service clients).
+2. **Static advertise pattern** — one platform-config entry advertises
+   `*/control/state` by convention (keeps the device lib bridge-agnostic; one
+   line covers all current and future devices).
+3. **Registry/coordinator** — a small boat-side node advertises all ControlSet
+   topics and republishes a manifest.
+
+Recommendation: option 2 for the bootstrap (one generic, bridge-agnostic line),
+with the operator client doing the per-device `remote_subscribe`/`remote_advertise`
+on demand. Keeps the device library free of `udp_bridge` dependencies (consistent
+with D4's Qt-free, dependency-minimal ethos).
+
+### Ephemerality / re-establish
+
+Runtime-added bridges are **in-memory only** — lost if a bridge restarts. The
+client must watch `bridge_info` and re-establish its subscriptions on
+reconnect/restart. This is client logic the static YAML does not need, and is the
+main added complexity of the dynamic approach.
+
+### Safety carve-out (interacts with D8.3)
+
+A safety-critical control's bridge **must not depend on a client having made a
+service call**. The e-stop / collision-monitor control path (D8.3) keeps
+**static, guaranteed** wiring (current D7). Dynamic self-configuration applies to
+**convenience controls** (sidescan, costmap tuning). This split is the safety
+floor: discovery is an operator convenience, never the transport guarantee for a
+safety write path.
+
+### Precedent
+
+`rqt_udp_bridge` already calls `remote_subscribe` / `remote_advertise` /
+`add_remote` and consumes `bridge_info` for its UI — so the client-side pattern
+is proven; this amendment applies it to marine_control specifically.
+
+### Open decision points (for review)
+
+1. Bootstrap advertise: self-advertise (1) vs static `*/control/state` (2) vs
+   registry (3). (Recommend 2.)
+2. Robustness: the `remote_subscribe` request travels over lossy UDP — confirm
+   retry-until-`bridge_info`-confirms behavior, or add client-side retry.
+3. Ownership: does `rqt_marine_control` wire on panel-open, or a dedicated
+   coordinator wire all discovered devices?
+4. Sequencing vs June 15: interim static `bizzyboat.yaml` wiring for sidescan is
+   compatible with current D7 and can be retired once D7-dyn lands.
+
+### Decision pending
+
+Whether to (a) adopt D7-dyn and build it now, (b) ship interim static wiring for
+the June 15 survey and build D7-dyn after the freeze, or (c) keep static-only.
+This document is the design input for that decision.
