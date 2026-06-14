@@ -176,3 +176,14 @@ its public API.
 
 ### False positives
 - (none)
+
+## Post-PR Review — PR #148 @ 75528a4fd — 2026-06-14 (coordinator-dispatched reviewer; Copilot quota out)
+
+**Verdict: CHANGES NEEDED.** The epoch model, GeoTIFF importer, error handling, and provenance immutability are high quality and well-tested. Blockers are timing/contract:
+
+- **M1 (must-fix): single-level store/query contradicts the now-merged multi-level ADR (#151 / ADR amendment #153).** Hard-coded single level throughout: `requireGridAtLevel` throws on off-level tiles (set/importEpoch/getOrCreateTile); `forEachCellBestSource`/`bestSource`/`shallowestReliable` resolve within one `store.level()` only; `tile_io::loadTile` + `importGeoTiff` pin to `store.level()` and the test `LoadRejectsTilesFromAnotherLevel` bakes in behavior the ADR now forbids. Per #151 this is "mostly removing the single-`level_` assumption + single-level query iteration" — must land the level-aware best-available query before A2/B2 consumers lock onto it this week.
+- **M2 (must-fix): in-PR ADR copy (Amendment A1) predates #153** and still says single-level; merge `jazzy` and reconcile A1 with the D2 heterogeneous-levels paragraph (epoch dirs compose with mixed-level `<GridIndex>` filenames — state it).
+- **M3 (must-fix): PR marked Ready but body says "Draft until importers land";** GeoMapSheet (live path) + bag-replay importers and the cross-session 1/σ² fusion rule are unimplemented (CMakeLists builds only geotiff_import). Split to "epoch + GeoTIFF import" with follow-on issues, or finish — and fix the stale body so scope is legible.
+- Nits: signature Model says `Fable 5` (cosmetic); consider a coverage-change iterator (cells in exactly one epoch) as a follow-on for survey QC.
+
+Full strengths confirmed: datum-at-import (depth_scale/offset before write), zero/neg-uncertainty guard, GDAL error surfacing before clearing dirty, CRLF-safe provenance sidecar, supersedes_disk stale-tile cleanup — all tested.
