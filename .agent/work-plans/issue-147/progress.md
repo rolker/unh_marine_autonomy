@@ -187,3 +187,50 @@ its public API.
 - Nits: signature Model says `Fable 5` (cosmetic); consider a coverage-change iterator (cells in exactly one epoch) as a follow-on for survey QC.
 
 Full strengths confirmed: datum-at-import (depth_scale/offset before write), zero/neg-uncertainty guard, GDAL error surfacing before clearing dirty, CRLF-safe provenance sidecar, supersedes_disk stale-tile cleanup — all tested.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-14 10:42 -0400
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #148 at `5922b7b`
+**Sources**: 3 (Copilot R1 @ `a5a2824`, Post-PR Review @ `75528a4`, CI rollup @ `5922b7b`)
+**Cross-source confirmations**: 0 (Copilot's code-hardening set and the Post-PR contract/timing set do not overlap)
+**CI**: all-pass (build success @ `5922b7b`)
+
+Round 2 of triage. Copilot R1's 6 inline comments were already integrated and
+fixed in the prior `## Integrated Review` (@ `a5a2824`, commits `0d25fef`..`99c03ca`);
+re-verified addressed at current head. Copilot R2 @ `75528a4` returned no comments
+(reviewer quota exhausted). The live open items are the local Post-PR Review's
+three must-fix blockers (contract/timing, not code-quality), verified against
+current code below.
+
+### Findings
+- [ ] (M1, high, Post-PR Review) Store/query are hard-coded single-level, contradicting
+  the now-merged multi-level ADR amendment (jazzy `0d27447` "store holds heterogeneous
+  GGGS levels", #151/#153). `requireGridAtLevel` throws on off-level grids
+  (`set`/`importEpoch`/`getOrCreateTile`); `bestSource`/`shallowestReliable`/
+  `forEachCellBestSource` resolve within one `store.level()`; `tile_io::loadTile`
+  + `importGeoTiff` pin to `store.level()`; `test_tile_io.cpp:216
+  LoadRejectsTilesFromAnotherLevel` bakes in the forbidden behavior. Land the
+  level-aware best-available query before A2/B2 consumers lock onto the API —
+  `src/bathymetry_store.cpp`, `src/query.cpp`, `src/geotiff_import.cpp`,
+  `src/tile_io.cpp`, `test/test_tile_io.cpp`.
+- [ ] (M2, high, Post-PR Review) In-PR `docs/decisions/0002-bathymetric-data-store.md`
+  predates the merged heterogeneous-levels amendment — branch is 7 behind jazzy and
+  the ADR copy still carries only the single-level Amendment A1. Merge `jazzy` and
+  reconcile A1 with the D2 heterogeneous-levels paragraph (epoch dirs compose with
+  mixed-level `<GridIndex>` filenames) — `docs/decisions/0002-bathymetric-data-store.md`.
+- [ ] (M3, med, Post-PR Review) PR marked Ready but body says "Draft until the importers
+  land"; CMake builds only `import_geotiff` (no GeoMapSheet live-path or bag-replay
+  importer, no cross-session 1/σ² fusion rule). Either split scope to "epoch + GeoTIFF
+  import" with follow-on issues for the remaining importers, or finish them — and fix
+  the stale PR body so scope is legible — `marine_bathymetry_store/CMakeLists.txt`, PR body.
+- [ ] (nit, low, Post-PR Review) Follow-on: a coverage-change iterator (cells observed in
+  exactly one epoch) would aid survey QC — enhancement, not a blocker.
+- [ ] (nit, cosmetic, Post-PR Review) Corpus Inventory entry signature says model `Fable 5`
+  — cosmetic, no action required.
+
+### False positives
+- (none) — all Copilot R1 findings were valid and are fixed; the Post-PR blockers all
+  reproduce against current code.
