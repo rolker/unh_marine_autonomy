@@ -75,8 +75,8 @@ the standard `diagnostic_msgs/KeyValue` from the start (per #158 decision).
 
 ## Open Questions
 
-- Project ADR-0004 capturing the design — write now in this PR, or as a fast-follow?
-  (Time-crunch: leaning fast-follow.)
+- ~~Project ADR-0004 capturing the design — write now or fast-follow?~~ RESOLVED:
+  written into this PR as `docs/decisions/0004-unified-perception-contact.md`.
 - No round-trip/convention tests added here (marine_interfaces has no test/ dir
   and IDL has no logic to unit-test); convention tests would land with the first
   producer. Acceptable?
