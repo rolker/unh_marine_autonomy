@@ -141,7 +141,8 @@ ships the messages but not the bridge wiring is incomplete.
 > bridges control topics for unused devices. See
 > [Proposed Amendment 1 — Dynamic, self-configuring bridge wiring](#proposed-amendment-1--dynamic-self-configuring-bridge-wiring-d7-dyn-159)
 > for evolving D7 to client-driven `udp_bridge` service calls + `bridge_info`
-> discovery, keeping static wiring as the floor for safety-critical controls.
+> discovery. The control interface is a convenience over safe defaults, so this
+> applies uniformly to all controls (no safety carve-out).
 
 ### D8 — Adoption phasing
 
@@ -190,7 +191,8 @@ first:
 ## Proposed Amendment 1 — Dynamic, self-configuring bridge wiring (D7-dyn) [#159]
 
 **Status: proposed (draft, for review).** Refines D7; does not reverse it. Static
-wiring remains valid and is the required floor for safety-critical controls.
+wiring remains a valid option; it is not required for any control (see "Safety is
+by safe defaults" below).
 
 ### Problem with static-only D7
 
@@ -272,14 +274,27 @@ intent on reconnect is not the same as auto-connecting on discovery — the form
 restores a requested state, the latter is the side effect we are avoiding. This
 re-establish logic is the main added complexity vs. static YAML.
 
-### Safety carve-out (interacts with D8.3)
+### Safety is by safe defaults, not by the control link
 
-A safety-critical control's bridge **must not depend on a client having made a
-service call**. The e-stop / collision-monitor control path (D8.3) keeps
-**static, guaranteed** wiring (current D7). Dynamic self-configuration applies to
-**convenience controls** (sidescan, costmap tuning). This split is the safety
-floor: discovery is an operator convenience, never the transport guarantee for a
-safety write path.
+The control interface is always a **convenience**, never a safety requirement.
+Every safety-related setting must **default to its safe value** and be enforced
+autonomously on the boat (sidescan defaults transmit OFF with a sound-speed
+watchdog; the collision-monitor / reflex floor runs on-boat with safe default
+thresholds). Because the safe state holds with **no operator input**, an
+unreachable or un-set-up control link cannot make the system unsafe — it can only
+prevent an operator from *relaxing* a safe default, which is itself a fail-safe
+outcome.
+
+Therefore D7-dyn applies **uniformly to all controls, including safety-related
+ones** — there is no need to guarantee a static bridge for any control for
+safety's sake. (An earlier draft carved out e-stop controls to keep static
+"guaranteed" wiring; that was misconceived — the guarantee belongs in the safe
+default + on-boat enforcement, not the transport.)
+
+D8.3's confirmation + change-audit requirement is unchanged and orthogonal: it
+governs deliberate *changes* made through whatever interface is available
+(recording who relaxed a safety threshold, and when), not the availability of the
+transport.
 
 ### Precedent
 
