@@ -24,3 +24,34 @@ issue: 156
 - [ ] Confirm no out-of-workspace consumers (operator/boat manifests, gitcloud repos) of legacy `Contact`/`Detect` before deleting + redefining `Contact`.
 - [ ] Carry consequences in-PR: `package.xml` + `CMakeLists.txt` (new rosidl entries, `diagnostic_msgs` dep if kept), `.agents/README.md` msg count/inventory, package README, camp dead-code removal, radar tracker docs/tests.
 - [ ] Add round-trip/field-convention tests for the `covariance[0]==-1` "unknown" and `orientation_availability` sentinels.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-14 19:40 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**Plan**: `.agent/work-plans/issue-156/plan.md` at `da912f9`
+**PR**: (see Implementation below)
+**Phases**: single
+
+### Open questions
+- [ ] Project ADR-0004 for the design — write now or fast-follow? (Roland: time-crunch — leaning fast-follow.)
+- [ ] No convention tests added here (no test/ dir; IDL has no logic); they land with the first producer. Acceptable?
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-14 19:55 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**Commit**: `7157885` — marine_interfaces: add unified perception Contact message family
+**Verification**: `./core_ws/build.sh marine_interfaces` clean (35s); `ros2 interface show marine_interfaces/msg/Contact` confirms the composed family generates and resolves (Classification[]/Kinematics/Shape/GeoPose/diagnostic_msgs/KeyValue[]).
+
+### What changed
+- New `Classification`, `Kinematics`, `Shape`, `ContactArray` messages; `Contact.msg` replaced in place with the unified perception contact (legacy vessel msg was orphaned; camp#93 merged removed its last consumer).
+- `attributes` uses `diagnostic_msgs/KeyValue`; added `diagnostic_msgs` to `package.xml` + `CMakeLists.txt`.
+- `.agents/README.md` msg count 34 → 39 (also corrected pre-existing drift).
+- No plan deviations.
+
+### Deferred (per Roland, time-crunch)
+- [ ] `Detect` retirement — split to its own issue (filed; depends on rolker/unh_marine_radar#13 migrating the producer first). NOT done here.
+- [ ] Confirm no out-of-workspace consumers of legacy `Contact` — in-tree clean (only camp, merged); operator station = camp (cleaned). Residual: gitcloud mirrors pick this up via reconciliation.
