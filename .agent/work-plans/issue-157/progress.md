@@ -15,7 +15,7 @@ issue: 157
 
 ### Actions
 - [ ] Make #157 an umbrella; carve a v1 slice: `.srv` (marine_interfaces) + manager node + distribution topic + CAMP display+confirm. Defer full in-CAMP create/edit/delete, multi-producer ingest, heavy persistence to sub-issues (CAMP layer → camp repo sub-issue).
-- [ ] Settle three design forks before plan-task (need Roland's decision): Fork 1 CAMP one-way+confirm vs two-way (lean one-way); Fork 3 new `contact_manager` package vs in `unh_marine_autonomy` (lean new package); Fork 2 standalone store vs reuse #86 bathy-store (lean standalone for v1).
+- [x] Three design forks DECIDED with Roland 2026-06-14/15 ([comment](https://github.com/rolker/unh_marine_autonomy/issues/157#issuecomment-4704925993)): Fork 1 = one-way + confirm, rqt#59 sole creator (service stays full-CRUD); Fork 2 = standalone store (lean SQLite, clean interface for future content-hash sync); Fork 3 = new `contact_manager` package in `unh_marine_autonomy` (sibling to `marine_bathymetry_store`), `.srv` in `marine_interfaces`.
 - [ ] Capture settled forks in a project ADR-0005 (manager architecture), mirroring ADR-0004.
 - [ ] Align distribution with ADR-0003 / marine_control state/change contract (coordinate with #140) — don't invent a contact-specific state dialect.
 - [ ] Point rqt_operator_tools#59 at `Contact` (currently emits `TargetAnnotation`) — producer alignment dependency.
