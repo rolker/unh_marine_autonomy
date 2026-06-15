@@ -70,6 +70,6 @@ Specialists: Static (package.xml well-formed; no other linters apply), Governanc
 
 ### Findings
 - [ ] (suggestion) Heads-up only — open camp branches `feature/issue-59` + `feature/issue-76` still reference old `marine_interfaces::msg::Contact` in `ais/*` (bases predate camp#93); they'll need a rebase or hit a compile break. Not fixable in this PR — flag to whoever lands those camp PRs.
-- [ ] (suggestion) `Contact.msg` `geo_pose` has no "unset/unresolved" sentinel convention (unlike covariance) — consider pinning it down before merge while the interface is cheap to change.
+- [x] (suggestion) `Contact.msg` `geo_pose` unset convention — ADDRESSED before merge: documented in `Contact.msg` + ADR-0004 D4 (unresolved = `position.latitude` NaN; orientation unknown = all-zero quaternion). Rebuilt clean.
 - [ ] (suggestion) ADR-0004 Status `Proposed` vs project ADR-0001 `Accepted` — decide whether merging flips it to `Accepted`.
 - [ ] (suggestion) No convention tests for covariance/`orientation_availability` sentinels — deferred to first producer (Watch).

@@ -21,6 +21,10 @@ Shape            shape
 # kinematics is a local metric frame, so the archival pose carries its own
 # geographic orientation. Explicitly a derived value, for persistence and
 # operator<->boat sync (per the bathy-store pattern).
+# Unset/unresolved convention (an all-zero GeoPose is NOT "unset" -- (0,0,0)
+# is a valid location): geo_pose is unresolved when position.latitude is NaN;
+# orientation is unknown when the quaternion is all-zero (0,0,0,0, i.e. not
+# normalized). Mirrors the covariance[0]==-1 unknown convention above.
 geographic_msgs/GeoPose geo_pose
 
 # --- provenance / curation ---

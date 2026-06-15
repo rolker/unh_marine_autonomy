@@ -65,6 +65,11 @@ Nothing is re-invented. Specifics:
   (core `common_interfaces`, already in the `core_ws` build via `udp_bridge`) and
   interoperates, whereas the clone is a distinct, non-interoperable DDS type.
   Package-wide standardization on it is tracked in #158.
+- **`geo_pose` unset convention**: it is a derived/resolved value, so it needs a
+  way to say "not yet resolved" that an all-zero `GeoPose` cannot give ((0,0,0)
+  is a valid location). Unresolved = `position.latitude` is NaN; orientation
+  unknown = all-zero quaternion. Same unknown-by-convention spirit as the
+  covariance sentinel, not a `has_*` flag.
 
 ### D5 — A curation / provenance block, distinct from the sensor observation layer
 
