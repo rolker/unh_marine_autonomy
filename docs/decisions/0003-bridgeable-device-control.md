@@ -190,9 +190,9 @@ first:
 
 ## Proposed Amendment 1 — Dynamic, self-configuring bridge wiring (D7-dyn) [#159]
 
-**Status: proposed (draft, for review).** Refines D7; does not reverse it. Static
-wiring remains a valid option; it is not required for any control (see "Safety is
-by safe defaults" below).
+**Status: accepted (build now — Roland, 2026-06-14).** Refines D7; does not
+reverse it. Static wiring remains a valid option; it is not required for any
+control (see "Safety is by safe defaults" below).
 
 ### Problem with static-only D7
 
@@ -315,8 +315,9 @@ is proven; this amendment applies it to marine_control specifically.
 4. Sequencing vs June 15: interim static `bizzyboat.yaml` wiring for sidescan is
    compatible with current D7 and can be retired once D7-dyn lands.
 
-### Decision pending
+### Decision
 
-Whether to (a) adopt D7-dyn and build it now, (b) ship interim static wiring for
-the June 15 survey and build D7-dyn after the freeze, or (c) keep static-only.
-This document is the design input for that decision.
+**Build D7-dyn now** (Roland, 2026-06-14) — option (a). The interim static-wiring
+path is not taken; the dynamic mechanism is the way sidescan (and every adopter)
+gets its control surface bridged. Static wiring stays available as a fallback but
+is not the planned path for any control.
