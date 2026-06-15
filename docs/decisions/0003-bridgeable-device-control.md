@@ -137,6 +137,13 @@ bridged the right way in the platform config (e.g. `bizzyboat.yaml`):
 **supersedes the partial approach in `marine_tools#31`**. An adoption PR that
 ships the messages but not the bridge wiring is incomplete.
 
+> **Proposed amendment (#159):** static platform-config wiring does not scale and
+> bridges control topics for unused devices. See
+> [Proposed Amendment 1 — Dynamic, self-configuring bridge wiring](#proposed-amendment-1--dynamic-self-configuring-bridge-wiring-d7-dyn-159)
+> for evolving D7 to client-driven `udp_bridge` service calls + `bridge_info`
+> discovery. The control interface is a convenience over safe defaults, so this
+> applies uniformly to all controls (no safety carve-out).
+
 ### D8 — Adoption phasing
 
 Sequence the first adopters so the mechanism is proven on the simplest case
@@ -180,3 +187,137 @@ first:
   generalizes.
 - marine_tools#31 — the partial sidescan-controls-over-the-bridge attempt this
   supersedes (D7).
+
+## Proposed Amendment 1 — Dynamic, self-configuring bridge wiring (D7-dyn) [#159]
+
+**Status: accepted (build now — Roland, 2026-06-14).** Refines D7; does not
+reverse it. Static wiring remains a valid option; it is not required for any
+control (see "Safety is by safe defaults" below).
+
+### Problem with static-only D7
+
+D7 as written wires every device's `state`/`change` topics in the platform
+config (`bizzyboat.yaml`). Two costs:
+
+- **Doesn't scale** — each new controlled device edits platform YAML, and the
+  edit is easy to get wrong (the #250 gap was exactly a missing/one-directional
+  bridge entry).
+- **Always-on bandwidth** — statically bridged control topics consume the wifi
+  link even for devices the operator is not currently using.
+
+### Mechanism (`udp_bridge` already supports this)
+
+`udp_bridge` exposes runtime, per-topic bridging services and a discovery topic,
+all already exercised by `rqt_udp_bridge`:
+
+- `~/remote_subscribe` — ask a remote to start sending a topic (pull). The
+  operator's bridge calls this to receive a device's `control/state`
+  (boat→operator).
+- `~/remote_advertise` — push a local topic to a remote. The operator's bridge
+  calls this to send `control/change` (operator→boat).
+- Both accept **per-topic QoS** (`reliability` / `durability` / `history`), so
+  the D5 contract (state RELIABLE + VOLATILE, never `TRANSIENT_LOCAL`) is honored
+  at bridge setup.
+- The operator↔boat peer connection already exists, so a device reuses it
+  (`add_remote` is not needed per device).
+
+So an operator-side client (`rqt_marine_control`, or a small coordinator) wires
+**both directions with two service calls to its own local bridge** — no
+boat-side platform YAML per device.
+
+### Discovery via the per-remote `bridge_info` topic
+
+`udp_bridge` publishes a `BridgeInfo` whose `topics[]` enumerates **every** topic
+on that node — `sendBridgeInfo()` iterates `get_topic_names_and_types()` and pushes
+a `TopicInfo` (with `datatype`) for *all* topics, not only bridged ones; the
+per-topic `remotes[]` sub-field is simply empty for un-bridged topics
+(`udp_bridge/src/udp_bridge.cpp` `sendBridgeInfo`). Each node sends its
+`BridgeInfo` to its peers, and the receiving bridge **republishes each remote's**
+`BridgeInfo` as a **latched ROS topic**:
+
+```
+<bridge_node>/remotes/<remote_topic_name>/bridge_info   (transient_local, latched)
+```
+
+(`udp_bridge/src/remote_node.cpp` — the per-remote `bridge_info_publisher_`.)
+
+So the operator-side client discovers **available controllable devices** by
+subscribing to the remote's `bridge_info` topic and filtering its `topics[]` for
+`datatype == marine_control_interfaces/ControlSet` (the `state` topics) and the
+matching `ControlValue` `change` topics. **No boat-side pre-advertise is needed** —
+the device's topics appear in `bridge_info` as soon as the `ControlServer` is up,
+because `bridge_info` reflects the full node graph, not just what is bridged. The
+`remotes[]` sub-field additionally tells the client whether a given control topic
+is *already* bridged and on which connection. (This corrects an earlier draft that
+assumed `bridge_info` listed only already-bridged topics; it does not.)
+
+### No auto-connect — discovery is passive, bridging is on explicit request
+
+Reading `bridge_info` to **list** available devices is passive, cheap, and
+automatic. **Setting up the bridge** for a device — the `remote_subscribe`
+(pull `state`) + `remote_advertise` (push `change`) calls, which consume link
+bandwidth — must be triggered by an **explicit connection request**, never
+automatically on discovery or panel-open. The client presents the discovered
+devices; the operator explicitly requests "connect" for the one(s) they want,
+and only then are the bridge service calls issued. A matching "disconnect" tears
+the bridge down. This keeps the wifi link carrying only the control traffic the
+operator has actually asked for, and keeps bridge setup an intentional act rather
+than a side effect of opening a panel.
+
+### Ephemerality / re-establish
+
+Runtime-added bridges are **in-memory only** — lost if a bridge restarts. The
+client tracks the set of devices the operator has **explicitly connected**, and
+re-establishes *those* (not all discovered devices) when `bridge_info` shows the
+bridge restarted or the topic dropped. Re-establishing the operator's existing
+intent on reconnect is not the same as auto-connecting on discovery — the former
+restores a requested state, the latter is the side effect we are avoiding. This
+re-establish logic is the main added complexity vs. static YAML.
+
+### Safety is by safe defaults, not by the control link
+
+The control interface is always a **convenience**, never a safety requirement.
+Every safety-related setting must **default to its safe value** and be enforced
+autonomously on the boat (sidescan defaults transmit OFF with a sound-speed
+watchdog; the collision-monitor / reflex floor runs on-boat with safe default
+thresholds). Because the safe state holds with **no operator input**, an
+unreachable or un-set-up control link cannot make the system unsafe — it can only
+prevent an operator from *relaxing* a safe default, which is itself a fail-safe
+outcome.
+
+Therefore D7-dyn applies **uniformly to all controls, including safety-related
+ones** — there is no need to guarantee a static bridge for any control for
+safety's sake. (An earlier draft carved out e-stop controls to keep static
+"guaranteed" wiring; that was misconceived — the guarantee belongs in the safe
+default + on-boat enforcement, not the transport.)
+
+D8.3's confirmation + change-audit requirement is unchanged and orthogonal: it
+governs deliberate *changes* made through whatever interface is available
+(recording who relaxed a safety threshold, and when), not the availability of the
+transport.
+
+### Precedent
+
+`rqt_udp_bridge` already calls `remote_subscribe` / `remote_advertise` /
+`add_remote` and consumes `bridge_info` for its UI — so the client-side pattern
+is proven; this amendment applies it to marine_control specifically.
+
+### Open decision points (for review)
+
+1. ~~Bootstrap advertise~~ — **resolved**: discovery reads the remote's
+   `bridge_info` (lists all topics), so no pre-advertise is needed.
+2. Connect UX: where the explicit connect/disconnect request lives — a control in
+   `rqt_marine_control`, or a separate connection manager that several clients
+   share. (Discovery is passive; only connect/disconnect issues service calls.)
+3. Robustness: the `remote_subscribe` request travels over lossy UDP — confirm
+   retry-until-`bridge_info`-confirms behavior, or add client-side retry, so an
+   explicit connect reliably takes effect.
+4. Sequencing vs June 15: interim static `bizzyboat.yaml` wiring for sidescan is
+   compatible with current D7 and can be retired once D7-dyn lands.
+
+### Decision
+
+**Build D7-dyn now** (Roland, 2026-06-14) — option (a). The interim static-wiring
+path is not taken; the dynamic mechanism is the way sidescan (and every adopter)
+gets its control surface bridged. Static wiring stays available as a fallback but
+is not the planned path for any control.
