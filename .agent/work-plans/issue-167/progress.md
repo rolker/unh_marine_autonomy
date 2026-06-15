@@ -18,3 +18,9 @@ issue: 167
 - [ ] State topic name/namespace — `~/contacts` → `marine/contacts`? Confirm vs `marine/` convention + bridge config naming.
 - [ ] SQLite serialization — CDR blob (whole-msg round-trip, recommended) vs explicit columns.
 - [ ] Where the node runs — boat-side (state bridged boat→operator, default assumption), operator-side, or both? Affects launch wiring + bridge direction.
+
+## Decisions / Open (2026-06-15, Roland — wrapping up)
+- **Language: C++** — DECIDED (matches `marine_bathymetry_store` sibling + clean-library-behind-interface shape). Plan already C++-first; no change needed.
+- **Storage (open question 3): DEFER — Roland wants to DISCUSS** (CDR-blob vs explicit columns vs hybrid). Do not finalize SQLite serialization until that conversation. Resume here next session.
+- **Topic name (`marine/contacts`) + node placement (boat-side): proposed defaults, NOT yet confirmed** — revisit with the storage discussion.
+- Next step when resumed: settle storage → confirm topic/placement → `/review-plan 167`. Plan = PR #169 (`[PLAN]`), plan commit 8a78542.
