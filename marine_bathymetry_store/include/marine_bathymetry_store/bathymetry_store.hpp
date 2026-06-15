@@ -23,8 +23,10 @@
 #define MARINE_BATHYMETRY_STORE__BATHYMETRY_STORE_HPP_
 
 #include <array>
+#include <cstddef>
 #include <map>
 #include <optional>
+#include <string>
 
 #include "marine_autonomy/gggs.h"
 #include "marine_bathymetry_store/bathy_cell.hpp"
@@ -32,6 +34,13 @@
 
 namespace marine_bathymetry_store
 {
+
+class BathymetryStore;
+// Persistence free functions (defined in tile_io.cpp). Forward-declared here so
+// the store can friend them: `load` must populate any layer — including the
+// read-only `Chart` prior — from disk, which the public API otherwise forbids.
+std::size_t save(BathymetryStore & store, const std::string & dir);
+std::size_t load(BathymetryStore & store, const std::string & dir);
 
 /// @brief In-memory, GGGS-tiled, multi-layer bathymetric store (Phase 1 core).
 ///
@@ -48,16 +57,29 @@ class BathymetryStore
 {
 public:
   /// @brief Construct a store whose tiles live at GGGS quadtree @p gggs_level.
+  ///
+  /// @param chart_writable Opt in to per-cell `set()` writes on the read-only
+  ///   `Chart` prior layer. Default `false` — only the chart importer (which
+  ///   converts the contour prior to ellipsoidal at import) should pass `true`.
+  ///   Runtime consumers leave it `false` so live Draft/CUBE ingest can never
+  ///   mutate the prior. `load()` (a friend) may still populate Chart from disk
+  ///   regardless of this flag — the read-only gate is on per-cell mutation
+  ///   (`set`), not on loading the prior. Direct tile mutation is impossible
+  ///   from outside: `getOrCreateTile` is private (persistence-only).
   /// @throws std::out_of_range if the level is invalid (via gggs::Level).
-  explicit BathymetryStore(uint8_t gggs_level)
-  : level_(gggs_level) {}
+  explicit BathymetryStore(uint8_t gggs_level, bool chart_writable = false)
+  : level_(gggs_level), chart_writable_(chart_writable) {}
 
   /// @brief Construct a store at the coarsest GGGS level whose cells are no
   ///        larger than @p cell_size_m (clamped to the finest level, 20).
-  static BathymetryStore fromCellSize(float cell_size_m)
+  static BathymetryStore fromCellSize(float cell_size_m, bool chart_writable = false)
   {
-    return BathymetryStore(gggs::Level::fromCellSize(cell_size_m).level());
+    return BathymetryStore(
+      gggs::Level::fromCellSize(cell_size_m).level(), chart_writable);
   }
+
+  /// @brief Whether per-cell `set()` may write the read-only `Chart` layer.
+  bool chartWritable() const noexcept {return chart_writable_;}
 
   /// @brief The GGGS level all tiles in this store use.
   const gggs::Level & level() const noexcept {return level_;}
@@ -76,6 +98,8 @@ public:
   /// Creates the backing tile on first write to its grid. The cell's grid must
   /// be at this store's level.
   /// @throws std::invalid_argument if @p cell is invalid or at the wrong level.
+  /// @throws std::logic_error if @p layer is `Chart` and the store was not
+  ///   constructed `chart_writable` — the prior is read-only (ADR-0002 §D3).
   void set(SourceLayer layer, const gggs::CellIndex & cell, const BathyCell & value);
 
   /// @brief Read the raw cell in a single @p layer (no priority overlay).
@@ -89,11 +113,21 @@ public:
     return layerMap(layer);
   }
 
-  /// @brief Find or create the tile for @p grid in @p layer (used by load).
+private:
+  // Persistence needs to populate any layer (including the read-only Chart
+  // prior) from disk, so the free functions in tile_io.cpp are friends.
+  friend std::size_t save(BathymetryStore & store, const std::string & dir);
+  friend std::size_t load(BathymetryStore & store, const std::string & dir);
+
+  /// @brief Find or create the tile for @p grid in @p layer.
+  ///
+  /// Private: the only mutable tile access. Public mutation goes through `set`
+  /// (which gates `Chart`); persistence reaches this via friendship. This is
+  /// what makes the Chart read-only guarantee hold by construction, not just by
+  /// convention — external code cannot obtain a mutable Chart tile.
   /// @throws std::invalid_argument if @p grid is invalid or at the wrong level.
   BathymetryTile & getOrCreateTile(SourceLayer layer, const gggs::GridIndex & grid);
 
-private:
   std::map<gggs::GridIndex, BathymetryTile> & layerMap(SourceLayer layer)
   {
     return layers_[static_cast<std::size_t>(layer)];
@@ -104,6 +138,7 @@ private:
   }
 
   gggs::Level level_;
+  bool chart_writable_ = false;
   std::array<std::map<gggs::GridIndex, BathymetryTile>, source_layer_count> layers_;
 };
 

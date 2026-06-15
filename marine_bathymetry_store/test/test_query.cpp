@@ -127,3 +127,47 @@ TEST(Query, ForEachRegionVisitsCoveredCells)
   EXPECT_GT(visited, 0u);
   EXPECT_GE(with_data, 1u);   // the written cell falls inside the box
 }
+
+TEST(Query, BestSourceFallsThroughToChartPrior)
+{
+  // Chart is the lowest-priority prior: used only where nothing newer exists,
+  // and overridden by Draft/Processed where they do (ADR-0002 §D3).
+  BathymetryStore store(5, /*chart_writable=*/true);
+  const auto unsurveyed = store.cellIndex(43.0, -70.5);
+  const auto surveyed = store.cellIndex(43.0, -70.4);
+
+  store.set(SourceLayer::Chart, unsurveyed, BathyCell{38.0, 3.0, 1.0});
+  store.set(SourceLayer::Chart, surveyed, BathyCell{38.0, 3.0, 1.0});
+  store.set(SourceLayer::Draft, surveyed, BathyCell{40.0, 0.5, 2.0});
+
+  // Unsurveyed cell falls through to the chart prior.
+  const auto a = bestSource(store, unsurveyed);
+  ASSERT_TRUE(a.has_value());
+  EXPECT_EQ(a->source, SourceLayer::Chart);
+  EXPECT_DOUBLE_EQ(a->depth, 38.0);
+
+  // Surveyed cell prefers the live draft over the chart prior.
+  const auto b = bestSource(store, surveyed);
+  ASSERT_TRUE(b.has_value());
+  EXPECT_EQ(b->source, SourceLayer::Draft);
+  EXPECT_DOUBLE_EQ(b->depth, 40.0);
+}
+
+TEST(Query, ShallowestReliableGatesChartByUncertainty)
+{
+  // The coarse Chart prior carries a fixed import uncertainty (3.0 m). It feeds
+  // the safety query shallowestReliable, so the uncertainty gate must admit it
+  // only when the caller's tolerance allows — both sides of the threshold.
+  BathymetryStore store(5, /*chart_writable=*/true);
+  const auto cell = store.cellIndex(43.0, -70.5);
+  store.set(SourceLayer::Chart, cell, BathyCell{38.0, 3.0, 1.0});
+
+  // Tolerance below the chart uncertainty excludes it -> cell reads as unknown.
+  EXPECT_FALSE(shallowestReliable(store, cell, 2.9).has_value());
+
+  // Tolerance at the chart uncertainty (comparison is strictly >) admits it.
+  const auto at = shallowestReliable(store, cell, 3.0);
+  ASSERT_TRUE(at.has_value());
+  EXPECT_EQ(at->source, SourceLayer::Chart);
+  EXPECT_DOUBLE_EQ(at->depth, 38.0);
+}
