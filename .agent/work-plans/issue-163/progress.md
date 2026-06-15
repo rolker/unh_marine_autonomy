@@ -16,3 +16,23 @@ issue: 163
 ### Open questions
 - [ ] Read-only mechanism: Chart read-only by default + importer opt-in (recommended) vs runtime setLayerReadOnly() flag — confirm at review-plan.
 - [ ] A2 is a separate cube_bathymetry repo PR stacked after A1 (A2 needs A1's chart-writable API).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-15 00:23 -0400
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: approved (findings addressed in-session)
+
+**Branch**: feature/issue-163 at `f972286`
+**Mode**: pre-push
+**Depth**: Standard (reason: core data-model change + read-only safety guard, ADR-0002)
+**Must-fix**: 1 | **Suggestions**: 2
+
+### Findings
+- [x] (must-fix, cross-confirmed Lens A+B) read-only Chart guard bypassable via public `getOrCreateTile()` returning a mutable tile ref — closed by construction (made private, friended save/load) — `bathymetry_store.hpp`
+- [x] (suggestion) `set()` read-only check ran before cell validity → malformed cell reported logic_error not invalid_argument; reordered validity-first — `bathymetry_store.cpp:33`
+- [x] (suggestion) no `shallowestReliable` + Chart test across the 3.0 m import-uncertainty gate (a safety input); added boundary test — `test_query.cpp`
+
+### Notes
+- Static analysis clean (cppcheck/cpplint/uncrustify/lint_cmake/xmllint all pass); 82 gtests, 0 failures.
+- Cross-cutting (for A2, not A1): whoever sets Chart import uncertainty holds the safety lever for shallowestReliable in unsurveyed cells.
