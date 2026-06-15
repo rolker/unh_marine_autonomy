@@ -152,3 +152,22 @@ TEST(Query, BestSourceFallsThroughToChartPrior)
   EXPECT_EQ(b->source, SourceLayer::Draft);
   EXPECT_DOUBLE_EQ(b->depth, 40.0);
 }
+
+TEST(Query, ShallowestReliableGatesChartByUncertainty)
+{
+  // The coarse Chart prior carries a fixed import uncertainty (3.0 m). It feeds
+  // the safety query shallowestReliable, so the uncertainty gate must admit it
+  // only when the caller's tolerance allows — both sides of the threshold.
+  BathymetryStore store(5, /*chart_writable=*/true);
+  const auto cell = store.cellIndex(43.0, -70.5);
+  store.set(SourceLayer::Chart, cell, BathyCell{38.0, 3.0, 1.0});
+
+  // Tolerance below the chart uncertainty excludes it -> cell reads as unknown.
+  EXPECT_FALSE(shallowestReliable(store, cell, 2.9).has_value());
+
+  // Tolerance at the chart uncertainty (comparison is strictly >) admits it.
+  const auto at = shallowestReliable(store, cell, 3.0);
+  ASSERT_TRUE(at.has_value());
+  EXPECT_EQ(at->source, SourceLayer::Chart);
+  EXPECT_DOUBLE_EQ(at->depth, 38.0);
+}
