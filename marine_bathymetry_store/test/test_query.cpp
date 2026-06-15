@@ -127,3 +127,28 @@ TEST(Query, ForEachRegionVisitsCoveredCells)
   EXPECT_GT(visited, 0u);
   EXPECT_GE(with_data, 1u);   // the written cell falls inside the box
 }
+
+TEST(Query, BestSourceFallsThroughToChartPrior)
+{
+  // Chart is the lowest-priority prior: used only where nothing newer exists,
+  // and overridden by Draft/Processed where they do (ADR-0002 §D3).
+  BathymetryStore store(5, /*chart_writable=*/true);
+  const auto unsurveyed = store.cellIndex(43.0, -70.5);
+  const auto surveyed = store.cellIndex(43.0, -70.4);
+
+  store.set(SourceLayer::Chart, unsurveyed, BathyCell{38.0, 3.0, 1.0});
+  store.set(SourceLayer::Chart, surveyed, BathyCell{38.0, 3.0, 1.0});
+  store.set(SourceLayer::Draft, surveyed, BathyCell{40.0, 0.5, 2.0});
+
+  // Unsurveyed cell falls through to the chart prior.
+  const auto a = bestSource(store, unsurveyed);
+  ASSERT_TRUE(a.has_value());
+  EXPECT_EQ(a->source, SourceLayer::Chart);
+  EXPECT_DOUBLE_EQ(a->depth, 38.0);
+
+  // Surveyed cell prefers the live draft over the chart prior.
+  const auto b = bestSource(store, surveyed);
+  ASSERT_TRUE(b.has_value());
+  EXPECT_EQ(b->source, SourceLayer::Draft);
+  EXPECT_DOUBLE_EQ(b->depth, 40.0);
+}

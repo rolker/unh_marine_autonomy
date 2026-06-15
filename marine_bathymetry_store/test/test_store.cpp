@@ -102,3 +102,37 @@ TEST(Store, FromCellSizeChoosesAFiniteLevel)
   // The chosen level must produce valid cells for a normal position.
   EXPECT_TRUE(store.cellIndex(43.0, -70.5).valid());
 }
+
+TEST(Store, ChartIsReadOnlyByDefault)
+{
+  // The contour prior must be unclobberable by live ingest: set(Chart) throws
+  // unless the store was explicitly opened chart_writable (ADR-0002 §D3).
+  BathymetryStore store(5);
+  EXPECT_FALSE(store.chartWritable());
+  EXPECT_THROW(
+    store.set(SourceLayer::Chart, store.cellIndex(43.0, -70.5), BathyCell{-10.0, 3.0, 1.0}),
+    std::logic_error);
+  // Other layers are unaffected by the guard.
+  EXPECT_NO_THROW(
+    store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-12.0, 2.0, 2.0}));
+}
+
+TEST(Store, ChartWritableStoreAllowsChartSet)
+{
+  // The importer opts in; the converted prior then writes and reads back.
+  BathymetryStore store(5, /*chart_writable=*/true);
+  EXPECT_TRUE(store.chartWritable());
+  const auto cell = store.cellIndex(43.0, -70.5);
+  store.set(SourceLayer::Chart, cell, BathyCell{38.58, 3.0, 1000.0});
+  const auto got = store.get(SourceLayer::Chart, cell);
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, 38.58);
+}
+
+TEST(Store, FromCellSizePropagatesChartWritable)
+{
+  auto store = BathymetryStore::fromCellSize(30.0f, /*chart_writable=*/true);
+  EXPECT_TRUE(store.chartWritable());
+  EXPECT_NO_THROW(
+    store.set(SourceLayer::Chart, store.cellIndex(43.0, -70.5), BathyCell{40.0, 3.0, 1.0}));
+}

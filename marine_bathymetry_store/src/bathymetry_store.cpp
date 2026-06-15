@@ -30,6 +30,11 @@ namespace marine_bathymetry_store
 void BathymetryStore::set(
   SourceLayer layer, const gggs::CellIndex & cell, const BathyCell & value)
 {
+  if (layer == SourceLayer::Chart && !chart_writable_) {
+    throw std::logic_error(
+            "BathymetryStore::set: Chart is a read-only prior layer; construct "
+            "the store with chart_writable=true (importer only) to write it");
+  }
   if (!cell.valid()) {
     throw std::invalid_argument("BathymetryStore::set: invalid CellIndex");
   }

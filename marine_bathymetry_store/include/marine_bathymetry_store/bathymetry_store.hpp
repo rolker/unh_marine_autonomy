@@ -48,16 +48,27 @@ class BathymetryStore
 {
 public:
   /// @brief Construct a store whose tiles live at GGGS quadtree @p gggs_level.
+  ///
+  /// @param chart_writable Opt in to per-cell `set()` writes on the read-only
+  ///   `Chart` prior layer. Default `false` — only the chart importer (which
+  ///   converts the contour prior to ellipsoidal at import) should pass `true`.
+  ///   Runtime consumers leave it `false` so live Draft/CUBE ingest can never
+  ///   mutate the prior. Loading Chart tiles from disk is always allowed
+  ///   (`getOrCreateTile` / `load`); only `set(Chart, …)` is gated.
   /// @throws std::out_of_range if the level is invalid (via gggs::Level).
-  explicit BathymetryStore(uint8_t gggs_level)
-  : level_(gggs_level) {}
+  explicit BathymetryStore(uint8_t gggs_level, bool chart_writable = false)
+  : level_(gggs_level), chart_writable_(chart_writable) {}
 
   /// @brief Construct a store at the coarsest GGGS level whose cells are no
   ///        larger than @p cell_size_m (clamped to the finest level, 20).
-  static BathymetryStore fromCellSize(float cell_size_m)
+  static BathymetryStore fromCellSize(float cell_size_m, bool chart_writable = false)
   {
-    return BathymetryStore(gggs::Level::fromCellSize(cell_size_m).level());
+    return BathymetryStore(
+      gggs::Level::fromCellSize(cell_size_m).level(), chart_writable);
   }
+
+  /// @brief Whether per-cell `set()` may write the read-only `Chart` layer.
+  bool chartWritable() const noexcept {return chart_writable_;}
 
   /// @brief The GGGS level all tiles in this store use.
   const gggs::Level & level() const noexcept {return level_;}
@@ -76,6 +87,8 @@ public:
   /// Creates the backing tile on first write to its grid. The cell's grid must
   /// be at this store's level.
   /// @throws std::invalid_argument if @p cell is invalid or at the wrong level.
+  /// @throws std::logic_error if @p layer is `Chart` and the store was not
+  ///   constructed `chart_writable` — the prior is read-only (ADR-0002 §D3).
   void set(SourceLayer layer, const gggs::CellIndex & cell, const BathyCell & value);
 
   /// @brief Read the raw cell in a single @p layer (no priority overlay).
@@ -104,6 +117,7 @@ private:
   }
 
   gggs::Level level_;
+  bool chart_writable_ = false;
   std::array<std::map<gggs::GridIndex, BathymetryTile>, source_layer_count> layers_;
 };
 

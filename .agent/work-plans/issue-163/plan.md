@@ -77,10 +77,12 @@ converted *at import* (§D7) — that conversion is A2, not a raw load.
 | Store now stores a converted prior | sim harness (#76), costmap layer (#164) consume ellipsoidal Chart | Downstream issues already assume ellipsoidal |
 
 ## Open Questions
-1. **Read-only mechanism.** Recommend **Chart read-only by default**, importer
-   opts in (chart-writable store). Alternative: a runtime `setLayerReadOnly()` flag
-   (default writable). Default-read-only is the stronger guarantee; confirm at
-   review-plan.
+1. **Read-only mechanism — RESOLVED (implemented in A1).** Chart is read-only by
+   default: `set(Chart,…)` throws `std::logic_error` unless the store is
+   constructed `chart_writable=true` (importer only). `load()`/`getOrCreateTile`
+   stay unguarded, so the runtime loads the prior into a read-only store. The
+   alternative (runtime `setLayerReadOnly()` flag, default writable) was rejected —
+   default-read-only is the stronger guarantee.
 2. **A2 worktree** is a separate cube_bathymetry repo PR — confirm we stack it after
    A1 lands (A1 has no cube dependency; A2 depends on A1's chart-writable API).
 

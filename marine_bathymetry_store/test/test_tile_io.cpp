@@ -123,3 +123,42 @@ TEST_F(TileIoTest, LoadRejectsTilesFromAnotherLevel)
   BathymetryStore wrong_level(6);
   EXPECT_THROW(marine_bathymetry_store::load(wrong_level, dir_.string()), std::runtime_error);
 }
+
+TEST_F(TileIoTest, ChartRoundTripsAndLoadsIntoReadOnlyStore)
+{
+  // The importer writes Chart (chart_writable); the runtime loads it into a
+  // default (read-only-Chart) store. load() populates via getOrCreateTile, not
+  // set(), so the prior loads even though live set(Chart) stays forbidden.
+  BathymetryStore writer(5, /*chart_writable=*/true);
+  writer.set(SourceLayer::Chart, writer.cellIndex(43.0, -70.5), BathyCell{38.58, 3.0, 1.78e9});
+  EXPECT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 1u);
+  EXPECT_TRUE(fs::is_directory(dir_ / "chart"));
+
+  BathymetryStore runtime(5);   // Chart NOT writable
+  EXPECT_FALSE(runtime.chartWritable());
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, dir_.string()), 1u);
+
+  const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, 38.58);
+  EXPECT_DOUBLE_EQ(got->timestamp, 1.78e9);
+
+  // The read-only guard still holds after the prior is loaded.
+  EXPECT_THROW(
+    runtime.set(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5), BathyCell{1.0, 1.0, 1.0}),
+    std::logic_error);
+}
+
+TEST_F(TileIoTest, ProcessedDraftOnlyStoreLoadsWithoutChartDir)
+{
+  // Back-compat: a Phase-1 store with no chart/ subdir still saves and loads;
+  // the absent chart layer is simply skipped, not an error.
+  BathymetryStore store(5);
+  store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 1.0});
+  marine_bathymetry_store::save(store, dir_.string());
+  EXPECT_FALSE(fs::exists(dir_ / "chart"));   // no spurious empty chart/ dir
+
+  BathymetryStore reloaded(5);
+  EXPECT_EQ(marine_bathymetry_store::load(reloaded, dir_.string()), 1u);
+  EXPECT_TRUE(reloaded.tiles(SourceLayer::Chart).empty());
+}
