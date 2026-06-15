@@ -55,3 +55,21 @@ issue: 156
 ### Deferred (per Roland, time-crunch)
 - [ ] `Detect` retirement — split to its own issue (filed; depends on rolker/unh_marine_radar#13 migrating the producer first). NOT done here.
 - [ ] Confirm no out-of-workspace consumers of legacy `Contact` — in-tree clean (only camp, merged); operator station = camp (cleaned). Residual: gitcloud mirrors pick this up via reconciliation.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-14 20:30 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: approved
+**Branch**: feature/issue-156 at `05e7666`
+**Mode**: pre-push
+**Depth**: Deep (reason: ADR add + shared interface-package edit)
+**Must-fix**: 0 | **Suggestions**: 4
+
+Specialists: Static (package.xml well-formed; no other linters apply), Governance, Claude Adversarial Lens A (logic) + Lens B (systemic). Lens B grepped the whole tree: no live pub/sub or surviving consumer of legacy `Contact` (ADR-0004's "camp#93 merged" claim verified true). README "39" confirmed accurate by two passes (old `34` was pre-existing drift).
+
+### Findings
+- [ ] (suggestion) Heads-up only — open camp branches `feature/issue-59` + `feature/issue-76` still reference old `marine_interfaces::msg::Contact` in `ais/*` (bases predate camp#93); they'll need a rebase or hit a compile break. Not fixable in this PR — flag to whoever lands those camp PRs.
+- [ ] (suggestion) `Contact.msg` `geo_pose` has no "unset/unresolved" sentinel convention (unlike covariance) — consider pinning it down before merge while the interface is cheap to change.
+- [ ] (suggestion) ADR-0004 Status `Proposed` vs project ADR-0001 `Accepted` — decide whether merging flips it to `Accepted`.
+- [ ] (suggestion) No convention tests for covariance/`orientation_availability` sentinels — deferred to first producer (Watch).
