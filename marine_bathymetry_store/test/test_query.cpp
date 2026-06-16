@@ -222,8 +222,9 @@ TEST(Query, ChangedCellsVisitsOnlyDoublyObserved)
 TEST(Query, ChartLayerRanksBelowDraftAndFillsGaps)
 {
   // The chart prior must never shadow survey data, but must answer where
-  // nothing else does.
-  BathymetryStore store(5);
+  // nothing else does. Chart is read-only by default, so this writes it through
+  // a chart_writable store (the importer's path).
+  BathymetryStore store(5, /*chart_writable=*/true);
   const auto surveyed = store.cellIndex(43.0, -70.5);
   const auto unsurveyed = store.cellIndex(43.2, -70.2);
   store.set(SourceLayer::Chart, kDay1, surveyed, BathyCell{-10.0, 3.0, 1.0});
@@ -257,4 +258,48 @@ TEST(Query, ChangedCellsMissingEpochIsEmpty)
       FAIL() << "no cells should be visited when an epoch is absent";
     });
   EXPECT_EQ(count, 0u);
+}
+
+TEST(Query, BestSourceFallsThroughToChartPrior)
+{
+  // Chart is the lowest-priority prior: used only where nothing newer exists,
+  // and overridden by Draft/Processed where they do (ADR-0002 §D3).
+  BathymetryStore store(5, /*chart_writable=*/true);
+  const auto unsurveyed = store.cellIndex(43.0, -70.5);
+  const auto surveyed = store.cellIndex(43.0, -70.4);
+
+  store.set(SourceLayer::Chart, kDay1, unsurveyed, BathyCell{38.0, 3.0, 1.0});
+  store.set(SourceLayer::Chart, kDay1, surveyed, BathyCell{38.0, 3.0, 1.0});
+  store.set(SourceLayer::Draft, kDay1, surveyed, BathyCell{40.0, 0.5, 2.0});
+
+  // Unsurveyed cell falls through to the chart prior.
+  const auto a = bestSource(store, unsurveyed);
+  ASSERT_TRUE(a.has_value());
+  EXPECT_EQ(a->source, SourceLayer::Chart);
+  EXPECT_DOUBLE_EQ(a->depth, 38.0);
+
+  // Surveyed cell prefers the live draft over the chart prior.
+  const auto b = bestSource(store, surveyed);
+  ASSERT_TRUE(b.has_value());
+  EXPECT_EQ(b->source, SourceLayer::Draft);
+  EXPECT_DOUBLE_EQ(b->depth, 40.0);
+}
+
+TEST(Query, ShallowestReliableGatesChartByUncertainty)
+{
+  // The coarse Chart prior carries a fixed import uncertainty (3.0 m). It feeds
+  // the safety query shallowestReliable, so the uncertainty gate must admit it
+  // only when the caller's tolerance allows — both sides of the threshold.
+  BathymetryStore store(5, /*chart_writable=*/true);
+  const auto cell = store.cellIndex(43.0, -70.5);
+  store.set(SourceLayer::Chart, kDay1, cell, BathyCell{38.0, 3.0, 1.0});
+
+  // Tolerance below the chart uncertainty excludes it -> cell reads as unknown.
+  EXPECT_FALSE(shallowestReliable(store, cell, 2.9).has_value());
+
+  // Tolerance at the chart uncertainty (comparison is strictly >) admits it.
+  const auto at = shallowestReliable(store, cell, 3.0);
+  ASSERT_TRUE(at.has_value());
+  EXPECT_EQ(at->source, SourceLayer::Chart);
+  EXPECT_DOUBLE_EQ(at->depth, 38.0);
 }

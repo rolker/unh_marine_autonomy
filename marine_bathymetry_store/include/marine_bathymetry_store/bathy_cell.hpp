@@ -37,19 +37,21 @@ namespace marine_bathymetry_store
 /// deliberate, cleaner realization of ADR-0002 §D3's "each cell stores a
 /// source layer": the layer is the map it lives in.
 ///
-/// The numeric value is the priority rank (0 = highest).
-///
-/// `Chart` holds cartographic priors — S57 depths, contour-derived lake
-/// bathymetry — broad but coarse, so it ranks *below* survey data: any
-/// surveyed cell beats it, and it fills cells nothing else covers. Datum
-/// conversion happens at import (ADR-0002 §D4): a constant offset suffices
-/// for lake sources; tidal S57 imports stay gated on the mru_transform
-/// vertical-datum work.
+/// The numeric value is the priority rank (0 = highest). `Chart` holds the
+/// broad, coarse cartographic prior — S57 depths, contour-derived lake
+/// bathymetry — so it ranks *below* survey data: any Processed/Draft cell beats
+/// it, and it only answers where nothing else covers. Chart cells are
+/// ellipsoidal heights converted from chart datum **at import** (a constant
+/// offset suffices for lake sources; tidal S57 imports stay gated on the
+/// mru_transform vertical-datum work). The store treats Chart as a **read-only
+/// prior** so live Draft/CUBE ingest can never clobber it — see
+/// `BathymetryStore::set` and the `chart_writable` construction flag the
+/// importer opts into.
 enum class SourceLayer : uint8_t
 {
   Processed = 0,  ///< Externally produced grids (bathy-BAG / GeoTIFF). Highest confidence.
   Draft = 1,      ///< Real-time CUBE output. Valuable but potentially noisy.
-  Chart = 2,      ///< Cartographic priors (S57 / contour-derived). Broad but coarse.
+  Chart = 2,      ///< Cartographic prior (S57 / contour-derived). Broad, coarse, read-only.
 };
 
 /// @brief Source layers in descending priority order — iterate for best-source.

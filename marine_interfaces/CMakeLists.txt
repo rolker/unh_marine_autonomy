@@ -12,12 +12,18 @@ find_package(marine_acoustic_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 
 set(MSG_FILES
   msg/AcousticLayer.msg
   msg/AcousticSlice.msg
   msg/BehaviorInformation.msg
+  # Unified perception contact family (sensor-agnostic detect/contact)
   msg/Contact.msg
+  msg/ContactArray.msg
+  msg/Classification.msg
+  msg/Kinematics.msg
+  msg/Shape.msg
   msg/CourseMadeGood.msg
   msg/CourseMadeGoodStamped.msg
   msg/CTD.msg
@@ -62,6 +68,7 @@ rosidl_generate_interfaces(
     std_msgs
     geometry_msgs
     nav_msgs
+    diagnostic_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)

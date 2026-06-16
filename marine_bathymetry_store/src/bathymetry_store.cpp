@@ -47,6 +47,9 @@ bool BathymetryStore::set(
   SourceLayer layer, const Epoch & epoch, const gggs::CellIndex & cell,
   const BathyCell & value)
 {
+  // Validate the inputs first, then the layer permission — so a malformed cell
+  // always reports invalid_argument (the more actionable error), and the
+  // read-only logic_error fires only for an otherwise-valid Chart write.
   if (!cell.valid()) {
     throw std::invalid_argument("BathymetryStore::set: invalid CellIndex");
   }
@@ -55,6 +58,11 @@ bool BathymetryStore::set(
             "BathymetryStore::set: CellIndex at level " +
             std::to_string(cell.level()) + " but store is at level " +
             std::to_string(level_.level()));
+  }
+  if (layer == SourceLayer::Chart && !chart_writable_) {
+    throw std::logic_error(
+            "BathymetryStore::set: Chart is a read-only prior layer; construct "
+            "the store with chart_writable=true (importer only) to write it");
   }
   EpochTiles & epoch_tiles = getOrCreateEpoch(layer, epoch, Provenance::LiveFused);
   // A compacted (replayed) epoch is immutable: a late live snapshot must not

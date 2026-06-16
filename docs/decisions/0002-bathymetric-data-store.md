@@ -5,6 +5,12 @@
 Proposed (2026-06-10). Tracked by
 [rolker/unh_marine_autonomy#86](https://github.com/rolker/unh_marine_autonomy/issues/86).
 
+**Amended 2026-06-13 ([#151](https://github.com/rolker/unh_marine_autonomy/issues/151)):**
+the store holds **heterogeneous GGGS levels**, not a single fixed level — see D2. The
+single-level Phase-1 implementation ([#143](https://github.com/rolker/unh_marine_autonomy/issues/143))
+is a simplification, not a load-bearing decision; multi-level storage with a level-aware
+query is adopted now, with the refinement policy staged.
+
 The full design is in the issue body; this ADR records the load-bearing
 architecture decisions and their rationale so they survive the issue. It is a
 **cross-cutting** decision in the sense ADR-0001 establishes for this repo's
@@ -73,6 +79,24 @@ scheme. GGGS is geographic (WGS84 lat/lon), so the store is internally geographi
 functions and the `earth`→`map` TF from `mru_transform`. This reuses the exact
 tiling the CUBE producer already emits, so draft ingest is a tile handoff, not a
 resample.
+
+**Levels are heterogeneous (amended 2026-06-13, [#151](https://github.com/rolker/unh_marine_autonomy/issues/151)).**
+The store holds tiles at **mixed GGGS levels** — fine where the data and navigation
+warrant it (nearshore, shoals), coarse where they do not (deep / offshore /
+reconnaissance). A single store fixed at one fine level does not scale to multi-region
+coverage: a uniform fine grid is false precision over deep water and an un-syncable,
+un-costmappable volume (Massabesic is fine at 0.5 m / level 11; a Portsmouth→Isles of
+Shoals corridor is not). This is **not** a new tiling scheme — `GridIndex` already
+carries the level and tiles are keyed by it, so multi-level is the data model *removing*
+the single-level constraint. The query is **level-aware**: it returns the best-available
+cell across the levels present, preserving the D3 source-layer priority and the D7
+shallowest-reliable safety mode, optionally bounded by a caller-supplied target
+resolution. The Phase-1 single-level store
+([#143](https://github.com/rolker/unh_marine_autonomy/issues/143)) is a simplification
+superseded here. The **refinement policy** — when a region subdivides toward finer levels
+(depth-/density-driven) and overview/decimation generation for level-of-detail (see the
+LOD note on #86) — is **staged** as follow-on; the data model and query contract change
+now so consumers do not bake in a single level.
 
 ### D3 — Per-cell record and source-layer priority
 
