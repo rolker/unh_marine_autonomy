@@ -63,7 +63,10 @@ std::string tileFilename(const gggs::GridIndex & grid);
 ///
 /// @param band_nodata Optional per-band no-data value, one entry per band (size
 ///   must equal @p tile.bandCount()). A `std::nullopt` entry writes no no-data
-///   tag for that band (e.g. a timestamp band where every value is valid).
+///   tag for that band (e.g. a timestamp band where every value is valid). A
+///   present value must be exactly representable in @p T — it is written via
+///   GDAL's `SetNoDataValue(double)`, so a sentinel outside @p T's range (or not
+///   round-tripping through `double`) would tag a value the band can never hold.
 /// @throws std::invalid_argument if @p band_nodata size != tile.bandCount().
 /// @throws std::runtime_error on any GDAL failure.
 template<typename T>

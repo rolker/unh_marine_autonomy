@@ -12,9 +12,10 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(marine_autonomy REQUIRED)
+# GDAL is no longer used directly here — tile_io delegates all GeoTIFF I/O to
+# marine_tiled_raster_store, which carries (and re-exports) the GDAL dependency.
 find_package(marine_tiled_raster_store REQUIRED)
 find_package(geographic_msgs REQUIRED)
-find_package(GDAL CONFIG REQUIRED)
 
 add_library(${PROJECT_NAME}
   src/bathymetry_store.cpp
@@ -28,17 +29,13 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   "$<INSTALL_INTERFACE:include>"
 )
 # marine_autonomy + geographic_msgs are in the public headers (GGGS / GeoPoint);
-# GDAL is used only inside tile_io.cpp, so it is PRIVATE. It is still exported as
-# a dependency below because this is a static library — CMake propagates the
-# private link to consumers as $<LINK_ONLY:GDAL::GDAL>, so they must be able to
-# resolve the GDAL target via find_package(marine_bathymetry_store).
+# marine_tiled_raster_store is public too — BathymetryTile wraps its
+# TiledRasterTile<double>. GDAL arrives transitively through that package (which
+# uses it privately in tile_io.cpp); this package no longer references GDAL.
 target_link_libraries(${PROJECT_NAME} PUBLIC
   marine_autonomy::marine_autonomy
   marine_tiled_raster_store::marine_tiled_raster_store
   ${geographic_msgs_TARGETS}
-)
-target_link_libraries(${PROJECT_NAME} PRIVATE
-  GDAL::GDAL
 )
 
 # Headers are laid out as include/${PROJECT_NAME}/*.hpp, so install the include/
@@ -54,7 +51,7 @@ install(TARGETS ${PROJECT_NAME}
 )
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(marine_autonomy marine_tiled_raster_store geographic_msgs GDAL)
+ament_export_dependencies(marine_autonomy marine_tiled_raster_store geographic_msgs)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
