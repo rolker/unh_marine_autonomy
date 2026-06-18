@@ -38,3 +38,21 @@ issue: 172
 - "NaN-no-data on bands 0/1 only" accurate (timestamp band intentionally has none) — `tile_io.cpp:139-141`.
 - Public `tile_io.hpp` signatures must stay stable so `test_tile_io` is untouched — confirmed: the test exercises `save`/`load`/`store.*`, never the per-tile helpers — `test/test_tile_io.cpp`.
 - ADR-0002 §D5 (3-band Float64) / §D2 (reuse GGGS, no new scheme) / §D9 ("store core free of consumer-specific logic") correctly cited; extraction directly serves D9. Note the store has 3 source layers (processed/draft/chart), but that is subdir-level and orthogonal to the per-tile band extraction.
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-18 15:12 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**Branch**: feature/issue-172 at `8ff0a23` (local, not pushed)
+**Commits**: `6368508` (new marine_tiled_raster_store package), `8ff0a23` (bathy refactor + docs)
+
+**Built**: `marine_tiled_raster_store` + `marine_bathymetry_store` — both compile clean.
+**Tests** (gtest xml, 0 failures):
+- marine_tiled_raster_store/test_tile_io: **5/5** (uint16 single-band + double 3-band round-trip, level-mismatch reject, band_nodata-size guard, dirty-only saveTiles/loadTiles).
+- marine_bathymetry_store unchanged: test_store **11/11**, test_query **9/9**, test_tile_io **7/7** — no-behavior-change confirmed.
+
+**As-built vs plan**: `gdalType<T>()` trait folded into `tile_io.cpp` (keeps GDAL out of public headers) instead of a public `gdal_type.hpp`; `bathymetry_store.hpp` needed no change (BathymetryTile public surface preserved). Plan + Implementation Notes synced.
+
+### Next
+- [ ] /review-code (pre-push) on the diff, then triage + push/PR.
