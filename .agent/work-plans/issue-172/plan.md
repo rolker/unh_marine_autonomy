@@ -55,9 +55,10 @@ queries, and `BathyCell` are bathy-specific and **stay put**.
 | `…/src/tile_io.cpp` | GDAL impl + explicit instantiations (`double`, `uint16_t`) |
 | `…/test/test_tile_io.cpp`, `README.md` | Core tests + docs |
 | `marine_bathymetry_store/.../bathymetry_tile.hpp` | Wrap `TiledRasterTile<double>`; keep named API |
+| `marine_bathymetry_store/.../bathymetry_store.hpp` | Verify/adjust: stores `map<GridIndex, BathymetryTile>`, calls `BathymetryTile(grid)` ctor + friends `tile_io` — confirm wrapper-compatible |
 | `marine_bathymetry_store/src/tile_io.cpp` | Delegate per-tile IO to core; keep multi-layer save/load |
 | `marine_bathymetry_store/CMakeLists.txt`, `package.xml` | `find_package` + PUBLIC dep on the new package |
-| `.agents/README.md` | Package inventory (+1), build order |
+| `.agents/README.md` | Package inventory: add `marine_tiled_raster_store` **and** the already-missing `marine_bathymetry_store` (#141) row; note build-order edge (tiled-raster core before bathy) |
 
 ## Principles Self-Check
 
