@@ -18,3 +18,23 @@ issue: 172
 - [x] GDAL linkage → keep PRIVATE via explicit instantiation in .cpp (resolved 2026-06-18).
 - [x] ADR → defer dedicated substrate ADR to I3 (#86 Phase 6); I1 adds a code comment referencing ADR-0002 §D5/§D6 (resolved 2026-06-18).
 - [x] Package name → `marine_tiled_raster_store` accepted (resolved 2026-06-18).
+
+## Plan Review
+**Status**: complete
+**When**: 2026-06-18 12:59 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8)
+
+**Plan**: `.agent/work-plans/issue-172/plan.md` at `cf25f20`
+**PR**: PR-less (--issue / file-path mode)
+**Verdict**: approve-with-suggestions
+
+### Findings
+- [ ] (suggestion) `bathymetry_store.hpp` not in the file list, but it stores `std::map<GridIndex, BathymetryTile>`, calls the `BathymetryTile(grid)` ctor, and is the likely `friend` granting tile_io band access — making it a probable edit/verify site for the wrapper refactor. List it explicitly (even if "no change, verified"). — `plan.md:48-60`
+- [ ] (suggestion) `.agents/README.md` Package Inventory is already stale: `marine_bathymetry_store` (#141) is missing from it. When updating "package inventory (+1)", add BOTH the new `marine_tiled_raster_store` row AND the missing `marine_bathymetry_store` row, plus a build-order edge (core before bathy) in the Build/Common-Pitfalls section. — `plan.md:60`
+
+### Verification notes (code-checked, no action needed)
+- `saveTile`/`loadTile` confirmed as the shared nugget (corner→geotransform, WGS84 SRS, `flipRows`, geotransform→GridIndex + half-cell level-match, non-WGS84 rejection) — `marine_bathymetry_store/src/tile_io.cpp`.
+- GDAL-PRIVATE claim sound: PRIVATE link + `ament_export_dependencies(... GDAL)` for static-lib propagation — `marine_bathymetry_store/CMakeLists.txt:38-55`. Explicit instantiation (`double`,`uint16_t`) preserves this.
+- "NaN-no-data on bands 0/1 only" accurate (timestamp band intentionally has none) — `tile_io.cpp:139-141`.
+- Public `tile_io.hpp` signatures must stay stable so `test_tile_io` is untouched — confirmed: the test exercises `save`/`load`/`store.*`, never the per-tile helpers — `test/test_tile_io.cpp`.
+- ADR-0002 §D5 (3-band Float64) / §D2 (reuse GGGS, no new scheme) / §D9 ("store core free of consumer-specific logic") correctly cited; extraction directly serves D9. Note the store has 3 source layers (processed/draft/chart), but that is subdir-level and orthogonal to the per-tile band extraction.
