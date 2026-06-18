@@ -12,6 +12,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(marine_autonomy REQUIRED)
+find_package(marine_tiled_raster_store REQUIRED)
 find_package(geographic_msgs REQUIRED)
 find_package(GDAL CONFIG REQUIRED)
 
@@ -33,6 +34,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 # resolve the GDAL target via find_package(marine_bathymetry_store).
 target_link_libraries(${PROJECT_NAME} PUBLIC
   marine_autonomy::marine_autonomy
+  marine_tiled_raster_store::marine_tiled_raster_store
   ${geographic_msgs_TARGETS}
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -52,7 +54,7 @@ install(TARGETS ${PROJECT_NAME}
 )
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(marine_autonomy geographic_msgs GDAL)
+ament_export_dependencies(marine_autonomy marine_tiled_raster_store geographic_msgs GDAL)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

@@ -14,6 +14,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>marine_autonomy</depend>
+  <depend>marine_tiled_raster_store</depend>
   <depend>geographic_msgs</depend>
   <depend>libgdal-dev</depend>
 

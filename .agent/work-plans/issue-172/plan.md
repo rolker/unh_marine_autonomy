@@ -50,9 +50,8 @@ queries, and `BathyCell` are bathy-specific and **stay put**.
 |------|--------|
 | `marine_tiled_raster_store/package.xml`, `CMakeLists.txt` | New ament_cmake lib; deps `marine_autonomy`, GDAL (PRIVATE) |
 | `…/include/marine_tiled_raster_store/tiled_raster_tile.hpp` | Generic `TiledRasterTile<T>` |
-| `…/include/marine_tiled_raster_store/gdal_type.hpp` | `gdalType<T>()` trait |
-| `…/include/marine_tiled_raster_store/tile_io.hpp` | Generic `saveTile`/`loadTile`/`save`/`load` |
-| `…/src/tile_io.cpp` | GDAL impl + explicit instantiations (`double`, `uint16_t`) |
+| `…/include/marine_tiled_raster_store/tile_io.hpp` | Generic `saveTile`/`loadTile`/`saveTiles`/`loadTiles` |
+| `…/src/tile_io.cpp` | GDAL impl, internal `gdalType<T>()` trait, explicit instantiations (`double`, `uint16_t`) |
 | `…/test/test_tile_io.cpp`, `README.md` | Core tests + docs |
 | `marine_bathymetry_store/.../bathymetry_tile.hpp` | Wrap `TiledRasterTile<double>`; keep named API |
 | `marine_bathymetry_store/.../bathymetry_store.hpp` | Verify/adjust: stores `map<GridIndex, BathymetryTile>`, calls `BathymetryTile(grid)` ctor + friends `tile_io` — confirm wrapper-compatible |
@@ -100,3 +99,16 @@ queries, and `BathyCell` are bathy-specific and **stay put**.
 
 Single PR — the extraction and the bathy refactor must land together so bathy
 never builds against a removed type. Sizable but one logical change.
+
+## Implementation Notes
+
+- The `gdalType<T>()` trait lives **inside `tile_io.cpp`** (anonymous namespace),
+  not a public `gdal_type.hpp`: mapping `T`→`GDALDataType` requires the GDAL
+  header, and the whole point of the explicit-instantiation approach is to keep
+  GDAL out of the public headers. A public trait header would have leaked it.
+- `bathymetry_store.hpp` needed **no change** — `BathymetryTile` keeps the same
+  public surface (ctor, `set`/`get`, named band accessors, `index`, dirty flags,
+  `edge`/`cell_count`, `offset`), so the store's `map<GridIndex, BathymetryTile>`,
+  `getOrCreateTile`, and `friend` persistence all compile unchanged. A second
+  ctor `BathymetryTile(Raster)` + a `raster()` accessor were added for the
+  load/save delegation.
