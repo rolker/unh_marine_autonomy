@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>marine_tiled_raster_store</name>
+  <version>0.0.0</version>
+  <description>
+    Generic GGGS-tiled raster store core: a band/dtype-parametrized tile
+    (TiledRasterTile&lt;T&gt;) and per-tile GeoTIFF persistence, factored out of
+    marine_bathymetry_store so multiple raster sources (bathymetry, sidescan
+    backscatter) share one tiling + persistence contract. See
+    unh_marine_autonomy#172 / #171 / ADR-0002.
+  </description>
+  <maintainer email="roland.arsenault@unh.edu">Roland Arsenault</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>marine_autonomy</depend>
+  <depend>libgdal-dev</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
