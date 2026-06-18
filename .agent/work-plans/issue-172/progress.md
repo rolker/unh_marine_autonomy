@@ -56,3 +56,23 @@ issue: 172
 
 ### Next
 - [ ] /review-code (pre-push) on the diff, then triage + push/PR.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-18 17:04 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: approved
+
+**Branch**: feature/issue-172 at `a78e652`
+**Mode**: pre-push
+**Depth**: Standard (reason: new ~990-line C++ package + refactor of a costmap-feeding package; single repo, no security surface)
+**Must-fix**: 0 | **Suggestions**: 3 (2 addressed, 1 no-change)
+
+Static analysis (ament_cpplint): clean — "No problems found" on all 6 changed C++ files.
+Claude Adversarial: 2 passes (Lens A logic, Lens B systemic) — both 0 must-fix; independently confirmed the no-behavior-change claim (band order, NaN no-data tags, geotransform, filename mapping, load-side georeferencing guards byte-equivalent vs jazzy).
+Governance: ADR-0002 §D2 (reuse GGGS) / §D5 (bathy persistence unchanged) / §D9 (core free of consumer logic) all compliant; substrate ADR deferred to I3 by decision. Plan adherence: in sync.
+
+### Findings
+- [x] (suggestion) Drop dead GDAL declarations from marine_bathymetry_store — addressed in `a78e652`; rebuild+tests green.
+- [x] (suggestion) Document band_nodata value must be representable in T — addressed in `a78e652`.
+- [x] (suggestion) loadTile silently reads first band_count when a file has more bands — already documented + matches prior bathy behavior; no change (intended generic contract).
