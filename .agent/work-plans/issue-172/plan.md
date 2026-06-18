@@ -82,14 +82,18 @@ queries, and `BathyCell` are bathy-specific and **stay put**.
 |---|---|---|
 | Extract tile + tile_io | `marine_bathymetry_store` CMake/package.xml dep + build order | Yes |
 | New package | `.agents/README` package inventory | Yes |
-| Shared persistence substrate | Whether it merits its own ADR (cross-cutting per ADR-0001) | Open question |
+| Shared persistence substrate | Dedicated substrate ADR deferred to I3 (#86 Phase 6); I1 adds a code comment referencing ADR-0002 §D5/§D6 | Yes — code comment |
+
+## Decisions (resolved 2026-06-18)
+
+- **Parametrization**: template element type `T` + **runtime band count** (compile-time type safety, GDAL type via `gdalType<T>()` trait).
+- **GDAL linkage**: keep **PRIVATE** via explicit instantiation (`double`, `uint16_t`) in `tile_io.cpp` (mirrors bathy today).
+- **ADR**: **defer** the dedicated substrate ADR to **I3 (#86 Phase 6)**, where the shared sync contract lands; I1 only adds a code comment in the generic `tile_io` referencing ADR-0002 §D5/§D6.
+- **Package name**: `marine_tiled_raster_store` (accepted).
 
 ## Open Questions
 
-- Parametrization: template element type `T` + runtime band count (recommended) vs. a fully-runtime dtype enum?
-- Keep GDAL PRIVATE via explicit instantiation in `.cpp` (recommended) vs. header templates (GDAL becomes public)?
-- ADR now: short ADR (or amend ADR-0002 §D5) for the extracted substrate, or defer to I3 (#86 Phase 6)?
-- Package name `marine_tiled_raster_store` acceptable?
+- [ ] None — resolved above; review-plan-ready.
 
 ## Estimated Scope
 

@@ -14,7 +14,7 @@ issue: 172
 **Phases**: single
 
 ### Open questions
-- [ ] Parametrization: template element type T + runtime band count (recommended) vs. fully-runtime dtype enum?
-- [ ] Keep GDAL PRIVATE via explicit instantiation in .cpp (recommended) vs. header templates (GDAL public)?
-- [ ] ADR now (short ADR / amend ADR-0002 §D5) for the extracted substrate, or defer to I3 (#86 Phase 6)?
-- [ ] Package name `marine_tiled_raster_store` acceptable?
+- [x] Parametrization → template element type T + runtime band count (resolved 2026-06-18).
+- [x] GDAL linkage → keep PRIVATE via explicit instantiation in .cpp (resolved 2026-06-18).
+- [x] ADR → defer dedicated substrate ADR to I3 (#86 Phase 6); I1 adds a code comment referencing ADR-0002 §D5/§D6 (resolved 2026-06-18).
+- [x] Package name → `marine_tiled_raster_store` accepted (resolved 2026-06-18).
