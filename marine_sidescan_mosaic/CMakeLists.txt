@@ -11,6 +11,11 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(marine_acoustic_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
 find_package(geographic_msgs REQUIRED)
 find_package(geodesy REQUIRED)
 find_package(marine_autonomy REQUIRED)
@@ -33,6 +38,20 @@ ament_target_dependencies(${PROJECT_NAME}
   marine_tiled_raster_store
 )
 
+# Node executable.
+add_executable(sidescan_mosaic_node src/mosaic_node.cpp)
+target_link_libraries(sidescan_mosaic_node ${PROJECT_NAME})
+ament_target_dependencies(sidescan_mosaic_node
+  rclcpp
+  marine_acoustic_msgs
+  sensor_msgs
+  tf2
+  tf2_ros
+  geographic_msgs
+  marine_autonomy
+  marine_tiled_raster_store
+)
+
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS ${PROJECT_NAME}
   EXPORT export_${PROJECT_NAME}
@@ -40,6 +59,8 @@ install(TARGETS ${PROJECT_NAME}
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
+install(TARGETS sidescan_mosaic_node DESTINATION lib/${PROJECT_NAME})
+install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(geographic_msgs geodesy marine_autonomy marine_tiled_raster_store)
