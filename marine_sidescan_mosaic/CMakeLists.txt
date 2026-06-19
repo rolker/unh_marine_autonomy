@@ -20,6 +20,7 @@ find_package(marine_tiled_raster_store REQUIRED)
 add_library(${PROJECT_NAME}
   src/projection.cpp
   src/accumulator.cpp
+  src/normalizer.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
@@ -55,6 +56,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_accumulator test/test_accumulator.cpp)
   target_link_libraries(test_accumulator ${PROJECT_NAME})
   ament_target_dependencies(test_accumulator marine_autonomy marine_tiled_raster_store)
+
+  ament_add_gtest(test_normalizer test/test_normalizer.cpp)
+  target_link_libraries(test_normalizer ${PROJECT_NAME})
 endif()
 
 ament_package()
