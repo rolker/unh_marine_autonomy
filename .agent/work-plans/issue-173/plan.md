@@ -119,14 +119,15 @@ ECEF↔geodetic + `geodesics.h` `direct` Vincenty) — no hand-rolled ellipsoid 
 - **GeoTIFF no-data 0.** Untouched cells flush with a no-data tag of 0, so empty
   mosaic areas render transparent in QGIS / CAMP.
 
-## Validation status (Simulation-First — PENDING)
+## Validation status (Simulation-First — DONE, port channel)
 
 Built clean; the three pure units (`projection`, `accumulator`, `normalizer`) are
-fully unit-tested (17 gtest cases). **Runtime validation is not yet done**: this
-dev host has no rosbag with the `earth`→sensor TF chain (only `*_sidescan_raw` /
-PINGMapper output), and `unh_marine_simulation` doesn't emit sidescan
-`RawSonarImage`. The acceptance gate — replay a `bizzyboat_sonar` bag (or sim) and
-confirm the mosaic geo-registers — must run on a boat-side host (gabby/salmon) or
-once such a bag is local. The existing PINGMapper Massabesic tiles
-(`~/data/sidescan/Massabesic/.../rect_wcr`) are a ready comparison reference, and
-the `across_track_offset_deg` frame convention is the specific thing to confirm.
+fully unit-tested (17 gtest cases). **Runtime bag replay validated** against
+`~/data/logs/gabby/logs/bizzyboat_sonar/2026-06-16T14-17-37+00-00`: port pings
+georeference into WGS84 L13 tiles **centered on Lake Massabesic (42.992°N,
+71.393°W)** with real normalized backscatter — the default `across_track_offset_deg`
+frame convention is grossly correct. Caught + fixed a node-construct crash
+(double-declared `norm_*` params). **Open follow-ups:** (1) `earth→…_starboard` is
+missing from that bag's TF tree (port works) — a platform/URDF gap, all starboard
+pings dropped; (2) fine geometry accuracy vs the PINGMapper `~/data/sidescan/
+Massabesic` reference. See the `## Validation` progress entry.
