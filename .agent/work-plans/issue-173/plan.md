@@ -45,9 +45,9 @@ ECEF↔geodetic + `geodesics.h` `direct` Vincenty) — no hand-rolled ellipsoid 
 5. **Splat**: resolve **each sample's own** `GridIndex` via `Level::gridIndex(pos)`
    then `cellIndex(pos)` — do NOT reuse the origin grid (`cellIndex(grid, p)`
    clamps out-of-grid `p` to the edge, smearing across-boundary samples).
-   Accumulate intensity: **mean** default — per-cell **`uint32` sum + count** →
-   quantize to `uint16` on flush; policy param `splat: mean|max_hold` (mean
-   despeckles the ~5–15 samples/cell at L13; max-hold for target-cueing).
+   Accumulate intensity: **mean** default — per-cell **`uint64` sum + `uint32`
+   count** → quantize to `uint16` on flush; policy param `splat: mean|max_hold`
+   (mean despeckles the ~5–15 samples/cell at L13; max-hold for target-cueing).
 6. **Normalize** (P2): rolling/adaptive gain (TVG-like across-range + rolling
    display-scale) → `uint16`.
 7. **Flush**: dirty tiles → GeoTIFF on a timer (`marine_tiled_raster_store::
@@ -99,3 +99,34 @@ ECEF↔geodetic + `geodesics.h` `direct` Vincenty) — no hand-rolled ellipsoid 
 
 **Single PR** for #173 (P1+P2). P3 (adaptive multi-level + Req A/B) and P4
 (dirty-region) are separate follow-on sub-issues of #171, filed when reached.
+
+## Implementation Notes
+
+- **Per-side normalizers.** Port and stbd each get their own `RollingNormalizer`
+  so a sensitivity difference between channels doesn't bias the gain; the shared
+  `MosaicAccumulator` still merges both into one tile store.
+- **`uint64` sum (not `uint32`).** The mean accumulator uses a `uint64` sum so a
+  long stationary dwell can't overflow even at the `uint16` ceiling (the reviewer
+  endorsed `uint32` for 5–15 samples/cell; `uint64` removes the dwell edge case
+  for ~one extra band of scratch).
+- **`across_track_offset_deg` parameter.** The across-track azimuth is
+  `heading ± across_track_offset_deg` (default 90°), assuming the sensor
+  `frame_id` +x is vessel-forward. Made a parameter (not a hardcoded 90°) so a
+  platform whose URDF orients the sensor frame differently can correct it without
+  a rebuild — the exact value is a **validation target** (see below).
+- **Nadir-cone skip.** Samples whose ground range resolves to 0 (slant within
+  altitude) are dropped rather than piled onto the origin cell.
+- **GeoTIFF no-data 0.** Untouched cells flush with a no-data tag of 0, so empty
+  mosaic areas render transparent in QGIS / CAMP.
+
+## Validation status (Simulation-First — PENDING)
+
+Built clean; the three pure units (`projection`, `accumulator`, `normalizer`) are
+fully unit-tested (17 gtest cases). **Runtime validation is not yet done**: this
+dev host has no rosbag with the `earth`→sensor TF chain (only `*_sidescan_raw` /
+PINGMapper output), and `unh_marine_simulation` doesn't emit sidescan
+`RawSonarImage`. The acceptance gate — replay a `bizzyboat_sonar` bag (or sim) and
+confirm the mosaic geo-registers — must run on a boat-side host (gabby/salmon) or
+once such a bag is local. The existing PINGMapper Massabesic tiles
+(`~/data/sidescan/Massabesic/.../rect_wcr`) are a ready comparison reference, and
+the `across_track_offset_deg` frame convention is the specific thing to confirm.
