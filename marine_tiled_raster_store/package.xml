@@ -1,12 +1,13 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>marine_bathymetry_store</name>
+  <name>marine_tiled_raster_store</name>
   <version>0.0.0</version>
   <description>
-    Persistent multi-source bathymetric data store built on the GGGS spatial
-    index. Phase 1 (core): a GGGS-tiled in-memory store with priority source
-    layers, best-source / shallowest-reliable queries, and per-tile GeoTIFF
-    persistence. See unh_marine_autonomy#86 / ADR-0002.
+    Generic GGGS-tiled raster store core: a band/dtype-parametrized tile
+    (TiledRasterTile&lt;T&gt;) and per-tile GeoTIFF persistence, factored out of
+    marine_bathymetry_store so multiple raster sources (bathymetry, sidescan
+    backscatter) share one tiling + persistence contract. See
+    unh_marine_autonomy#172 / #171 / ADR-0002.
   </description>
   <maintainer email="roland.arsenault@unh.edu">Roland Arsenault</maintainer>
   <license>MIT</license>
@@ -14,8 +15,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>marine_autonomy</depend>
-  <depend>marine_tiled_raster_store</depend>
-  <depend>geographic_msgs</depend>
+  <depend>libgdal-dev</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>

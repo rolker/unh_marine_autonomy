@@ -22,95 +22,108 @@
 #ifndef MARINE_BATHYMETRY_STORE__BATHYMETRY_TILE_HPP_
 #define MARINE_BATHYMETRY_STORE__BATHYMETRY_TILE_HPP_
 
-#include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <utility>
 #include <vector>
 
 #include "marine_autonomy/gggs.h"
 #include "marine_bathymetry_store/bathy_cell.hpp"
+#include "marine_tiled_raster_store/tiled_raster_tile.hpp"
 
 namespace marine_bathymetry_store
 {
 
 /// @brief One GGGS grid (960×960 cells) of bathymetric data for a single layer.
 ///
-/// Stored as dense, row-major structure-of-arrays (one array each for depth,
-/// uncertainty, timestamp) in **GGGS cell coordinates**: row 0 is the southern
-/// edge and increases north; column 0 is the western edge and increases east.
-/// (Persistence flips rows to north-up GeoTIFF order — see `tile_io`.)
-///
-/// SoA mirrors the GeoTIFF band layout, making persistence a per-band copy.
-/// Arrays are allocated lazily by the owning `BathymetryStore` only when a
-/// tile is first written, so empty regions cost nothing. A fully-allocated
-/// tile holds 3 × 960 × 960 doubles ≈ 22 MB (see `BathyCell` for why double).
+/// A thin, bathy-semantic wrapper over `marine_tiled_raster_store::
+/// TiledRasterTile<double>` (the generic GGGS-tiled raster, #172): three
+/// `Float64` bands — **depth**, **uncertainty**, **timestamp** — in that order,
+/// matching the GeoTIFF band layout (`tile_io`). The generic tile owns the
+/// storage, dirty flag, and GGGS-cell-order layout (row 0 = south); this wrapper
+/// adds the per-cell `BathyCell` record and the named band accessors the store
+/// and persistence rely on. A fully-allocated tile holds 3 × 960 × 960 doubles
+/// ≈ 22 MB (see `BathyCell` for why `double`); tiles are allocated lazily by the
+/// owning `BathymetryStore`.
 class BathymetryTile
 {
 public:
-  /// @brief Number of cells along each grid edge (GGGS constant).
-  static constexpr uint16_t edge = gggs::cell_rows_per_grid;
-  /// @brief Total cells in a tile (edge × edge).
-  static constexpr uint32_t cell_count = gggs::grid_total_cell_count;
+  /// @brief The underlying generic raster tile type.
+  using Raster = marine_tiled_raster_store::TiledRasterTile<double>;
 
-  /// @brief Construct an empty tile for @p index (all cells no-data).
+  /// @brief Number of cells along each grid edge (GGGS constant).
+  static constexpr uint16_t edge = Raster::edge;
+  /// @brief Total cells in a tile (edge × edge).
+  static constexpr uint32_t cell_count = Raster::cell_count;
+
+  /// @brief Construct an empty tile for @p index (depth/uncertainty no-data, ts 0).
   explicit BathymetryTile(gggs::GridIndex index)
-  : index_(index),
-    depth_(cell_count, std::numeric_limits<double>::quiet_NaN()),
-    uncertainty_(cell_count, std::numeric_limits<double>::quiet_NaN()),
-    timestamp_(cell_count, 0.0)
+  : tile_(index, std::vector<double>{
+      std::numeric_limits<double>::quiet_NaN(),    // depth
+      std::numeric_limits<double>::quiet_NaN(),    // uncertainty
+      0.0})                                        // timestamp (0 = unset)
   {
   }
 
+  /// @brief Wrap a generic raster tile loaded from disk (persistence path).
+  explicit BathymetryTile(Raster tile)
+  : tile_(std::move(tile)) {}
+
   /// @brief The grid this tile covers.
-  const gggs::GridIndex & index() const noexcept {return index_;}
+  const gggs::GridIndex & index() const noexcept {return tile_.index();}
 
   /// @brief Write a cell at (@p row, @p col) within the grid; marks the tile dirty.
   void set(uint16_t row, uint16_t col, const BathyCell & cell)
   {
     const uint32_t i = offset(row, col);
-    depth_[i] = cell.depth;
-    uncertainty_[i] = cell.uncertainty;
-    timestamp_[i] = cell.timestamp;
-    dirty_ = true;
+    tile_.band(kDepth)[i] = cell.depth;
+    tile_.band(kUncertainty)[i] = cell.uncertainty;
+    tile_.band(kTimestamp)[i] = cell.timestamp;
+    tile_.markDirty();
   }
 
   /// @brief Read the cell at (@p row, @p col) within the grid.
   BathyCell get(uint16_t row, uint16_t col) const
   {
     const uint32_t i = offset(row, col);
-    return BathyCell{depth_[i], uncertainty_[i], timestamp_[i]};
+    return BathyCell{
+      tile_.band(kDepth)[i], tile_.band(kUncertainty)[i], tile_.band(kTimestamp)[i]};
   }
 
   /// @brief Whether this tile has unsaved changes.
-  bool dirty() const noexcept {return dirty_;}
+  bool dirty() const noexcept {return tile_.dirty();}
   /// @brief Mark all changes saved (called by persistence after a successful write).
-  void clearDirty() noexcept {dirty_ = false;}
+  void clearDirty() noexcept {tile_.clearDirty();}
   /// @brief Force the dirty flag (used when reconstructing a tile in memory).
-  void markDirty() noexcept {dirty_ = true;}
+  void markDirty() noexcept {tile_.markDirty();}
 
   /// @brief Raw band accessors (row-major, GGGS cell order) for persistence.
   /// @{
-  const std::vector<double> & depthBand() const noexcept {return depth_;}
-  const std::vector<double> & uncertaintyBand() const noexcept {return uncertainty_;}
-  const std::vector<double> & timestampBand() const noexcept {return timestamp_;}
-  std::vector<double> & depthBand() noexcept {return depth_;}
-  std::vector<double> & uncertaintyBand() noexcept {return uncertainty_;}
-  std::vector<double> & timestampBand() noexcept {return timestamp_;}
+  const std::vector<double> & depthBand() const noexcept {return tile_.band(kDepth);}
+  const std::vector<double> & uncertaintyBand() const noexcept
+  {return tile_.band(kUncertainty);}
+  const std::vector<double> & timestampBand() const noexcept {return tile_.band(kTimestamp);}
+  std::vector<double> & depthBand() noexcept {return tile_.band(kDepth);}
+  std::vector<double> & uncertaintyBand() noexcept {return tile_.band(kUncertainty);}
+  std::vector<double> & timestampBand() noexcept {return tile_.band(kTimestamp);}
+  /// @}
+
+  /// @brief The underlying generic raster tile (for persistence delegation).
+  /// @{
+  Raster & raster() noexcept {return tile_;}
+  const Raster & raster() const noexcept {return tile_;}
   /// @}
 
   /// @brief Row-major offset of cell (@p row, @p col). Asserts in debug builds.
-  static uint32_t offset(uint16_t row, uint16_t col)
-  {
-    assert(row < edge && col < edge && "BathymetryTile cell out of bounds");
-    return static_cast<uint32_t>(row) * edge + col;
-  }
+  static uint32_t offset(uint16_t row, uint16_t col) {return Raster::offset(row, col);}
 
 private:
-  gggs::GridIndex index_;
-  std::vector<double> depth_;
-  std::vector<double> uncertainty_;
-  std::vector<double> timestamp_;
-  bool dirty_ = false;
+  static constexpr std::size_t kDepth = 0;
+  static constexpr std::size_t kUncertainty = 1;
+  static constexpr std::size_t kTimestamp = 2;
+
+  Raster tile_;
 };
 
 }  // namespace marine_bathymetry_store

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(marine_bathymetry_store)
+project(marine_tiled_raster_store)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
@@ -12,14 +12,9 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(marine_autonomy REQUIRED)
-# GDAL is no longer used directly here — tile_io delegates all GeoTIFF I/O to
-# marine_tiled_raster_store, which carries (and re-exports) the GDAL dependency.
-find_package(marine_tiled_raster_store REQUIRED)
-find_package(geographic_msgs REQUIRED)
+find_package(GDAL CONFIG REQUIRED)
 
 add_library(${PROJECT_NAME}
-  src/bathymetry_store.cpp
-  src/query.cpp
   src/tile_io.cpp
 )
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
@@ -28,14 +23,16 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>"
 )
-# marine_autonomy + geographic_msgs are in the public headers (GGGS / GeoPoint);
-# marine_tiled_raster_store is public too — BathymetryTile wraps its
-# TiledRasterTile<double>. GDAL arrives transitively through that package (which
-# uses it privately in tile_io.cpp); this package no longer references GDAL.
+# marine_autonomy (GGGS) is in the public headers; GDAL is used only inside
+# tile_io.cpp (the templates are explicitly instantiated there), so it is
+# PRIVATE. It is still exported below because this is a static library — CMake
+# propagates the private link to consumers as $<LINK_ONLY:GDAL::GDAL>, so they
+# must be able to resolve the GDAL target via find_package(${PROJECT_NAME}).
 target_link_libraries(${PROJECT_NAME} PUBLIC
   marine_autonomy::marine_autonomy
-  marine_tiled_raster_store::marine_tiled_raster_store
-  ${geographic_msgs_TARGETS}
+)
+target_link_libraries(${PROJECT_NAME} PRIVATE
+  GDAL::GDAL
 )
 
 # Headers are laid out as include/${PROJECT_NAME}/*.hpp, so install the include/
@@ -51,18 +48,12 @@ install(TARGETS ${PROJECT_NAME}
 )
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(marine_autonomy marine_tiled_raster_store geographic_msgs)
+ament_export_dependencies(marine_autonomy GDAL)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
   find_package(ament_cmake_gtest REQUIRED)
-
-  ament_add_gtest(test_store test/test_store.cpp)
-  target_link_libraries(test_store ${PROJECT_NAME})
-
-  ament_add_gtest(test_query test/test_query.cpp)
-  target_link_libraries(test_query ${PROJECT_NAME})
 
   ament_add_gtest(test_tile_io test/test_tile_io.cpp)
   target_link_libraries(test_tile_io ${PROJECT_NAME})
