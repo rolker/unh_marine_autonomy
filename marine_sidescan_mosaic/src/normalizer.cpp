@@ -70,7 +70,9 @@ void RollingNormalizer::normalize(
   const double scale = config_.target_level / reference_;
   for (std::size_t i = 0; i < raw.size(); ++i) {
     const double scaled = std::round(raw[i] * scale);
-    const double clamped = std::clamp(scaled, 0.0, 65535.0);
+    // Floor at 1: 0 is reserved as the tile no-data value (untouched cells), so
+    // even the darkest real return maps to "covered", not "no data".
+    const double clamped = std::clamp(scaled, 1.0, 65535.0);
     out[i] = static_cast<std::uint16_t>(clamped);
   }
 }

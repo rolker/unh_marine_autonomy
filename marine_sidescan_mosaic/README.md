@@ -48,6 +48,17 @@ the sign. If a platform's URDF orients the sensor frame differently, set
 `across_track_offset_deg`. Verify against a real `bizzyboat_sonar` bag / sim
 (#173 validation).
 
+## Limitations (P1)
+
+- **Memory grows with covered extent.** The accumulator holds every touched GGGS
+  grid (~12.7 MB each in `mean` mode) and never evicts — a long/large survey grows
+  unbounded. The node logs a throttled warning past `grid_warn_count` grids;
+  offload-after-flush eviction is a P3/P4 concern (ties to the Phase-6 sync).
+- **No-data = 0.** Untouched cells are 0 (transparent); real returns are floored
+  to ≥1, so "covered-but-dark" stays distinct from "never surveyed".
+- **Single-beam only.** Multi-beam `RawSonarImage` pings are dropped (warned); the
+  GCV is single-beam.
+
 ## Run
 
 ```bash

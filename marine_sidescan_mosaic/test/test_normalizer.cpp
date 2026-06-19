@@ -61,7 +61,7 @@ TEST(Normalizer, AllDarkPingIsSafe)
   norm.normalize(raw, out);
   EXPECT_GE(norm.reference(), 1.0);  // floored, no divide-by-zero
   for (auto v : out) {
-    EXPECT_EQ(v, 0);
+    EXPECT_EQ(v, 1);   // floor 1: covered-but-dark, distinct from no-data 0
   }
 }
 

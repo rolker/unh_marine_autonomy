@@ -65,7 +65,12 @@ void MosaicAccumulator::add(const gggs::CellIndex & cell, std::uint16_t value)
     const std::uint32_t i = Tile::offset(row, col);
     mg.sum[i] += value;
     mg.count[i] += 1;
-    tile.set(row, col, 0, static_cast<std::uint16_t>(mg.sum[i] / mg.count[i]));
+    // Only write (and dirty) when the rounded mean actually changes, so a dwell
+    // over stable ground doesn't re-flush the same tile every cycle.
+    const auto mean = static_cast<std::uint16_t>(mg.sum[i] / mg.count[i]);
+    if (mean != tile.get(row, col, 0)) {
+      tile.set(row, col, 0, mean);
+    }
   } else {
     // MaxHold: only write (and dirty) when the cell actually brightens.
     if (value > tile.get(row, col, 0)) {

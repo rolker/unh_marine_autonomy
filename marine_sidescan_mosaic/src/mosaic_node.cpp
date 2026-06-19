@@ -38,10 +38,12 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "geographic_msgs/msg/geo_point.hpp"
@@ -123,6 +125,7 @@ public:
     nadir_staleness_s_ = declare_parameter<double>("nadir_staleness_s", 5.0);
     no_nadir_policy_ = declare_parameter<std::string>("no_nadir_policy", "drop");
     max_tf_age_s_ = declare_parameter<double>("max_tf_age_s", 1.0);
+    grid_warn_count_ = declare_parameter<int>("grid_warn_count", 256);
     const double flush_period_s = declare_parameter<double>("flush_period_s", 2.0);
     const std::string splat = declare_parameter<std::string>("splat", "mean");
     accumulator_ = MosaicAccumulator(
@@ -138,20 +141,38 @@ public:
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
+    // All callbacks mutate the shared accumulator + nadir/normalizer state, so
+    // pin them to one mutually-exclusive group: serialized under the default
+    // single-threaded executor AND if the node is ever composed into a
+    // multi-threaded one (no torn std::map iteration during a flush).
+    cb_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+    rclcpp::SubscriptionOptions sub_opts;
+    sub_opts.callback_group = cb_group_;
+
     // Imagery is best-effort on the driver; match it or no samples arrive.
     auto qos = rclcpp::SensorDataQoS();
     port_sub_ = create_subscription<marine_acoustic_msgs::msg::RawSonarImage>(
       port_topic, qos,
-      [this](const marine_acoustic_msgs::msg::RawSonarImage & m) {onPing(m, Side::Port);});
+      [this](const marine_acoustic_msgs::msg::RawSonarImage & m) {onPing(m, Side::Port);},
+      sub_opts);
     stbd_sub_ = create_subscription<marine_acoustic_msgs::msg::RawSonarImage>(
       stbd_topic, qos,
-      [this](const marine_acoustic_msgs::msg::RawSonarImage & m) {onPing(m, Side::Starboard);});
+      [this](const marine_acoustic_msgs::msg::RawSonarImage & m) {onPing(m, Side::Starboard);},
+      sub_opts);
     nadir_sub_ = create_subscription<sensor_msgs::msg::Range>(
       nadir_topic, qos,
-      [this](const sensor_msgs::msg::Range & m) {onNadir(m);});
+      [this](const sensor_msgs::msg::Range & m) {onNadir(m);}, sub_opts);
 
     flush_timer_ = create_wall_timer(
-      std::chrono::duration<double>(flush_period_s), [this]() {flush();});
+      std::chrono::duration<double>(flush_period_s), [this]() {flush();}, cb_group_);
+
+    // Fail loudly at startup if the output directory can't be created — better
+    // than silently dropping the whole survey product on every flush.
+    if (!ensureOutputDir()) {
+      RCLCPP_ERROR(
+        get_logger(), "output_dir '%s' is not writable; tile flush will fail",
+        output_dir_.c_str());
+    }
 
     RCLCPP_INFO(
       get_logger(),
@@ -169,6 +190,14 @@ private:
     c.ema_alpha = declare_parameter<double>("norm_ema_alpha", c.ema_alpha);
     c.min_reference = declare_parameter<double>("norm_min_reference", c.min_reference);
     return c;
+  }
+
+  // Create the output directory if needed; true if it exists and is a directory.
+  bool ensureOutputDir() const
+  {
+    std::error_code ec;
+    std::filesystem::create_directories(output_dir_, ec);
+    return std::filesystem::is_directory(output_dir_, ec);
   }
 
   // Held nadir altitude valid for a ping at @p ping_ns, per the staleness bound;
@@ -223,6 +252,15 @@ private:
     if (msg.sample_rate <= 0.0) {
       return;   // can't reconstruct range without a scale
     }
+    if (msg.image.beam_count > 1) {
+      // The per-sample pipeline treats the payload as one across-track scan
+      // line; a multi-beam image would be mis-projected. The GCV is single-beam.
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "beam_count %u > 1 unsupported (single-beam sidescan only); dropping ping",
+        static_cast<unsigned>(msg.image.beam_count));
+      return;
+    }
     const int64_t ping_ns = stampNs(msg.header.stamp);
 
     // Altitude (slant→ground): held nadir, else apply the no-nadir policy.
@@ -266,6 +304,14 @@ private:
       (side == Side::Starboard ? offset_rad : -offset_rad);
 
     const std::vector<double> raw = decodeSamples(msg);
+    if (msg.samples_per_beam > 0 && raw.size() != msg.samples_per_beam) {
+      // A length mismatch points at a dtype/endianness/payload error; the scan
+      // line is still placed per-sample, but flag it so it doesn't smear silently.
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "decoded %zu samples != samples_per_beam %u; check dtype/endianness",
+        raw.size(), static_cast<unsigned>(msg.samples_per_beam));
+    }
     std::vector<std::uint16_t> norm;
     (side == Side::Port ? port_norm_ : stbd_norm_).normalize(raw, norm);
 
@@ -296,6 +342,15 @@ private:
     if (written > 0) {
       RCLCPP_INFO(get_logger(), "flushed %zu tile(s) to %s", written, output_dir_.c_str());
     }
+    // The accumulator never evicts: memory grows with covered extent. Make the
+    // ceiling visible (P1 has no eviction; offload-after-flush is a P3/P4 concern).
+    const std::size_t grids = accumulator_.tiles().size();
+    if (grid_warn_count_ > 0 && grids > static_cast<std::size_t>(grid_warn_count_)) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 30000,
+        "%zu GGGS grids held in memory (~%zu MB); grows with survey extent",
+        grids, grids * 13);
+    }
   }
 
   gggs::Level level_;
@@ -310,6 +365,7 @@ private:
   double across_track_offset_deg_ = 90.0;
   double nadir_staleness_s_ = 5.0;
   double max_tf_age_s_ = 1.0;
+  int grid_warn_count_ = 256;
 
   double nadir_altitude_m_ = 0.0;
   int64_t nadir_stamp_ns_ = 0;
@@ -317,6 +373,7 @@ private:
 
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  rclcpp::CallbackGroup::SharedPtr cb_group_;
   rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr port_sub_;
   rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr stbd_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr nadir_sub_;
