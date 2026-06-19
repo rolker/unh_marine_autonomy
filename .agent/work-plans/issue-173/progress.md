@@ -11,11 +11,11 @@ issue: 173
 
 **Plan**: `.agent/work-plans/issue-173/plan.md` at `eaf249d`
 **Branch**: feature/issue-173 at `eaf249d`
-**Phases**: multiple (P1 MVP -> P2 normalization -> P3 adaptive multi-level + Req A/B -> P4 dirty-region); recommend stacked PRs
+**Phases**: #173 re-scoped to **P1+P2** (single PR: georef + per-sample projection + splat @ fixed L13 + rolling normalization + tests). P3 (adaptive multi-level + Req A/B) and P4 (dirty-region) = follow-on sub-issues of #171.
 
 ### Open questions
-- [ ] Phasing as stacked PRs vs sub-issues of #173 (recommend stacked PRs; P1 first).
-- [ ] Splat conflict policy: last-write (P1) vs max-hold vs running mean.
-- [ ] Dirty-region message type: std_msgs vs marine_interfaces.
-- [ ] No-nadir fallback: assume alt≈0 vs drop the ping.
-- [ ] Confirm geodesy exposes ECEF↔geodetic + local-ENU helper (ADR-0002 D8 precondition).
+- [x] Scope/phasing → Option A: #173 = P1+P2 (one PR); P3/P4 = sub-issues of #171 (resolved 2026-06-19).
+- [x] Splat conflict → **mean** default, selectable (max-hold reachable) (resolved 2026-06-19).
+- [x] No-nadir → **hold last valid nadir, then drop** on residual; selectable drop/assume_zero (resolved 2026-06-19).
+- [x] Dirty-region message type → out of #173 scope; deferred to the P4 sub-issue (resolved 2026-06-19).
+- [x] geodesy (D8) → **confirmed**: `geodesy::ecef` (ECEF↔geodetic) + `geodesics::direct` (Vincenty across-track); heading via small geo.py-style extraction (resolved 2026-06-19).
