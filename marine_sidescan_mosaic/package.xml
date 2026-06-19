@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>marine_sidescan_mosaic</name>
+  <version>0.0.0</version>
+  <description>
+    Live georeferenced sidescan backscatter mosaicker: projects Garmin GCV
+    port/stbd RawSonarImage samples to the ground and splats them into GGGS-tiled
+    uint16 GeoTIFF tiles (marine_tiled_raster_store) for live display in CAMP and
+    the web viewer. See unh_marine_autonomy#173 / #171 / #166.
+  </description>
+  <maintainer email="roland.arsenault@unh.edu">Roland Arsenault</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>marine_acoustic_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geographic_msgs</depend>
+  <depend>geodesy</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>marine_autonomy</depend>
+  <depend>marine_tiled_raster_store</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
