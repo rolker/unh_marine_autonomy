@@ -62,3 +62,14 @@ Static analysis: cpplint / copyright / flake8 clean (cppcheck skipped on version
 
 ### Validation
 - [ ] Runtime bag/sim georegistration PENDING (no local bag with TF; sim has no sidescan) — boat-side gate; PINGMapper Massabesic tiles as reference; confirm across_track_offset_deg frame convention.
+
+## Validation (bag replay)
+**Status**: complete (port channel)
+**When**: 2026-06-19 09:53 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+Ran the node against a real `bizzyboat_sonar` bag (`~/data/logs/gabby/logs/bizzyboat_sonar/2026-06-16T14-17-37+00-00`, mid-survey window via `--start-offset 1200 --playback-duration 300`).
+- **Georegistration correct**: tiles are WGS84, centered **42.992°N, 71.393°W (Lake Massabesic)**, ~0.11 m pixels (L13), UInt16, NoData=0, data min=1/max=50208/mean≈24866 (normalized, floored at 1). The default `across_track_offset_deg=90` frame convention places port data at the right location.
+- **Bug found + fixed**: `makeNormalizerConfig()` called twice in the init list re-declared `norm_*` params → `ParameterAlreadyDeclaredException` crash on construct (commit 2f85591). Unit tests don't construct the node, so only runtime caught it.
+- **Platform finding (not a node bug)**: `earth→bizzy/garmin_sidescan_starboard` is **absent from the bag's TF tree** (port resolves fine) → all starboard pings dropped (correctly, with throttled warn). Likely the boat URDF is missing the starboard sidescan frame — worth a separate platform check.
+- Remaining: fine-grained geometry accuracy (compare vs the PINGMapper `~/data/sidescan/Massabesic` reference) and the starboard frame are follow-ups; gross georegistration + pipeline are validated.
