@@ -114,9 +114,7 @@ public:
   SidescanMosaicNode()
   : rclcpp::Node("sidescan_mosaic"),
     level_(declare_parameter<int>("gggs_level", 13)),
-    accumulator_(level_, SplatPolicy::Mean),
-    port_norm_(makeNormalizerConfig()),
-    stbd_norm_(makeNormalizerConfig())
+    accumulator_(level_, SplatPolicy::Mean)
   {
     earth_frame_ = declare_parameter<std::string>("earth_frame", "earth");
     output_dir_ = declare_parameter<std::string>("output_dir", "sidescan_mosaic");
@@ -130,6 +128,11 @@ public:
     const std::string splat = declare_parameter<std::string>("splat", "mean");
     accumulator_ = MosaicAccumulator(
       level_, splat == "max_hold" ? SplatPolicy::MaxHold : SplatPolicy::Mean);
+    // One config (declares the norm_* params once) feeds both per-side
+    // normalizers — declaring them twice would throw ParameterAlreadyDeclared.
+    const NormalizerConfig ncfg = makeNormalizerConfig();
+    port_norm_ = RollingNormalizer(ncfg);
+    stbd_norm_ = RollingNormalizer(ncfg);
 
     const std::string port_topic = declare_parameter<std::string>(
       "port_topic", "sonar_image_port");
