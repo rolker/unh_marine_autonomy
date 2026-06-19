@@ -29,18 +29,25 @@ ECEF↔geodetic + `geodesics.h` `direct` Vincenty) — no hand-rolled ellipsoid 
    (`sensor_msgs/Range`), TF (`tf2_ros::Buffer`/`TransformListener`).
 2. **Georef origin**: `lookupTransform(earth, ping.frame_id, stamp)` with exact→
    bounded-latest→drop fallback (port `bag_to_xtf::_lookup_pose`); ECEF pose →
-   `GeoPoint` via `geodesy::ECEFPose`/`toMsg`; heading from the ECEF orientation
-   (small `geo.py`-style quaternion→ENU-azimuth extraction).
+   `GeoPoint` via `geodesy::ECEFPose`/`toMsg`; **heading = sensor body x-axis
+   azimuth in local NED** at the origin — port `geo.py::ecef_pose_to_geo` /
+   `matrix_to_heading_pitch_roll` (body→NED yaw, NOT a raw ECEF-quaternion yaw).
 3. **Altitude**: from `~/nadir_depth`; **hold last valid within a staleness bound**
-   (altitude varies slowly). Residual (none in window): **drop the ping**
-   (param `no_nadir_policy: drop|assume_zero`, default `drop`).
+   (altitude varies slowly; bound is a parameter `nadir_staleness_s`). Residual
+   (none in window): **drop the ping** (param `no_nadir_policy: drop|assume_zero`,
+   default `drop`). **Throttled warning** whenever altitude is held-stale or a
+   ping is dropped, so degraded georef is visible live.
 4. **Per-sample projection**: range to sample `j` = `(sample0+j)·sv/(2·fs)`;
    ground range = `sqrt(max(0, slant² − alt²))`; sample lat/lon =
-   `geodesy::direct(origin, heading ± 90° [sign per side], ground_range)`.
-5. **Splat**: `GeoPoint` → `gggs::CellIndex` → accumulate intensity. **Mean**
-   default (per-cell sum+count accumulator → quantize to `uint16` on flush);
-   policy param `splat: mean|max_hold` (mean despeckles oversampled data — ~5–15
-   samples/cell at L13; max-hold for target-cueing).
+   `geodesy::wgs84::direct(origin0, az_rad, ground_range)` — the **non-templated**
+   wrapper (geodesics.h:387); `az_rad = heading ± 90°` (radians CW from north,
+   sign per side) and `origin0` = origin at **altitude 0** (asserted precondition).
+5. **Splat**: resolve **each sample's own** `GridIndex` via `Level::gridIndex(pos)`
+   then `cellIndex(pos)` — do NOT reuse the origin grid (`cellIndex(grid, p)`
+   clamps out-of-grid `p` to the edge, smearing across-boundary samples).
+   Accumulate intensity: **mean** default — per-cell **`uint32` sum + count** →
+   quantize to `uint16` on flush; policy param `splat: mean|max_hold` (mean
+   despeckles the ~5–15 samples/cell at L13; max-hold for target-cueing).
 6. **Normalize** (P2): rolling/adaptive gain (TVG-like across-range + rolling
    display-scale) → `uint16`.
 7. **Flush**: dirty tiles → GeoTIFF on a timer (`marine_tiled_raster_store::
@@ -56,7 +63,7 @@ ECEF↔geodetic + `geodesics.h` `direct` Vincenty) — no hand-rolled ellipsoid 
 | `…/src/accumulator.{hpp,cpp}` | Per-cell mean/max splat + uint16 quantize |
 | `…/src/normalizer.{hpp,cpp}` | Rolling gain → uint16 |
 | `…/launch/sidescan_mosaic.launch.py` | Generic launch (topics, output dir, level/cell-size, flush rate, policies) |
-| `…/test/test_projection.cpp`, `test_accumulator.cpp` | Unit tests: known pose+range → expected cell; slant/altitude edges; mean vs max splat |
+| `…/test/test_projection.cpp`, `test_accumulator.cpp` | Unit tests: known pose+range → expected cell; slant/altitude edges; **across-grid-boundary sample lands in the correct `GridIndex`** (not clamped); mean vs max splat + **quantize-on-flush boundary** |
 | `…/README.md`, repo `.agents/README.md` | Package doc + inventory/build-order |
 
 ## Principles Self-Check
@@ -64,7 +71,7 @@ ECEF↔geodetic + `geodesics.h` `direct` Vincenty) — no hand-rolled ellipsoid 
 | Principle | Consideration |
 |---|---|
 | Only what's needed | #173 is P1+P2 only; adaptive/Req-A/B (P3) + dirty-region (P4) are separate sub-issues |
-| Simulation-First | Validate against a `bizzyboat_sonar` bag (has the TF chain) before field use |
+| Simulation-First | Validate in `unh_marine_simulation` (issue Acceptance) **and** against a `bizzyboat_sonar` bag (has the TF chain) before field use |
 | Decoupling | Pure `projection`/`accumulator`/`normalizer` units; node is thin glue; reuses #172 core |
 | Sensor conventions | Look-direction from TF/`frame_id` (per-side sign only); generic launch + node defaults, no trademarks |
 | Safety First | Display/search aid, not control — but mis-georeference misleads a search; projection unit-tested, drop-on-no-nadir is conservative |
