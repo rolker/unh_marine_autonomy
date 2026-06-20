@@ -112,3 +112,28 @@ a known environment issue — not real correctness; gtest is green).
   stays band-1).
 - No persisted tiles existed on disk at branch time (verified), so no data
   migration was required.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-20 18:06 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: approved
+
+**Branch**: feature/issue-178 at `41851c6`
+**Mode**: pre-push
+**Depth**: Deep (reason: safety-relevant data store + substantive ADR amendment + cross-package change)
+**Must-fix**: 0 | **Suggestions**: 4
+
+### Findings
+- [ ] (suggestion) `loadRegistry` discards the stored `"index"` field and re-derives index from array position — silently wrong (or diverges `by_index_`/`by_source_id_`) on a reordered/sparse/duplicate hand-edited registry.json; add a `index == size()+1` validation — `marine_bathymetry_store/src/registry.cpp:151`
+- [ ] (suggestion) Pre-migration single 3-band Float64 tile loads with band_count=2 (`GetRasterCount() < 2` passes a 3-band file) and silently drops band 3 (old Float64 seconds timestamp) instead of converting it; timestamp 0-fills via the absent `_time.tif`. Acceptable only if old acquisition times are disposable — N/A today (no on-disk data at branch) but a real migration-story decision — `marine_bathymetry_store/src/tile_io.cpp:116`
+- [ ] (suggestion) 3-file `saveTile` writes value→time→source non-atomically and registry after tiles; a crash mid-write pairs a new depth with stale/absent provenance (safety query unaffected — reads value tile only). Document the value-first ordering; consider temp-set+rename and registry-first — `marine_bathymetry_store/src/tile_io.cpp:101`
+- [ ] (suggestion) `BathymetryTile(value, time, source)` does not enforce the three rasters share a grid (doc says "must"); a mis-renamed companion would combine cell-for-cell with a different grid silently. A `grid == value.index()` check in `loadTile` after each companion load closes it cheaply — `marine_bathymetry_store/src/tile_io.cpp:134`
+
+### Notes
+- Safety carve-out VERIFIED: `shallowestReliable()` (query.cpp, unchanged) builds `DepthSample` with no `source_index` field, so it structurally cannot consult the provenance axis. The `ShallowestReliableUnaffectedBySourceIndex` regression test is non-tautological (asserts identical result with source indices swapped). Holds.
+- Backward compat VERIFIED: load() correctly excludes `_time`/`_source` companions from the value-tile scan (stem-anchored `ends_with`; no integer GridIndex filename can collide); `MissingTime/SourceTileLoadsAsZero` tests cover the 0-fill path.
+- Int64 ns round-trips bit-exact through `GDT_Int64` RasterIO (no `double` intermediary; no-data path is `std::nullopt` for the time tile). Test covers INT64_MAX.
+- Atomic registry write (write-then-rename) and uint16 interning / index-0-reserved / overflow-at-65535 / idempotency all correct.
+- ADR-0002 amendment internally consistent: D5 rewritten to three tiles, old "source layer is not a band" reasoning explicitly superseded, D6 covers all three files; remaining "3-band" mentions are correct historical context.
+- Static analysis: ament_cpplint / ament_copyright / ament_xmllint clean. cppcheck "unusedStructMember" / "useStlAlgorithm" are header-isolation false positives on unchanged lines. Local uncrustify-0.78.1 mass-fail is the known CI-drift environment issue (gtest 41/41 green is the source of truth).
