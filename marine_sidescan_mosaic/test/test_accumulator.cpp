@@ -75,6 +75,39 @@ TEST(Accumulator, MaxHold)
   EXPECT_EQ(valueAt(acc, cell), 30);          // brightest wins, order-independent
 }
 
+// Newest-valid-wins: the strictly-last real return wins, not the brightest.
+TEST(Accumulator, NewestReplaces)
+{
+  msm::MosaicAccumulator acc(kLevel, msm::SplatPolicy::Newest);
+  const auto cell = cellAt(1, 1);
+  acc.add(cell, 10);
+  acc.add(cell, 30);
+  acc.add(cell, 20);
+  EXPECT_EQ(valueAt(acc, cell), 20);          // last write wins (cf. MaxHold -> 30)
+}
+
+// A zero (no-data/dropout) sample must NOT overwrite existing coverage.
+TEST(Accumulator, NewestSkipsZero)
+{
+  msm::MosaicAccumulator acc(kLevel, msm::SplatPolicy::Newest);
+  const auto cell = cellAt(2, 2);
+  acc.add(cell, 42);
+  acc.add(cell, 0);                           // dropout: must be ignored
+  EXPECT_EQ(valueAt(acc, cell), 42);          // original coverage preserved
+}
+
+// A zero sample on a never-touched cell neither writes nor dirties the tile:
+// a stray null ping must not "punch a hole" or trigger a spurious flush.
+TEST(Accumulator, NewestZeroOnUntouchedDoesNotDirty)
+{
+  msm::MosaicAccumulator acc(kLevel, msm::SplatPolicy::Newest);
+  const auto cell = cellAt(6, 6);
+  acc.add(cell, 0);                           // no-data on a fresh accumulator
+  ASSERT_EQ(acc.tiles().count(cell.grid()), 1u);  // tile materializes...
+  EXPECT_EQ(valueAt(acc, cell), 0);               // ...but cell stays no-data
+  EXPECT_FALSE(acc.tiles().at(cell.grid()).dirty());  // and no spurious flush
+}
+
 TEST(Accumulator, IndependentCellsAndGrids)
 {
   msm::MosaicAccumulator acc(kLevel, msm::SplatPolicy::Mean);

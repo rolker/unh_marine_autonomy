@@ -71,6 +71,13 @@ void MosaicAccumulator::add(const gggs::CellIndex & cell, std::uint16_t value)
     if (mean != tile.get(row, col, 0)) {
       tile.set(row, col, 0, mean);
     }
+  } else if (policy_ == SplatPolicy::Newest) {
+    // Newest-valid-wins: a real return always overwrites so the operator sees
+    // live painting. value==0 is the no-data sentinel (real returns are floored
+    // to >=1 by RollingNormalizer), so skip it — don't punch holes in coverage.
+    if (value != 0 && value != tile.get(row, col, 0)) {
+      tile.set(row, col, 0, value);
+    }
   } else {
     // MaxHold: only write (and dirty) when the cell actually brightens.
     if (value > tile.get(row, col, 0)) {

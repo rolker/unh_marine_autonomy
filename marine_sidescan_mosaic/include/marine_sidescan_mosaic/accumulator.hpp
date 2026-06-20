@@ -36,16 +36,20 @@ namespace marine_sidescan_mosaic
 enum class SplatPolicy
 {
   Mean,      ///< Mean of the samples (box-filter downsample of oversampled data).
-  MaxHold    ///< Brightest sample (target-cueing).
+  MaxHold,   ///< Brightest sample (target-cueing).
+  Newest     ///< Newest-valid sample wins (recency; live operator `draft` layer).
 };
 
 /// @brief Accumulates georeferenced sample intensities into GGGS-tiled `uint16`
 ///   mosaic tiles, ready for `marine_tiled_raster_store::saveTiles`.
 ///
-/// Cells are oversampled (~5–15 samples/cell at L13), so `Mean` is the default:
-/// per cell a `uint64` sum + `uint32` count is kept (the sum can't overflow even
-/// over a long stationary dwell), and the live `uint16` output cell is
-/// `sum/count`. `MaxHold` keeps the brightest sample and needs no side state.
+/// Cells are oversampled (~5–15 samples/cell at L13). `Mean` keeps, per cell, a
+/// `uint64` sum + `uint32` count (the sum can't overflow even over a long
+/// stationary dwell), and the live `uint16` output cell is `sum/count`.
+/// `MaxHold` keeps the brightest sample and needs no side state. `Newest`
+/// (newest-valid-wins) is the live operator `draft`-layer policy: every real
+/// ping overwrites the cell so the operator sees the sonar actively painting,
+/// rather than a new pass being visually rejected by a quality/mean arbiter.
 /// The output tiles carry the dirty flag (`set` marks dirty), so the node flushes
 /// only what changed. A cell value of 0 is "no data" (un-touched).
 class MosaicAccumulator
@@ -56,6 +60,11 @@ public:
   MosaicAccumulator(gggs::Level level, SplatPolicy policy);
 
   /// @brief Fold one sample @p value into @p cell (ignored if @p cell is invalid).
+  ///
+  /// For `Newest`, a `value == 0` sample is treated as no-data and does NOT
+  /// overwrite existing coverage; real returns (guaranteed ≥ 1 by the
+  /// normalizer's `clamp(scaled, 1.0, 65535.0)` floor) always overwrite. The
+  /// zero-guard keeps a dropout from punching holes in already-painted tiles.
   void add(const gggs::CellIndex & cell, std::uint16_t value);
 
   /// @brief The live mosaic tiles (mutable so `saveTiles` can clear dirty flags).
