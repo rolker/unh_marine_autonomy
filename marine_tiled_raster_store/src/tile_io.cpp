@@ -61,6 +61,11 @@ template<>
 GDALDataType gdalType<double>() {return GDT_Float64;}
 template<>
 GDALDataType gdalType<std::uint16_t>() {return GDT_UInt16;}
+// GDT_Int64 requires GDAL >= 3.5; the workspace targets GDAL >= 3.8 (ROS 2
+// jazzy / rolling, 3.8.4 locally). Used by the bathy timestamp tile (#178):
+// int64 nanoseconds-since-epoch is ROS-native and exact, unlike Float64 seconds.
+template<>
+GDALDataType gdalType<std::int64_t>() {return GDT_Int64;}
 
 /// Copy a band between GGGS cell order (row 0 = south) and north-up raster order
 /// (row 0 = north) — the two differ only by a vertical row flip. Works in both
@@ -90,6 +95,17 @@ std::string tileFilename(const gggs::GridIndex & grid)
 {
   return std::to_string(static_cast<int>(grid.level())) + "_" +
          std::to_string(grid.row()) + "_" + std::to_string(grid.column()) + ".tif";
+}
+
+int tileRasterCount(const std::string & path)
+{
+  GDALAllRegister();
+  DatasetCloser in;
+  in.ds = GDALDataset::FromHandle(GDALOpen(path.c_str(), GA_ReadOnly));
+  if (in.ds == nullptr) {
+    throw std::runtime_error("tileRasterCount: could not open " + path);
+  }
+  return in.ds->GetRasterCount();
 }
 
 template<typename T>
@@ -301,10 +317,15 @@ template void saveTile<double>(
 template void saveTile<std::uint16_t>(
   const TiledRasterTile<std::uint16_t> &, const std::string &,
   const std::vector<std::optional<std::uint16_t>> &);
+template void saveTile<std::int64_t>(
+  const TiledRasterTile<std::int64_t> &, const std::string &,
+  const std::vector<std::optional<std::int64_t>> &);
 
 template TiledRasterTile<double> loadTile<double>(
   const std::string &, const gggs::Level &, std::size_t);
 template TiledRasterTile<std::uint16_t> loadTile<std::uint16_t>(
+  const std::string &, const gggs::Level &, std::size_t);
+template TiledRasterTile<std::int64_t> loadTile<std::int64_t>(
   const std::string &, const gggs::Level &, std::size_t);
 
 template std::size_t saveTiles<double>(
@@ -313,12 +334,18 @@ template std::size_t saveTiles<double>(
 template std::size_t saveTiles<std::uint16_t>(
   std::map<gggs::GridIndex, TiledRasterTile<std::uint16_t>> &, const std::string &,
   const std::vector<std::optional<std::uint16_t>> &);
+template std::size_t saveTiles<std::int64_t>(
+  std::map<gggs::GridIndex, TiledRasterTile<std::int64_t>> &, const std::string &,
+  const std::vector<std::optional<std::int64_t>> &);
 
 template std::size_t loadTiles<double>(
   std::map<gggs::GridIndex, TiledRasterTile<double>> &, const std::string &,
   const gggs::Level &, std::size_t);
 template std::size_t loadTiles<std::uint16_t>(
   std::map<gggs::GridIndex, TiledRasterTile<std::uint16_t>> &, const std::string &,
+  const gggs::Level &, std::size_t);
+template std::size_t loadTiles<std::int64_t>(
+  std::map<gggs::GridIndex, TiledRasterTile<std::int64_t>> &, const std::string &,
   const gggs::Level &, std::size_t);
 
 }  // namespace marine_tiled_raster_store

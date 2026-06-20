@@ -60,23 +60,32 @@ inline constexpr std::size_t source_layer_count = source_layers_by_priority.size
 
 /// @brief Per-cell bathymetric record.
 ///
-/// All fields are `double`. Depth/uncertainty don't need the range, but the
-/// **timestamp does**: an absolute Unix-seconds timestamp (~1.8e9 in 2026) in
-/// `float` resolves to ~128 s granularity, which would silently coarsen the
-/// staleness information the costmap will eventually rely on (ADR-0002 §D7).
-/// Keeping the whole record `double` (and persisting as a `Float64` GeoTIFF)
-/// avoids that trap without per-tile epoch bookkeeping. The cost is denser
-/// tiles (≈22 MB per fully-allocated 960×960 tile); see `BathymetryTile`.
+/// `depth` and `uncertainty` are `double` (a 2-band `Float64` value tile); the
+/// **timestamp is `int64_t` nanoseconds since the Unix epoch** (ROS-native:
+/// `rclcpp::Time` is int64 ns), persisted as a separate 1-band `Int64` tile so
+/// it keeps nanosecond exactness (a `Float64` seconds band resolved absolute
+/// 2026 stamps to only ~0.4 µs). The `source_index` is a small interning handle
+/// into the store-wide `registry.json` (ADR-0005 D2/D8): which platform/sensor
+/// contributed this cell. 0 = no-data/unset (ADR-0005 D4 sentinel) and is the
+/// default for pre-existing single-platform data. The on-disk layout is three
+/// tiles per grid — value (`<grid>.tif`), time (`<grid>_time.tif`), and source
+/// (`<grid>_source.tif`); see `BathymetryTile` and `tile_io`.
 struct BathyCell
 {
   /// Ellipsoidal height (WGS84), metres. NaN = no data.
   double depth = std::numeric_limits<double>::quiet_NaN();
   /// 1-sigma vertical uncertainty, metres. NaN = unknown.
   double uncertainty = std::numeric_limits<double>::quiet_NaN();
-  /// Acquisition / import time, seconds since the Unix epoch. 0 = unset.
-  double timestamp = 0.0;
+  /// Acquisition / import time, nanoseconds since the Unix epoch. 0 = unset.
+  int64_t timestamp = 0;
+  /// Local source index into the store-wide registry. 0 = no-data/unset.
+  uint16_t source_index = 0;
 
   /// @brief True if this cell carries a usable depth (depth is not NaN).
+  ///
+  /// Data presence is **depth-only**: `source_index` is provenance, not a
+  /// data-presence signal, so a cell with a registered source but NaN depth is
+  /// still no-data.
   bool hasData() const noexcept
   {
     return !std::isnan(depth);

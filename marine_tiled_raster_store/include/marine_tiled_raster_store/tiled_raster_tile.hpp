@@ -48,8 +48,8 @@ namespace marine_tiled_raster_store
 /// store can persist only what changed (incremental save).
 ///
 /// @tparam T Per-cell element type. `tile_io` supports the explicitly
-///   instantiated types (`double`, `std::uint16_t`); other types compile here
-///   but have no persistence backing.
+///   instantiated types (`double`, `std::uint16_t`, `std::int64_t`); other types
+///   compile here but have no persistence backing.
 template<typename T>
 class TiledRasterTile
 {

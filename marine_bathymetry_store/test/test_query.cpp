@@ -41,8 +41,8 @@ TEST(Query, BestSourcePrefersHigherPriorityLayer)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Draft, cell, BathyCell{-12.0, 2.0, 2.0});
-  store.set(SourceLayer::Processed, cell, BathyCell{-10.0, 0.1, 1.0});
+  store.set(SourceLayer::Draft, cell, BathyCell{-12.0, 2.0, 2LL});
+  store.set(SourceLayer::Processed, cell, BathyCell{-10.0, 0.1, 1LL});
 
   const auto best = bestSource(store, cell);
   ASSERT_TRUE(best.has_value());
@@ -54,7 +54,7 @@ TEST(Query, BestSourceFallsBackToLowerPriority)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Draft, cell, BathyCell{-12.0, 2.0, 2.0});
+  store.set(SourceLayer::Draft, cell, BathyCell{-12.0, 2.0, 2LL});
 
   const auto best = bestSource(store, cell);
   ASSERT_TRUE(best.has_value());
@@ -77,8 +77,8 @@ TEST(Query, ShallowestReliablePicksGreatestHeight)
   // depth is ellipsoidal height (up-positive): shallower == greater value.
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Processed, cell, BathyCell{-30.0, 0.1, 1.0});  // deeper
-  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, 0.2, 2.0});      // shallower
+  store.set(SourceLayer::Processed, cell, BathyCell{-30.0, 0.1, 1LL});  // deeper
+  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, 0.2, 2LL});      // shallower
 
   const auto result = shallowestReliable(store, cell, 1.0);
   ASSERT_TRUE(result.has_value());
@@ -90,8 +90,8 @@ TEST(Query, ShallowestReliableExcludesOverUncertain)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Processed, cell, BathyCell{-30.0, 0.1, 1.0});  // reliable, deeper
-  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, 5.0, 2.0});      // shallower, too uncertain
+  store.set(SourceLayer::Processed, cell, BathyCell{-30.0, 0.1, 1LL});  // reliable, deeper
+  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, 5.0, 2LL});      // shallower, too uncertain
 
   const auto result = shallowestReliable(store, cell, 1.0);
   ASSERT_TRUE(result.has_value());
@@ -103,7 +103,7 @@ TEST(Query, ShallowestReliableTreatsNaNUncertaintyAsUnreliable)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, std::nan(""), 2.0});
+  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, std::nan(""), 2LL});
   EXPECT_FALSE(shallowestReliable(store, cell, 1.0).has_value());
 }
 
@@ -111,7 +111,7 @@ TEST(Query, ForEachRegionVisitsCoveredCells)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Draft, cell, BathyCell{-20.0, 0.5, 1.0});
+  store.set(SourceLayer::Draft, cell, BathyCell{-20.0, 0.5, 1LL});
 
   std::size_t visited = 0;
   std::size_t with_data = 0;
@@ -136,9 +136,9 @@ TEST(Query, BestSourceFallsThroughToChartPrior)
   const auto unsurveyed = store.cellIndex(43.0, -70.5);
   const auto surveyed = store.cellIndex(43.0, -70.4);
 
-  store.set(SourceLayer::Chart, unsurveyed, BathyCell{38.0, 3.0, 1.0});
-  store.set(SourceLayer::Chart, surveyed, BathyCell{38.0, 3.0, 1.0});
-  store.set(SourceLayer::Draft, surveyed, BathyCell{40.0, 0.5, 2.0});
+  store.set(SourceLayer::Chart, unsurveyed, BathyCell{38.0, 3.0, 1LL});
+  store.set(SourceLayer::Chart, surveyed, BathyCell{38.0, 3.0, 1LL});
+  store.set(SourceLayer::Draft, surveyed, BathyCell{40.0, 0.5, 2LL});
 
   // Unsurveyed cell falls through to the chart prior.
   const auto a = bestSource(store, unsurveyed);
@@ -153,6 +153,36 @@ TEST(Query, BestSourceFallsThroughToChartPrior)
   EXPECT_DOUBLE_EQ(b->depth, 40.0);
 }
 
+TEST(Query, ShallowestReliableUnaffectedBySourceIndex)
+{
+  // ADR-0005 D5 safety carve-out: the navigation-safety query ignores the
+  // source-index / registry priority axis entirely. Two cells in the same layer
+  // with DIFFERENT source indices must produce exactly the same shallowest-
+  // reliable result as if source_index were unset — selection is by depth +
+  // uncertainty only, never by which platform/sensor contributed the cell.
+  BathymetryStore store(5);
+  const auto cell = store.cellIndex(43.0, -70.5);
+
+  // Deeper cell from a "high" source index; shallower from a "low" one. If the
+  // query ever consulted source_index, the answer could flip — it must not.
+  store.set(SourceLayer::Processed, cell, BathyCell{-30.0, 0.1, 1LL, 9000u});  // deeper
+  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, 0.2, 2LL, 1u});         // shallower
+
+  const auto result = shallowestReliable(store, cell, 1.0);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_DOUBLE_EQ(result->depth, -25.0);          // shallowest, regardless of source
+  EXPECT_EQ(result->source, SourceLayer::Draft);
+
+  // Same geometry with source indices swapped -> identical result.
+  BathymetryStore swapped(5);
+  swapped.set(SourceLayer::Processed, cell, BathyCell{-30.0, 0.1, 1LL, 1u});
+  swapped.set(SourceLayer::Draft, cell, BathyCell{-25.0, 0.2, 2LL, 9000u});
+  const auto result2 = shallowestReliable(swapped, cell, 1.0);
+  ASSERT_TRUE(result2.has_value());
+  EXPECT_DOUBLE_EQ(result2->depth, -25.0);
+  EXPECT_EQ(result2->source, SourceLayer::Draft);
+}
+
 TEST(Query, ShallowestReliableGatesChartByUncertainty)
 {
   // The coarse Chart prior carries a fixed import uncertainty (3.0 m). It feeds
@@ -160,7 +190,7 @@ TEST(Query, ShallowestReliableGatesChartByUncertainty)
   // only when the caller's tolerance allows — both sides of the threshold.
   BathymetryStore store(5, /*chart_writable=*/true);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Chart, cell, BathyCell{38.0, 3.0, 1.0});
+  store.set(SourceLayer::Chart, cell, BathyCell{38.0, 3.0, 1LL});
 
   // Tolerance below the chart uncertainty excludes it -> cell reads as unknown.
   EXPECT_FALSE(shallowestReliable(store, cell, 2.9).has_value());
