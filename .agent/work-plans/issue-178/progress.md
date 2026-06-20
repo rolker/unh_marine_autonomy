@@ -51,3 +51,64 @@ issue: 178
 - [ ] (must-fix) Directory scan will load `_time.tif` / `_source.tif` as value tiles — `marine_bathymetry_store/tile_io.cpp`'s `load()` calls `loadTiles` (or its own iterator) over `*.tif` in each layer subdirectory. With three file types co-resident in the same subdirectory, the scanner will pick up `<grid>_time.tif` and `<grid>_source.tif` as candidate value tiles and either fail the geotransform/band-count checks or silently load the wrong data. The plan doesn't specify a filename filter to skip the auxiliary suffixes. The implementation must filter out files matching `*_time.tif` and `*_source.tif` when scanning for value tiles. Add this to the `marine_bathymetry_store/tile_io.cpp` step (step 5 / step 8) in the plan. — `plan.md:77`
 - [ ] (suggestion) Registry save on every `save()` call regardless of dirty-tile count — Step 11 says "`save()` calls `saveRegistry()` once at the end." If `save()` is called but no tiles are dirty (incremental save skips them), a newly-registered source not yet associated with any tile cell would still have its registry entry written — which is correct. However if `registerSource()` is called in a context where `save()` is never subsequently called (e.g., an error before tiles are dirtied), the registry entry is lost. Consider documenting that registry persistence is tied to the `save()` call and that callers must ensure `save()` is invoked after registration to avoid orphaned registry entries. — `plan.md:127`
 - [ ] (suggestion) `markDirty()` language in step 7 says "both" but there are now three rasters — Step 2 correctly says "update `dirty()`/`clearDirty()`/`markDirty()` to operate on both [value + time rasters]"; step 7 adds the source raster but doesn't revisit the dirty semantics to say "all three." The implementation will need all three rasters' dirty flags coordinated; the plan text should say "all three" to avoid an implementor reading step 2 and step 7 independently missing the source raster in the dirty path. — `plan.md:57`
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-20 +00:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**Branch**: feature/issue-178 (6 commits on top of the plan-authored state)
+
+### What changed
+Step 0 — folded all five review-plan findings into `plan.md` (committed `debf9e6`):
+must-fix 1 (query.hpp DepthSample::timestamp int64), must-fix 2 (explicit
+nlohmann_json), must-fix 3 (directory-scan suffix filter), suggestion 4 (registry
+persistence tied to save()), suggestion 5 ("all three rasters" dirty wording).
+
+Part 1 — time → Int64 ns tile:
+- `marine_tiled_raster_store/src/tile_io.cpp`: `gdalType<int64_t>()` → `GDT_Int64`
+  + explicit instantiations for all four templates; doc/header notes updated;
+  new int64 single-band round-trip test (`edee0c6`).
+- `BathyCell::timestamp` double seconds → `int64_t` ns; `BathymetryTile` split
+  into value (2-band Float64) + time (1-band Int64) + source (1-band UInt16)
+  rasters, value raster's dirty flag authoritative; `DepthSample::timestamp` →
+  int64 ns (`481b3af`).
+
+Part 2 — source-index band + registry:
+- `BathyCell::source_index` (uint16, 0=unset); third `_source.tif` UInt16 tile;
+  `load()` skips `_time`/`_source` companions when scanning value tiles and fills
+  missing companions with 0 (pre-migration back-compat); `save()`/`load()` persist
+  the store-wide registry (`481b3af`).
+- New `SourceRegistry` (`registry.hpp`/`registry.cpp`): ADR-0005 D3 core schema +
+  bathy `datum`; intern to uint16; `registry.json` atomic write-then-rename;
+  index 0 reserved; idempotent on source_id; nlohmann_json declared explicitly
+  (`404ffb0`, wired in `481b3af`).
+
+Part 3 — ADR-0002 amendment (`7d35ef4`): amendment-pointer header (cross-ref
+ADR-0005 D2/D8 + ADR-0006); D5 rewritten to three tiles + quality vs provenance
+axes; D3 provenance-axis note + D5 carve-out pointer; D6 hash covers all three
+files. (ADR filenames verified: 0005-multi-platform-provenance-registry.md,
+0006-multi-platform-backscatter-store.md.)
+
+Tests (`fb9d19c`): all timestamps → int64 ns; added RoundTripPreservesSourceIndex,
+MissingTimeTileLoadsAsZero, MissingSourceTileLoadsAsZero, RegistryAtomicWrite,
+RegisterSourceIsIdempotent, SaveWritesRegistryWhenProvided, and the mandatory
+ShallowestReliableUnaffectedBySourceIndex (ADR-0005 D5 carve-out regression).
+
+### Build / test result
+Clean build of both packages. gtest XML (the source of truth):
+- marine_tiled_raster_store/test_tile_io: 6/6 pass
+- marine_bathymetry_store/test_store: 12/12 pass
+- marine_bathymetry_store/test_query: 10/10 pass
+- marine_bathymetry_store/test_tile_io: 13/13 pass
+Total 41/41 gtests pass. cpplint, cppcheck, copyright, lint_cmake, xmllint all
+clean. The only colcon-test failures are uncrustify (local 0.78.1 drift vs CI,
+a known environment issue — not real correctness; gtest is green).
+
+### Left / follow-ups (out of scope, flagged in plan)
+- #164 costmap reader: depth is still band-1 of the value tile (unchanged), but
+  a post-merge band-assumption check is warranted.
+- #175 CAMP layer: band-layout check post-merge (display unaffected — depth
+  stays band-1).
+- No persisted tiles existed on disk at branch time (verified), so no data
+  migration was required.
