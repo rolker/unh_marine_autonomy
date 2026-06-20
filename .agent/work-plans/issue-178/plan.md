@@ -85,6 +85,16 @@ Rationale:
    path, logged as a warning). Update `kBathyBandCount` → remove and replace with
    `kValueBandCount = 2` and `kTimeBandCount = 1`.
 
+   **Must-fix 3 (directory scan filter):** the `load()` directory scan globs
+   `*.tif` in each layer subdirectory. With three file types co-resident
+   (`<grid>.tif`, `<grid>_time.tif`, `<grid>_source.tif`), the scanner must
+   **skip the auxiliary suffixes** so it only treats the base value tile as a
+   candidate. Implement a filename-suffix filter: when iterating, skip any file
+   whose stem ends in `_time` or `_source` (i.e. names ending in `_time.tif` /
+   `_source.tif`); only the base `<level>_<row>_<col>.tif` is loaded as the value
+   tile, and the matching `_time.tif` / `_source.tif` are loaded by deriving their
+   paths from the value tile's name.
+
 ### Part 2 — Per-cell source-index band + `registry.json` sidecar
 
 6. **`bathy_cell.hpp`** — Add `uint16_t source_index = 0` to `BathyCell` (0 =
@@ -94,7 +104,11 @@ Rationale:
 7. **`bathymetry_tile.hpp`** — Add a third underlying raster:
    - `source_raster_` (`TiledRasterTile<uint16_t>`, 1 band: source index)
    Update `set()` / `get()` to read/write `source_index`. Add `sourceBand()`
-   accessors returning `std::vector<uint16_t>&`.
+   accessors returning `std::vector<uint16_t>&`. **Suggestion 5:** the dirty
+   coordination now spans **all three rasters** (value + time + source) — a single
+   tile-level dirty flag covers them (the value raster's flag is authoritative;
+   `set()` marks it, `clearDirty()`/`markDirty()` operate through it), so all
+   three are written/cleared together on `save()`.
 
 8. **`marine_bathymetry_store/tile_io.cpp`** — Add a third file per tile per layer:
    - `<level>_<row>_<col>_source.tif` — 1-band `UInt16` (source index); no-data
@@ -116,6 +130,13 @@ Rationale:
      `registry.json`. No partial-write corruption.
    - `void loadRegistry(const std::string & store_root_dir)` — load from
      `registry.json` if present; no-op if absent (fresh store).
+
+   **Suggestion 4 (registry call contract):** a source registered via
+   `registerSource()` lives only in memory until `save()` (which invokes
+   `saveRegistry()`) runs. Document on `registerSource()` that callers must call
+   `save()` (or `saveRegistry()`) to persist the entry; a registration with no
+   subsequent `save()` is lost. This is intentional — registry persistence is
+   tied to the store's `save()` lifecycle.
 
 10. **`marine_bathymetry_store/src/registry.cpp`** — Implement `SourceRegistry`.
     Use `nlohmann/json.hpp` (already a ROS 2 jazzy dependency). Index 0 is reserved
@@ -181,9 +202,13 @@ Rationale:
 | `marine_bathymetry_store/include/marine_bathymetry_store/bathymetry_tile.hpp` | Split into value raster (2-band Float64) + time raster (1-band Int64) + source raster (1-band UInt16) |
 | `marine_bathymetry_store/include/marine_bathymetry_store/tile_io.hpp` | Update doc comment; add registry save/load declarations |
 | `marine_bathymetry_store/src/tile_io.cpp` | Rewrite to 3-file per tile; add registry save/load delegation; add missing-file fallback paths |
+| `marine_bathymetry_store/include/marine_bathymetry_store/query.hpp` | **Must-fix 1:** `DepthSample::timestamp` `double` (Unix s) → `int64_t` (ns) to match the internal store and the costmap (#164) boundary |
 | `marine_bathymetry_store/include/marine_bathymetry_store/registry.hpp` | New: `SourceRegistry` with `SourceRecord`, intern, lookup, atomic save/load |
 | `marine_bathymetry_store/src/registry.cpp` | New: implement `SourceRegistry` (nlohmann/json, atomic write-then-rename) |
+| `marine_bathymetry_store/package.xml` | **Must-fix 2:** add `<depend>nlohmann_json</depend>` (only transitive today) |
+| `marine_bathymetry_store/CMakeLists.txt` | **Must-fix 2:** `find_package(nlohmann_json REQUIRED)` + link `nlohmann_json::nlohmann_json` |
 | `marine_tiled_raster_store/src/tile_io.cpp` | Add `int64_t` explicit instantiations + `gdalType<int64_t>()` → `GDT_Int64` |
+| `marine_tiled_raster_store/test/test_tile_io.cpp` | Add an `int64_t` single-band round-trip test for the new instantiation |
 | `marine_bathymetry_store/test/test_tile_io.cpp` | Update all tests for 3-file layout; add round-trip + fallback + registry tests |
 | `marine_bathymetry_store/test/test_store.cpp` | Update timestamp values to int64_t ns; add source_index round-trip test |
 | `marine_bathymetry_store/test/test_query.cpp` | Add `ShallowestReliableUnaffectedBySourceIndex` regression test |
