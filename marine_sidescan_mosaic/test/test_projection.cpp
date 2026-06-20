@@ -107,6 +107,21 @@ std::array<double, 4> bodyEcefQuatForHeading(double lat_deg, double lon_deg, dou
   return quatFromMatrix(r_body_ecef);
 }
 
+// body->ECEF quaternion for an arbitrary body->NED rotation at (lat,lon).
+std::array<double, 4> bodyEcefQuatForBodyNed(
+  double lat_deg, double lon_deg, const Mat3 & r_body_ned)
+{
+  const double lat = lat_deg * M_PI / 180.0;
+  const double lon = lon_deg * M_PI / 180.0;
+  const double sla = std::sin(lat), cla = std::cos(lat);
+  const double slo = std::sin(lon), clo = std::cos(lon);
+  const Mat3 r_ecef_enu = {
+    -slo, clo, 0.0, -sla * clo, -sla * slo, cla, cla * clo, cla * slo, sla};
+  const Mat3 r_enu_ned = {0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, -1.0};
+  const Mat3 r_ecef_ned = matmul(r_enu_ned, r_ecef_enu);
+  return quatFromMatrix(matmul(transpose(r_ecef_ned), r_body_ned));
+}
+
 geographic_msgs::msg::GeoPoint geoPoint(double lat, double lon, double alt = 0.0)
 {
   geographic_msgs::msg::GeoPoint p;
@@ -150,6 +165,30 @@ TEST(Projection, HeadingRecoveredFromPose)
     EXPECT_NEAR(std::cos(gh.heading_rad), std::cos(h), 1e-6) << "heading " << h_deg;
     EXPECT_NEAR(std::sin(gh.heading_rad), std::sin(h), 1e-6) << "heading " << h_deg;
   }
+}
+
+TEST(Projection, BeamAzimuthDepressionFromFullAttitude)
+{
+  geodesy::ECEFPoint e;
+  geodesy::fromMsg(geoPoint(43.07, -71.42, 0.0), e);
+
+  // Frame +Z (range axis) points due East, horizontal: column 2 of body->NED is
+  // (N,E,D)=(0,1,0).  X=North, Y=Up, Z=East.
+  const Mat3 east_horizontal = {1, 0, 0, 0, 0, 1, 0, -1, 0};
+  const auto q = bodyEcefQuatForBodyNed(43.07, -71.42, east_horizontal);
+  const auto gb = msm::ecefPoseToGeoBeam(e.x, e.y, e.z, q[0], q[1], q[2], q[3]);
+  EXPECT_NEAR(gb.latitude_deg, 43.07, 1e-6);
+  EXPECT_NEAR(std::cos(gb.azimuth_rad), 0.0, 1e-6);     // azimuth = +90 deg (east)
+  EXPECT_NEAR(std::sin(gb.azimuth_rad), 1.0, 1e-6);
+  EXPECT_NEAR(gb.depression_rad, 0.0, 1e-6);
+
+  // Frame +Z points East and 30 deg down: column 2 = (0, cos30, sin30).
+  const double c = std::cos(M_PI / 6.0), s = std::sin(M_PI / 6.0);
+  const Mat3 east_down = {1, 0, 0, 0, s, c, 0, -c, s};   // X=N, Y=(0,s,-c), Z=(0,c,s)
+  const auto q2 = bodyEcefQuatForBodyNed(43.07, -71.42, east_down);
+  const auto gb2 = msm::ecefPoseToGeoBeam(e.x, e.y, e.z, q2[0], q2[1], q2[2], q2[3]);
+  EXPECT_NEAR(std::sin(gb2.azimuth_rad), 1.0, 1e-6);     // still east
+  EXPECT_NEAR(gb2.depression_rad, M_PI / 6.0, 1e-6);     // 30 deg depression
 }
 
 TEST(Projection, ProjectsEastward)

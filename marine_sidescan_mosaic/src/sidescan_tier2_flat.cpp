@@ -104,13 +104,15 @@ int main(int argc, char ** argv)
       continue;
     }
 
-    const GeoHeading gh = ecefPoseToGeoHeading(p.tx, p.ty, p.tz, p.qx, p.qy, p.qz, p.qw);
+    // Full attitude (#185 Stage 2): the per-channel frame's +Z encodes the look
+    // side (port/stbd) plus static mounting tilt and dynamic roll, so the
+    // across-track azimuth composes them — no Side / yaw-only heading needed.
+    const GeoBeam gb = ecefPoseToGeoBeam(p.tx, p.ty, p.tz, p.qx, p.qy, p.qz, p.qw);
     geographic_msgs::msg::GeoPoint origin;
-    origin.latitude = gh.latitude_deg;
-    origin.longitude = gh.longitude_deg;
+    origin.latitude = gb.latitude_deg;
+    origin.longitude = gb.longitude_deg;
     origin.altitude = 0.0;   // projectSample precondition.
-    const Side side = (p.channel == Tier1Channel::Port) ? Side::Port : Side::Starboard;
-    const double azimuth = acrossTrackAzimuth(gh.heading_rad, side);
+    const double azimuth = gb.azimuth_rad;
 
     for (std::size_t j = 0; j < p.samples.size(); ++j) {
       const double slant = slantRange(static_cast<int>(j), p.sample0, p.sound_speed, p.sample_rate);

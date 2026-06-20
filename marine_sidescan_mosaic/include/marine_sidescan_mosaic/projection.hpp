@@ -66,6 +66,30 @@ GeoHeading ecefPoseToGeoHeading(
   double tx, double ty, double tz,
   double qx, double qy, double qz, double qw);
 
+/// @brief Geographic origin + **full-attitude** beam direction from an
+///   `earth`(ECEF)→sensor pose.
+struct GeoBeam
+{
+  double latitude_deg = 0.0;
+  double longitude_deg = 0.0;
+  double altitude_m = 0.0;       ///< Ellipsoidal height of the sensor origin (m).
+  double azimuth_rad = 0.0;      ///< Across-track azimuth: the horizontal projection of
+                                 ///<   the sensor's +Z (range) axis, clockwise from north.
+                                 ///<   Side, mounting tilt, and dynamic roll all compose in.
+  double depression_rad = 0.0;   ///< +Z axis depression below horizontal (>0 = down);
+                                 ///<   the beam grazing seed for radiometry (#185).
+};
+
+/// @brief Full-attitude counterpart to @ref ecefPoseToGeoHeading: returns the
+///   geographic origin plus the **beam (+Z range axis)** azimuth and depression,
+///   so static mounting tilt and dynamic roll compose — unlike the yaw-only
+///   heading. The per-channel frame's +Z already encodes the look side, so no
+///   @ref Side is needed. Across-track placement on a flat bottom still uses
+///   `groundRange(slant, altitude)` at this azimuth.
+GeoBeam ecefPoseToGeoBeam(
+  double tx, double ty, double tz,
+  double qx, double qy, double qz, double qw);
+
 /// @brief Slant range (m) to delivered sample @p j (0-based), from the near-field
 ///   gate @p sample0, sound speed (m/s) and `RawSonarImage` `sample_rate` (Hz).
 inline double slantRange(int j, int sample0, double sound_speed, double sample_rate)
