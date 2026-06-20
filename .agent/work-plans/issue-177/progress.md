@@ -18,3 +18,15 @@ issue: 177
 - [ ] Add `newest` to the `splat` parameter row in `marine_sidescan_mosaic/README.md`.
 - [ ] Make the splat-param parse a 3-way branch (`mean` / `max_hold` / `newest`) and add a WARN log for unrecognised values.
 - [ ] Include a note in the PR description calling out the default change (`mean` → `newest`) so operators know to set `splat: mean` explicitly if they relied on the old default.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-20 00:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet 4.6)
+
+**Plan**: `.agent/work-plans/issue-177/plan.md` at `e744fd8`
+**Branch**: feature/issue-177 at `e744fd8`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
