@@ -35,12 +35,15 @@ max_hold` deployments continue to work unchanged.
    } else if (policy_ == SplatPolicy::Newest) {
      // value==0 is the no-data sentinel; real returns are floored to >=1
      // by RollingNormalizer, so skip zero to avoid punching holes in coverage.
-     if (value != 0) {
+     if (value != 0 && value != tile.get(row, col, 0)) {
        tile.set(row, col, 0, value);
      }
    }
    ```
    No extra side-state is needed (no sum/count like `Mean`, no held max like `MaxHold`).
+   The `value != tile.get(...)` guard mirrors the existing `Mean`/`MaxHold` "only
+   write-and-dirty when the cell actually changes" optimization, so a dwell over
+   stable ground doesn't re-flush an unchanged tile every cycle.
 
 3. **Update `mosaic_node.cpp`**:
    - Change the `splat` default in `declare_parameter` from `"mean"` to `"newest"`.

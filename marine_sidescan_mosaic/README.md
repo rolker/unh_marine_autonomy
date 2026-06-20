@@ -23,7 +23,7 @@ and the dirty-region distribution topic (P4) are separate sub-issues.
    azimuth → GGGS `CellIndex` (grid resolved per sample, no edge clamp).
 4. **Normalize** — rolling AGC (`RollingNormalizer`) maps sample magnitudes to
    `uint16` so the mosaic stays legible (live stand-in for PINGMapper's EGN).
-5. **Splat** — `MosaicAccumulator` folds into tiles (`mean` default / `max_hold`).
+5. **Splat** — `MosaicAccumulator` folds into tiles (`newest` default / `mean` / `max_hold`).
 6. **Flush** — dirty tiles → GeoTIFF on a timer (`saveTiles`).
 
 ## Key parameters
@@ -32,7 +32,7 @@ and the dirty-region distribution topic (P4) are separate sub-issues.
 |---|---|---|
 | `gggs_level` | `13` | GGGS level (13 ≈ 0.11 m cells) |
 | `output_dir` | `sidescan_mosaic` | Where the `<level>_<row>_<col>.tif` tiles are written |
-| `splat` | `mean` | Per-cell combine: `mean` (despeckle) or `max_hold` (target-cue) |
+| `splat` | `newest` | Per-cell combine: `newest` (recency — live operator view, default) / `mean` (despeckle) / `max_hold` (target-cue) |
 | `no_nadir_policy` | `drop` | On a stale/missing nadir: `drop` the ping or `assume_zero` |
 | `nadir_staleness_s` | `5.0` | How long a held nadir altitude stays valid |
 | `across_track_offset_deg` | `90` | Across-track azimuth offset from heading (see frame note) |
@@ -55,7 +55,9 @@ the sign. If a platform's URDF orients the sensor frame differently, set
   unbounded. The node logs a throttled warning past `grid_warn_count` grids;
   offload-after-flush eviction is a P3/P4 concern (ties to the Phase-6 sync).
 - **No-data = 0.** Untouched cells are 0 (transparent); real returns are floored
-  to ≥1, so "covered-but-dark" stays distinct from "never surveyed".
+  to ≥1, so "covered-but-dark" stays distinct from "never surveyed". The `newest`
+  policy honors this: a `0` sample is treated as a dropout and never overwrites
+  existing coverage, so a stray null ping can't punch a hole in a painted tile.
 - **Single-beam only.** Multi-beam `RawSonarImage` pings are dropped (warned); the
   GCV is single-beam.
 

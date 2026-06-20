@@ -125,9 +125,17 @@ public:
     max_tf_age_s_ = declare_parameter<double>("max_tf_age_s", 1.0);
     grid_warn_count_ = declare_parameter<int>("grid_warn_count", 256);
     const double flush_period_s = declare_parameter<double>("flush_period_s", 2.0);
-    const std::string splat = declare_parameter<std::string>("splat", "mean");
-    accumulator_ = MosaicAccumulator(
-      level_, splat == "max_hold" ? SplatPolicy::MaxHold : SplatPolicy::Mean);
+    const std::string splat = declare_parameter<std::string>("splat", "newest");
+    SplatPolicy sp = SplatPolicy::Newest;  // operator `draft`-layer default
+    if (splat == "mean") {
+      sp = SplatPolicy::Mean;
+    } else if (splat == "max_hold") {
+      sp = SplatPolicy::MaxHold;
+    } else if (splat != "newest") {
+      RCLCPP_WARN(
+        get_logger(), "Unknown splat value '%s'; defaulting to 'newest'", splat.c_str());
+    }
+    accumulator_ = MosaicAccumulator(level_, sp);
     // One config (declares the norm_* params once) feeds both per-side
     // normalizers — declaring them twice would throw ParameterAlreadyDeclared.
     const NormalizerConfig ncfg = makeNormalizerConfig();

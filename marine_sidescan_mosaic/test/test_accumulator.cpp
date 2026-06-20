@@ -75,6 +75,27 @@ TEST(Accumulator, MaxHold)
   EXPECT_EQ(valueAt(acc, cell), 30);          // brightest wins, order-independent
 }
 
+// Newest-valid-wins: the strictly-last real return wins, not the brightest.
+TEST(Accumulator, NewestReplaces)
+{
+  msm::MosaicAccumulator acc(kLevel, msm::SplatPolicy::Newest);
+  const auto cell = cellAt(1, 1);
+  acc.add(cell, 10);
+  acc.add(cell, 30);
+  acc.add(cell, 20);
+  EXPECT_EQ(valueAt(acc, cell), 20);          // last write wins (cf. MaxHold -> 30)
+}
+
+// A zero (no-data/dropout) sample must NOT overwrite existing coverage.
+TEST(Accumulator, NewestSkipsZero)
+{
+  msm::MosaicAccumulator acc(kLevel, msm::SplatPolicy::Newest);
+  const auto cell = cellAt(2, 2);
+  acc.add(cell, 42);
+  acc.add(cell, 0);                           // dropout: must be ignored
+  EXPECT_EQ(valueAt(acc, cell), 42);          // original coverage preserved
+}
+
 TEST(Accumulator, IndependentCellsAndGrids)
 {
   msm::MosaicAccumulator acc(kLevel, msm::SplatPolicy::Mean);
