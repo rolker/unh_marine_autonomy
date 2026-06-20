@@ -43,3 +43,18 @@ issue: 177
 ### Findings
 - [ ] (suggestion) Plan cites `normalizer.cpp:75` for the clamp; the `std::clamp(scaled, 1.0, 65535.0)` floor is actually at line 74 (line 75 is the `static_cast`). Predicate is correct; the line ref is off by one. — `plan.md:18,30,89`
 - [ ] (suggestion) Live-node log line (`mosaic_node.cpp:182`, `splat=%s`) already echoes the active splat string, so the `mean`→`newest` default change is observable in node startup logs — worth keeping when implementing. — `plan.md:53`
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-20 09:30 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: approved
+
+**Branch**: feature/issue-177 at `97595c8`
+**Mode**: pre-push
+**Depth**: Light (reason: ~30 LOC across 4 code files, no governance/cross-layer triggers)
+**Must-fix**: 0 | **Suggestions**: 2
+
+### Findings
+- [ ] (suggestion) No test asserts the dirty flag under `Newest`; specifically that a `value==0` sample on a never-touched cell does NOT spuriously dirty/flush the tile — pins the README "stray null ping can't punch a hole" guarantee. — `test/test_accumulator.cpp:78-97`
+- [ ] (suggestion) `NewestSkipsZero` covers zero-after-coverage but not zero-on-untouched-cell; one test (`add(cell,0)` first, assert value 0 and tile not dirty) closes both this and the prior gap. — `test/test_accumulator.cpp:90-97`
