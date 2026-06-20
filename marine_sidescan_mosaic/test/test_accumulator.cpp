@@ -96,6 +96,18 @@ TEST(Accumulator, NewestSkipsZero)
   EXPECT_EQ(valueAt(acc, cell), 42);          // original coverage preserved
 }
 
+// A zero sample on a never-touched cell neither writes nor dirties the tile:
+// a stray null ping must not "punch a hole" or trigger a spurious flush.
+TEST(Accumulator, NewestZeroOnUntouchedDoesNotDirty)
+{
+  msm::MosaicAccumulator acc(kLevel, msm::SplatPolicy::Newest);
+  const auto cell = cellAt(6, 6);
+  acc.add(cell, 0);                           // no-data on a fresh accumulator
+  ASSERT_EQ(acc.tiles().count(cell.grid()), 1u);  // tile materializes...
+  EXPECT_EQ(valueAt(acc, cell), 0);               // ...but cell stays no-data
+  EXPECT_FALSE(acc.tiles().at(cell.grid()).dirty());  // and no spurious flush
+}
+
 TEST(Accumulator, IndependentCellsAndGrids)
 {
   msm::MosaicAccumulator acc(kLevel, msm::SplatPolicy::Mean);
