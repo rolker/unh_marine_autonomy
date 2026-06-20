@@ -32,11 +32,10 @@
 /// for the prototype; the shared per-ping engine extraction (ADR-0006 D12) is a
 /// follow-up after #177 (PR #181) merges, to avoid touching the node in parallel.
 
-#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -85,6 +84,28 @@ std::string argValue(int argc, char ** argv, const std::string & flag, const std
   }
   return dflt;
 }
+
+// Parse a numeric arg, exiting with a usage error rather than std::terminate on
+// bad/empty/out-of-range input.
+double toDouble(const std::string & s, const std::string & flag)
+{
+  try {
+    return std::stod(s);
+  } catch (const std::exception &) {
+    std::cerr << "error: expected a number for " << flag << ", got '" << s << "'\n";
+    std::exit(2);
+  }
+}
+
+int toInt(const std::string & s, const std::string & flag)
+{
+  try {
+    return std::stoi(s);
+  } catch (const std::exception &) {
+    std::cerr << "error: expected an integer for " << flag << ", got '" << s << "'\n";
+    std::exit(2);
+  }
+}
 }  // namespace
 
 int main(int argc, char ** argv)
@@ -105,9 +126,9 @@ int main(int argc, char ** argv)
     argValue(argc, argv, "--stbd-topic", base + "sonar_image_starboard");
   const std::string nadir_topic = argValue(argc, argv, "--nadir-topic", base + "nadir_depth");
   const std::string earth_frame = argValue(argc, argv, "--earth-frame", "earth");
-  const double sound_speed_fallback = std::stod(argValue(argc, argv, "--sound-speed", "1500.0"));
-  const double nadir_staleness_s = std::stod(argValue(argc, argv, "--nadir-staleness", "5.0"));
-  const int expected_bins = std::stoi(argValue(argc, argv, "--bins", "2048"));
+  const double sound_speed_fallback = toDouble(argValue(argc, argv, "--sound-speed", "1500.0"), "--sound-speed");
+  const double nadir_staleness_s = toDouble(argValue(argc, argv, "--nadir-staleness", "5.0"), "--nadir-staleness");
+  const int expected_bins = toInt(argValue(argc, argv, "--bins", "2048"), "--bins");
 
   // Pass 1 — fill the TF buffer from /tf + /tf_static.
   tf2::BufferCore tf_buffer(tf2::durationFromSec(36000.0));
@@ -215,6 +236,12 @@ int main(int argc, char ** argv)
     ++n_written;
   }
 
+  out.flush();
+  if (!out.good()) {
+    std::cerr << "error: write/flush failed (disk full?); " << out_path
+              << " may be truncated\n";
+    return 1;
+  }
   std::cerr << "pass 2: wrote " << n_written << " Tier-1 pings to " << out_path
             << " (dropped: no-tf=" << n_no_tf << " no-rate=" << n_no_rate
             << " bad-bins=" << n_bad_bins << ")\n";

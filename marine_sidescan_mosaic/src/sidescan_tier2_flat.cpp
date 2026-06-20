@@ -35,6 +35,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -61,6 +62,16 @@ std::string argValue(int argc, char ** argv, const std::string & flag, const std
   }
   return dflt;
 }
+
+int toInt(const std::string & s, const std::string & flag)
+{
+  try {
+    return std::stoi(s);
+  } catch (const std::exception &) {
+    std::cerr << "error: expected an integer for " << flag << ", got '" << s << "'\n";
+    std::exit(2);
+  }
+}
 }  // namespace
 
 int main(int argc, char ** argv)
@@ -73,7 +84,7 @@ int main(int argc, char ** argv)
   }
   const std::string tier1_path = argv[1];
   const std::string out_dir = argv[2];
-  const int level_n = std::stoi(argValue(argc, argv, "--level", "13"));
+  const int level_n = toInt(argValue(argc, argv, "--level", "13"), "--level");
   const std::string no_nadir = argValue(argc, argv, "--no-nadir-policy", "drop");
 
   std::ifstream in(tier1_path, std::ios::binary);
@@ -90,7 +101,7 @@ int main(int argc, char ** argv)
   MosaicAccumulator acc(level, SplatPolicy::Mean);
 
   Tier1Ping p;
-  std::size_t n_in = 0, n_proj = 0, n_no_nadir = 0, n_placed = 0;
+  std::size_t n_in = 0, n_proj = 0, n_no_nadir = 0, n_placed = 0, n_bad_pose = 0;
   while (readTier1Ping(in, p)) {
     ++n_in;
     if (p.sample_rate <= 0.0) {
@@ -108,6 +119,10 @@ int main(int argc, char ** argv)
     // side (port/stbd) plus static mounting tilt and dynamic roll, so the
     // across-track azimuth composes them — no Side / yaw-only heading needed.
     const GeoBeam gb = ecefPoseToGeoBeam(p.tx, p.ty, p.tz, p.qx, p.qy, p.qz, p.qw);
+    if (!gb.valid) {
+      ++n_bad_pose;   // degenerate quaternion: don't project the ping due north.
+      continue;
+    }
     geographic_msgs::msg::GeoPoint origin;
     origin.latitude = gb.latitude_deg;
     origin.longitude = gb.longitude_deg;
@@ -137,7 +152,8 @@ int main(int argc, char ** argv)
   }
 
   std::cerr << "tier2: projected " << n_proj << "/" << n_in << " pings ("
-            << n_placed << " samples placed; no-nadir dropped " << n_no_nadir
-            << "), flushed " << written << " tiles to " << out_dir << "\n";
+            << n_placed << " samples placed; dropped no-nadir=" << n_no_nadir
+            << " bad-pose=" << n_bad_pose << "), flushed " << written << " tiles to "
+            << out_dir << "\n";
   return 0;
 }

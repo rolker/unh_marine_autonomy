@@ -127,6 +127,7 @@ GeoBeam ecefPoseToGeoBeam(
   out.latitude_deg = p.lat_deg;
   out.longitude_deg = p.lon_deg;
   out.altitude_m = p.alt_m;
+  out.valid = p.valid;
   if (p.valid) {
     // +Z (range/beam) axis = column 2 of body→NED, as (N, E, D).
     const double zN = p.r_body_ned[0 * 3 + 2];

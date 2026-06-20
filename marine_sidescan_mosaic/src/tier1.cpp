@@ -30,6 +30,11 @@ namespace marine_sidescan_mosaic
 
 namespace
 {
+// Upper bound on a record's sample count, so a corrupt/truncated stream can't
+// drive an unbounded allocation (a single ping is ~2k samples; this is a DoS
+// ceiling, not a real limit).
+constexpr std::uint32_t kMaxSamplesPerPing = 1u << 20;
+
 template<typename T>
 void put(std::ostream & os, const T & v)
 {
@@ -44,6 +49,12 @@ bool get(std::istream & is, T & v)
 }
 }  // namespace
 
+// Format contract: fields are written in the writer's native byte order. All
+// current hosts are little-endian x86-64. The magic is the endianness guard — a
+// stream written on the opposite endianness reads back a byte-swapped magic that
+// fails readTier1Header, so a mismatched host rejects the file rather than reading
+// garbage doubles. (If a big-endian host is ever introduced, switch to explicit
+// LE serialization here; the per-field writes make that a localized change.)
 void writeTier1Header(std::ostream & os)
 {
   put(os, kTier1Magic);
@@ -87,33 +98,33 @@ void writeTier1Ping(std::ostream & os, const Tier1Ping & p)
 bool readTier1Ping(std::istream & is, Tier1Ping & p)
 {
   if (!get(is, p.stamp_ns)) {
-    return false;   // clean EOF on the first field.
+    return false;   // clean EOF: no bytes left at a record boundary.
   }
+  // Past the first field, any short read is a TRUNCATED record (corruption), not a
+  // clean EOF — bail without populating a half-valid ping.
   std::uint8_t channel = 0;
-  get(is, channel);
-  p.channel = static_cast<Tier1Channel>(channel);
-  get(is, p.tx);
-  get(is, p.ty);
-  get(is, p.tz);
-  get(is, p.qx);
-  get(is, p.qy);
-  get(is, p.qz);
-  get(is, p.qw);
-  get(is, p.sound_speed);
-  get(is, p.sample_rate);
-  get(is, p.sample0);
-  get(is, p.nadir_altitude_m);
-  std::uint32_t n = 0;
-  if (!get(is, n)) {
+  if (!get(is, channel) ||
+    !get(is, p.tx) || !get(is, p.ty) || !get(is, p.tz) ||
+    !get(is, p.qx) || !get(is, p.qy) || !get(is, p.qz) || !get(is, p.qw) ||
+    !get(is, p.sound_speed) || !get(is, p.sample_rate) ||
+    !get(is, p.sample0) || !get(is, p.nadir_altitude_m))
+  {
     return false;
   }
-  p.samples.resize(n);
-  if (n > 0) {
-    is.read(
-      reinterpret_cast<char *>(p.samples.data()),
-      static_cast<std::streamsize>(n * sizeof(float)));
+  p.channel = static_cast<Tier1Channel>(channel);
+  std::uint32_t n = 0;
+  if (!get(is, n) || n > kMaxSamplesPerPing) {
+    return false;   // truncated, or an implausible count from a corrupt stream.
   }
-  return static_cast<bool>(is);
+  p.samples.resize(n);
+  if (n > 0 &&
+    !is.read(
+      reinterpret_cast<char *>(p.samples.data()),
+      static_cast<std::streamsize>(n * sizeof(float))))
+  {
+    return false;   // sample block short read.
+  }
+  return true;
 }
 
 }  // namespace marine_sidescan_mosaic

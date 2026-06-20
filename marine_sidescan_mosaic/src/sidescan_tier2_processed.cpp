@@ -37,6 +37,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -65,6 +67,43 @@ std::string argValue(int argc, char ** argv, const std::string & flag, const std
   return dflt;
 }
 
+int toInt(const std::string & s, const std::string & flag)
+{
+  try {
+    return std::stoi(s);
+  } catch (const std::exception &) {
+    std::cerr << "error: expected an integer for " << flag << ", got '" << s << "'\n";
+    std::exit(2);
+  }
+}
+
+// Escape a string for embedding in a JSON value (operator-typed registry fields
+// may contain quotes/backslashes/control chars that would otherwise corrupt the
+// ADR-0005 registry and poison downstream merges).
+std::string jsonEscape(const std::string & s)
+{
+  std::string out;
+  out.reserve(s.size() + 8);
+  for (const char ch : s) {
+    switch (ch) {
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if (static_cast<unsigned char>(ch) < 0x20) {
+          char buf[8];
+          std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(ch));
+          out += buf;
+        } else {
+          out += ch;
+        }
+    }
+  }
+  return out;
+}
+
 // Mid-swath grazing-angle quality in [1, 65535]; peaks at 45 deg, ~0 at nadir/far.
 std::uint16_t gradingQuality(double altitude, double ground_range)
 {
@@ -78,15 +117,18 @@ void writeRegistry(
   const std::string & path, std::uint16_t source_id, const std::string & platform,
   const std::string & sensor, const std::string & sensor_class, const std::string & campaign)
 {
-  std::ofstream r(path);
   // ADR-0005: per-cell band is the compact LOCAL index; the registry resolves it
   // to the (eventually origin-namespaced, ADR-0005 D4) global source-id + record.
+  // TODO(#179): v1 writes a single-source registry write-once; multi-source / a
+  // reimport over the same out_dir must MERGE append-only (ADR-0005 D8), not
+  // overwrite — load existing + union before writing.
+  std::ofstream r(path);
   r << "{\n  \"version\": 1,\n  \"sources\": {\n    \"" << source_id << "\": {\n"
     << "      \"source_id\": " << source_id << ",\n"
-    << "      \"platform\": \"" << platform << "\",\n"
-    << "      \"sensor\": \"" << sensor << "\",\n"
-    << "      \"sensor_class\": \"" << sensor_class << "\",\n"
-    << "      \"campaign\": \"" << campaign << "\"\n"
+    << "      \"platform\": \"" << jsonEscape(platform) << "\",\n"
+    << "      \"sensor\": \"" << jsonEscape(sensor) << "\",\n"
+    << "      \"sensor_class\": \"" << jsonEscape(sensor_class) << "\",\n"
+    << "      \"campaign\": \"" << jsonEscape(campaign) << "\"\n"
     << "    }\n  }\n}\n";
 }
 }  // namespace
@@ -102,9 +144,20 @@ int main(int argc, char ** argv)
   }
   const std::string tier1_path = argv[1];
   const std::string out_dir = argv[2];
-  const int level_n = std::stoi(argValue(argc, argv, "--level", "13"));
+  const int level_n = toInt(argValue(argc, argv, "--level", "13"), "--level");
   const std::string no_nadir = argValue(argc, argv, "--no-nadir-policy", "drop");
-  const auto source_id = static_cast<std::uint16_t>(std::stoi(argValue(argc, argv, "--source-id", "1")));
+  const int source_id_arg = toInt(argValue(argc, argv, "--source-id", "1"), "--source-id");
+  if (source_id_arg < 1 || source_id_arg > 65535) {
+    std::cerr << "error: --source-id must be in [1, 65535] (the per-cell band is the uint16 "
+                 "local index; the wide global id lives in the registry, ADR-0005 D4)\n";
+    return 2;
+  }
+  const auto source_id = static_cast<std::uint16_t>(source_id_arg);
+  if (no_nadir == "assume_zero") {
+    std::cerr << "warning: --no-nadir-policy assume_zero collapses grazing (altitude 0 -> "
+                 "grazing 0), so quality floors and best-source degenerates to first-touch; "
+                 "prefer 'drop' for the processed layer.\n";
+  }
   const std::string platform = argValue(argc, argv, "--platform", "bizzyboat");
   const std::string sensor = argValue(argc, argv, "--sensor", "garmin-gcv20");
   const std::string sensor_class = argValue(argc, argv, "--sensor-class", "sidescan");
@@ -120,7 +173,7 @@ int main(int argc, char ** argv)
   ProcessedAccumulator acc(level);
 
   Tier1Ping p;
-  std::size_t n_in = 0, n_proj = 0, n_no_nadir = 0, n_placed = 0;
+  std::size_t n_in = 0, n_proj = 0, n_no_nadir = 0, n_placed = 0, n_bad_pose = 0;
   while (readTier1Ping(in, p)) {
     ++n_in;
     if (p.sample_rate <= 0.0) {
@@ -135,6 +188,10 @@ int main(int argc, char ** argv)
     }
 
     const GeoBeam gb = ecefPoseToGeoBeam(p.tx, p.ty, p.tz, p.qx, p.qy, p.qz, p.qw);
+    if (!gb.valid) {
+      ++n_bad_pose;   // degenerate quaternion: don't project the ping due north.
+      continue;
+    }
     geographic_msgs::msg::GeoPoint origin;
     origin.latitude = gb.latitude_deg;
     origin.longitude = gb.longitude_deg;
@@ -168,7 +225,8 @@ int main(int argc, char ** argv)
   writeRegistry(out_dir + "/registry.json", source_id, platform, sensor, sensor_class, campaign);
 
   std::cerr << "tier2-processed: projected " << n_proj << "/" << n_in << " pings ("
-            << n_placed << " samples; no-nadir dropped " << n_no_nadir << "), best-source into "
+            << n_placed << " samples; dropped no-nadir=" << n_no_nadir
+            << " bad-pose=" << n_bad_pose << "), best-source into "
             << written << " 3-band tiles + registry.json in " << out_dir << "\n";
   return 0;
 }

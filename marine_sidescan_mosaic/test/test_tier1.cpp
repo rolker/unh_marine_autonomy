@@ -21,7 +21,10 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <cstring>
 #include <sstream>
+#include <string>
 #include <vector>
 
 #include "marine_sidescan_mosaic/tier1.hpp"
@@ -77,6 +80,45 @@ TEST(Tier1, HeaderAndRecordRoundTrip)
   // A second read on an exhausted stream is a clean EOF, not a partial record.
   Tier1Ping c;
   EXPECT_FALSE(readTier1Ping(ss, c));
+}
+
+TEST(Tier1, RejectsTruncatedRecordMidField)
+{
+  // A header + the start of a record, cut off mid-field, must read as false
+  // (corruption) without populating a half-valid ping — distinct from a clean EOF
+  // at a record boundary.
+  const Tier1Ping a = makePing();
+  std::stringstream src(std::ios::in | std::ios::out | std::ios::binary);
+  writeTier1Header(src);
+  writeTier1Ping(src, a);
+  const std::string bytes = src.str();
+  // Header (8) + full stamp (8) + 4 bytes into the next field → mid-record cut.
+  std::stringstream trunc(bytes.substr(0, 20), std::ios::in | std::ios::binary);
+
+  ASSERT_TRUE(readTier1Header(trunc));
+  Tier1Ping b;
+  EXPECT_FALSE(readTier1Ping(trunc, b));
+}
+
+TEST(Tier1, RejectsBogusSampleCount)
+{
+  // Forge a record whose sample-count field is absurd; the read must reject it
+  // (the kMaxSamplesPerPing ceiling) rather than attempt a multi-GB allocation.
+  Tier1Ping a = makePing();
+  a.samples.clear();
+  std::stringstream src(std::ios::in | std::ios::out | std::ios::binary);
+  writeTier1Header(src);
+  writeTier1Ping(src, a);
+  std::string bytes = src.str();
+  // The uint32 sample-count is the last 4 bytes of an empty-samples record.
+  const std::size_t n_off = bytes.size() - 4;
+  const std::uint32_t huge = 0xFFFFFFFFu;
+  std::memcpy(&bytes[n_off], &huge, sizeof(huge));
+  std::stringstream forged(bytes, std::ios::in | std::ios::binary);
+
+  ASSERT_TRUE(readTier1Header(forged));
+  Tier1Ping b;
+  EXPECT_FALSE(readTier1Ping(forged, b));
 }
 
 TEST(Tier1, RejectsBadMagic)

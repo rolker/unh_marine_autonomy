@@ -78,6 +78,8 @@ struct GeoBeam
                                  ///<   Side, mounting tilt, and dynamic roll all compose in.
   double depression_rad = 0.0;   ///< +Z axis depression below horizontal (>0 = down);
                                  ///<   the beam grazing seed for radiometry (#185).
+  bool valid = true;             ///< false if the quaternion was near-zero/degenerate
+                                 ///<   (azimuth/depression are 0); callers should skip.
 };
 
 /// @brief Full-attitude counterpart to @ref ecefPoseToGeoHeading: returns the
