@@ -20,8 +20,13 @@
   <depend>geodesy</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
+  <depend>tf2_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>builtin_interfaces</depend>
   <depend>marine_autonomy</depend>
   <depend>marine_tiled_raster_store</depend>
+  <depend>rosbag2_cpp</depend>
+  <depend>rosbag2_storage</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>

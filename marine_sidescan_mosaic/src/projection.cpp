@@ -48,26 +48,29 @@ Mat3 matmul(const Mat3 & a, const Mat3 & b)
   }
   return r;
 }
-}  // namespace
+// Geodetic origin + the body→NED rotation for an ECEF pose. `valid` is false for a
+// near-zero quaternion (caller falls back to a default orientation).
+struct PoseNed
+{
+  double lat_deg = 0.0, lon_deg = 0.0, alt_m = 0.0;
+  Mat3 r_body_ned{};
+  bool valid = false;
+};
 
-GeoHeading ecefPoseToGeoHeading(
+PoseNed poseToNed(
   double tx, double ty, double tz,
   double qx, double qy, double qz, double qw)
 {
-  GeoHeading out;
-
+  PoseNed out;
   // Position: ECEF → geodetic via geodesy (ADR-0002 §D8), not hand-rolled.
   const auto geo = geodesy::toMsg(geodesy::ECEFPoint(tx, ty, tz));
-  out.latitude_deg = geo.latitude;
-  out.longitude_deg = geo.longitude;
-  out.altitude_m = geo.altitude;
+  out.lat_deg = geo.latitude;
+  out.lon_deg = geo.longitude;
+  out.alt_m = geo.altitude;
 
-  // Heading: body→ECEF (quaternion) → body→NED (via the local ENU rotation), then
-  // the aerospace ZYX yaw. Mirrors geo.py::matrix_to_heading_pitch_roll.
   const double norm = std::sqrt(qx * qx + qy * qy + qz * qz + qw * qw);
   if (norm < 1e-12) {
-    out.heading_rad = 0.0;
-    return out;
+    return out;   // valid stays false.
   }
   qx /= norm; qy /= norm; qz /= norm; qw /= norm;
 
@@ -77,8 +80,8 @@ GeoHeading ecefPoseToGeoHeading(
     2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw),
     2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)};
 
-  const double lat = out.latitude_deg * M_PI / 180.0;
-  const double lon = out.longitude_deg * M_PI / 180.0;
+  const double lat = out.lat_deg * M_PI / 180.0;
+  const double lon = out.lon_deg * M_PI / 180.0;
   const double sla = std::sin(lat), cla = std::cos(lat);
   const double slo = std::sin(lon), clo = std::cos(lon);
 
@@ -93,8 +96,46 @@ GeoHeading ecefPoseToGeoHeading(
     1.0, 0.0, 0.0,
     0.0, 0.0, -1.0};
 
-  const Mat3 r_body_ned = matmul(r_enu_ned, matmul(r_ecef_enu, r_body_ecef));
-  out.heading_rad = std::atan2(r_body_ned[1 * 3 + 0], r_body_ned[0 * 3 + 0]);
+  out.r_body_ned = matmul(r_enu_ned, matmul(r_ecef_enu, r_body_ecef));
+  out.valid = true;
+  return out;
+}
+}  // namespace
+
+GeoHeading ecefPoseToGeoHeading(
+  double tx, double ty, double tz,
+  double qx, double qy, double qz, double qw)
+{
+  const PoseNed p = poseToNed(tx, ty, tz, qx, qy, qz, qw);
+  GeoHeading out;
+  out.latitude_deg = p.lat_deg;
+  out.longitude_deg = p.lon_deg;
+  out.altitude_m = p.alt_m;
+  // Body +X axis (column 0 of body→NED): the aerospace ZYX yaw.
+  out.heading_rad = p.valid
+    ? std::atan2(p.r_body_ned[1 * 3 + 0], p.r_body_ned[0 * 3 + 0])
+    : 0.0;
+  return out;
+}
+
+GeoBeam ecefPoseToGeoBeam(
+  double tx, double ty, double tz,
+  double qx, double qy, double qz, double qw)
+{
+  const PoseNed p = poseToNed(tx, ty, tz, qx, qy, qz, qw);
+  GeoBeam out;
+  out.latitude_deg = p.lat_deg;
+  out.longitude_deg = p.lon_deg;
+  out.altitude_m = p.alt_m;
+  out.valid = p.valid;
+  if (p.valid) {
+    // +Z (range/beam) axis = column 2 of body→NED, as (N, E, D).
+    const double zN = p.r_body_ned[0 * 3 + 2];
+    const double zE = p.r_body_ned[1 * 3 + 2];
+    const double zD = p.r_body_ned[2 * 3 + 2];
+    out.azimuth_rad = std::atan2(zE, zN);
+    out.depression_rad = std::atan2(zD, std::hypot(zN, zE));
+  }
   return out;
 }
 

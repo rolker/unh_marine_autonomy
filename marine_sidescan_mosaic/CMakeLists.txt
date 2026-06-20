@@ -20,18 +20,27 @@ find_package(geographic_msgs REQUIRED)
 find_package(geodesy REQUIRED)
 find_package(marine_autonomy REQUIRED)
 find_package(marine_tiled_raster_store REQUIRED)
+find_package(rosbag2_cpp REQUIRED)
+find_package(rosbag2_storage REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(builtin_interfaces REQUIRED)
+find_package(tf2_msgs REQUIRED)
 
 # Core library (pure logic; node executable + more units land in later slices).
 add_library(${PROJECT_NAME}
   src/projection.cpp
   src/accumulator.cpp
   src/normalizer.cpp
+  src/tier1.cpp
+  src/decode.cpp
+  src/processed_accumulator.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>"
 )
 ament_target_dependencies(${PROJECT_NAME}
+  marine_acoustic_msgs
   geographic_msgs
   geodesy
   marine_autonomy
@@ -60,6 +69,43 @@ install(TARGETS ${PROJECT_NAME}
   RUNTIME DESTINATION bin
 )
 install(TARGETS sidescan_mosaic_node DESTINATION lib/${PROJECT_NAME})
+
+# Offline bag importer -> Tier-1 (issue #184).
+add_executable(sidescan_mosaic_bag src/sidescan_mosaic_bag.cpp)
+target_link_libraries(sidescan_mosaic_bag ${PROJECT_NAME})
+ament_target_dependencies(sidescan_mosaic_bag
+  rclcpp
+  rosbag2_cpp
+  rosbag2_storage
+  marine_acoustic_msgs
+  sensor_msgs
+  geometry_msgs
+  builtin_interfaces
+  tf2
+  tf2_msgs
+)
+install(TARGETS sidescan_mosaic_bag DESTINATION lib/${PROJECT_NAME})
+
+# Flat-bottom Tier-2 projector: Tier-1 -> GGGS tiles (issue #184).
+add_executable(sidescan_tier2_flat src/sidescan_tier2_flat.cpp)
+target_link_libraries(sidescan_tier2_flat ${PROJECT_NAME})
+ament_target_dependencies(sidescan_tier2_flat
+  geographic_msgs
+  marine_autonomy
+  marine_tiled_raster_store
+)
+install(TARGETS sidescan_tier2_flat DESTINATION lib/${PROJECT_NAME})
+
+# Durable processed Tier-2: best-source composite -> 3-band tiles + registry (#184).
+add_executable(sidescan_tier2_processed src/sidescan_tier2_processed.cpp)
+target_link_libraries(sidescan_tier2_processed ${PROJECT_NAME})
+ament_target_dependencies(sidescan_tier2_processed
+  geographic_msgs
+  marine_autonomy
+  marine_tiled_raster_store
+)
+install(TARGETS sidescan_tier2_processed DESTINATION lib/${PROJECT_NAME})
+
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
@@ -80,6 +126,14 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_normalizer test/test_normalizer.cpp)
   target_link_libraries(test_normalizer ${PROJECT_NAME})
+
+  ament_add_gtest(test_tier1 test/test_tier1.cpp)
+  target_link_libraries(test_tier1 ${PROJECT_NAME})
+
+  ament_add_gtest(test_processed_accumulator test/test_processed_accumulator.cpp)
+  target_link_libraries(test_processed_accumulator ${PROJECT_NAME})
+  ament_target_dependencies(test_processed_accumulator
+    geographic_msgs marine_autonomy marine_tiled_raster_store)
 endif()
 
 ament_package()

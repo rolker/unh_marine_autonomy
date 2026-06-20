@@ -56,6 +56,7 @@
 #include "tf2_ros/transform_listener.h"
 
 #include "marine_sidescan_mosaic/accumulator.hpp"
+#include "marine_sidescan_mosaic/decode.hpp"
 #include "marine_sidescan_mosaic/normalizer.hpp"
 #include "marine_sidescan_mosaic/projection.hpp"
 
@@ -65,42 +66,6 @@ namespace marine_sidescan_mosaic
 namespace
 {
 constexpr int64_t kNsPerS = 1000000000LL;
-
-// Decode a RawSonarImage payload (single beam) to a 1-D double array, honouring
-// the declared dtype + endianness. Handles the types the GCV emits (uint8,
-// uint16) plus a few common others; unknown dtypes fall back to uint8.
-template<typename T>
-std::vector<double> decodeAs(const std::vector<uint8_t> & data, bool big_endian)
-{
-  const std::size_t n = data.size() / sizeof(T);
-  std::vector<double> out(n);
-  for (std::size_t i = 0; i < n; ++i) {
-    T value;
-    std::memcpy(&value, data.data() + i * sizeof(T), sizeof(T));
-    if (big_endian && sizeof(T) > 1) {
-      auto * bytes = reinterpret_cast<uint8_t *>(&value);
-      std::reverse(bytes, bytes + sizeof(T));
-    }
-    out[i] = static_cast<double>(value);
-  }
-  return out;
-}
-
-std::vector<double> decodeSamples(const marine_acoustic_msgs::msg::RawSonarImage & msg)
-{
-  using SonarImageData = marine_acoustic_msgs::msg::SonarImageData;
-  const auto & data = msg.image.data;
-  const bool be = msg.image.is_bigendian;
-  switch (msg.image.dtype) {
-    case SonarImageData::DTYPE_UINT8: return decodeAs<uint8_t>(data, be);
-    case SonarImageData::DTYPE_INT8: return decodeAs<int8_t>(data, be);
-    case SonarImageData::DTYPE_UINT16: return decodeAs<uint16_t>(data, be);
-    case SonarImageData::DTYPE_INT16: return decodeAs<int16_t>(data, be);
-    case SonarImageData::DTYPE_UINT32: return decodeAs<uint32_t>(data, be);
-    case SonarImageData::DTYPE_FLOAT32: return decodeAs<float>(data, be);
-    default: return decodeAs<uint8_t>(data, be);
-  }
-}
 
 int64_t stampNs(const builtin_interfaces::msg::Time & t)
 {
