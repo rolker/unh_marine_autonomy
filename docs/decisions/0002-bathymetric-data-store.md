@@ -11,6 +11,18 @@ single-level Phase-1 implementation ([#143](https://github.com/rolker/unh_marine
 is a simplification, not a load-bearing decision; multi-level storage with a level-aware
 query is adopted now, with the refinement policy staged.
 
+**Amended 2026-06-20 ([#178](https://github.com/rolker/unh_marine_autonomy/issues/178)):**
+D5 (per-tile persistence) is revised — the timestamp moves out of the value tile
+into a **separate `Int64` nanoseconds tile** (`<grid>_time.tif`), depth and
+uncertainty stay co-located in a **2-band `Float64` value tile**, and a
+**per-cell source-index band** (`UInt16`, `<grid>_source.tif`) is re-added with a
+store-wide `registry.json` sidecar. This reconciles ADR-0002 with the now-merged
+**[ADR-0005](0005-multi-platform-provenance-registry.md) D2/D8** (multi-platform
+provenance registry) and aligns the on-disk encodings with
+**[ADR-0006](0006-multi-platform-backscatter-store.md)** (backscatter store: same
+`Int64`-ns time tile and `uint16` source band). D6 (content hash) is updated to
+cover all three tile files. See D5/D6 below.
+
 The full design is in the issue body; this ADR records the load-bearing
 architecture decisions and their rationale so they survive the issue. It is a
 **cross-cutting** decision in the sense ADR-0001 establishes for this repo's
@@ -115,6 +127,14 @@ Default query returns the highest-priority source present per cell. A separate
 draft never overwrites a trusted processed value, and a later processed import
 supersedes draft without data loss.
 
+(Amended 2026-06-20, [#178](https://github.com/rolker/unh_marine_autonomy/issues/178):
+"source layer" above is the **quality/maturity** axis. A second, orthogonal
+**platform/sensor provenance** axis — a per-cell source index into a
+`registry.json` sidecar — is added per
+[ADR-0005](0005-multi-platform-provenance-registry.md) D2/D8; see D5. The
+navigation-safety **shallowest-reliable** query deliberately ignores the
+provenance axis (ADR-0005 D5 carve-out): it selects on depth + uncertainty only.)
+
 ### D4 — All depths on the WGS84 ellipsoid; datum conversion happens at import
 
 The store holds a single vertical reference: **ellipsoidal height (WGS84)**.
@@ -134,27 +154,49 @@ stored mixed:
 Storing one datum and converting at the edge keeps every query datum-consistent
 and confines datum logic to the importers.
 
-### D5 — Persistence: one GeoTIFF per dirty GGGS tile
+### D5 — Persistence: per-tile GeoTIFFs per dirty GGGS tile
 
-Persist each dirty tile as a **multi-band GeoTIFF** named by its `GridIndex`.
-The bands are **depth, uncertainty, timestamp** (3 bands); the **source layer is
-not a band** — it is encoded as the on-disk subdirectory (`processed/`,
-`draft/`), because a tile is single-layer by construction (the store keeps one
-tile map per layer, D3), so a per-cell source band would be a constant and pure
-overhead. (As-built in the Phase-1 store, #141; this supersedes an earlier draft
-of this section that listed a 4th `source` band.) Bands are `Float64` so the
-absolute-Unix-seconds timestamp keeps usable precision — a single GeoTIFF has one
-band data type, so depth/uncertainty ride along as `Float64` too. Rationale:
-GeoTIFF I/O relies on GDAL, which the bathy-BAG / GeoTIFF importer tooling
-already uses (Phase 1 brings that dependency into the store itself); GeoTIFF
-carries its own georeferencing; per-tile files make incremental ("save only dirty
-tiles") and
-the distribution manifest (D6) fall out naturally — the manifest is
-`{GridIndex → version}`, and **version is a content hash of the tile's cell
-data** (not file mtime: mtime is unreliable across the clock-skewed robot and
-operator machines that D6 sync compares, so it cannot be the interoperability
-key). An mtime check may still be used as a cheap *local* dirty-detection
-optimization, but the hash is the authoritative sync version.
+Persist each dirty tile as **three GeoTIFFs** named by its `GridIndex`
+(amended 2026-06-20, [#178](https://github.com/rolker/unh_marine_autonomy/issues/178);
+the original [#141](https://github.com/rolker/unh_marine_autonomy/issues/141)
+form was a single 3-band `Float64` GeoTIFF):
+
+- `<level>_<row>_<col>.tif` — **2-band `Float64` value tile**: depth +
+  uncertainty. Both are float and read together on the costmap hot path (D7), so
+  they stay co-located. NaN no-data on both bands.
+- `<level>_<row>_<col>_time.tif` — **1-band `Int64` time tile**: timestamp in
+  nanoseconds since the Unix epoch. This is ROS-native (`rclcpp::Time` is int64
+  ns) and exact; the earlier `Float64` absolute-Unix-seconds band resolved 2026
+  stamps to only ~0.4 µs. Time is a different dtype and a *cold* access (not in
+  the nav loop), so it earns its own tile. 0 = unset (no no-data tag). Requires
+  GDAL >= 3.5 for `GDT_Int64` (the workspace targets >= 3.8).
+- `<level>_<row>_<col>_source.tif` — **1-band `UInt16` source-index tile**: the
+  per-cell **local source index** into the store-wide `registry.json`
+  (cross-ref [ADR-0005](0005-multi-platform-provenance-registry.md) D2/D8). 0 =
+  no-data/unset (ADR-0005 D4 sentinel).
+
+**The source layer is now two distinct axes.** The **quality/maturity** axis
+(Processed / Draft / Chart, D3) remains encoded as the on-disk subdirectory
+(`processed/`, `draft/`, `chart/`). The **platform/sensor provenance** axis is the
+per-cell source index + the `registry.json` sidecar. This re-adds a per-cell
+source band — superseding the original D5 reasoning that a tile is single-layer
+by construction so a source band would be a constant: under ADR-0005 D2,
+different platforms contribute different cells of the *same* GGGS tile, so the
+winning source is **non-constant within a tile**. (Pre-#178 single-platform data
+has no `_time.tif` / `_source.tif`; on load those bands fill with 0 — backward
+compatible.) Rationale for the file split: each band's dtype gets its native
+GeoTIFF representation (a single GeoTIFF has one band dtype), and the hot-path
+costmap reader opens only the 2-band value tile.
+
+Rationale (unchanged): GeoTIFF I/O relies on GDAL, which the bathy-BAG / GeoTIFF
+importer tooling already uses (Phase 1 brings that dependency into the store
+itself); GeoTIFF carries its own georeferencing; per-tile files make incremental
+("save only dirty tiles") and the distribution manifest (D6) fall out naturally —
+the manifest is `{GridIndex → version}`, and **version is a content hash of the
+tile's cell data** (not file mtime: mtime is unreliable across the clock-skewed
+robot and operator machines that D6 sync compares, so it cannot be the
+interoperability key). An mtime check may still be used as a cheap *local*
+dirty-detection optimization, but the hash is the authoritative sync version.
 On startup, load persisted tiles; save incrementally as data arrives. A raw
 binary tile format is the fallback **only if** GeoTIFF write amplification proves
 too costly; that change would not alter the manifest contract. This decision is
@@ -175,6 +217,15 @@ the property the monolithic `GridMap` downlink lacked. Distribution is the last
 implementation phase and stays **deferred past the June 15 survey**; `clear_grid`
 remains the agreed interim. The store core is nonetheless designed so the sync
 layer is additive.
+
+**Content hash covers all three tile files** (amended 2026-06-20,
+[#178](https://github.com/rolker/unh_marine_autonomy/issues/178)). With D5 now
+persisting a tile as a value (`<grid>.tif`), time (`<grid>_time.tif`), and source
+(`<grid>_source.tif`) file, the per-tile **version** hash must cover the cell
+data of **all three** so a re-arbitration that flips a cell's winning source (or
+updates its timestamp) flips the tile hash and re-syncs — not just a depth change.
+No Phase-1 hash implementation exists yet, so this is a forward constraint on the
+deferred D6 sync layer, not a current code change.
 
 ### D7 — Consumers depend on the store, not on sources
 
