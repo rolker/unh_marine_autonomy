@@ -55,6 +55,7 @@
 #include "tf2/time.h"
 #include "tf2_msgs/msg/tf_message.hpp"
 
+#include "marine_sidescan_mosaic/decode.hpp"
 #include "marine_sidescan_mosaic/tier1.hpp"
 
 namespace
@@ -64,41 +65,6 @@ constexpr std::int64_t kNsPerS = 1000000000LL;
 std::int64_t stampNs(const builtin_interfaces::msg::Time & t)
 {
   return static_cast<std::int64_t>(t.sec) * kNsPerS + t.nanosec;
-}
-
-// Decode a RawSonarImage payload to magnitudes, honouring dtype + endianness
-// (replicated from mosaic_node; de-dup deferred to the engine extraction).
-template<typename T>
-std::vector<float> decodeAs(const std::vector<std::uint8_t> & data, bool big_endian)
-{
-  const std::size_t n = data.size() / sizeof(T);
-  std::vector<float> out(n);
-  for (std::size_t i = 0; i < n; ++i) {
-    T value;
-    std::memcpy(&value, data.data() + i * sizeof(T), sizeof(T));
-    if (big_endian && sizeof(T) > 1) {
-      auto * bytes = reinterpret_cast<std::uint8_t *>(&value);
-      std::reverse(bytes, bytes + sizeof(T));
-    }
-    out[i] = static_cast<float>(value);
-  }
-  return out;
-}
-
-std::vector<float> decodeSamples(const marine_acoustic_msgs::msg::RawSonarImage & msg)
-{
-  using SonarImageData = marine_acoustic_msgs::msg::SonarImageData;
-  const auto & d = msg.image.data;
-  const bool be = msg.image.is_bigendian;
-  switch (msg.image.dtype) {
-    case SonarImageData::DTYPE_UINT8: return decodeAs<std::uint8_t>(d, be);
-    case SonarImageData::DTYPE_INT8: return decodeAs<std::int8_t>(d, be);
-    case SonarImageData::DTYPE_UINT16: return decodeAs<std::uint16_t>(d, be);
-    case SonarImageData::DTYPE_INT16: return decodeAs<std::int16_t>(d, be);
-    case SonarImageData::DTYPE_UINT32: return decodeAs<std::uint32_t>(d, be);
-    case SonarImageData::DTYPE_FLOAT32: return decodeAs<float>(d, be);
-    default: return decodeAs<std::uint8_t>(d, be);
-  }
 }
 
 template<typename MsgT>
@@ -242,7 +208,8 @@ int main(int argc, char ** argv)
     p.sample0 = static_cast<std::int32_t>(msg.sample0);
     const double age_s = std::abs(ping_ns - held_nadir_ns) / 1e9;
     p.nadir_altitude_m = (held_nadir > 0.0F && age_s <= nadir_staleness_s) ? held_nadir : -1.0F;
-    p.samples = decodeSamples(msg);
+    const auto raw = marine_sidescan_mosaic::decodeSamples(msg);
+    p.samples.assign(raw.begin(), raw.end());   // double -> float (lossless for GCV range).
 
     marine_sidescan_mosaic::writeTier1Ping(out, p);
     ++n_written;

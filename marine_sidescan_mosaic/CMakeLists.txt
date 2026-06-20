@@ -32,12 +32,14 @@ add_library(${PROJECT_NAME}
   src/accumulator.cpp
   src/normalizer.cpp
   src/tier1.cpp
+  src/decode.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>"
 )
 ament_target_dependencies(${PROJECT_NAME}
+  marine_acoustic_msgs
   geographic_msgs
   geodesy
   marine_autonomy
