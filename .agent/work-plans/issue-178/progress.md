@@ -23,3 +23,15 @@ issue: 178
 - [ ] Add atomic write (write-then-rename) for `registry.json` from the start.
 - [ ] Add a regression test verifying `shallowest-reliable` query is unaffected by the source-index/registry priority axis.
 - [ ] Flag `#164` (costmap) and `#175` (CAMP layer) for post-merge band-assumption check.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-20 12:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet 4.6)
+
+**Plan**: `.agent/work-plans/issue-178/plan.md` at `de7e091`
+**Branch**: feature/issue-178 at `de7e091`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
