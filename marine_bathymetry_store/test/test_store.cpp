@@ -34,13 +34,28 @@ TEST(Store, SetGetRoundTrip)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Draft, cell, BathyCell{-30.0, 0.5, 1000.0});
+  // timestamp is int64 nanoseconds since the epoch (1 s = 1e9 ns).
+  store.set(SourceLayer::Draft, cell, BathyCell{-30.0, 0.5, 1'000'000'000'000LL});
 
   const auto got = store.get(SourceLayer::Draft, cell);
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, -30.0);
   EXPECT_DOUBLE_EQ(got->uncertainty, 0.5);
-  EXPECT_DOUBLE_EQ(got->timestamp, 1000.0);
+  EXPECT_EQ(got->timestamp, 1'000'000'000'000LL);
+  EXPECT_EQ(got->source_index, 0u);   // default unset
+}
+
+TEST(Store, SetGetRoundTripWithSourceIndex)
+{
+  BathymetryStore store(5);
+  const auto cell = store.cellIndex(43.0, -70.5);
+  store.set(SourceLayer::Draft, cell, BathyCell{-30.0, 0.5, 2'000'000'000LL, 3u});
+
+  const auto got = store.get(SourceLayer::Draft, cell);
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, -30.0);
+  EXPECT_EQ(got->timestamp, 2'000'000'000LL);
+  EXPECT_EQ(got->source_index, 3u);
 }
 
 TEST(Store, GetEmptyLayerIsNullopt)
@@ -54,8 +69,8 @@ TEST(Store, LayersAreIndependent)
   // A draft write must not touch the processed layer at the same cell.
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Processed, cell, BathyCell{-10.0, 0.1, 1.0});
-  store.set(SourceLayer::Draft, cell, BathyCell{-12.0, 2.0, 2.0});
+  store.set(SourceLayer::Processed, cell, BathyCell{-10.0, 0.1, 1LL});
+  store.set(SourceLayer::Draft, cell, BathyCell{-12.0, 2.0, 2LL});
   EXPECT_DOUBLE_EQ(store.get(SourceLayer::Processed, cell)->depth, -10.0);
   EXPECT_DOUBLE_EQ(store.get(SourceLayer::Draft, cell)->depth, -12.0);
 }
@@ -66,7 +81,7 @@ TEST(Store, TilesAllocatedLazilyPerLayer)
   EXPECT_TRUE(store.tiles(SourceLayer::Draft).empty());
   EXPECT_TRUE(store.tiles(SourceLayer::Processed).empty());
 
-  store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 1.0});
+  store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 1LL});
   EXPECT_EQ(store.tiles(SourceLayer::Draft).size(), 1u);
   EXPECT_TRUE(store.tiles(SourceLayer::Processed).empty());
 }
@@ -110,11 +125,11 @@ TEST(Store, ChartIsReadOnlyByDefault)
   BathymetryStore store(5);
   EXPECT_FALSE(store.chartWritable());
   EXPECT_THROW(
-    store.set(SourceLayer::Chart, store.cellIndex(43.0, -70.5), BathyCell{-10.0, 3.0, 1.0}),
+    store.set(SourceLayer::Chart, store.cellIndex(43.0, -70.5), BathyCell{-10.0, 3.0, 1LL}),
     std::logic_error);
   // Other layers are unaffected by the guard.
   EXPECT_NO_THROW(
-    store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-12.0, 2.0, 2.0}));
+    store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-12.0, 2.0, 2LL}));
 }
 
 TEST(Store, ChartWritableStoreAllowsChartSet)
@@ -123,7 +138,7 @@ TEST(Store, ChartWritableStoreAllowsChartSet)
   BathymetryStore store(5, /*chart_writable=*/true);
   EXPECT_TRUE(store.chartWritable());
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Chart, cell, BathyCell{38.58, 3.0, 1000.0});
+  store.set(SourceLayer::Chart, cell, BathyCell{38.58, 3.0, 1000LL});
   const auto got = store.get(SourceLayer::Chart, cell);
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, 38.58);
@@ -134,5 +149,5 @@ TEST(Store, FromCellSizePropagatesChartWritable)
   auto store = BathymetryStore::fromCellSize(30.0f, /*chart_writable=*/true);
   EXPECT_TRUE(store.chartWritable());
   EXPECT_NO_THROW(
-    store.set(SourceLayer::Chart, store.cellIndex(43.0, -70.5), BathyCell{40.0, 3.0, 1.0}));
+    store.set(SourceLayer::Chart, store.cellIndex(43.0, -70.5), BathyCell{40.0, 3.0, 1LL}));
 }
