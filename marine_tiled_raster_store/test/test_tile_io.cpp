@@ -115,6 +115,34 @@ TEST(TiledRasterTileIo, RoundTripDoubleThreeBand)
   EXPECT_DOUBLE_EQ(loaded.get(0, 0, 2), 0.0);       // timestamp band fill
 }
 
+// A single-band int64 tile (the bathy timestamp-tile shape, #178) round-trips
+// through GeoTIFF: nanosecond-since-epoch stamps survive exactly (the precision
+// guarantee Float64 seconds could not provide), and the GridIndex is recovered.
+TEST(TiledRasterTileIo, RoundTripInt64SingleBand)
+{
+  ScratchDir dir("i64_single");
+  const gggs::Level level(11);                       // ~0.45 m cells
+  const gggs::GridIndex grid = sampleGrid(level);
+  const std::string path = (dir.path() / mtrs::tileFilename(grid)).string();
+
+  // Values that a Float64 seconds band could not represent exactly.
+  const std::int64_t a = 1'780'000'000'123'456'789LL;   // ~2026, ns precision
+  const std::int64_t b = 9'223'372'036'854'775'807LL;   // INT64_MAX
+  mtrs::TiledRasterTile<std::int64_t> tile(grid, 1, 0);
+  tile.set(0, 0, 0, a);
+  tile.set(100, 200, 0, b);
+
+  mtrs::saveTile<std::int64_t>(tile, path, {std::nullopt});
+  const auto loaded = mtrs::loadTile<std::int64_t>(path, level, 1);
+
+  EXPECT_EQ(loaded.index(), grid);
+  EXPECT_EQ(loaded.bandCount(), 1u);
+  EXPECT_EQ(loaded.get(0, 0, 0), a);
+  EXPECT_EQ(loaded.get(100, 200, 0), b);
+  EXPECT_EQ(loaded.get(5, 5, 0), 0);                 // untouched cell stays fill
+  EXPECT_FALSE(loaded.dirty());
+}
+
 // A tile saved at one level is rejected when loaded at a different level (its
 // geotransform won't match any grid there).
 TEST(TiledRasterTileIo, LevelMismatchRejected)
