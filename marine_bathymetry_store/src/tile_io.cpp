@@ -101,6 +101,14 @@ std::string layerDirName(SourceLayer layer)
 void saveTile(const BathymetryTile & tile, const std::string & path)
 {
   namespace mtrs = marine_tiled_raster_store;
+  // Write ordering: value tile first, then time, then source.  The three files
+  // are not written atomically — a crash mid-sequence leaves a partial set on
+  // disk.  Writing the value tile first is intentional: the safety query
+  // (shallowestReliable) reads only the value tile, so a crashed write that
+  // leaves an absent or stale _time / _source companion does not affect the
+  // depth/uncertainty result used by the collision monitor.  A full reload
+  // after a crash will 0-fill missing companion tiles (backward-compat path
+  // in loadTile), which is the correct degraded-mode behaviour.
   mtrs::saveTile<double>(tile.valueRaster(), path, valueBandNoData());
   mtrs::saveTile<int64_t>(
     tile.timeRaster(), companionPath(path, kTimeSuffix), timeBandNoData());
@@ -112,6 +120,28 @@ BathymetryTile loadTile(const std::string & path, const gggs::Level & level)
 {
   namespace mtrs = marine_tiled_raster_store;
   namespace fs = std::filesystem;
+
+  // Guard: reject legacy single-file 3-band Float64 tiles written before #178.
+  // The pre-migration layout (depth / uncertainty / Float64-seconds-timestamp)
+  // has exactly 3 bands in one file with no companion _time / _source tiles.
+  // Loading it with value_band_count=2 would silently discard band 3 (the old
+  // seconds timestamp) and 0-fill the new nadir Int64 time tile — losing
+  // acquisition times without warning.  There are no on-disk tiles at the time
+  // of this migration (pre-production), so this guard is a forward-safety check:
+  // if such a tile appears (e.g., from a backup or a partial manual migration),
+  // fail loudly rather than silently corrupt the provenance record.
+  // Decision: explicit rejection is preferred over silent data-drop per the
+  // workspace Quality Standard (never "good enough" when the proper fix exists).
+  {
+    const int band_count = mtrs::tileRasterCount(path);
+    if (band_count == 3) {
+      throw std::runtime_error(
+              "loadTile: rejected pre-#178 legacy 3-band Float64 tile at \"" + path +
+              "\".  This tile was written by a pre-migration store (depth/"
+              "uncertainty/Float64-seconds in one file).  Regenerate or migrate"
+              " the tile before loading it with the current store.");
+    }
+  }
 
   BathymetryTile::Raster value =
     mtrs::loadTile<double>(path, level, BathymetryTile::value_band_count);
@@ -125,11 +155,34 @@ BathymetryTile loadTile(const std::string & path, const gggs::Level & level)
     ? mtrs::loadTile<int64_t>(time_path, level, BathymetryTile::time_band_count)
     : BathymetryTile::TimeRaster(grid, BathymetryTile::time_band_count, int64_t{0});
 
+  // Enforce GridIndex consistency: the time companion must map to the same
+  // tile as the value raster.  A mis-renamed companion (e.g., from a manual
+  // store reorganisation or file tampering) would combine cell-for-cell data
+  // from different geographic tiles, silently associating wrong timestamps with
+  // depths.  The check is cheap (one comparison) and closes the tampering hole.
+  if (fs::is_regular_file(time_path) && !(time.index() == grid)) {
+    throw std::runtime_error(
+            "loadTile: companion \"" + time_path +
+            "\" has a GridIndex that does not match the value tile at \"" + path +
+            "\".  The companion file may have been mis-renamed or the store is"
+            " inconsistent.");
+  }
+
   const std::string source_path = companionPath(path, kSourceSuffix);
   BathymetryTile::SourceRaster source =
     fs::is_regular_file(source_path)
     ? mtrs::loadTile<uint16_t>(source_path, level, BathymetryTile::source_band_count)
     : BathymetryTile::SourceRaster(grid, BathymetryTile::source_band_count, uint16_t{0});
+
+  // Enforce GridIndex consistency for the source companion (same rationale as
+  // the time-companion check above).
+  if (fs::is_regular_file(source_path) && !(source.index() == grid)) {
+    throw std::runtime_error(
+            "loadTile: companion \"" + source_path +
+            "\" has a GridIndex that does not match the value tile at \"" + path +
+            "\".  The companion file may have been mis-renamed or the store is"
+            " inconsistent.");
+  }
 
   return BathymetryTile(std::move(value), std::move(time), std::move(source));
 }

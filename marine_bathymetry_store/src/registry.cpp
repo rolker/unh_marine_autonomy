@@ -145,17 +145,38 @@ void SourceRegistry::loadRegistry(const std::string & store_root_dir)
   if (sources == doc.end() || !sources->is_array()) {
     return;   // empty / sourceless registry
   }
-  // Records carry an explicit "index"; assign densely in that order. Indices are
-  // expected contiguous from 1 (written that way), so push in array order and
-  // trust the stored index for the by-source-id map.
+  // Records carry an explicit "index"; validate them against the expected
+  // position (1-based, contiguous, monotonically increasing by +1).  A
+  // reordered, sparse, or duplicate hand-edited registry.json would produce
+  // mismatches between the stored index and the reconstructed by_index_ /
+  // by_source_id_ maps — silently delivering wrong provenance.  Reject early
+  // with a clear error rather than silently diverge.
   for (const auto & entry : *sources) {
     SourceRecord r{
       jsonStr(entry, "source_id"), jsonStr(entry, "platform"),
       jsonStr(entry, "sensor"), jsonStr(entry, "sensor_class"),
       jsonStr(entry, "campaign"), jsonStr(entry, "datum")};
-    const uint16_t index = static_cast<uint16_t>(by_index_.size() + 1);
+    // Expected index for this entry (1-based: position 0 → index 1, etc.).
+    const uint16_t expected = static_cast<uint16_t>(by_index_.size() + 1);
+    // Stored index field — must match.
+    const auto idx_it = entry.find("index");
+    if (idx_it == entry.end() || !idx_it->is_number_unsigned()) {
+      throw std::runtime_error(
+              "SourceRegistry::loadRegistry: entry for source_id=\"" + r.source_id +
+              "\" is missing a valid \"index\" field (expected " +
+              std::to_string(expected) + ")");
+    }
+    const uint16_t stored = idx_it->get<uint16_t>();
+    if (stored != expected) {
+      throw std::runtime_error(
+              "SourceRegistry::loadRegistry: entry for source_id=\"" + r.source_id +
+              "\" has stored index " + std::to_string(stored) +
+              " but expected " + std::to_string(expected) +
+              " (indices must be contiguous from 1; the registry may have been"
+              " reordered, has gaps, or contains duplicate entries)");
+    }
     by_index_.push_back(r);
-    by_source_id_.emplace(r.source_id, index);
+    by_source_id_.emplace(r.source_id, expected);
   }
 }
 

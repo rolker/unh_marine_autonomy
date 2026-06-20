@@ -97,6 +97,17 @@ std::string tileFilename(const gggs::GridIndex & grid)
          std::to_string(grid.row()) + "_" + std::to_string(grid.column()) + ".tif";
 }
 
+int tileRasterCount(const std::string & path)
+{
+  GDALAllRegister();
+  DatasetCloser in;
+  in.ds = GDALDataset::FromHandle(GDALOpen(path.c_str(), GA_ReadOnly));
+  if (in.ds == nullptr) {
+    throw std::runtime_error("tileRasterCount: could not open " + path);
+  }
+  return in.ds->GetRasterCount();
+}
+
 template<typename T>
 void saveTile(
   const TiledRasterTile<T> & tile, const std::string & path,

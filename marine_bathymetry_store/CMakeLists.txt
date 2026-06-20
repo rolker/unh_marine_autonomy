@@ -75,7 +75,9 @@ if(BUILD_TESTING)
   target_link_libraries(test_query ${PROJECT_NAME})
 
   ament_add_gtest(test_tile_io test/test_tile_io.cpp)
-  target_link_libraries(test_tile_io ${PROJECT_NAME})
+  # nlohmann_json is used directly in the test (registry tamper fixtures);
+  # link it explicitly since it is PRIVATE in the library target.
+  target_link_libraries(test_tile_io ${PROJECT_NAME} nlohmann_json::nlohmann_json)
 endif()
 
 ament_package()

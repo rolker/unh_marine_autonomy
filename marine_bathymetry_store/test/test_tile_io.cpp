@@ -24,12 +24,16 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
+
+#include <nlohmann/json.hpp>
 
 #include "marine_bathymetry_store/bathymetry_store.hpp"
 #include "marine_bathymetry_store/registry.hpp"
 #include "marine_bathymetry_store/tile_io.hpp"
+#include "marine_tiled_raster_store/tile_io.hpp"
 
 using marine_bathymetry_store::BathyCell;
 using marine_bathymetry_store::BathymetryStore;
@@ -295,4 +299,114 @@ TEST_F(TileIoTest, SaveWritesRegistryWhenProvided)
   EXPECT_EQ(reloaded.size(), 1u);
   ASSERT_TRUE(reloaded.lookup(1).has_value());
   EXPECT_EQ(reloaded.lookup(1)->platform, "bizzy");
+}
+
+// --- Item 1: registry.cpp loadRegistry index validation ---
+
+TEST_F(TileIoTest, LoadRegistryRejectsReorderedIndex)
+{
+  // A hand-edited registry.json with a swapped/reordered "index" field must be
+  // rejected with a clear error (not silently accepted as a contiguous sequence).
+  fs::create_directories(dir_);
+  // Write a registry with two entries but with their index values swapped
+  // (entry 0 claims index=2, entry 1 claims index=1).
+  const nlohmann::json bad_registry = {
+    {"version", 1},
+    {"sources", nlohmann::json::array({
+      {{"index", 2}, {"source_id", "a"}, {"platform", "p1"}, {"sensor", "s"},
+       {"sensor_class", ""}, {"campaign", ""}, {"datum", ""}},
+      {{"index", 1}, {"source_id", "b"}, {"platform", "p2"}, {"sensor", "s"},
+       {"sensor_class", ""}, {"campaign", ""}, {"datum", ""}},
+    })}
+  };
+  {
+    std::ofstream out(dir_ / "registry.json");
+    out << bad_registry.dump(2);
+  }
+  SourceRegistry reg;
+  EXPECT_THROW(reg.loadRegistry(dir_.string()), std::runtime_error);
+}
+
+TEST_F(TileIoTest, LoadRegistryRejectsMissingIndexField)
+{
+  // An entry that lacks the "index" field entirely must also be rejected.
+  fs::create_directories(dir_);
+  const nlohmann::json bad_registry = {
+    {"version", 1},
+    {"sources", nlohmann::json::array({
+      // "index" field deliberately omitted
+      {{"source_id", "a"}, {"platform", "p1"}, {"sensor", "s"},
+       {"sensor_class", ""}, {"campaign", ""}, {"datum", ""}},
+    })}
+  };
+  {
+    std::ofstream out(dir_ / "registry.json");
+    out << bad_registry.dump(2);
+  }
+  SourceRegistry reg;
+  EXPECT_THROW(reg.loadRegistry(dir_.string()), std::runtime_error);
+}
+
+// --- Item 2: tile_io.cpp loadTile — legacy 3-band guard ---
+
+TEST_F(TileIoTest, LoadTileRejectsLegacyThreeBandValueTile)
+{
+  // A value tile with exactly 3 bands (the pre-#178 depth/uncertainty/Float64-
+  // seconds layout) must be rejected with a clear error on load rather than
+  // silently loading 2 bands and discarding the third.
+  namespace mtrs = marine_tiled_raster_store;
+  fs::create_directories(dir_ / "draft");
+
+  // Create a fake 3-band Float64 tile that mimics the old layout.
+  const gggs::Level level(5);
+  const gggs::GridIndex grid = level.gridIndex(43.0, -70.5);
+  const std::string filename = marine_bathymetry_store::tileFilename(grid);
+  const std::string path = (dir_ / "draft" / filename).string();
+
+  mtrs::TiledRasterTile<double> legacy_tile(grid, 3, 0.0);
+  legacy_tile.set(10, 20, 0, -12.5);    // depth
+  legacy_tile.set(10, 20, 1, 0.3);      // uncertainty
+  legacy_tile.set(10, 20, 2, 1.78e9);   // old Float64 seconds timestamp
+  mtrs::saveTile<double>(legacy_tile, path, {std::nullopt, std::nullopt, std::nullopt});
+
+  // loadTile must throw, not silently drop band 3.
+  BathymetryStore store(5);
+  EXPECT_THROW(marine_bathymetry_store::load(store, dir_.string()), std::runtime_error);
+}
+
+// --- Item 4: tile_io.cpp loadTile — GridIndex consistency ---
+
+TEST_F(TileIoTest, LoadTileRejectsCompanionWithWrongGrid)
+{
+  // If a _time.tif companion is manually replaced with a file from a different
+  // grid (simulating file tampering or mis-rename), loadTile must throw a clear
+  // error rather than silently combining cell-for-cell data from two different
+  // geographic locations.
+  namespace mtrs = marine_tiled_raster_store;
+  fs::create_directories(dir_ / "draft");
+
+  const gggs::Level level(5);
+  // Two grids in different locations.
+  const gggs::GridIndex grid_a = level.gridIndex(43.0, -70.5);
+  const gggs::GridIndex grid_b = level.gridIndex(44.0, -71.0);
+  ASSERT_FALSE(grid_a == grid_b);
+
+  // Save a normal tile for grid_a.
+  BathymetryStore store(5);
+  store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 42LL, 1u});
+  marine_bathymetry_store::save(store, dir_.string());
+
+  // Replace grid_a's _time companion with a time tile written for grid_b.
+  // The companion filename is derived from the value tile stem (grid_a filename
+  // + "_time.tif"), but we write a file whose geotransform encodes grid_b.
+  const std::string value_filename = marine_bathymetry_store::tileFilename(grid_a);
+  const fs::path time_path =
+    dir_ / "draft" / (fs::path(value_filename).stem().string() + "_time.tif");
+  // Write a time tile for grid_b at that path (overwrites any existing companion).
+  mtrs::TiledRasterTile<int64_t> wrong_time(grid_b, 1, int64_t{0});
+  wrong_time.set(0, 0, 0, 99LL);
+  mtrs::saveTile<int64_t>(wrong_time, time_path.string(), {std::nullopt});
+
+  BathymetryStore reloaded(5);
+  EXPECT_THROW(marine_bathymetry_store::load(reloaded, dir_.string()), std::runtime_error);
 }

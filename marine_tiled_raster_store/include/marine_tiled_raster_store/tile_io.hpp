@@ -60,6 +60,14 @@ namespace marine_tiled_raster_store
 /// @brief GeoTIFF filename (no directory) for a grid: `<level>_<row>_<col>.tif`.
 std::string tileFilename(const gggs::GridIndex & grid);
 
+/// @brief Return the raster band count of a GeoTIFF file without loading its data.
+///
+/// Opens the file read-only and calls `GetRasterCount()`.  Useful for probing
+/// a tile's layout (e.g. detecting a legacy tile format) before committing to a
+/// full load.
+/// @throws std::runtime_error if the file cannot be opened or is not a raster.
+int tileRasterCount(const std::string & path);
+
 /// @brief Write one tile as a `bandCount()`-band GeoTIFF (element type @p T) at @p path.
 ///
 /// @param band_nodata Optional per-band no-data value, one entry per band (size
