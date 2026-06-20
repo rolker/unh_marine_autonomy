@@ -137,3 +137,49 @@ a known environment issue — not real correctness; gtest is green).
 - Atomic registry write (write-then-rename) and uint16 interning / index-0-reserved / overflow-at-65535 / idempotency all correct.
 - ADR-0002 amendment internally consistent: D5 rewritten to three tiles, old "source layer is not a band" reasoning explicitly superseded, D6 covers all three files; remaining "3-band" mentions are correct historical context.
 - Static analysis: ament_cpplint / ament_copyright / ament_xmllint clean. cppcheck "unusedStructMember" / "useStlAlgorithm" are header-isolation false positives on unchanged lines. Local uncrustify-0.78.1 mass-fail is the known CI-drift environment issue (gtest 41/41 green is the source of truth).
+
+## Implementation (Pre-Push Robustness Fold-In)
+**Status**: complete
+**When**: 2026-06-20 +00:00
+**By**: Claude Code Agent (Claude Sonnet 4.6)
+
+**Commit**: `420d189` on `feature/issue-178`
+
+### What changed
+
+All 4 pre-push suggestions from the Local Review folded before push:
+
+1. **registry.cpp `loadRegistry` index validation** — validate the stored `"index"`
+   field against expected position (must be 1-based, contiguous, +1 per entry).
+   Throws `std::runtime_error` naming the offending `source_id` on mismatch or
+   missing field.  Tests: `LoadRegistryRejectsReorderedIndex`,
+   `LoadRegistryRejectsMissingIndexField`.
+
+2. **tile_io.cpp `loadTile` legacy 3-band guard** — probe via `tileRasterCount()`
+   before loading.  A value tile with exactly 3 bands is rejected with a clear
+   error explaining it is a pre-#178 tile that must be regenerated.  Keeps GDAL
+   encapsulated: `tileRasterCount(path)` is a new non-template free function added
+   to `marine_tiled_raster_store/tile_io.hpp+cpp`.  Test:
+   `LoadTileRejectsLegacyThreeBandValueTile`.
+
+3. **tile_io.cpp `saveTile` value-first ordering comment** — documents the
+   value→time→source non-atomic write order and the rationale (safety query reads
+   value tile only; 0-fill on missing companions is the correct degraded-mode
+   behaviour).  Comment-only change; no test needed.
+
+4. **tile_io.cpp `loadTile` GridIndex consistency** — after loading each companion
+   tile (time, source), check `companion.index() == grid`; throw a clear error on
+   mismatch (closes a file-tampering/mis-rename hole).  Test:
+   `LoadTileRejectsCompanionWithWrongGrid`.
+
+### Build / test result
+Clean build of both packages. gtest XML (source of truth):
+- marine_tiled_raster_store/test_tile_io: 6/6 pass
+- marine_bathymetry_store/test_store: 12/12 pass
+- marine_bathymetry_store/test_query: 10/10 pass
+- marine_bathymetry_store/test_tile_io: 17/17 pass (was 13; +4 new tests)
+Total 45/45 gtests pass.
+Uncrustify: 2 local 0.78.1 drift failures (known environment issue, not real).
+
+### Left / follow-ups
+None — all 4 suggestions addressed. Branch is ready to push.
