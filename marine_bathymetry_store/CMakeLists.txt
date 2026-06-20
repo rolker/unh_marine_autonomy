@@ -16,10 +16,15 @@ find_package(marine_autonomy REQUIRED)
 # marine_tiled_raster_store, which carries (and re-exports) the GDAL dependency.
 find_package(marine_tiled_raster_store REQUIRED)
 find_package(geographic_msgs REQUIRED)
+# nlohmann_json backs the source registry (registry.json sidecar, #178). Declared
+# explicitly here (and in package.xml) — it was only available transitively
+# before, which is not a dependency this package may rely on.
+find_package(nlohmann_json REQUIRED)
 
 add_library(${PROJECT_NAME}
   src/bathymetry_store.cpp
   src/query.cpp
+  src/registry.cpp
   src/tile_io.cpp
 )
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
@@ -36,6 +41,11 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
   marine_autonomy::marine_autonomy
   marine_tiled_raster_store::marine_tiled_raster_store
   ${geographic_msgs_TARGETS}
+)
+# nlohmann_json is header-only and used only inside registry.cpp (the public
+# registry.hpp keeps it out of its interface), so link it PRIVATE.
+target_link_libraries(${PROJECT_NAME} PRIVATE
+  nlohmann_json::nlohmann_json
 )
 
 # Headers are laid out as include/${PROJECT_NAME}/*.hpp, so install the include/

@@ -37,50 +37,74 @@ namespace marine_bathymetry_store
 
 /// @brief One GGGS grid (960×960 cells) of bathymetric data for a single layer.
 ///
-/// A thin, bathy-semantic wrapper over `marine_tiled_raster_store::
-/// TiledRasterTile<double>` (the generic GGGS-tiled raster, #172): three
-/// `Float64` bands — **depth**, **uncertainty**, **timestamp** — in that order,
-/// matching the GeoTIFF band layout (`tile_io`). The generic tile owns the
-/// storage, dirty flag, and GGGS-cell-order layout (row 0 = south); this wrapper
-/// adds the per-cell `BathyCell` record and the named band accessors the store
-/// and persistence rely on. A fully-allocated tile holds 3 × 960 × 960 doubles
-/// ≈ 22 MB (see `BathyCell` for why `double`); tiles are allocated lazily by the
-/// owning `BathymetryStore`.
+/// A bathy-semantic wrapper over **three** `marine_tiled_raster_store::
+/// TiledRasterTile<>` rasters (#172), one per on-disk tile file (#178):
+///
+/// - **value** (`TiledRasterTile<double>`, 2 bands): depth + uncertainty — both
+///   float, read together on the costmap hot path, so co-located.
+/// - **time** (`TiledRasterTile<int64_t>`, 1 band): timestamp ns — different
+///   dtype, cold access, so its own tile (ROS-native, exact).
+/// - **source** (`TiledRasterTile<uint16_t>`, 1 band): registry source index —
+///   different dtype, multi-platform provenance (ADR-0005 D2/D8).
+///
+/// Each generic tile owns its storage and GGGS-cell-order layout (row 0 = south);
+/// this wrapper adds the per-cell `BathyCell` record and the named band accessors
+/// the store and persistence rely on. The **value raster's dirty flag is
+/// authoritative** for the whole tile: `set()` marks it; `clearDirty()` /
+/// `markDirty()` operate through it; persistence writes/clears all three rasters
+/// together. Tiles are allocated lazily by the owning `BathymetryStore`.
 class BathymetryTile
 {
 public:
-  /// @brief The underlying generic raster tile type.
+  /// @brief The underlying generic raster tile type for depth + uncertainty.
   using Raster = marine_tiled_raster_store::TiledRasterTile<double>;
+  /// @brief The underlying raster type for the timestamp tile (int64 ns).
+  using TimeRaster = marine_tiled_raster_store::TiledRasterTile<int64_t>;
+  /// @brief The underlying raster type for the source-index tile (uint16).
+  using SourceRaster = marine_tiled_raster_store::TiledRasterTile<uint16_t>;
 
   /// @brief Number of cells along each grid edge (GGGS constant).
   static constexpr uint16_t edge = Raster::edge;
   /// @brief Total cells in a tile (edge × edge).
   static constexpr uint32_t cell_count = Raster::cell_count;
 
-  /// @brief Construct an empty tile for @p index (depth/uncertainty no-data, ts 0).
+  /// @brief Number of bands in each on-disk tile file.
+  /// @{
+  static constexpr std::size_t value_band_count = 2;   ///< depth + uncertainty
+  static constexpr std::size_t time_band_count = 1;    ///< timestamp ns
+  static constexpr std::size_t source_band_count = 1;  ///< source index
+  /// @}
+
+  /// @brief Construct an empty tile for @p index (depth/uncertainty no-data, ts
+  ///        and source 0 = unset).
   explicit BathymetryTile(gggs::GridIndex index)
-  : tile_(index, std::vector<double>{
+  : value_(index, std::vector<double>{
       std::numeric_limits<double>::quiet_NaN(),    // depth
-      std::numeric_limits<double>::quiet_NaN(),    // uncertainty
-      0.0})                                        // timestamp (0 = unset)
+      std::numeric_limits<double>::quiet_NaN()}),  // uncertainty
+    time_(index, time_band_count, int64_t{0}),     // timestamp (0 = unset)
+    source_(index, source_band_count, uint16_t{0})  // source index (0 = unset)
   {
   }
 
-  /// @brief Wrap a generic raster tile loaded from disk (persistence path).
-  explicit BathymetryTile(Raster tile)
-  : tile_(std::move(tile)) {}
+  /// @brief Wrap rasters loaded from disk (persistence path).
+  ///
+  /// The three rasters must cover the same grid; the value raster's grid is
+  /// authoritative for `index()`. The constructed tile is clean.
+  BathymetryTile(Raster value, TimeRaster time, SourceRaster source)
+  : value_(std::move(value)), time_(std::move(time)), source_(std::move(source)) {}
 
   /// @brief The grid this tile covers.
-  const gggs::GridIndex & index() const noexcept {return tile_.index();}
+  const gggs::GridIndex & index() const noexcept {return value_.index();}
 
   /// @brief Write a cell at (@p row, @p col) within the grid; marks the tile dirty.
   void set(uint16_t row, uint16_t col, const BathyCell & cell)
   {
     const uint32_t i = offset(row, col);
-    tile_.band(kDepth)[i] = cell.depth;
-    tile_.band(kUncertainty)[i] = cell.uncertainty;
-    tile_.band(kTimestamp)[i] = cell.timestamp;
-    tile_.markDirty();
+    value_.band(kDepth)[i] = cell.depth;
+    value_.band(kUncertainty)[i] = cell.uncertainty;
+    time_.band(0)[i] = cell.timestamp;
+    source_.band(0)[i] = cell.source_index;
+    value_.markDirty();   // value raster's dirty flag is authoritative
   }
 
   /// @brief Read the cell at (@p row, @p col) within the grid.
@@ -88,31 +112,38 @@ public:
   {
     const uint32_t i = offset(row, col);
     return BathyCell{
-      tile_.band(kDepth)[i], tile_.band(kUncertainty)[i], tile_.band(kTimestamp)[i]};
+      value_.band(kDepth)[i], value_.band(kUncertainty)[i],
+      time_.band(0)[i], source_.band(0)[i]};
   }
 
-  /// @brief Whether this tile has unsaved changes.
-  bool dirty() const noexcept {return tile_.dirty();}
+  /// @brief Whether this tile has unsaved changes (value raster is authoritative).
+  bool dirty() const noexcept {return value_.dirty();}
   /// @brief Mark all changes saved (called by persistence after a successful write).
-  void clearDirty() noexcept {tile_.clearDirty();}
+  void clearDirty() noexcept {value_.clearDirty();}
   /// @brief Force the dirty flag (used when reconstructing a tile in memory).
-  void markDirty() noexcept {tile_.markDirty();}
+  void markDirty() noexcept {value_.markDirty();}
 
   /// @brief Raw band accessors (row-major, GGGS cell order) for persistence.
   /// @{
-  const std::vector<double> & depthBand() const noexcept {return tile_.band(kDepth);}
+  const std::vector<double> & depthBand() const noexcept {return value_.band(kDepth);}
   const std::vector<double> & uncertaintyBand() const noexcept
-  {return tile_.band(kUncertainty);}
-  const std::vector<double> & timestampBand() const noexcept {return tile_.band(kTimestamp);}
-  std::vector<double> & depthBand() noexcept {return tile_.band(kDepth);}
-  std::vector<double> & uncertaintyBand() noexcept {return tile_.band(kUncertainty);}
-  std::vector<double> & timestampBand() noexcept {return tile_.band(kTimestamp);}
+  {return value_.band(kUncertainty);}
+  const std::vector<int64_t> & timestampBand() const noexcept {return time_.band(0);}
+  const std::vector<uint16_t> & sourceBand() const noexcept {return source_.band(0);}
+  std::vector<double> & depthBand() noexcept {return value_.band(kDepth);}
+  std::vector<double> & uncertaintyBand() noexcept {return value_.band(kUncertainty);}
+  std::vector<int64_t> & timestampBand() noexcept {return time_.band(0);}
+  std::vector<uint16_t> & sourceBand() noexcept {return source_.band(0);}
   /// @}
 
-  /// @brief The underlying generic raster tile (for persistence delegation).
+  /// @brief The underlying generic raster tiles (for persistence delegation).
   /// @{
-  Raster & raster() noexcept {return tile_;}
-  const Raster & raster() const noexcept {return tile_;}
+  Raster & valueRaster() noexcept {return value_;}
+  const Raster & valueRaster() const noexcept {return value_;}
+  TimeRaster & timeRaster() noexcept {return time_;}
+  const TimeRaster & timeRaster() const noexcept {return time_;}
+  SourceRaster & sourceRaster() noexcept {return source_;}
+  const SourceRaster & sourceRaster() const noexcept {return source_;}
   /// @}
 
   /// @brief Row-major offset of cell (@p row, @p col). Asserts in debug builds.
@@ -121,9 +152,10 @@ public:
 private:
   static constexpr std::size_t kDepth = 0;
   static constexpr std::size_t kUncertainty = 1;
-  static constexpr std::size_t kTimestamp = 2;
 
-  Raster tile_;
+  Raster value_;
+  TimeRaster time_;
+  SourceRaster source_;
 };
 
 }  // namespace marine_bathymetry_store

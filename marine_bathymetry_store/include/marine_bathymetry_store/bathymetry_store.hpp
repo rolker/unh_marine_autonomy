@@ -36,11 +36,14 @@ namespace marine_bathymetry_store
 {
 
 class BathymetryStore;
+class SourceRegistry;
 // Persistence free functions (defined in tile_io.cpp). Forward-declared here so
 // the store can friend them: `load` must populate any layer — including the
 // read-only `Chart` prior — from disk, which the public API otherwise forbids.
-std::size_t save(BathymetryStore & store, const std::string & dir);
-std::size_t load(BathymetryStore & store, const std::string & dir);
+std::size_t save(
+  BathymetryStore & store, const std::string & dir, const SourceRegistry * registry);
+std::size_t load(
+  BathymetryStore & store, const std::string & dir, SourceRegistry * registry);
 
 /// @brief In-memory, GGGS-tiled, multi-layer bathymetric store (Phase 1 core).
 ///
@@ -116,8 +119,10 @@ public:
 private:
   // Persistence needs to populate any layer (including the read-only Chart
   // prior) from disk, so the free functions in tile_io.cpp are friends.
-  friend std::size_t save(BathymetryStore & store, const std::string & dir);
-  friend std::size_t load(BathymetryStore & store, const std::string & dir);
+  friend std::size_t save(
+    BathymetryStore & store, const std::string & dir, const SourceRegistry * registry);
+  friend std::size_t load(
+    BathymetryStore & store, const std::string & dir, SourceRegistry * registry);
 
   /// @brief Find or create the tile for @p grid in @p layer.
   ///

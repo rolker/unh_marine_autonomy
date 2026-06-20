@@ -22,6 +22,7 @@
 #ifndef MARINE_BATHYMETRY_STORE__QUERY_HPP_
 #define MARINE_BATHYMETRY_STORE__QUERY_HPP_
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 
@@ -42,7 +43,7 @@ struct DepthSample
 {
   double depth;          ///< Ellipsoidal height (WGS84, m, up-positive).
   double uncertainty;    ///< 1-sigma vertical uncertainty (m).
-  double timestamp;      ///< Acquisition / import time (Unix seconds).
+  int64_t timestamp;     ///< Acquisition / import time (ns since the Unix epoch).
   SourceLayer source;    ///< Which layer this value came from.
 };
 
