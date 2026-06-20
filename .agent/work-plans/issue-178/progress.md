@@ -183,3 +183,60 @@ Uncrustify: 2 local 0.78.1 drift failures (known environment issue, not real).
 
 ### Left / follow-ups
 None — all 4 suggestions addressed. Branch is ready to push.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-20 (focused re-confirmation of 4-suggestion delta in commit 420d189)
+**By**: Claude Code Agent (Claude Sonnet 4.6)
+
+**Verdict**: approved
+
+**Scope**: Focused re-confirmation of commit `420d189` (4 non-blocking suggestions folded
+before push). The full diff was already approved at the prior SHA. This review only
+examines the delta.
+
+### Finding summary (0 new findings)
+
+1. **registry.cpp `loadRegistry` — stored-index validation** (item 1): Correct. No false
+   positives on the normal `saveRegistry` path. `saveRegistry` writes entries in
+   `by_index_` order using `i+1` (1-based), producing a contiguous ascending sequence
+   that `loadRegistry` expects (`expected = by_index_.size() + 1` before each push).
+   A clean round-trip always matches. Index-0-reserved holds: `registerSource` uses
+   `by_index_.size() + 1` (minimum 1 on first call). `loadRegistry` only validates
+   stored vs. expected; it never synthesises index 0.
+
+2. **`tileRasterCount` helper + 3-band guard** (item 2): GDAL encapsulation intact.
+   `tileRasterCount` lives in `marine_tiled_raster_store` (which already depends on
+   GDAL); `marine_bathymetry_store` takes no new GDAL dep — it calls the helper via
+   the existing `marine_tiled_raster_store/tile_io.hpp` include. Guard fires only on
+   `band_count == 3`; a normal 2-band value tile passes through untouched. No false
+   positives on the valid post-#178 write path.
+
+3. **`saveTile` value-first ordering comment** (item 3): Accurate. The code writes
+   value→time→source in that order. The comment correctly states that `shallowestReliable`
+   reads only the value tile (confirmed: `query.cpp` is not touched by this commit and
+   accesses only `value.depth()` / `value.uncertainty()`), so a crash after writing the
+   value tile but before the companions leaves the safety query correct. The 0-fill
+   fallback on missing companions described in the comment is verified in `loadTile`
+   (the ternary zero-fill path for absent companions).
+
+4. **Companion GridIndex consistency check** (item 4): Missing-companion 0-fill fallback
+   is intact. The guard condition is `fs::is_regular_file(time_path) && !(time.index() == grid)`.
+   When the companion is ABSENT, `is_regular_file` returns false — the condition short-circuits,
+   no throw, and the previously assigned `TimeRaster(grid, ..., int64_t{0})` stands.
+   The throw only fires when the companion IS PRESENT but has a mismatched GridIndex.
+   Same logic for the source companion. This is exactly the required semantics.
+
+### ADR-0005 D5 safety carve-out
+`shallowestReliable` in `query.cpp` is untouched by commit 420d189 (confirmed by
+`git diff bf85d64 420d189 -- marine_bathymetry_store/src/query.cpp` returning empty).
+
+### Build / test
+Build: clean (both packages, 2026-06-20 re-run).
+gtest results (from XML, re-run):
+- marine_tiled_raster_store/test_tile_io: 6/6 pass
+- marine_bathymetry_store/test_store: 12/12 pass
+- marine_bathymetry_store/test_query: 10/10 pass
+- marine_bathymetry_store/test_tile_io: 17/17 pass
+Total 45/45 gtests pass.
+Uncrustify: 3 local 0.78.1 drift failures (known environment noise — ignored per task spec).
