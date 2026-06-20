@@ -83,6 +83,16 @@ ament_target_dependencies(sidescan_mosaic_bag
 )
 install(TARGETS sidescan_mosaic_bag DESTINATION lib/${PROJECT_NAME})
 
+# Flat-bottom Tier-2 projector: Tier-1 -> GGGS tiles (issue #184).
+add_executable(sidescan_tier2_flat src/sidescan_tier2_flat.cpp)
+target_link_libraries(sidescan_tier2_flat ${PROJECT_NAME})
+ament_target_dependencies(sidescan_tier2_flat
+  geographic_msgs
+  marine_autonomy
+  marine_tiled_raster_store
+)
+install(TARGETS sidescan_tier2_flat DESTINATION lib/${PROJECT_NAME})
+
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
