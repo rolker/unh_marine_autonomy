@@ -14,6 +14,7 @@
 | `marine_autonomy_integration_tests` | Python (CMake) | Cross-package integration tests for mission and navigation flows |
 | `marine_bathymetry_store` | C++ | Persistent multi-source bathymetric data store: GGGS-tiled, priority source layers, best-source / shallowest-reliable queries, per-tile GeoTIFF (ADR-0002 / #86) |
 | `marine_interfaces` | C++ (IDL) | ROS 2 message definitions for helm commands, heartbeats, navigation, perception contacts, and sensor data (39 msg types) |
+| `marine_sidescan_mosaic` | C++ | Live georeferenced sidescan backscatter mosaicker: projects GCV port/stbd RawSonarImage samples to GGGS-tiled uint16 GeoTIFF tiles for CAMP / web display (#173 / #171 / #166) |
 | `marine_tiled_raster_store` | C++ | Generic GGGS-tiled raster store core: band/dtype-parametrized `TiledRasterTile<T>` + per-tile GeoTIFF persistence, shared by bathymetry and sidescan (#172) |
 | `mission_manager` | Python | Converts mission plans from CAMP GCS into navigation tasks and manages task execution |
 | `mission_manager_interfaces` | C++ (IDL) | Service definitions for task manipulation (3 srv types) |
@@ -116,7 +117,8 @@ colcon test --packages-select helm_manager && colcon test-result --verbose
 Known build requirements:
 - `marine_interfaces` must build before `helm_manager`, `mission_manager`, and
   `marine_autonomy` (provides shared message types)
-- `marine_tiled_raster_store` must build before `marine_bathymetry_store`
+- `marine_tiled_raster_store` must build before `marine_bathymetry_store` and
+  `marine_sidescan_mosaic` (both wrap its `TiledRasterTile` + GeoTIFF I/O)
   (provides the generic `TiledRasterTile<T>` + GeoTIFF persistence it wraps, #172)
 - `mission_manager_interfaces` must build before `mission_manager`
 - Integration tests depend on `command_bridge`, `mission_manager`, `marine_interfaces`,
