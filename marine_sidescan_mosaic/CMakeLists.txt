@@ -33,6 +33,7 @@ add_library(${PROJECT_NAME}
   src/normalizer.cpp
   src/tier1.cpp
   src/decode.cpp
+  src/processed_accumulator.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
@@ -95,6 +96,16 @@ ament_target_dependencies(sidescan_tier2_flat
 )
 install(TARGETS sidescan_tier2_flat DESTINATION lib/${PROJECT_NAME})
 
+# Durable processed Tier-2: best-source composite -> 3-band tiles + registry (#184).
+add_executable(sidescan_tier2_processed src/sidescan_tier2_processed.cpp)
+target_link_libraries(sidescan_tier2_processed ${PROJECT_NAME})
+ament_target_dependencies(sidescan_tier2_processed
+  geographic_msgs
+  marine_autonomy
+  marine_tiled_raster_store
+)
+install(TARGETS sidescan_tier2_processed DESTINATION lib/${PROJECT_NAME})
+
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
@@ -118,6 +129,11 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_tier1 test/test_tier1.cpp)
   target_link_libraries(test_tier1 ${PROJECT_NAME})
+
+  ament_add_gtest(test_processed_accumulator test/test_processed_accumulator.cpp)
+  target_link_libraries(test_processed_accumulator ${PROJECT_NAME})
+  ament_target_dependencies(test_processed_accumulator
+    geographic_msgs marine_autonomy marine_tiled_raster_store)
 endif()
 
 ament_package()
