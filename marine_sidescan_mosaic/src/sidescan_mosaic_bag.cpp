@@ -127,7 +127,8 @@ int main(int argc, char ** argv)
     std::cerr <<
       "usage: sidescan_mosaic_bag <bag_uri> <out.sst1>\n"
       "       [--port-topic T] [--stbd-topic T] [--nadir-topic T]\n"
-      "       [--sound-speed S] [--nadir-staleness S] [--earth-frame F]\n";
+      "       [--sound-speed S] [--nadir-staleness S] [--earth-frame F]\n"
+      "       [--bins N]   # require sample0+samples_per_beam==N (decode-bug gate; 0=off)\n";
     return 2;
   }
   const std::string bag_uri = argv[1];
@@ -140,6 +141,7 @@ int main(int argc, char ** argv)
   const std::string earth_frame = argValue(argc, argv, "--earth-frame", "earth");
   const double sound_speed_fallback = std::stod(argValue(argc, argv, "--sound-speed", "1500.0"));
   const double nadir_staleness_s = std::stod(argValue(argc, argv, "--nadir-staleness", "5.0"));
+  const int expected_bins = std::stoi(argValue(argc, argv, "--bins", "2048"));
 
   // Pass 1 — fill the TF buffer from /tf + /tf_static.
   tf2::BufferCore tf_buffer(tf2::durationFromSec(36000.0));
@@ -182,7 +184,7 @@ int main(int argc, char ** argv)
 
   float held_nadir = -1.0F;
   std::int64_t held_nadir_ns = 0;
-  std::size_t n_written = 0, n_no_tf = 0, n_no_rate = 0;
+  std::size_t n_written = 0, n_no_tf = 0, n_no_rate = 0, n_bad_bins = 0;
 
   while (reader.has_next()) {
     auto bag_msg = reader.read_next();
@@ -201,6 +203,14 @@ int main(int argc, char ** argv)
     auto msg = deserialize<marine_acoustic_msgs::msg::RawSonarImage>(bag_msg);
     if (msg.sample_rate <= 0.0) {
       ++n_no_rate;
+      continue;
+    }
+    // Decode-bug gate (#184): pre-fix bags mis-located sample values and show an
+    // inconsistent bin count; well-formed pings have sample0+samples_per_beam == N.
+    if (expected_bins > 0 &&
+      static_cast<int>(msg.sample0) + static_cast<int>(msg.samples_per_beam) != expected_bins)
+    {
+      ++n_bad_bins;
       continue;
     }
     const std::int64_t ping_ns = stampNs(msg.header.stamp);
@@ -239,6 +249,7 @@ int main(int argc, char ** argv)
   }
 
   std::cerr << "pass 2: wrote " << n_written << " Tier-1 pings to " << out_path
-            << " (dropped: no-tf=" << n_no_tf << " no-rate=" << n_no_rate << ")\n";
+            << " (dropped: no-tf=" << n_no_tf << " no-rate=" << n_no_rate
+            << " bad-bins=" << n_bad_bins << ")\n";
   return 0;
 }
