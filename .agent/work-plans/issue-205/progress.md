@@ -89,3 +89,15 @@ This unblocks #164 (the Nav2 `bathymetry_layer` costmap plugin on the global cos
 - [ ] Multi-level overlap test strategy for `loadWindow` (use `GridIndex` geographic accessors)
 - [ ] Decide placement of GridIndex↔box helper (inline vs. shared)
 - [ ] Confirm #189 concurrency assumption and document in PR
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-21 09:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet 4.6)
+
+**Plan**: `.agent/work-plans/issue-205/plan.md` at `ada4f5a`
+**Branch**: feature/issue-205 at `ada4f5a`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
