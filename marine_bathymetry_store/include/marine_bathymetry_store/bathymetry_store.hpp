@@ -27,10 +27,12 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "marine_autonomy/gggs.h"
 #include "marine_bathymetry_store/bathy_cell.hpp"
 #include "marine_bathymetry_store/bathymetry_tile.hpp"
+#include "marine_bathymetry_store/epoch.hpp"
 
 namespace marine_bathymetry_store
 {
@@ -38,28 +40,45 @@ namespace marine_bathymetry_store
 class BathymetryStore;
 class SourceRegistry;
 // Persistence free functions (defined in tile_io.cpp). Forward-declared here so
-// the store can friend them: `load` must populate any layer — including the
-// read-only `Chart` prior — from disk, which the public API otherwise forbids.
+// the store can friend them: `load` must reach getOrCreateEpoch /
+// getOrCreateTile on any layer — including the read-only `Chart` prior — which
+// the public API otherwise forbids.
 std::size_t save(
   BathymetryStore & store, const std::string & dir, const SourceRegistry * registry);
 std::size_t load(
   BathymetryStore & store, const std::string & dir, SourceRegistry * registry);
 
-/// @brief In-memory, GGGS-tiled, multi-layer, **multi-level** bathymetric store.
+/// @brief One epoch's tile set within a layer, with its provenance.
 ///
-/// Holds one tile map per `SourceLayer`, keyed by `gggs::GridIndex` (which
-/// itself carries its level). The store is **level-agnostic**: tiles at
-/// heterogeneous GGGS levels coexist in the same layer (ADR-0002 §D2,
-/// amendment #151/#153). The constructor's `gggs_level` is retained only as a
-/// **default for `cellIndex(lat,lon)`** (the write/query convenience that turns
-/// coordinates into a cell) — it is *not* an invariant on stored tiles, so a
-/// coarse chart prior and a fine survey grid can live in the same store and the
-/// query resolves the best-available level per cell.
+/// `supersedes_disk` is set by a wholesale import (`BathymetryStore::importEpoch`)
+/// and tells persistence that any files previously written for this epoch are
+/// stale and must be removed before saving — a compacted epoch may legitimately
+/// cover fewer grids than the live surface it replaces, and a leftover tile
+/// file would otherwise be silently resurrected on the next load.
+struct EpochTiles
+{
+  Provenance provenance = Provenance::LiveFused;
+  bool supersedes_disk = false;
+  std::map<gggs::GridIndex, BathymetryTile> tiles;
+};
+
+/// @brief In-memory, GGGS-tiled, multi-layer, multi-level, **multi-epoch**
+///        bathymetric store.
+///
+/// Holds, per `SourceLayer`, a map of **epochs** (dated layer instances,
+/// ADR-0002 Amendment A1) each holding a tile map keyed by `gggs::GridIndex`
+/// (which itself carries its level). The store is **level-agnostic**: tiles at
+/// heterogeneous GGGS levels coexist within an epoch (ADR-0002 §D2, amendment
+/// #151/#153). The constructor's `gggs_level` is retained only as a **default
+/// for `cellIndex(lat,lon)`** (the write/query convenience that turns
+/// coordinates into a cell) — it is *not* an invariant on stored tiles.
 ///
 /// Source priority is a **non-destructive query-time overlay** (see
 /// `query.hpp`): the layers are independent, so a noisy draft write never
-/// clobbers a trusted processed cell and a later processed import never has to
-/// merge with draft (ADR-0002 §D3).
+/// clobbers a trusted processed cell. Epochs are **never fused across days** —
+/// queries resolve a layer by walking its epochs newest-first (epoch labels
+/// sort chronologically; see `Epoch`), and differencing two epochs yields a
+/// change map (ADR-0002 §A1.1).
 ///
 /// This phase has no ROS interface or distribution — just storage, in-process
 /// queries (`query.hpp`), per-tile GeoTIFF persistence (`tile_io.hpp`), and the
@@ -113,57 +132,97 @@ public:
     return level_.cellIndex(gggs::geoPoint(latitude, longitude));
   }
 
-  /// @brief Write @p value into @p layer at @p cell.
+  /// @brief Write @p value into @p layer's @p epoch at @p cell (live path).
   ///
-  /// Creates the backing tile on first write to its grid. The cell may be at
-  /// **any** valid GGGS level — the store is multi-level (ADR-0002 §D2).
-  /// @throws std::invalid_argument if @p cell is invalid.
+  /// Creates the epoch (as `LiveFused`) and the backing tile on first write. The
+  /// cell may be at **any** valid GGGS level — the store is multi-level
+  /// (ADR-0002 §D2).
+  /// @return `false` (a no-op) if the epoch is already `Replayed`: a compacted
+  ///         epoch is immutable, and a live write must never regress it
+  ///         (ADR-0002 §A1.2 provenance ordering). The caller should log this —
+  ///         it means a live snapshot arrived after the day was compacted.
+  /// @throws std::invalid_argument if @p cell is invalid or @p epoch is not a
+  ///         valid label (`validateEpochLabel`).
   /// @throws std::logic_error if @p layer is `Chart` and the store was not
   ///   constructed `chart_writable` — the prior is read-only (ADR-0002 §D3).
-  void set(SourceLayer layer, const gggs::CellIndex & cell, const BathyCell & value);
+  bool set(
+    SourceLayer layer, const Epoch & epoch, const gggs::CellIndex & cell,
+    const BathyCell & value);
 
-  /// @brief Read the raw cell in a single @p layer (no priority overlay).
-  /// @return The cell, or `std::nullopt` if @p layer has no tile for that grid.
+  /// @brief Read the raw cell of one @p epoch in one @p layer (no overlay).
+  /// @return The cell, or `std::nullopt` if the epoch or its tile is absent.
   ///         A returned cell may still be no-data (`!hasData()`).
-  std::optional<BathyCell> get(SourceLayer layer, const gggs::CellIndex & cell) const;
+  std::optional<BathyCell> get(
+    SourceLayer layer, const Epoch & epoch, const gggs::CellIndex & cell) const;
 
-  /// @brief The tiles of a layer (for persistence / iteration). Tiles may be at
-  ///        heterogeneous levels (multi-level, ADR-0002 §D2).
-  const std::map<gggs::GridIndex, BathymetryTile> & tiles(SourceLayer layer) const
+  /// @brief Replace @p layer's @p epoch wholesale with @p tiles (import path).
+  ///
+  /// Used both for compaction products (@p provenance = `Replayed`: a full-day
+  /// replay superseding the live surface) and for whole-epoch imports such as
+  /// processed GeoTIFFs. All imported tiles are marked dirty and the epoch is
+  /// flagged `supersedes_disk` so persistence removes any stale files first.
+  /// Tiles may be at heterogeneous levels (multi-level, ADR-0002 §D2).
+  /// @return `false` (a no-op) if the existing epoch is `Replayed` and
+  ///         @p provenance is `LiveFused` — the §A1.2 ordering: live-fused
+  ///         never replaces replayed. Re-importing at equal-or-higher
+  ///         provenance (e.g. a re-compaction) is allowed.
+  /// @throws std::invalid_argument if @p epoch is not a valid label, or any
+  ///         tile is keyed at an invalid grid.
+  bool importEpoch(
+    SourceLayer layer, const Epoch & epoch,
+    std::map<gggs::GridIndex, BathymetryTile> tiles, Provenance provenance);
+
+  /// @brief A layer's epochs, ascending by label (oldest first; `rbegin()` =
+  ///        newest). Empty map if the layer holds no data.
+  const std::map<Epoch, EpochTiles> & epochs(SourceLayer layer) const
   {
     return layerMap(layer);
   }
 
 private:
-  // Persistence needs to populate any layer (including the read-only Chart
-  // prior) from disk, so the free functions in tile_io.cpp are friends.
+  // Persistence must reach getOrCreateEpoch / getOrCreateTile to populate any
+  // layer (including the read-only `Chart` prior) from disk and to clear dirty
+  // flags after a save, so the free functions in tile_io.cpp are friends. With
+  // both creators private, this is what makes the Chart read-only guarantee hold
+  // by construction, not just by convention: the only public mutator is `set`
+  // (which gates `Chart`), and external code cannot obtain a mutable tile.
   friend std::size_t save(
     BathymetryStore & store, const std::string & dir, const SourceRegistry * registry);
   friend std::size_t load(
     BathymetryStore & store, const std::string & dir, SourceRegistry * registry);
 
-  /// @brief Find or create the tile for @p grid in @p layer.
+  /// @brief Find or create @p epoch in @p layer with @p provenance (load path).
   ///
-  /// Private: the only mutable tile access. Public mutation goes through `set`
-  /// (which gates `Chart`); persistence reaches this via friendship. This is
-  /// what makes the Chart read-only guarantee hold by construction, not just by
-  /// convention — external code cannot obtain a mutable Chart tile. @p grid may
-  /// be at any valid level (multi-level store, ADR-0002 §D2).
-  /// @throws std::invalid_argument if @p grid is invalid.
-  BathymetryTile & getOrCreateTile(SourceLayer layer, const gggs::GridIndex & grid);
+  /// If the epoch already exists its provenance is left unchanged — creation is
+  /// the only time the argument applies.
+  /// @throws std::invalid_argument if @p epoch is not a valid label.
+  EpochTiles & getOrCreateEpoch(
+    SourceLayer layer, const Epoch & epoch, Provenance provenance);
 
-  std::map<gggs::GridIndex, BathymetryTile> & layerMap(SourceLayer layer)
+  /// @brief Find or create the tile for @p grid in @p layer's @p epoch.
+  ///
+  /// Creates the epoch (as `LiveFused`) if absent — used by load and by
+  /// persistence to clear dirty flags on existing tiles. Private: the only
+  /// mutable tile access. Public mutation goes through `set` (which gates
+  /// `Chart`); persistence reaches this via friendship. @p grid may be at any
+  /// valid level (multi-level store, ADR-0002 §D2).
+  /// @throws std::invalid_argument if @p grid is invalid or @p epoch is not a
+  ///         valid label.
+  BathymetryTile & getOrCreateTile(
+    SourceLayer layer, const Epoch & epoch, const gggs::GridIndex & grid);
+
+  std::map<Epoch, EpochTiles> & layerMap(SourceLayer layer)
   {
     return layers_[static_cast<std::size_t>(layer)];
   }
-  const std::map<gggs::GridIndex, BathymetryTile> & layerMap(SourceLayer layer) const
+  const std::map<Epoch, EpochTiles> & layerMap(SourceLayer layer) const
   {
     return layers_[static_cast<std::size_t>(layer)];
   }
 
   gggs::Level level_;
   bool chart_writable_ = false;
-  std::array<std::map<gggs::GridIndex, BathymetryTile>, source_layer_count> layers_;
+  std::array<std::map<Epoch, EpochTiles>, source_layer_count> layers_;
 };
 
 }  // namespace marine_bathymetry_store

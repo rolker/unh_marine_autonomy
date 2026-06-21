@@ -37,12 +37,15 @@ using marine_bathymetry_store::forEachCellBestSource;
 using marine_bathymetry_store::shallowestReliable;
 using marine_bathymetry_store::SourceLayer;
 
+// A single ISO-date epoch label for the single-epoch query tests (ADR-0002 A1).
+static const char * const kEpoch = "2026-06-10";
+
 TEST(Query, BestSourcePrefersHigherPriorityLayer)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Draft, cell, BathyCell{-12.0, 2.0, 2LL});
-  store.set(SourceLayer::Processed, cell, BathyCell{-10.0, 0.1, 1LL});
+  store.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-12.0, 2.0, 2LL});
+  store.set(SourceLayer::Processed, kEpoch, cell, BathyCell{-10.0, 0.1, 1LL});
 
   const auto best = bestSource(store, cell);
   ASSERT_TRUE(best.has_value());
@@ -54,7 +57,7 @@ TEST(Query, BestSourceFallsBackToLowerPriority)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Draft, cell, BathyCell{-12.0, 2.0, 2LL});
+  store.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-12.0, 2.0, 2LL});
 
   const auto best = bestSource(store, cell);
   ASSERT_TRUE(best.has_value());
@@ -68,7 +71,7 @@ TEST(Query, UnknownCellIsNullopt)
   EXPECT_FALSE(bestSource(store, cell).has_value());
 
   // A written-but-no-data cell is still unknown (not "deep water").
-  store.set(SourceLayer::Draft, cell, BathyCell{});
+  store.set(SourceLayer::Draft, kEpoch, cell, BathyCell{});
   EXPECT_FALSE(bestSource(store, cell).has_value());
 }
 
@@ -77,8 +80,8 @@ TEST(Query, ShallowestReliablePicksGreatestHeight)
   // depth is ellipsoidal height (up-positive): shallower == greater value.
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Processed, cell, BathyCell{-30.0, 0.1, 1LL});  // deeper
-  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, 0.2, 2LL});      // shallower
+  store.set(SourceLayer::Processed, kEpoch, cell, BathyCell{-30.0, 0.1, 1LL});  // deeper
+  store.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-25.0, 0.2, 2LL});      // shallower
 
   const auto result = shallowestReliable(store, cell, 1.0);
   ASSERT_TRUE(result.has_value());
@@ -90,8 +93,9 @@ TEST(Query, ShallowestReliableExcludesOverUncertain)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Processed, cell, BathyCell{-30.0, 0.1, 1LL});  // reliable, deeper
-  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, 5.0, 2LL});      // shallower, too uncertain
+  store.set(SourceLayer::Processed, kEpoch, cell, BathyCell{-30.0, 0.1, 1LL});  // reliable, deeper
+  // shallower, but too uncertain to be reliable:
+  store.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-25.0, 5.0, 2LL});
 
   const auto result = shallowestReliable(store, cell, 1.0);
   ASSERT_TRUE(result.has_value());
@@ -103,7 +107,7 @@ TEST(Query, ShallowestReliableTreatsNaNUncertaintyAsUnreliable)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, std::nan(""), 2LL});
+  store.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-25.0, std::nan(""), 2LL});
   EXPECT_FALSE(shallowestReliable(store, cell, 1.0).has_value());
 }
 
@@ -111,7 +115,7 @@ TEST(Query, ForEachRegionVisitsCoveredCells)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Draft, cell, BathyCell{-20.0, 0.5, 1LL});
+  store.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-20.0, 0.5, 1LL});
 
   std::size_t visited = 0;
   std::size_t with_data = 0;
@@ -136,9 +140,9 @@ TEST(Query, BestSourceFallsThroughToChartPrior)
   const auto unsurveyed = store.cellIndex(43.0, -70.5);
   const auto surveyed = store.cellIndex(43.0, -70.4);
 
-  store.set(SourceLayer::Chart, unsurveyed, BathyCell{38.0, 3.0, 1LL});
-  store.set(SourceLayer::Chart, surveyed, BathyCell{38.0, 3.0, 1LL});
-  store.set(SourceLayer::Draft, surveyed, BathyCell{40.0, 0.5, 2LL});
+  store.set(SourceLayer::Chart, kEpoch, unsurveyed, BathyCell{38.0, 3.0, 1LL});
+  store.set(SourceLayer::Chart, kEpoch, surveyed, BathyCell{38.0, 3.0, 1LL});
+  store.set(SourceLayer::Draft, kEpoch, surveyed, BathyCell{40.0, 0.5, 2LL});
 
   // Unsurveyed cell falls through to the chart prior.
   const auto a = bestSource(store, unsurveyed);
@@ -165,8 +169,8 @@ TEST(Query, ShallowestReliableUnaffectedBySourceIndex)
 
   // Deeper cell from a "high" source index; shallower from a "low" one. If the
   // query ever consulted source_index, the answer could flip — it must not.
-  store.set(SourceLayer::Processed, cell, BathyCell{-30.0, 0.1, 1LL, 9000u});  // deeper
-  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, 0.2, 2LL, 1u});         // shallower
+  store.set(SourceLayer::Processed, kEpoch, cell, BathyCell{-30.0, 0.1, 1LL, 9000u});  // deeper
+  store.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-25.0, 0.2, 2LL, 1u});         // shallower
 
   const auto result = shallowestReliable(store, cell, 1.0);
   ASSERT_TRUE(result.has_value());
@@ -175,8 +179,8 @@ TEST(Query, ShallowestReliableUnaffectedBySourceIndex)
 
   // Same geometry with source indices swapped -> identical result.
   BathymetryStore swapped(5);
-  swapped.set(SourceLayer::Processed, cell, BathyCell{-30.0, 0.1, 1LL, 1u});
-  swapped.set(SourceLayer::Draft, cell, BathyCell{-25.0, 0.2, 2LL, 9000u});
+  swapped.set(SourceLayer::Processed, kEpoch, cell, BathyCell{-30.0, 0.1, 1LL, 1u});
+  swapped.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-25.0, 0.2, 2LL, 9000u});
   const auto result2 = shallowestReliable(swapped, cell, 1.0);
   ASSERT_TRUE(result2.has_value());
   EXPECT_DOUBLE_EQ(result2->depth, -25.0);
@@ -193,8 +197,8 @@ TEST(Query, BestSourcePrefersFinerLevelAcrossLevels)
   gggs::Level fine(7);
   const auto pt = gggs::geoPoint(43.0, -70.5);
 
-  store.set(SourceLayer::Chart, coarse.cellIndex(pt), BathyCell{38.0, 3.0, 1LL});
-  store.set(SourceLayer::Chart, fine.cellIndex(pt), BathyCell{40.0, 0.5, 2LL});
+  store.set(SourceLayer::Chart, kEpoch, coarse.cellIndex(pt), BathyCell{38.0, 3.0, 1LL});
+  store.set(SourceLayer::Chart, kEpoch, fine.cellIndex(pt), BathyCell{40.0, 0.5, 2LL});
 
   // Query at the finest present level (its center is closest to the survey
   // point, so the coarse cell also covers it): best-available resolves the
@@ -215,9 +219,9 @@ TEST(Query, BestSourceFallsToCoarseLevelWhereFineAbsent)
   const auto surveyed = gggs::geoPoint(43.0, -70.5);
   const auto unsurveyed = gggs::geoPoint(43.0, -70.4);
 
-  store.set(SourceLayer::Chart, coarse.cellIndex(surveyed), BathyCell{38.0, 3.0, 1LL});
-  store.set(SourceLayer::Chart, coarse.cellIndex(unsurveyed), BathyCell{37.0, 3.0, 1LL});
-  store.set(SourceLayer::Chart, fine.cellIndex(surveyed), BathyCell{40.0, 0.5, 2LL});
+  store.set(SourceLayer::Chart, kEpoch, coarse.cellIndex(surveyed), BathyCell{38.0, 3.0, 1LL});
+  store.set(SourceLayer::Chart, kEpoch, coarse.cellIndex(unsurveyed), BathyCell{37.0, 3.0, 1LL});
+  store.set(SourceLayer::Chart, kEpoch, fine.cellIndex(surveyed), BathyCell{40.0, 0.5, 2LL});
 
   // Cell with no fine-level data: only the coarse level covers it -> resolves
   // to the coarse value.
@@ -237,8 +241,8 @@ TEST(Query, ShallowestReliableConsidersAllLevels)
   const auto pt = gggs::geoPoint(43.0, -70.5);
 
   // Fine level: shallower but too uncertain. Coarse: deeper but reliable.
-  store.set(SourceLayer::Draft, fine.cellIndex(pt), BathyCell{-20.0, 5.0, 2LL});
-  store.set(SourceLayer::Draft, coarse.cellIndex(pt), BathyCell{-30.0, 0.2, 1LL});
+  store.set(SourceLayer::Draft, kEpoch, fine.cellIndex(pt), BathyCell{-20.0, 5.0, 2LL});
+  store.set(SourceLayer::Draft, kEpoch, coarse.cellIndex(pt), BathyCell{-30.0, 0.2, 1LL});
 
   const auto result = shallowestReliable(store, store.cellIndex(43.0, -70.5), 1.0);
   ASSERT_TRUE(result.has_value());
@@ -253,7 +257,7 @@ TEST(Query, ShallowestReliableGatesChartByUncertainty)
   // only when the caller's tolerance allows — both sides of the threshold.
   BathymetryStore store(5, /*chart_writable=*/true);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Chart, cell, BathyCell{38.0, 3.0, 1LL});
+  store.set(SourceLayer::Chart, kEpoch, cell, BathyCell{38.0, 3.0, 1LL});
 
   // Tolerance below the chart uncertainty excludes it -> cell reads as unknown.
   EXPECT_FALSE(shallowestReliable(store, cell, 2.9).has_value());
@@ -263,4 +267,80 @@ TEST(Query, ShallowestReliableGatesChartByUncertainty)
   ASSERT_TRUE(at.has_value());
   EXPECT_EQ(at->source, SourceLayer::Chart);
   EXPECT_DOUBLE_EQ(at->depth, 38.0);
+}
+
+TEST(Query, BestSourceResolvesNewestEpochFirst)
+{
+  // Within a layer, the default query walks epochs newest-first (ADR-0002
+  // §A1.3) — a later day's value supersedes an earlier day's without fusion.
+  BathymetryStore store(5);
+  const auto cell = store.cellIndex(43.0, -70.5);
+  store.set(SourceLayer::Draft, "2026-06-09", cell, BathyCell{-30.0, 0.5, 1LL});
+  store.set(SourceLayer::Draft, "2026-06-11", cell, BathyCell{-28.0, 0.5, 2LL});
+
+  const auto best = bestSource(store, cell);
+  ASSERT_TRUE(best.has_value());
+  EXPECT_DOUBLE_EQ(best->depth, -28.0);          // newest epoch wins
+  EXPECT_EQ(best->epoch, "2026-06-11");
+}
+
+TEST(Query, EpochsAreNeverFused)
+{
+  // The point of epochs: N days surveyed keep N records, never averaged. Each
+  // epoch reads back its own value exactly; the default query is the newest,
+  // not a blend.
+  BathymetryStore store(5);
+  const auto cell = store.cellIndex(43.0, -70.5);
+  store.set(SourceLayer::Draft, "2026-06-09", cell, BathyCell{-30.0, 0.5, 1LL});
+  store.set(SourceLayer::Draft, "2026-06-10", cell, BathyCell{-20.0, 0.5, 2LL});
+  store.set(SourceLayer::Draft, "2026-06-11", cell, BathyCell{-25.0, 0.5, 3LL});
+
+  // Three distinct epochs, each holding its own depth (no fusion to a mean).
+  EXPECT_EQ(store.epochs(SourceLayer::Draft).size(), 3u);
+  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Draft, "2026-06-09", cell)->depth, -30.0);
+  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Draft, "2026-06-10", cell)->depth, -20.0);
+  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Draft, "2026-06-11", cell)->depth, -25.0);
+  // The newest is the default query result, not the mean (-25 vs a fused -25
+  // would be ambiguous, so the older two are deliberately not -25's average).
+  EXPECT_DOUBLE_EQ(bestSource(store, cell)->depth, -25.0);
+}
+
+TEST(Query, ShallowestReliableFallsThroughNoisyNewestEpoch)
+{
+  // §A1.3 safety walk: a fresh-but-noisy epoch fails the gate and falls through
+  // to the prior epoch's confident value — no cross-epoch fusion.
+  BathymetryStore store(5);
+  const auto cell = store.cellIndex(43.0, -70.5);
+  store.set(SourceLayer::Draft, "2026-06-09", cell, BathyCell{-30.0, 0.2, 1LL});  // confident
+  store.set(SourceLayer::Draft, "2026-06-11", cell, BathyCell{-20.0, 5.0, 2LL});  // noisy, newer
+
+  const auto result = shallowestReliable(store, cell, 1.0);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_DOUBLE_EQ(result->depth, -30.0);        // noisy newest skipped
+  EXPECT_EQ(result->epoch, "2026-06-09");
+}
+
+TEST(Query, ForEachChangedCellDiffsTwoEpochs)
+{
+  // The change map: cells observed in BOTH epochs are visited with both
+  // records; cells in only one are coverage change, not visited (ADR-0002 A1.1).
+  BathymetryStore store(5);
+  const auto both = store.cellIndex(43.0, -70.5);
+  const auto only_a = store.cellIndex(43.0, -70.4);
+  store.set(SourceLayer::Draft, "2026-06-09", both, BathyCell{-30.0, 0.5, 1LL});
+  store.set(SourceLayer::Draft, "2026-06-09", only_a, BathyCell{-31.0, 0.5, 1LL});
+  store.set(SourceLayer::Draft, "2026-06-11", both, BathyCell{-28.5, 0.5, 2LL});
+
+  std::size_t visited = 0;
+  double delta = 0.0;
+  const auto n = marine_bathymetry_store::forEachChangedCell(
+    store, SourceLayer::Draft, "2026-06-09", "2026-06-11",
+    [&](const gggs::CellIndex &, const BathyCell & a, const BathyCell & b) {
+      ++visited;
+      delta = b.depth - a.depth;
+    });
+
+  EXPECT_EQ(n, 1u);          // only the doubly-observed cell
+  EXPECT_EQ(visited, 1u);
+  EXPECT_DOUBLE_EQ(delta, 1.5);   // -28.5 - (-30.0)
 }

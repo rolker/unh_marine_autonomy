@@ -30,6 +30,7 @@
 #include "marine_autonomy/gggs.h"
 #include "marine_bathymetry_store/bathy_cell.hpp"
 #include "marine_bathymetry_store/bathymetry_store.hpp"
+#include "marine_bathymetry_store/epoch.hpp"
 
 namespace marine_bathymetry_store
 {
@@ -55,28 +56,35 @@ struct DepthSample
   /// multi-level (ADR-0002 §D2); the query resolves the best-available level
   /// per cell, so a single region scan can return samples at mixed levels.
   uint8_t level = 0;
+  /// Which epoch within the layer this value came from (ADR-0002 A1). Queries
+  /// resolve a layer newest-epoch-first; this records the winning epoch.
+  /// (Provenance — live-fused vs replayed — is a property of the epoch's
+  /// tiles, not of an individual sample.)
+  Epoch epoch;
 };
 
-/// @brief Best-available depth at @p cell across layers **and levels**.
+/// @brief Best-available depth at @p cell across layers, levels **and epochs**.
 ///
-/// Walks layers in `source_layers_by_priority` order; within a layer it resolves
-/// the **finest GGGS level present** that has data at the query position (the
-/// store is multi-level, ADR-0002 §D2 — a fine survey grid is preferred over the
-/// coarse prior where both cover the cell). Returns the first layer that
-/// resolves. `std::nullopt` means **unknown** — no layer has data here; a
-/// safety-conscious caller must treat that as not-safe (ADR-0002 §D7), not as
-/// deep water.
+/// Walks layers in `source_layers_by_priority` order; within a layer it walks
+/// epochs **newest-first** (ADR-0002 §A1.3 default resolution) and, within each
+/// epoch, resolves the **finest GGGS level present** that has data at the query
+/// position (the store is multi-level, ADR-0002 §D2). Returns the first
+/// (layer, epoch, level) that resolves. `std::nullopt` means **unknown** — no
+/// layer has data here; a safety-conscious caller must treat that as not-safe
+/// (ADR-0002 §D7), not as deep water.
 std::optional<DepthSample> bestSource(
   const BathymetryStore & store, const gggs::CellIndex & cell);
 
 /// @brief Shallowest reliable depth at @p cell (navigation-safety query).
 ///
-/// Among all layers and **all levels present** that (a) have data and (b) have
-/// uncertainty ≤ @p max_uncertainty (a NaN uncertainty is never reliable),
-/// returns the **shallowest** — i.e. the greatest ellipsoidal height, the value
-/// closest to the surface and therefore the most hazardous. `std::nullopt`
-/// means no reliable data covers the cell; the caller must treat that as
-/// not-safe.
+/// Within each layer, walks epochs **newest-first** and takes the first value
+/// passing the reliability gate (uncertainty ≤ @p max_uncertainty; a NaN
+/// uncertainty is never reliable) — the ADR-0002 §A1.3 safety walk: a fresh
+/// noisy pass falls through to a prior epoch's confident value, with no
+/// cross-epoch fusion. Across all levels present and all layers, returns the
+/// **shallowest** — the greatest ellipsoidal height, the value closest to the
+/// surface and therefore the most hazardous. `std::nullopt` means no reliable
+/// data covers the cell; the caller must treat that as not-safe.
 std::optional<DepthSample> shallowestReliable(
   const BathymetryStore & store, const gggs::CellIndex & cell, double max_uncertainty);
 
@@ -95,6 +103,24 @@ void forEachCellBestSource(
   const geographic_msgs::msg::GeoPoint & maximum,
   const std::function<void(const gggs::CellIndex &,
   const std::optional<DepthSample> &)> & visitor);
+
+/// @brief Visit every cell observed in **both** epochs of @p layer (change map).
+///
+/// The reason epochs exist (ADR-0002 §A1.1): differencing two days locates
+/// change instead of averaging it away. Iterates the grids present in both
+/// epochs' tile maps and invokes @p visitor for each cell where both have
+/// usable data, passing the two records (@p epoch_a's, then @p epoch_b's). The
+/// visitor owns the significance test — e.g. comparing `|b.depth - a.depth|`
+/// against the combined uncertainty. Cells observed in only one epoch are
+/// *coverage* change, not depth change, and are not visited. Only grids at the
+/// **same level** in both epochs are compared (a cell has no cross-level
+/// counterpart).
+/// @return The number of cells visited.
+std::size_t forEachChangedCell(
+  const BathymetryStore & store, SourceLayer layer,
+  const Epoch & epoch_a, const Epoch & epoch_b,
+  const std::function<void(const gggs::CellIndex &,
+  const BathyCell &, const BathyCell &)> & visitor);
 
 }  // namespace marine_bathymetry_store
 
