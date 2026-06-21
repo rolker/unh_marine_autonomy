@@ -32,3 +32,19 @@ issue: 194
 
 ### Open questions
 - [ ] No open questions — plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-06-20 20:30 +00:00
+**By**: Claude Code Agent (Claude Sonnet 4.6)  (in-context — author self-review)
+
+**Plan**: `.agent/work-plans/issue-194/plan.md` at `fd85eab`
+**PR**: PR-less
+**Verdict**: approve-with-suggestions
+
+### Findings
+- [ ] (suggestion) Float instantiation count mismatch: plan step 2 says "three explicit instantiation blocks" but correctly lists four functions (saveTile, loadTile, saveTiles, loadTiles) — the `int64_t` pattern in `tile_io.cpp` has exactly 4. Fix the count to "four" to avoid confusion during implementation. — `plan.md:33`
+- [ ] (suggestion) Companion-tile suffix skip not specified for `load`: the bathy store `tile_io.cpp` load explicitly skips files whose stem ends with `_time` or `_source` when iterating the layer directory, so companion tiles aren't mistakenly treated as value tiles. The plan mentions companion-path helpers but does not call out this skip guard in `tile_io.cpp`. Add it explicitly to the step 3h `tile_io.cpp` description so implementers don't omit it. — `plan.md:77`
+- [ ] (suggestion) `set()` API: issue body says "kept a plain setter so the producer needn't match a record struct" (`set(cell, intensity, intensity_variance, timestamp, source_index)`), but plan step 3e defines `set(SourceLayer layer, CellIndex, MbesCell)` using a struct. Both are defensible; the struct mirrors `marine_bathymetry_store`. Clarify the choice explicitly (or align with the issue's stated preference) so implementers don't face a contradiction. — `plan.md:58`
+- [ ] (suggestion) Registry load path not addressed: `marine_backscatter::writeRegistry` is write-only (no load counterpart). The plan states load parses `registry.json` via `nlohmann_json` but doesn't specify what the loaded data is stored into (the bathy store has `SourceRegistry`; the MBES store plan omits an equivalent). If Phase 3 intentionally defers registry read-back (provenance not needed until Phase 4 fusion), state that explicitly; if read-back is needed for tests (`registry write/intern` is listed in the issue test description), the plan must specify the in-memory struct or defer the registry intern test. — `plan.md:78`
+- [ ] (suggestion) `grazingQuality` listed as a `marine_backscatter` usage reason in the ADR compliance table, but Phase 3 does not implement GeoCoder / angle correction (that is Phase 4 / cube#54 territory). The dependency on `marine_backscatter` is valid and correct (for `writeRegistry` alone), but citing `grazingQuality` as a Phase 3 usage overstates scope. Remove from ADR-0005 row or annotate as future. — `plan.md:157`
