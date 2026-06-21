@@ -54,13 +54,19 @@ in the PR description.
    - `tileOverlapsBox(grid_from_filename, min, max)` — skip non-overlapping tiles.
    - `store.epochs(layer)` already has this tile (grid key present) — skip to
      avoid reloading already-resident tiles (idempotent).
-   The grid is recovered by calling `gggs::Level(lvl).gridIndex(...)` using the
-   geotransform parsed from the file, but since we need the `GridIndex` *before*
-   calling `loadTile`, we parse the level from the filename
-   (`levelFromTileFilename`) and then reconstruct the `GridIndex` from the
-   filename stem (`<level>_<row>_<col>`) to check overlap before paying the
-   GDAL I/O cost. A helper `gridIndexFromTileFilename(filename)` (also
-   file-local) parses row and column from the stem.
+   The grid is recovered before paying GDAL I/O cost via a file-local helper
+   `gridIndexFromTileFilename(filename)` that:
+   1. Parses (level, row, col) from the `<level>_<row>_<col>` stem.
+   2. Computes `southLat = -96.0 + row * levels[lvl].grid_angular_span` and
+      `westLon = -180.0 + col * levels[lvl].gridLongitudinalSpan(row)`.
+   3. Adds a small epsilon (`levels[lvl].cell_angular_span * 0.5`) to put the
+      query point inside the tile, then calls
+      `gggs::Level(lvl).gridIndex(southLat + epsilon, westLon + epsilon)`.
+   **Must-fix (plan-review)**: the `GridIndex(level, row, col)` constructor is
+   private (accessible only to `gggs::Level`, `GridAreaIterator`, `GridBounds`).
+   The implementation MUST go through `gggs::Level(lvl).gridIndex(lat, lon)` with
+   a lat/lon derived from the parsed row/col as described above — never call the
+   private constructor directly.
 
 3. **Implement `evictOutside()` in `tile_io.cpp`** — Iterate all layers and all
    epochs within each layer. For each tile in `epoch_tiles.tiles`, if
@@ -70,8 +76,11 @@ in the PR description.
      data with no reload path. A Chart tile is always clean (never mutated at
      runtime), so this guard fires only for dirty Draft or Processed tiles.
    - Otherwise erase from `epoch_tiles.tiles` (requires mutable access via the
-     private `epochs` map — needs either friendship or a new `evictTile` accessor
-     on `BathymetryStore`). See design note below.
+     private `store.layerMap(layer)` — the non-const overload — reached through
+     friendship declared in `bathymetry_store.hpp`). **Suggestion (plan-review)**:
+     do NOT use `const_cast` on `store.epochs(layer)` (the public const accessor);
+     use `store.layerMap(layer)` (the private non-const overload) directly, which
+     is accessible because `evictOutside` is a friend. See design note below.
    Return `std::size_t` (count of tiles evicted), symmetric with `load()` /
    `save()`.
 
@@ -106,6 +115,12 @@ in the PR description.
       (dirty guard worked) and return value does not count it.
    e. `LoadWindowIdempotent` — call `loadWindow` twice on the same box; verify
       tile count is unchanged on second call (already-resident tiles skipped).
+
+   **Suggestion (plan-review)**: `importEpoch` already marks all imported tiles
+   dirty; do NOT call `save()` between populating the store and calling
+   `evictOutside()` in dirty-guard test (d), as that would clear dirty flags and
+   make the guard non-testable. Populate via `importEpoch`, call `evictOutside`
+   directly — no save in between.
 
    Note: The existing `test_tile_io.cpp` uses on-disk GeoTIFF round-trips.
    `loadWindow` also requires on-disk tiles (it scans a directory). The new
