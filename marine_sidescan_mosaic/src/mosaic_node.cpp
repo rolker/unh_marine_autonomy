@@ -28,12 +28,12 @@
 /// ping, splats into GGGS-tiled uint16 tiles, and flushes dirty tiles to GeoTIFF
 /// on a timer.
 ///
-/// Frame convention (validate against real data, #173 slice 5): the across-track
-/// azimuth is `heading ± across_track_offset_deg`, where heading is the sensor
-/// frame +x azimuth — i.e. this assumes the per-channel `frame_id` +x is the
-/// vessel-forward / along-track direction, with the look direction (port/stbd)
-/// supplied by the sign. If a platform's URDF orients the sensor frame
-/// differently, adjust `across_track_offset_deg`.
+/// Frame convention: the across-track azimuth is the horizontal projection of the
+/// per-channel sensor frame's +Z (range/beam) axis in local NED, read from the
+/// earth→sensor TF via `ecefPoseToGeoBeam` — so the look direction (port/stbd),
+/// static mount tilt, and dynamic roll all compose in directly (full attitude,
+/// not yaw-only). A residual `beam_azimuth_trim_deg` calibration offset (default
+/// 0) is added on top for sensors whose URDF +Z is not exactly abeam.
 
 #include <algorithm>
 #include <cstdint>
@@ -84,7 +84,29 @@ public:
     earth_frame_ = declare_parameter<std::string>("earth_frame", "earth");
     output_dir_ = declare_parameter<std::string>("output_dir", "sidescan_mosaic");
     sound_speed_ = declare_parameter<double>("sound_speed", 1500.0);
-    across_track_offset_deg_ = declare_parameter<double>("across_track_offset_deg", 90.0);
+    beam_azimuth_trim_deg_ = declare_parameter<double>("beam_azimuth_trim_deg", 0.0);
+    if (beam_azimuth_trim_deg_ != 0.0) {
+      // The beam +Z direction already carries the look side and mount/roll tilt;
+      // a non-zero trim is a residual calibration offset on top, worth surfacing.
+      RCLCPP_WARN(
+        get_logger(),
+        "beam_azimuth_trim_deg=%.3f is non-zero; applying a residual across-track "
+        "azimuth offset on top of the sensor +Z beam direction",
+        beam_azimuth_trim_deg_);
+    }
+    // Migration guard: `across_track_offset_deg` (90° default) was renamed to
+    // `beam_azimuth_trim_deg` (now a residual trim, default 0). rclcpp silently
+    // ignores an override for an undeclared parameter, so a stale config carrying the
+    // old name would drift in unnoticed — surface it loudly instead.
+    for (const auto & p : get_node_options().parameter_overrides()) {
+      if (p.get_name() == "across_track_offset_deg") {
+        RCLCPP_WARN(
+          get_logger(),
+          "parameter 'across_track_offset_deg' was renamed to 'beam_azimuth_trim_deg' "
+          "(now a residual trim, default 0); the old value (%s) is ignored",
+          p.value_to_string().c_str());
+      }
+    }
     nadir_staleness_s_ = declare_parameter<double>("nadir_staleness_s", 5.0);
     no_nadir_policy_ = declare_parameter<std::string>("no_nadir_policy", "drop");
     max_tf_age_s_ = declare_parameter<double>("max_tf_age_s", 1.0);
@@ -263,21 +285,34 @@ private:
       return;
     }
 
-    const auto gh = ecefPoseToGeoHeading(
+    const auto gb = ecefPoseToGeoBeam(
       pose.translation.x, pose.translation.y, pose.translation.z,
       pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w);
+    if (!gb.valid) {
+      // Near-zero / degenerate quaternion: azimuth & depression are meaningless.
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "degenerate sensor orientation (near-zero quaternion); dropping ping");
+      return;
+    }
 
     // wgs84::direct requires the origin at altitude 0 (it places on the surface).
     geographic_msgs::msg::GeoPoint origin;
-    origin.latitude = gh.latitude_deg;
-    origin.longitude = gh.longitude_deg;
+    origin.latitude = gb.latitude_deg;
+    origin.longitude = gb.longitude_deg;
     origin.altitude = 0.0;
 
     const double sound_speed = msg.ping_info.sound_speed > 0.0 ?
       msg.ping_info.sound_speed : sound_speed_;
-    const double offset_rad = across_track_offset_deg_ * M_PI / 180.0;
-    const double azimuth = gh.heading_rad +
-      (side == Side::Starboard ? offset_rad : -offset_rad);
+    // Across-track azimuth is the beam's own +Z horizontal projection (look side,
+    // mount tilt, and dynamic roll already composed in by ecefPoseToGeoBeam); the
+    // trim is a residual calibration offset, normally 0. Side no longer enters the
+    // azimuth — it only selects the per-channel normalizer below.
+    const double azimuth = gb.azimuth_rad + beam_azimuth_trim_deg_ * M_PI / 180.0;
+
+    // Beam depression below horizontal, staged for Stage 3 (footprint /
+    // roll-intensity, #185); not consumed by accumulator_.add yet.
+    [[maybe_unused]] const double depression_rad = gb.depression_rad;
 
     const std::vector<double> raw = decodeSamples(msg);
     if (msg.samples_per_beam > 0 && raw.size() != msg.samples_per_beam) {
@@ -338,7 +373,7 @@ private:
   std::string output_dir_;
   std::string no_nadir_policy_;
   double sound_speed_ = 1500.0;
-  double across_track_offset_deg_ = 90.0;
+  double beam_azimuth_trim_deg_ = 0.0;
   double nadir_staleness_s_ = 5.0;
   double max_tf_age_s_ = 1.0;
   int grid_warn_count_ = 256;

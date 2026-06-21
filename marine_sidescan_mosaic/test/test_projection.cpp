@@ -122,6 +122,33 @@ std::array<double, 4> bodyEcefQuatForBodyNed(
   return quatFromMatrix(matmul(transpose(r_ecef_ned), r_body_ned));
 }
 
+// Sensor body->NED for a vessel at (yaw,pitch,roll) carrying a sidescan whose +Z
+// (range/beam) axis points abeam-and-down. Built as the standard aerospace Z-Y-X
+// body->NED DCM composed with the fixed mount that maps the sensor frame
+// (x=forward, y=up, z=abeam) onto the ship frame (x=fwd, y=stbd, z=down). The look
+// @p side selects which beam the +Z points along: starboard (+Z to ship-starboard)
+// or port (+Z to ship-port, the starboard mount mirrored about the forward axis).
+// At zero attitude the starboard mount reduces to (x=N, y=Up, z=E) — beam due east,
+// level; port gives beam due west.
+Mat3 shipSensorBodyNed(double yaw, double pitch, double roll, msm::Side side = msm::Side::Starboard)
+{
+  const double cps = std::cos(yaw), sps = std::sin(yaw);
+  const double cth = std::cos(pitch), sth = std::sin(pitch);
+  const double cph = std::cos(roll), sph = std::sin(roll);
+  // Ship body->NED, standard Z-Y-X (yaw about Down, then pitch, then roll).
+  const Mat3 r_ship_ned = {
+    cth * cps, sph * sth * cps - cph * sps, cph * sth * cps + sph * sps,
+    cth * sps, sph * sth * sps + cph * cps, cph * sth * sps - sph * cps,
+    -sth, sph * cth, cph * cth};
+  // Fixed mount: sensor axes expressed in the ship frame (cols: x=fwd, y=up=-down,
+  // z=abeam).  Starboard points +Z to ship-starboard (the level "beam due east"
+  // matrix above); port mirrors it about forward so +Z points to ship-port.
+  const Mat3 r_mount = side == msm::Side::Starboard
+    ? Mat3{1, 0, 0, 0, 0, 1, 0, -1, 0}
+    : Mat3{1, 0, 0, 0, 0, -1, 0, 1, 0};
+  return matmul(r_ship_ned, r_mount);
+}
+
 geographic_msgs::msg::GeoPoint geoPoint(double lat, double lon, double alt = 0.0)
 {
   geographic_msgs::msg::GeoPoint p;
@@ -189,6 +216,95 @@ TEST(Projection, BeamAzimuthDepressionFromFullAttitude)
   const auto gb2 = msm::ecefPoseToGeoBeam(e.x, e.y, e.z, q2[0], q2[1], q2[2], q2[3]);
   EXPECT_NEAR(std::sin(gb2.azimuth_rad), 1.0, 1e-6);     // still east
   EXPECT_NEAR(gb2.depression_rad, M_PI / 6.0, 1e-6);     // 30 deg depression
+}
+
+// Level vessel (no roll/pitch): the full-attitude beam azimuth must match the
+// yaw-only heading + 90° (starboard) and sit on the horizon (zero depression).
+// Regression guard: with both paths in parallel, a level platform must agree.
+TEST(Projection, BeamVsHeadingLevel)
+{
+  geodesy::ECEFPoint e;
+  geodesy::fromMsg(geoPoint(43.07, -71.42, 0.0), e);
+  for (double h_deg : {0.0, 35.0, 200.0, 315.0}) {
+    const double h = h_deg * M_PI / 180.0;
+    const Mat3 r = shipSensorBodyNed(h, 0.0, 0.0);   // level: no roll, no pitch
+    const auto q = bodyEcefQuatForBodyNed(43.07, -71.42, r);
+    const auto gh = msm::ecefPoseToGeoHeading(e.x, e.y, e.z, q[0], q[1], q[2], q[3]);
+    const auto gb = msm::ecefPoseToGeoBeam(e.x, e.y, e.z, q[0], q[1], q[2], q[3]);
+    ASSERT_TRUE(gb.valid) << "heading " << h_deg;
+    const double expected = msm::acrossTrackAzimuth(gh.heading_rad, msm::Side::Starboard);
+    EXPECT_NEAR(std::cos(gb.azimuth_rad), std::cos(expected), 1e-6) << "heading " << h_deg;
+    EXPECT_NEAR(std::sin(gb.azimuth_rad), std::sin(expected), 1e-6) << "heading " << h_deg;
+    EXPECT_NEAR(gb.depression_rad, 0.0, 1e-6) << "heading " << h_deg;
+  }
+}
+
+// Port channel mirror of BeamVsHeadingLevel: a level vessel's port-look beam
+// azimuth must equal heading − 90° (the starboard case is heading + 90°), still on
+// the horizon.  Pins the per-channel +Z look-side assumption for port, which the
+// starboard-only beam tests left untested.
+TEST(Projection, BeamVsHeadingLevelPort)
+{
+  geodesy::ECEFPoint e;
+  geodesy::fromMsg(geoPoint(43.07, -71.42, 0.0), e);
+  for (double h_deg : {0.0, 35.0, 200.0, 315.0}) {
+    const double h = h_deg * M_PI / 180.0;
+    const Mat3 r = shipSensorBodyNed(h, 0.0, 0.0, msm::Side::Port);   // level, port look
+    const auto q = bodyEcefQuatForBodyNed(43.07, -71.42, r);
+    const auto gh = msm::ecefPoseToGeoHeading(e.x, e.y, e.z, q[0], q[1], q[2], q[3]);
+    const auto gb = msm::ecefPoseToGeoBeam(e.x, e.y, e.z, q[0], q[1], q[2], q[3]);
+    ASSERT_TRUE(gb.valid) << "heading " << h_deg;
+    const double expected = msm::acrossTrackAzimuth(gh.heading_rad, msm::Side::Port);
+    EXPECT_NEAR(std::cos(gb.azimuth_rad), std::cos(expected), 1e-6) << "heading " << h_deg;
+    EXPECT_NEAR(std::sin(gb.azimuth_rad), std::sin(expected), 1e-6) << "heading " << h_deg;
+    EXPECT_NEAR(gb.depression_rad, 0.0, 1e-6) << "heading " << h_deg;
+  }
+}
+
+// Pure roll about the forward axis tilts the abeam +Z boresight in the vertical
+// plane: it changes the depression but NOT the across-track azimuth (the
+// horizontal projection of +Z stays abeam).  Pins the real geometry so a future
+// change can't mislabel roll as an azimuth effect.
+TEST(Projection, RollChangesDepressionNotAzimuth)
+{
+  geodesy::ECEFPoint e;
+  geodesy::fromMsg(geoPoint(43.07, -71.42, 0.0), e);
+  const double h = 35.0 * M_PI / 180.0;
+  const double roll = 25.0 * M_PI / 180.0;
+  const Mat3 r = shipSensorBodyNed(h, 0.0, roll);    // pure roll, level in pitch
+  const auto q = bodyEcefQuatForBodyNed(43.07, -71.42, r);
+  const auto gh = msm::ecefPoseToGeoHeading(e.x, e.y, e.z, q[0], q[1], q[2], q[3]);
+  const auto gb = msm::ecefPoseToGeoBeam(e.x, e.y, e.z, q[0], q[1], q[2], q[3]);
+  ASSERT_TRUE(gb.valid);
+  // Azimuth still equals heading + 90° — roll did not move it.
+  const double expected = msm::acrossTrackAzimuth(gh.heading_rad, msm::Side::Starboard);
+  EXPECT_NEAR(std::cos(gb.azimuth_rad), std::cos(expected), 1e-6);
+  EXPECT_NEAR(std::sin(gb.azimuth_rad), std::sin(expected), 1e-6);
+  // ...but the depression now equals the applied roll angle.
+  EXPECT_NEAR(gb.depression_rad, roll, 1e-6);
+}
+
+// Combined roll + pitch tilts the forward axis out of the horizontal plane, so the
+// beam's +Z horizontal projection genuinely rotates away from heading ± 90°.  This
+// is exactly the case the yaw-only path mis-placed and Stage 2 corrects.
+TEST(Projection, BeamAzimuthDivergesUnderCombinedAttitude)
+{
+  geodesy::ECEFPoint e;
+  geodesy::fromMsg(geoPoint(43.07, -71.42, 0.0), e);
+  const double h = 35.0 * M_PI / 180.0;
+  const double pitch = 18.0 * M_PI / 180.0;
+  const double roll = 22.0 * M_PI / 180.0;
+  const Mat3 r = shipSensorBodyNed(h, pitch, roll);
+  const auto q = bodyEcefQuatForBodyNed(43.07, -71.42, r);
+  const auto gh = msm::ecefPoseToGeoHeading(e.x, e.y, e.z, q[0], q[1], q[2], q[3]);
+  const auto gb = msm::ecefPoseToGeoBeam(e.x, e.y, e.z, q[0], q[1], q[2], q[3]);
+  ASSERT_TRUE(gb.valid);
+  // The yaw-only path would place the beam at heading + 90°; full attitude moves it.
+  const double yaw_only = msm::acrossTrackAzimuth(gh.heading_rad, msm::Side::Starboard);
+  const double diff = std::atan2(
+    std::sin(gb.azimuth_rad - yaw_only), std::cos(gb.azimuth_rad - yaw_only));
+  EXPECT_GT(std::abs(diff), 2.0 * M_PI / 180.0);   // diverges measurably (> 2°)
+  EXPECT_GT(gb.depression_rad, 0.0);               // and the beam tilts below horizon
 }
 
 TEST(Projection, ProjectsEastward)

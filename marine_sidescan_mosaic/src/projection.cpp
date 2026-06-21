@@ -133,6 +133,9 @@ GeoBeam ecefPoseToGeoBeam(
     const double zN = p.r_body_ned[0 * 3 + 2];
     const double zE = p.r_body_ned[1 * 3 + 2];
     const double zD = p.r_body_ned[2 * 3 + 2];
+    // Assumes the beam +Z has a non-degenerate horizontal projection (it never
+    // points straight down/up on a sidescan): for zN≈zE≈0 the azimuth atan2(0,0)
+    // would be ill-defined.  Not guarded here as that geometry can't occur abeam.
     out.azimuth_rad = std::atan2(zE, zN);
     out.depression_rad = std::atan2(zD, std::hypot(zN, zE));
   }

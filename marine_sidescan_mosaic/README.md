@@ -15,7 +15,9 @@ and the dirty-region distribution topic (P4) are separate sub-issues.
 ## Pipeline (per ping)
 
 1. **Georeference origin** — `earth`→sensor TF lookup (exact, else bounded-latest);
-   ECEF pose → geographic origin + heading via `geodesy` + a body→NED yaw.
+   ECEF pose → geographic origin via `geodesy`, plus the across-track beam azimuth
+   and depression from the per-channel sensor **+Z** axis in local NED (full vessel
+   attitude — look side, mount tilt, and dynamic roll/pitch all compose in).
 2. **Altitude** — held last nadir (`~/nadir_depth`) within a staleness bound; on a
    residual gap the `no_nadir_policy` applies (`drop` default, or `assume_zero`).
 3. **Per-sample projection** — slant range `(sample0+j)·c/2f` → ground range
@@ -35,18 +37,24 @@ and the dirty-region distribution topic (P4) are separate sub-issues.
 | `splat` | `newest` | Per-cell combine: `newest` (recency — live operator view, default) / `mean` (despeckle) / `max_hold` (target-cue) |
 | `no_nadir_policy` | `drop` | On a stale/missing nadir: `drop` the ping or `assume_zero` |
 | `nadir_staleness_s` | `5.0` | How long a held nadir altitude stays valid |
-| `across_track_offset_deg` | `90` | Across-track azimuth offset from heading (see frame note) |
+| `beam_azimuth_trim_deg` | `0` | Residual fine-trim added to the beam azimuth (see frame note) |
 | `flush_period_s` | `2.0` | Tile flush cadence |
 | `norm_*` | — | Normalizer tuning (`target_level`, `percentile`, `ema_alpha`) |
 
 ## Frame convention (validate per platform)
 
-The across-track azimuth is `heading ± across_track_offset_deg`, where heading is
-the per-channel `frame_id` **+x** azimuth — i.e. this assumes the sensor frame +x
-is the **vessel-forward / along-track** direction, with the look side supplied by
-the sign. If a platform's URDF orients the sensor frame differently, set
-`across_track_offset_deg`. Verify against a real `bizzyboat_sonar` bag / sim
-(#173 validation).
+The across-track azimuth and beam depression come from the per-channel `frame_id`
+**+Z** (range/beam) axis: its horizontal projection in local NED gives the
+across-track azimuth and its dip below horizontal gives the depression (via
+`ecefPoseToGeoBeam`). Because this reads the full sensor orientation from the
+`earth`→sensor TF, the look side (port/stbd), static mount tilt, and dynamic
+roll/pitch all compose in directly — it is **not** a yaw-only `heading ± 90°`.
+
+This assumes the URDF mounts each channel so its **+Z points abeam** (set by the
+platform's URDF, e.g. the echoboats `sidescan.xacro` mount). `beam_azimuth_trim_deg`
+(default `0`) is only a small residual calibration trim added on top of the +Z
+azimuth — not a 90° look-side offset. Verify the channel TFs (+Z abeam, look side
+correct) against a real `bizzyboat_sonar` bag / sim (#173 validation).
 
 ## Limitations (P1)
 
