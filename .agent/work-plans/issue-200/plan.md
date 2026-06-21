@@ -2,7 +2,7 @@
 
 ## Issue
 
-https://github.com/unh-heron-autonomy/unh_marine_autonomy/issues/200
+https://github.com/rolker/unh_marine_autonomy/issues/200
 
 ## Context
 
@@ -29,9 +29,12 @@ roll-intensity) can consume it without another pass through the node.
    frame's +Z already encodes the look side (starboard or port) and any static
    URDF mount tilt; adding 90° on top would be double-counting.  Rename the
    parameter to `beam_azimuth_trim_deg` in the `declare_parameter` call and the
-   member variable so a misconfigured launch file trips a "unknown parameter" error
-   rather than silently misplacing samples.  Log the old default mismatch (a
-   non-zero value on startup) as a `RCLCPP_WARN`.
+   member variable.  Note: rclcpp **silently ignores** a leftover
+   `across_track_offset_deg` override (it does not raise an "unknown parameter"
+   error), so the rename is not a hard guard — it just means a stale override stops
+   having any effect.  A workspace sweep found nothing setting the old name, so there
+   is no migration to do.  The node still logs a `RCLCPP_WARN` when the *new*
+   `beam_azimuth_trim_deg` is non-zero at startup, surfacing residual misconfig.
 
 3. **Remove `Side` from the azimuth path** — `Side` is now only needed to select
    the per-channel `RollingNormalizer` (`port_norm_` / `stbd_norm_`); remove
@@ -49,15 +52,25 @@ roll-intensity) can consume it without another pass through the node.
    called by the live node path (kept for callers that still want the
    heading-± convention, e.g. offline bag tools).
 
-7. **Add two tests** in `test/test_projection.cpp`:
+7. **Add three tests** in `test/test_projection.cpp` (a shared `shipSensorBodyNed`
+   helper builds the sensor pose from a standard aerospace ship attitude + fixed
+   sidescan mount):
    - `BeamVsHeadingLevel` — a level pose (no roll / pitch): `ecefPoseToGeoBeam`
      azimuth should match `ecefPoseToGeoHeading` heading + 90° (the old
-     `acrossTrackAzimuth` result for Starboard).  Regression guard: if both
-     functions exist in parallel, a level vessel must give the same placement.
-   - `BeamAzimuthChangedByRoll` — add roll about the forward axis: the beam
-     azimuth from `ecefPoseToGeoBeam` must differ from the yaw-only path's
-     `heading ± 90°`, confirming the bug was corrected.  Also verifies
-     `depression_rad` is non-zero when roll is applied.
+     `acrossTrackAzimuth` result for Starboard) with zero depression.  Regression
+     guard: if both functions exist in parallel, a level vessel must agree.
+   - `RollChangesDepressionNotAzimuth` — pure roll about the forward (+X) axis tilts
+     the abeam +Z boresight in the vertical plane: it changes the **depression**
+     (which equals the roll angle) but NOT the across-track **azimuth** (the
+     horizontal projection of +Z stays abeam, so it still equals `heading + 90°`).
+     Pins the real geometry so a future change can't mislabel roll as an azimuth
+     effect.  (A *pure-roll* pose does not demonstrate azimuth divergence — that was
+     the original `BeamAzimuthChangedByRoll` premise, which was geometrically wrong.)
+   - `BeamAzimuthDivergesUnderCombinedAttitude` — combined roll + pitch tilts the
+     forward axis out of horizontal, so the +Z horizontal projection genuinely
+     rotates away from `heading ± 90°`.  Asserts the `ecefPoseToGeoBeam` azimuth
+     differs measurably (> 2°) from the yaw-only `heading + 90°`, and depression is
+     non-zero — exactly the case Stage 2 corrects.
 
 ## Files to Change
 
@@ -65,7 +78,7 @@ roll-intensity) can consume it without another pass through the node.
 |------|--------|
 | `marine_sidescan_mosaic/src/mosaic_node.cpp` | Steps 1–5: replace `ecefPoseToGeoHeading` with `ecefPoseToGeoBeam`; add valid guard; redefault + rename `beam_azimuth_trim_deg`; strip Side from azimuth; store depression_rad; update comment block |
 | `marine_sidescan_mosaic/include/marine_sidescan_mosaic/projection.hpp` | Step 6: update `acrossTrackAzimuth` doc |
-| `marine_sidescan_mosaic/test/test_projection.cpp` | Step 7: add `BeamVsHeadingLevel` and `BeamAzimuthChangedByRoll` tests |
+| `marine_sidescan_mosaic/test/test_projection.cpp` | Step 7: add `BeamVsHeadingLevel`, `RollChangesDepressionNotAzimuth`, and `BeamAzimuthDivergesUnderCombinedAttitude` tests |
 
 ## Principles Self-Check
 
@@ -87,16 +100,17 @@ roll-intensity) can consume it without another pass through the node.
 
 | If we change... | Also update... | Included in plan? |
 |---|---|---|
-| `across_track_offset_deg_` renamed → `beam_azimuth_trim_deg` | Any launch files / YAML overrides that set `across_track_offset_deg` | No — operator config; flagged in open questions |
+| `across_track_offset_deg_` renamed → `beam_azimuth_trim_deg` | Any launch files / YAML overrides that set `across_track_offset_deg` (none found in the workspace; rclcpp silently ignores a stale override — no error) | N/A — no migration needed |
 | Default 90° → 0° | Existing bags replayed with the new node will produce different (corrected) mosaics | Intentional; flagged in open questions |
 | `ecefPoseToGeoHeading` no longer called by node | `acrossTrackAzimuth` also no longer called by node | Yes (doc note in step 6); not removed (offline tools may use it) |
 
 ## Open Questions
 
-- [ ] **Launch-file migration**: any existing `across_track_offset_deg` overrides in
-  echoboats launch / YAML configs must be renamed to `beam_azimuth_trim_deg` (and
-  their values reviewed — most should become 0° with the correct URDF).  Needs
-  a sweep of echoboats#303 launch configs before merge.
+- [x] **Launch-file migration**: a workspace sweep found nothing setting
+  `across_track_offset_deg`, so there is no rename to do.  Note that rclcpp would
+  *silently ignore* a leftover override (no "unknown parameter" error), so any
+  future config carrying the old name must be caught by review, not by a runtime
+  failure.  Values should be 0° with a correct URDF (the +Z look side is in the TF).
 - [ ] **Bag replay delta**: mosaics produced before vs after this change will differ
   for any survey with non-negligible roll.  Acceptable? Confirm with the survey team.
 

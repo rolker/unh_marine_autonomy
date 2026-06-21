@@ -109,6 +109,12 @@ inline double groundRange(double slant_range, double altitude)
 
 /// @brief Across-track azimuth (radians, clockwise from north) for a @p side.
 ///   Starboard is heading + 90°, port is heading − 90°.
+///
+/// @note No longer used by the live node path, which now reads the full-attitude
+///   beam azimuth from @ref ecefPoseToGeoBeam (the sensor +Z direction) so static
+///   mount tilt and dynamic roll compose in. Kept for callers that still want the
+///   yaw-only heading-± convention (e.g. offline bag tools) and as the regression
+///   reference in `test_projection.cpp`.
 inline double acrossTrackAzimuth(double heading_rad, Side side)
 {
   constexpr double half_pi = M_PI / 2.0;
