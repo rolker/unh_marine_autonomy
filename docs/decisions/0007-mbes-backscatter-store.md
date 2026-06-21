@@ -171,17 +171,44 @@ lookup is needed at write time.
 ### D6 — Tile schema and provenance reuse ADR-0006 / ADR-0005
 
 Persist GGGS tiles as **GeoTIFF** via the generic `marine_tiled_raster_store`
-(ADR-0002 D5 mechanism), reusing the ADR-0006 D7 schema: a compact value/quality/
-**source-index** tile plus a separate `Int64`-ns time tile (the *co-locate same-dtype,
-separate cold/differing-dtype* principle, as in [#178](https://github.com/rolker/unh_marine_autonomy/issues/178)).
+(ADR-0002 D5 mechanism), following the same *co-locate same-dtype, separate
+cold/differing-dtype* principle ADR-0006 D7 and [#178](https://github.com/rolker/unh_marine_autonomy/issues/178)
+apply. Because the value band here is **float** (next paragraph), the schema cannot
+reuse ADR-0006's single 3-band `uint16` tile — a GeoTIFF is single-dtype-per-file —
+so it separates by dtype into **three tiles**: a float **`{intensity,
+intensity_variance}` value tile**, a separate **small-int `source-index` tile**, and
+a separate **`Int64`-ns time tile**. (This is the one place the MBES schema departs
+from ADR-0006, where value/quality/source-index share a dtype and co-locate.)
 Provenance is ADR-0005: the per-cell **local source index** resolves through the
 registry to a global, origin-namespaced `source-id`; the M3 registry entry is
 `platform: bizzyboat, sensor: norbit-m3, sensor_class: mbes-backscatter`, with
 `calibration_ref` empty until a beam-pattern calibration exists (relative
-backscatter). `intensity_variance` rides as a value-band alongside intensity
-(both float, co-accessed) — the bathy and backscatter intensity precisions are
-float, so the value tile is a float tile here rather than ADR-0006's detection-grade
-`uint16` (an MBES-store divergence to ratify in review).
+backscatter).
+
+The value tile is **float** rather than ADR-0006's detection-grade `uint16` because
+`intensity_variance` (D4, the Welford estimate variance) rides as a band alongside
+intensity and both are float precisions — there is **no** integer "quality" band
+here; the variance *is* the quality/uncertainty signal (mirroring the bathy store's
+depth uncertainty). A float value tile needs a `float` instantiation of the generic
+`marine_tiled_raster_store` tile IO, mirroring the `Int64` instantiation
+[#178](https://github.com/rolker/unh_marine_autonomy/issues/178) added for the time
+band. *(Float-value tile = a position to ratify in review.)*
+
+**Shared code vs. per-store code — the `marine_backscatter` boundary.** What this
+store **shares** with the sidescan store is *library code*, not just a schema:
+[`marine_backscatter`](https://github.com/rolker/unh_marine_autonomy/issues/191)
+(#191, Part of #180) is the modality-agnostic home for the **registry writer + JSON
+escaping**, the **`grazingQuality`** helper, and — when it lands — the **GeoCoder
+radiometry chain** (footprint area + incidence/Lambert + residual beam pattern). D3's
+node-output correction *is* that shared chain, called here at MBES node-output and at
+sidescan Tier-2 — **one GeoCoder, two call sites**, not two implementations. What is
+**per-store** is the **compositor**: sidescan composites **best-source** (`uint16`,
+`marine_backscatter::ProcessedAccumulator`) because blending angle-/shadow-dependent
+sidescan degrades it; MBES composites a **Welford mean+variance** (`float`, D2)
+because its beams are angle-corrected and a running estimate is the honest treatment.
+The MBES store therefore **depends on `marine_backscatter`** for registry + quality +
+GeoCoder and adds its own Welford accumulator — it does **not** reuse the best-source
+`ProcessedAccumulator`.
 
 ### D7 — `draft` / `processed` layers (ADR-0002 D3/D5; ADR-0006 D6)
 
@@ -211,11 +238,16 @@ the cross-store composition a tile-by-tile merge, not a resample.
 The CUBE-coupled accumulation (intensity-in-`Hypothesis`, node-output correction)
 lives in **`cube_bathymetry`** (where CUBE and the hypothesis/grid machinery are; it
 sits in `sensors_ws`, above `core_ws`, and already feeds the bathy store). The
-**store/tile IO** is a `core_ws` concern reusing `marine_tiled_raster_store`; whether
-it is a new `marine_mbes_backscatter_store` package or a thin instantiation beside
-the bathy store is a placement choice to ratify. `cube_bathymetry` may depend on the
-core store package (same direction it already feeds bathy); the store package must
-**not** depend on `cube_bathymetry` (layering, ADR-0002 D9). Phases (sub-issues,
+**store/tile IO** is a `core_ws` concern reusing `marine_tiled_raster_store` and
+**depending on `marine_backscatter`** (D6: shared registry + quality + GeoCoder).
+**Recommendation: a new `marine_mbes_backscatter_store` package** (depending on
+`marine_backscatter` + `marine_tiled_raster_store`), symmetric with
+`marine_sidescan_mosaic → marine_backscatter`, rather than a thin instantiation
+beside the bathy store — the float value tile, the Welford accumulator, and the
+node-output correction stage are enough store-specific logic to warrant its own
+package. (Placement remains a position to ratify.) `cube_bathymetry` may depend on
+the core store package (same direction it already feeds bathy); the store package
+must **not** depend on `cube_bathymetry` (layering, ADR-0002 D9). Phases (sub-issues,
 Part of #180 / #190):
 
 1. This ADR.
