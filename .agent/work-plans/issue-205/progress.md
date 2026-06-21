@@ -115,3 +115,59 @@ This unblocks #164 (the Nav2 `bathymetry_layer` costmap plugin on the global cos
 - [ ] (must-fix) `gridIndexFromTileFilename()` cannot directly construct `GridIndex(level, row, col)` — that constructor is `private` in `grid_index.h` (line 166), accessible only to `gggs::Level`, `GridAreaIterator`, and `GridBounds`. The plan says "reconstruct the `GridIndex` from the filename stem" but doesn't specify how. The implementation must go through `gggs::Level(lvl).gridIndex(lat, lon)` with a lat/lon derived from the parsed row/col (e.g., `southLat = -96.0 + row * span`, `westLon = -180.0 + col * longitudinalSpan(row)`, then call `Level(lvl).gridIndex(southLat + epsilon, westLon + epsilon)`). The plan should document this non-obvious indirection so the implementer does not attempt to call the private constructor. — `plan.md:62-63`
 - [ ] (suggestion) The mutable-access path for `evictOutside` erasing from `epoch_tiles.tiles` is correctly identified as requiring friendship, but the plan only mentions erasing from `epoch_tiles.tiles` without specifying that the implementation will call the private `store.layerMap(layer)` (the non-const overload) to get a mutable `std::map<Epoch, EpochTiles> &`. Noting this explicitly would prevent the implementer from mistakenly trying to cast away const from `store.epochs(layer)`. — `plan.md:65-74`
 - [ ] (suggestion) Test case (d) `EvictOutsideDirtyTileNotEvicted` calls `BathymetryTile::markDirty()` — this method exists (verified in `bathymetry_tile.hpp` line 124). However the test will need to populate the tile via `importEpoch` (not `store.set()`) so the tile can be in any SourceLayer including Chart. The plan says "mark a Draft tile dirty" and uses `importEpoch` for `evictOutside` tests — confirm the test constructs a tile with `markDirty()` called on it before the import, since `importEpoch` marks tiles dirty on import anyway (meaning the dirty state is already set). Just verify the test doesn't inadvertently save the store between population and calling `evictOutside` (which would clear dirty flags). — `plan.md:104-106`
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-21 18:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet 4.6)
+
+**Commits**: `8b90c83` (plan update), `f1e171f` (implementation)
+**Branch**: feature/issue-205
+
+### What changed
+
+**Step 0 — plan update** (commit `8b90c83`):
+- Documented must-fix: `gridIndexFromTileFilename` uses `Level(lvl).gridIndex(southLat+eps, westLon+eps)`, not the private `GridIndex(level, row, col)` constructor.
+- Documented suggestion: `evictOutside` uses `store.layerMap(layer)` (non-const, private, via friendship), not `const_cast` on `store.epochs(layer)`.
+- Documented suggestion: dirty-guard test uses `importEpoch` without `save()` in between (importEpoch already marks tiles dirty; save would clear flags).
+
+**Step 1 — implementation** (commit `f1e171f`):
+
+`marine_bathymetry_store/src/tile_io.cpp`:
+- Added `geographic_msgs/msg/geo_point.hpp` include.
+- `gridIndexFromTileFilename()` (file-local, anonymous namespace): parses `<level>_<row>_<col>` from stem; computes south-lat and west-lon from LevelSpecs table; nudges half a cell inward; calls `Level(lvl).gridIndex(lat+eps, lon+eps)`.
+- `tileOverlapsBox()` (file-local): 4-comparison AABB intersection using `GridIndex::{south,north}Latitude()` / `{west,east}Longitude()`; inclusive on all boundaries; correct at any GGGS level (ADR-0002 §D2).
+- `loadWindow()`: mirrors `load()` (layer×epoch×dir scan, companion-skip, level-recovery, backward-compat 0-fill, provenance restore), gating each tile on `tileOverlapsBox` (pre-GDAL) and skipping already-resident tiles (idempotent).
+- `evictOutside()`: iterates all layers×epochs via `store.layerMap(layer)` (private non-const, via friendship); erases clean outside tiles with `std::map::erase(iterator)` in a while loop; dirty-tile guard with explicit comment; returns `std::size_t` evicted count.
+
+`marine_bathymetry_store/include/marine_bathymetry_store/tile_io.hpp`:
+- Added `geographic_msgs/msg/geo_point.hpp` include.
+- Doxygen declarations for `loadWindow` and `evictOutside` (matching `load`/`save` style), including dirty-guard invariant note and #189 concurrency assumption.
+
+`marine_bathymetry_store/include/marine_bathymetry_store/bathymetry_store.hpp`:
+- Added `geographic_msgs/msg/geo_point.hpp` include.
+- Forward-declared `loadWindow` and `evictOutside` in the friend preamble.
+- Added `friend` declarations for both in the private section (same pattern as `load`/`save`).
+
+`marine_bathymetry_store/test/test_tile_io.cpp`:
+- Added 5 new GTest cases (28 total, all passing):
+  - `LoadWindowLoadsOnlyOverlappingTiles`: 3 tiles on disk; outside tile not loaded.
+  - `LoadWindowBoundaryStraddle`: tile whose south edge == box north edge is loaded (inclusive).
+  - `LoadWindowIdempotent`: second call returns 0 (already-resident tiles skipped).
+  - `EvictOutsideDropsOutsideKeepsInside`: clean outside tile evicted; inside tile survives; return 1.
+  - `EvictOutsideDirtyTileNotEvicted`: `importEpoch` (marks dirty) → no save → `evictOutside` → returns 0, tile still present.
+
+### Build result
+Clean build: `core_ws/build.sh marine_bathymetry_store` — no warnings on new code.
+
+### Test result
+**28 tests, 0 failures, 0 errors** (all existing + 5 new all pass).
+
+### ament_uncrustify result
+Ran `ament_uncrustify src/tile_io.cpp test/test_tile_io.cpp` from `/opt/ros/jazzy`.
+- `tile_io.hpp`: clean (no divergence).
+- `bathymetry_store.hpp`: clean (no divergence).
+- `tile_io.cpp`: 2 pre-existing divergences in `loadTile()` (lines 289, 308 — ternary operator style); no divergences in new code (lines 101–456, 458–535).
+- `test_tile_io.cpp`: 4 pre-existing divergences in existing tests (lines 137, 344–389); no divergences in new test code (lines 582+).
+
+Pre-existing uncrustify issues are in code not touched by this PR and were present before this branch. New code is clean.
