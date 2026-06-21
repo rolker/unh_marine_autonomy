@@ -21,11 +21,12 @@ arbitration happens at the fusion / query (or central-server) layer across the t
 stores, not inside either one** (D8). This store ingests `sensor_class: sidescan`
 sources.
 
-Builds on **ADR-0002** (bathymetric store — tiling, layer-as-subdirectory,
-content-hash sync, datum-at-import) and **ADR-0005** (cross-store
-provenance/registry). First sensor: **BizzyBoat Garmin GCV** side-scan. A
-**cross-cutting** ADR per the ADR-0001 convention (spans `marine_sidescan_mosaic`,
-`marine_tiled_raster_store`, `marine_autonomy` GGGS, and the bathy store it reads).
+Sibling to **ADR-0007** (MBES backscatter store). Builds on **ADR-0002**
+(bathymetric store — tiling, layer-as-subdirectory, content-hash sync,
+datum-at-import) and **ADR-0005** (cross-store provenance/registry). First sensor:
+**BizzyBoat Garmin GCV** side-scan. A **cross-cutting** ADR per the ADR-0001
+convention (spans `marine_sidescan_mosaic`, `marine_tiled_raster_store`,
+`marine_autonomy` GGGS, and the bathy store it reads).
 
 ## Context
 

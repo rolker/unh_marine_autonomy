@@ -72,6 +72,15 @@ This is the deliberate split from ADR-0006: sidescan *needs* Tier-1 because it h
 no bathy; MBES *does not*, because its bathy and its archive (the bags) both already
 exist. Adding a slant Tier-1 here would be redundant state.
 
+**The single-tier choice makes re-derivability contingent on soundings-bag
+retention** — an asymmetry vs sidescan, where ADR-0006 D11 lets bags move to cold
+storage *because* the slant Tier-1 survives independently. Here the bags **are** the
+archive, so they must be retained (or recallable from cold storage) for any durable
+re-correction. This is the same retention assumption ADR-0005 D3 already names for
+re-import-from-source; ADR-0007 inherits it explicitly. Bag retention is a
+producer/operational responsibility (out of scope here), but the dependency is real
+and stated.
+
 ### D2 — Produced by the CUBE pass: intensity rides the winning hypothesis
 
 The store is fed by the **CUBE estimator** (`cube_bathymetry`), not a standalone
@@ -86,9 +95,12 @@ backscatter cell estimate needs and would otherwise have to reinvent.
 is incorporated into a hypothesis, its backscatter is accumulated on the *same*
 hypothesis. Consequences:
 
-- Beams the W&H monitor **rejects for depth** (multipath, outliers) never enter the
-  backscatter accumulator — outlier rejection comes free and is consistent between
-  the two products.
+- Beams the W&H monitor **rejects for depth** (multipath, geometric outliers) never
+  enter the backscatter accumulator — *depth-geometry* outlier rejection comes free.
+  Note the limit: a beam can be a valid depth member yet an **intensity** outlier
+  (e.g. a water-column target on an otherwise-good return); the depth monitor does
+  not catch that, and it surfaces instead in the D4 within-node dispersion. So the
+  association is shared, but only depth-geometry outliers are rejected for free.
 - The winning hypothesis emits, per node, a **single enriched record**:
   `{ depth, depth_variance, intensity, intensity_variance, n_samples }`.
 
@@ -116,10 +128,16 @@ refine vs. deferred-settled); **the decision is deferred-settled**:
   then is the Welford mean/variance of *corrected* backscatter computed and written.
 
 This keeps the stored value radiometrically clean and re-derivable, at the cost of
-carrying a small per-beam record on the hypothesis until output. It ties directly to
-**cube_bathymetry#15** (slope correction is currently disabled in `Node::insert`):
-the slope that feeds incidence-angle correction here is the same quantity #15 must
-provide — at output, not in the live insert.
+carrying a small per-beam record on the hypothesis until output. That per-node state
+is **bounded by hypothesis membership** (`n_samples` beams), not unbounded; the
+`{raw intensity, grazing angle}` pair is a few bytes per contributing beam. The two
+write paths (D7) consume it differently: the live **`draft`** correction uses the
+depth/slope settled *so far* (best-available live), while the durable **`processed`**
+build re-runs the pass and applies the fully-settled correction — so "until output"
+means "until the live node emits" for draft, and "during the offline re-run" for
+processed. It ties directly to **cube_bathymetry#15** (slope correction is currently
+disabled in `Node::insert`): the slope that feeds incidence-angle correction here is
+the same quantity #15 must provide — at output, not in the live insert.
 
 ### D4 — `intensity_uncertainty` = posterior estimate variance; dispersion is a candidate texture band
 
