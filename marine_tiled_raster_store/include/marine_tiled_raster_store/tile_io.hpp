@@ -44,9 +44,11 @@
 ///
 /// GDAL is intentionally absent from this header: the functions are templates
 /// **explicitly instantiated** in `tile_io.cpp` for the supported element types
-/// (`double`, `std::uint16_t`, `std::int64_t`), so consumers link the
+/// (`double`, `float`, `std::uint16_t`, `std::int64_t`), so consumers link the
 /// instantiations without taking a public GDAL dependency. (`std::int64_t` →
-/// `GDT_Int64` backs the bathy timestamp tile, #178; requires GDAL >= 3.5.)
+/// `GDT_Int64` backs the bathy timestamp tile, #178; requires GDAL >= 3.5.
+/// `float` → `GDT_Float32` backs the MBES backscatter value tile, ADR-0007 D6 /
+/// #194.)
 ///
 /// @note Round-trip persistence is validated for **non-polar** latitudes
 /// (|lat| < 72°), the intended lake/coastal survey envelope. Near GGGS's polar

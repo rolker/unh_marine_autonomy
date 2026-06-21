@@ -143,6 +143,35 @@ TEST(TiledRasterTileIo, RoundTripInt64SingleBand)
   EXPECT_FALSE(loaded.dirty());
 }
 
+// A single-band float tile (the MBES backscatter value-tile shape, ADR-0007 D6 /
+// #194) round-trips through GeoTIFF: float values — including a NaN no-data
+// sentinel on an untouched cell — survive, and the GridIndex is recovered.
+TEST(TiledRasterTileIo, RoundTripFloatSingleBand)
+{
+  ScratchDir dir("f32_single");
+  const gggs::Level level(13);                       // ~0.11 m cells
+  const gggs::GridIndex grid = sampleGrid(level);
+  const std::string path = (dir.path() / mtrs::tileFilename(grid)).string();
+
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  // Fill untouched cells with the NaN no-data sentinel; write a few real values.
+  mtrs::TiledRasterTile<float> tile(grid, 1, nan);
+  tile.set(0, 0, 0, -12.5f);
+  tile.set(100, 200, 0, 0.375f);                     // exactly representable in f32
+  tile.set(tile.edge - 1, tile.edge - 1, 0, 42.0f);
+
+  mtrs::saveTile<float>(tile, path, {nan});
+  const auto loaded = mtrs::loadTile<float>(path, level, 1);
+
+  EXPECT_EQ(loaded.index(), grid);
+  EXPECT_EQ(loaded.bandCount(), 1u);
+  EXPECT_FLOAT_EQ(loaded.get(0, 0, 0), -12.5f);
+  EXPECT_FLOAT_EQ(loaded.get(100, 200, 0), 0.375f);
+  EXPECT_FLOAT_EQ(loaded.get(tile.edge - 1, tile.edge - 1, 0), 42.0f);
+  EXPECT_TRUE(std::isnan(loaded.get(5, 5, 0)));      // untouched cell stays no-data
+  EXPECT_FALSE(loaded.dirty());
+}
+
 // A tile saved at one level is rejected when loaded at a different level (its
 // geotransform won't match any grid there).
 TEST(TiledRasterTileIo, LevelMismatchRejected)

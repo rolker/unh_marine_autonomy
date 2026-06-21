@@ -60,6 +60,8 @@ GDALDataType gdalType();
 template<>
 GDALDataType gdalType<double>() {return GDT_Float64;}
 template<>
+GDALDataType gdalType<float>() {return GDT_Float32;}
+template<>
 GDALDataType gdalType<std::uint16_t>() {return GDT_UInt16;}
 // GDT_Int64 requires GDAL >= 3.5; the workspace targets GDAL >= 3.8 (ROS 2
 // jazzy / rolling, 3.8.4 locally). Used by the bathy timestamp tile (#178):
@@ -314,6 +316,9 @@ std::size_t loadTiles(
 template void saveTile<double>(
   const TiledRasterTile<double> &, const std::string &,
   const std::vector<std::optional<double>> &);
+template void saveTile<float>(
+  const TiledRasterTile<float> &, const std::string &,
+  const std::vector<std::optional<float>> &);
 template void saveTile<std::uint16_t>(
   const TiledRasterTile<std::uint16_t> &, const std::string &,
   const std::vector<std::optional<std::uint16_t>> &);
@@ -323,6 +328,8 @@ template void saveTile<std::int64_t>(
 
 template TiledRasterTile<double> loadTile<double>(
   const std::string &, const gggs::Level &, std::size_t);
+template TiledRasterTile<float> loadTile<float>(
+  const std::string &, const gggs::Level &, std::size_t);
 template TiledRasterTile<std::uint16_t> loadTile<std::uint16_t>(
   const std::string &, const gggs::Level &, std::size_t);
 template TiledRasterTile<std::int64_t> loadTile<std::int64_t>(
@@ -331,6 +338,9 @@ template TiledRasterTile<std::int64_t> loadTile<std::int64_t>(
 template std::size_t saveTiles<double>(
   std::map<gggs::GridIndex, TiledRasterTile<double>> &, const std::string &,
   const std::vector<std::optional<double>> &);
+template std::size_t saveTiles<float>(
+  std::map<gggs::GridIndex, TiledRasterTile<float>> &, const std::string &,
+  const std::vector<std::optional<float>> &);
 template std::size_t saveTiles<std::uint16_t>(
   std::map<gggs::GridIndex, TiledRasterTile<std::uint16_t>> &, const std::string &,
   const std::vector<std::optional<std::uint16_t>> &);
@@ -340,6 +350,9 @@ template std::size_t saveTiles<std::int64_t>(
 
 template std::size_t loadTiles<double>(
   std::map<gggs::GridIndex, TiledRasterTile<double>> &, const std::string &,
+  const gggs::Level &, std::size_t);
+template std::size_t loadTiles<float>(
+  std::map<gggs::GridIndex, TiledRasterTile<float>> &, const std::string &,
   const gggs::Level &, std::size_t);
 template std::size_t loadTiles<std::uint16_t>(
   std::map<gggs::GridIndex, TiledRasterTile<std::uint16_t>> &, const std::string &,
