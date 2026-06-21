@@ -259,3 +259,94 @@ rebuilt via the just-merged #43 DetectionsProjector (offline, no live ROS graph)
 - [ ] OQ2 — Bag-replay tool location: recommend cube_bathymetry-side (mirrors bag_to_geotiff, depends on store via public API) — confirm.
 - [ ] OQ3 — GeoMapSheet live-path importer: recommend OUT of Phase 2 (belongs with Phase-3 live node) — confirm the cut.
 - [ ] Checkpoint — close #148 when the superseding PR is green (it stays the harvest reference until then) — operator decision.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-06-21 02:10 -0400
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context)) (in-context — author self-review)
+<!-- Fresh-context independent review pass per host dispatch; the `## Plan Authored`
+     entry shares the same agent-name string, so the name-based independence detection
+     annotates it as author self-review per the skill. Weight accordingly. -->
+
+**Plan**: `.agent/work-plans/issue-147/plan.md` at `71bc52c`
+**PR**: PR-less (`--issue`/file-path mode; PR #148 is the prior Phase-2 PR on this same branch, not this plan's PR)
+**Verdict**: changes-requested
+
+### Verification against current code
+- **Store API read is accurate.** `BathymetryStore` per-`SourceLayer` `map<GridIndex,BathymetryTile>`,
+  single `gggs::Level level_`, private `getOrCreateTile`, `chart_writable` gate, `set`/`get`
+  level-checks — all as the plan's Context says (`bathymetry_store.hpp/.cpp` confirmed). `BathymetryTile`
+  3-raster value(2-band double)/time(int64)/source(uint16) + `BathyCell{depth,uncertainty,timestamp,source_index}`
+  confirmed. `SourceRegistry` idempotent-on-`source_id`, index-0 sentinel, `registry.json` atomic — confirmed.
+  `query.hpp` `bestSource`/`shallowestReliable`/`forEachCellBestSource` all single-level (`store.level()`) — confirmed.
+  ADR-0002 already carries the merged heterogeneous-levels D2 amendment (the store body lags the ADR) — confirmed.
+- **Minor naming drift (not blocking):** the plan calls the off-level rejection `requireGridAtLevel`; the actual
+  mechanism is inline `cell.level() != level_.level()` checks in `set`/`getOrCreateTile` (#148-era name). The plan
+  also names harvested query fns `bestSample`/`reliableSample`; current jazzy fns are `bestSource`/`shallowestReliable`.
+  Substance is right; names should track current code when implemented.
+
+### Findings
+- [ ] (must-fix) **Branch strategy is internally inconsistent and risks destroying PR #148's diff.** PR #148's
+  `headRefName` IS `feature/issue-147` — the exact branch this plan reset to jazzy. Local has diverged from
+  `origin/feature/issue-147` (local 79 ahead / 20 behind; only 3 ahead of jazzy). Pushing this re-plan requires a
+  force-push that overwrites `origin/feature/issue-147` and erases #148's harvest diff — contradicting "keep #148
+  OPEN as the harvest reference." You cannot both reset this branch and preserve #148. Fix: open the new PR from a
+  NEW branch (e.g. `feature/issue-147-replatform`), leaving `origin/feature/issue-147`/#148 untouched as the
+  reference; supersede by comment, not by force-push. — `plan.md:228-235`
+- [ ] (must-fix) **Multi-level load mechanism is mis-described and under-specified (the M1 core).** Plan says
+  `tile_io::loadTile` "recovers each tile's level from its geotransform (already does — it just currently rejects
+  non-store levels)." It does NOT: `loadTile(path, level)` takes the level as an INPUT and `mtrs::loadTile<T>(path,
+  level, bands)` validates the geotransform against that supplied level. `load()` passes `store.level()` to every
+  tile. Mixed-level load therefore needs a concrete new step the plan omits: parse the level prefix from the
+  `<level>_<row>_<col>.tif` filename and pass per-file level (the filename already encodes it — small, but it must
+  be stated). Spell this out in M1. — `plan.md:99-102`
+- [ ] (must-fix) **Bag-replay chain omits the Sounding→GeoSounding earth-frame georeferencing step.** Plan's chain
+  is `project() → GeoMapSheet::addSoundings → grids() → values()`. The actual `bag_to_geotiff.cpp -d` path inserts a
+  per-sounding `lookupTransform("earth", sonar_frame, stamp)` loop (lines ~517-559) that converts `cube::Sounding`
+  (sonar-frame x/y/z) into `cube::GeoSounding` (lat/lon) BEFORE `addSoundings`. `project()` returns `cube::Sounding`,
+  not `GeoSounding`. State this intermediate; it's where earth-frame TF is consumed. — `plan.md:148-157,75-79`
+- [ ] (must-fix) **`GeoGrid::values()` is a flat positional vector, not "keyed by CellIndex," and it mutates node
+  state.** `values()` returns `std::vector<DepthAndUncertainty>` in `CellAreaIterator(index_)` order (full grid,
+  NaN-filled empties) — the CellIndex association is positional, not a map. The plan's "`DepthAndUncertainty` keyed
+  by `gggs::CellIndex`" is wrong; the importer must walk `CellAreaIterator` in lockstep with the vector. Also
+  `values()` calls `queueFlush`/`extractDepthAndUncertainty` (mutates the median pre-filter), and `DepthAndUncertainty`
+  is `float` (store is `double` — widening, fine). The determinism claim (D6 byte-identical) hinges on CUBE +
+  `values()` being deterministic for a fixed sounding-insertion order; make the determinism test assert that explicitly
+  (same bag, same order → identical tiles) and note the float→double widening. — `plan.md:75-79,168-169`
+- [ ] (suggestion) **ADR-0002 "replace #148's Amendment A1" overstates the docs delta.** Current jazzy ADR-0002 has
+  NO Amendment A1 / epoch content (that lived only on the #148 branch, never merged). The epoch amendment is authored
+  FRESH here, composed against the already-merged D2/D5. Reword to "author the epoch Amendment A1 against merged
+  D2/D5," not "replace." — `plan.md:173-178,213`
+- [ ] (suggestion) **`DepthSample` has no `source_index` today.** Plan §4 says "`source_index` is already available
+  via the per-cell record" — true at `BathyCell`, but `DepthSample` (what queries return) carries only depth/uncertainty/
+  timestamp/source-LAYER. If consumers need the registry index off a query result, `DepthSample` must gain it
+  explicitly alongside the planned `epoch` field. — `plan.md:135-136`
+
+### Open-question recommendations (independent)
+- [ ] **OQ1 (dual provenance axes) — AGREE, genuinely orthogonal.** `Provenance{LiveFused,Replayed}` is the
+  per-epoch compaction-maturity axis (governs immutable-after-compaction ordering); the `SourceRegistry` uint16 is the
+  per-cell platform/sensor axis. They never alias (one is epoch-scoped, one cell-scoped) and the store already holds
+  both substrates. Keep both; the plan treats them so. Lock the ADR-A1 wording to this split before coding.
+- [ ] **OQ2 (bag-replay tool location) — AGREE, cube-side (option a).** Store can't depend on cube (ADR-0002 D-layering);
+  cube already depends on the store's public API path is the only coupling, and `bag_to_geotiff` proves cube-side
+  offline replay end-to-end. A separate bridge package adds a repo/CMake surface for zero isolation benefit. Caveat:
+  this makes PR-B genuinely cross-repo (cube_bathymetry), so PR-B depends on PR-A's public import API being released
+  first — sequence accordingly (see PR-split note).
+- [ ] **OQ3 (GeoMapSheet live-path importer) — AGREE, OUT of Phase 2.** It needs the running graph + session identity
+  (Phase-3 live node). The offline bag-replay importer already exercises the GeoMapSheet→store cell-extraction code, so
+  Phase 3 inherits it. Clean cut.
+
+### PR-split assessment
+Sound in principle: PR-A is the self-contained in-repo foundation downstream consumers lock onto; PR-B is cross-repo and
+depends only on PR-A's public import API. One API-timing risk to record: PR-B (cube-side) cannot build until PR-A's
+import API is merged+released into the layer, so the split is a hard dependency order, not parallelizable. No dependency
+inversion (store never depends on cube). PR-A is large (re-platform); acceptable given it supersedes #148.
+
+### Summary
+Strong, well-grounded re-plan: the harvest-vs-rebuild call is correct (17+ conflict merge = re-platform), the store-API
+reading is accurate, multi-level-from-the-start correctly resolves the old M1 blocker, and all three OQ recommendations
+are sound. Not ready as written: the branch strategy will destroy #148's reference diff on push (must-fix), and three
+cross-repo/internal API claims (loadTile level recovery, the Sounding→GeoSounding step, GeoGrid::values() shape +
+mutation/determinism) are mis-described against the actual code and must be corrected so the implementer builds the right
+thing. Fix those five and it's ready.
+
