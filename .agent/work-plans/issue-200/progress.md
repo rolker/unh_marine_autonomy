@@ -82,3 +82,24 @@ deps first: `geodesy` (underlay_ws/src/geographic_info) was unbuilt — built it
   rotate 90°. Verify echoboats#303 channel TFs orient +Z abeam before merge. Host must
   confirm — `gh` unauthenticated in-container.
 - [ ] Bag-replay delta for non-trivial roll surveys — confirm acceptable with survey team.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-21 13:16 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-200 at `fb6a41b`
+**Mode**: pre-push
+**Depth**: Standard (reason: correctness-sensitive projection geometry + ROS param rename/default change)
+**Must-fix**: 2 | **Suggestions**: 4
+**Round**: 1 | **Ship**: continue — 2 mechanical must-fixes (stale README + missing port-channel test); no design/correctness defect in production code
+
+### Findings
+- [ ] (must-fix) Package README still documents removed `across_track_offset_deg` (90°) + old yaw-only frame convention; update to `beam_azimuth_trim_deg` (0°) + +Z full-attitude model — `marine_sidescan_mosaic/README.md:38,42-49`
+- [ ] (must-fix) New beam tests cover starboard only; add a port-channel case (expected azimuth = heading − 90°) — the per-channel +Z look-side assumption is untested for port — `marine_sidescan_mosaic/test/test_projection.cpp:215`
+- [ ] (suggestion) Stale-old-name config drift is silent: rclcpp ignores a leftover `across_track_offset_deg`; WARN only fires on non-zero new param — warn if legacy name present — `marine_sidescan_mosaic/src/mosaic_node.cpp:87`
+- [ ] (suggestion) Launch relied on the old 90° default; after 90°→0° it shifts placement unless TF +Z is abeam — expose `beam_azimuth_trim_deg` arg / migration comment — `marine_sidescan_mosaic/launch/sidescan_mosaic.launch.py:39`
+- [ ] (suggestion) Trim now applied same-sign to both channels (was ±per-side); symmetric per-side mount-yaw no longer correctable with one param — document the semantic change — `marine_sidescan_mosaic/src/mosaic_node.cpp:298`
+- [ ] (suggestion) `valid` guard misses straight-down/up +Z (`zN≈zE≈0` ⇒ `atan2(0,0)`); azimuth ill-defined while valid stays true — note-level, unlikely for sidescan — `marine_sidescan_mosaic/src/projection.cpp:130`
+- [ ] (gate, pre-existing) URDF +Z sweep (echoboats#303) and bag-replay delta sign-off still open — operational, not code defects, but must clear before merge
