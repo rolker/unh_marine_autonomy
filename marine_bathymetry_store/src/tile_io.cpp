@@ -30,6 +30,8 @@
 #include <string>
 #include <vector>
 
+#include "geographic_msgs/msg/geo_point.hpp"
+
 #include "marine_bathymetry_store/epoch.hpp"
 #include "marine_tiled_raster_store/tile_io.hpp"
 
@@ -81,6 +83,73 @@ std::string companionPath(const std::string & value_path, const char * suffix)
   namespace fs = std::filesystem;
   const fs::path p(value_path);
   return (p.parent_path() / (p.stem().string() + suffix + p.extension().string())).string();
+}
+
+/// Reconstruct a `GridIndex` from a tile filename stem `<level>_<row>_<col>`
+/// without opening the file (called before the GDAL I/O to gate overlap checks).
+///
+/// Strategy (must-fix from plan-review): `GridIndex(level, row, col)` is a
+/// private constructor only accessible to `gggs::Level`, `GridAreaIterator`, and
+/// `GridBounds`.  We derive (southLat, westLon) from the parsed (row, col), nudge
+/// them half a cell inward to stay strictly inside the tile, and round-trip
+/// through `gggs::Level(lvl).gridIndex()` which calls the private constructor
+/// via the Level friend relationship.
+///
+/// @param filename Basename (with or without `.tif`) of the form
+///        `<level>_<row>_<col>[.tif]`.
+/// @throws std::runtime_error if the filename cannot be parsed.
+gggs::GridIndex gridIndexFromTileFilename(const std::string & filename)
+{
+  namespace fs = std::filesystem;
+  const std::string stem = fs::path(filename).stem().string();
+  // Parse "<level>_<row>_<col>" from the stem.
+  const auto first_under = stem.find('_');
+  if (first_under == std::string::npos || first_under == 0) {
+    throw std::runtime_error(
+            "gridIndexFromTileFilename: cannot parse level from '" + filename + "'");
+  }
+  const auto second_under = stem.find('_', first_under + 1);
+  if (second_under == std::string::npos || second_under == first_under + 1) {
+    throw std::runtime_error(
+            "gridIndexFromTileFilename: cannot parse row from '" + filename + "'");
+  }
+  const uint8_t lvl = static_cast<uint8_t>(std::stoi(stem.substr(0, first_under)));
+  const uint32_t row =
+    static_cast<uint32_t>(std::stoul(stem.substr(first_under + 1, second_under - first_under - 1)));
+  const uint32_t col = static_cast<uint32_t>(std::stoul(stem.substr(second_under + 1)));
+
+  // Derive the tile's south-west corner from (level, row, col) using the
+  // precomputed LevelSpecs table (same formulas as GridIndex::southLatitude()
+  // and GridIndex::westLongitude()).
+  const gggs::LevelSpecs & spec = gggs::levels[lvl];
+  const double south_lat = -96.0 + row * spec.grid_angular_span;
+  const double west_lon = -180.0 + col * spec.gridLongitudinalSpan(row);
+
+  // Nudge half a cell-span inward so the query point is strictly inside the
+  // tile's geographic AABB even after floating-point rounding.
+  const double epsilon = spec.cell_angular_span * 0.5;
+  return gggs::Level(lvl).gridIndex(south_lat + epsilon, west_lon + epsilon);
+}
+
+/// Return `true` when tile @p grid's geographic AABB intersects the bounding
+/// box [@p min_pt … @p max_pt] (both inclusive — a tile whose edge exactly
+/// touches the box boundary is treated as overlapping).
+///
+/// Uses `GridIndex::{south,north}Latitude()` and `{west,east}Longitude()` for
+/// the AABB, which are correct at any GGGS level without a `GridAreaIterator`
+/// (ADR-0002 §D2 multi-level).
+bool tileOverlapsBox(
+  const gggs::GridIndex & grid,
+  const geographic_msgs::msg::GeoPoint & min_pt,
+  const geographic_msgs::msg::GeoPoint & max_pt)
+{
+  // Axis-aligned rectangle intersection: disjoint if one box is entirely to the
+  // left, right, above, or below the other.
+  if (grid.northLatitude() < min_pt.latitude) {return false;}
+  if (grid.southLatitude() > max_pt.latitude) {return false;}
+  if (grid.eastLongitude() < min_pt.longitude) {return false;}
+  if (grid.westLongitude() > max_pt.longitude) {return false;}
+  return true;
 }
 
 constexpr const char * kProvenanceMarker = "provenance";
@@ -384,6 +453,110 @@ std::size_t load(
     registry->loadRegistry(dir);
   }
   return loaded;
+}
+
+std::size_t loadWindow(
+  BathymetryStore & store, const std::string & dir,
+  const geographic_msgs::msg::GeoPoint & min_pt,
+  const geographic_msgs::msg::GeoPoint & max_pt,
+  SourceRegistry * registry)
+{
+  namespace fs = std::filesystem;
+  std::size_t loaded = 0;
+  for (const SourceLayer layer : source_layers_by_priority) {
+    const fs::path layer_dir = fs::path(dir) / layerDirName(layer);
+    if (!fs::is_directory(layer_dir)) {
+      continue;
+    }
+    for (const auto & epoch_entry : fs::directory_iterator(layer_dir)) {
+      if (!epoch_entry.is_directory()) {
+        continue;
+      }
+      const std::string epoch = epoch_entry.path().filename().string();
+      validateEpochLabel(epoch);
+      const fs::path epoch_dir = epoch_entry.path();
+      const Provenance provenance = readProvenanceMarker(epoch_dir);
+
+      for (const auto & entry : fs::directory_iterator(epoch_dir)) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
+          continue;
+        }
+        // Skip companion tiles (_time / _source) — loaded alongside value tile.
+        const std::string stem = entry.path().stem().string();
+        const auto ends_with = [&stem](const char * suffix) {
+            const std::string s(suffix);
+            return stem.size() >= s.size() &&
+                   stem.compare(stem.size() - s.size(), s.size(), s) == 0;
+          };
+        if (ends_with(kTimeSuffix) || ends_with(kSourceSuffix)) {
+          continue;
+        }
+
+        // Gate on geographic overlap BEFORE paying the GDAL I/O cost.
+        const gggs::GridIndex candidate_grid =
+          gridIndexFromTileFilename(entry.path().filename().string());
+        if (!tileOverlapsBox(candidate_grid, min_pt, max_pt)) {
+          continue;
+        }
+
+        // Idempotency: skip tiles already resident in this epoch.
+        const auto & epoch_map = store.epochs(layer);
+        const auto epoch_it = epoch_map.find(epoch);
+        if (epoch_it != epoch_map.end()) {
+          if (epoch_it->second.tiles.count(candidate_grid) != 0) {
+            continue;
+          }
+        }
+
+        // Load the tile (GDAL I/O path — only for overlapping, non-resident tiles).
+        const uint8_t lvl = levelFromTileFilename(entry.path().filename().string());
+        BathymetryTile tile = loadTile(entry.path().string(), gggs::Level(lvl));
+        store.getOrCreateEpoch(layer, epoch, provenance);
+        store.getOrCreateTile(layer, epoch, tile.index()) = std::move(tile);
+        ++loaded;
+      }
+    }
+  }
+  if (registry != nullptr) {
+    registry->loadRegistry(dir);
+  }
+  return loaded;
+}
+
+std::size_t evictOutside(
+  BathymetryStore & store,
+  const geographic_msgs::msg::GeoPoint & min_pt,
+  const geographic_msgs::msg::GeoPoint & max_pt)
+{
+  std::size_t evicted = 0;
+  for (const SourceLayer layer : source_layers_by_priority) {
+    // Use the non-const layerMap() (private, accessible here via friendship) to
+    // obtain a mutable reference — do NOT const_cast store.epochs(layer).
+    for (auto & [epoch, epoch_tiles] : store.layerMap(layer)) {
+      auto it = epoch_tiles.tiles.begin();
+      while (it != epoch_tiles.tiles.end()) {
+        const gggs::GridIndex & grid = it->first;
+        const BathymetryTile & tile = it->second;
+        if (!tileOverlapsBox(grid, min_pt, max_pt)) {
+          // Dirty-tile guard: a dirty (unsaved) Draft or Processed tile is live
+          // sensor data that has not yet reached disk; evicting it would lose that
+          // data with no reload path.  Chart tiles are always clean (never mutated
+          // at runtime) and are always safely evictable.  Skip dirty tiles here
+          // and let them survive until they are either saved (clearing the flag)
+          // or explicitly discarded by the caller.
+          if (tile.dirty()) {
+            ++it;
+            continue;
+          }
+          it = epoch_tiles.tiles.erase(it);
+          ++evicted;
+        } else {
+          ++it;
+        }
+      }
+    }
+  }
+  return evicted;
 }
 
 }  // namespace marine_bathymetry_store
