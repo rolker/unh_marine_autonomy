@@ -29,8 +29,10 @@
 #include "marine_tiled_raster_store/tiled_raster_tile.hpp"
 
 /// @file
-/// @brief Best-source compositor for the durable `processed` backscatter layer
-///   (ADR-0006 D5/D7) — shared by the sidescan and MBES backscatter layers.
+/// @brief Best-source compositor for the durable `processed` **sidescan**
+///   backscatter layer (ADR-0006 D5/D7). The MBES layer composites differently
+///   (Welford mean+variance, ADR-0007 D2) and does not use this — only the
+///   registry + quality helpers in this package are cross-layer shared.
 ///
 /// Per GGGS cell it keeps the sample with the highest **quality** and stores that
 /// sample's `{intensity, quality, source-id}` — the 3-band `uint16` tile of

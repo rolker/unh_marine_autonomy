@@ -15,8 +15,11 @@ find_package(marine_autonomy REQUIRED)
 find_package(marine_tiled_raster_store REQUIRED)
 find_package(geographic_msgs REQUIRED)
 
-# Modality-agnostic backscatter processing core (shared by the sidescan + MBES
-# layers): best-source compositor, grazing-angle quality, provenance registry.
+# Modality-agnostic backscatter processing core. Shared by the sidescan + MBES
+# layers (ADR-0006/0007): grazing-angle quality, provenance registry, and (later)
+# the GeoCoder radiometry chain. The COMPOSITOR is per-store, not shared — this lib
+# ships the sidescan best-source ProcessedAccumulator (uint16); MBES adds its own
+# Welford mean+variance accumulator (float). See ADR-0007 D6.
 add_library(${PROJECT_NAME}
   src/processed_accumulator.cpp
   src/quality.cpp

@@ -3,10 +3,12 @@
   <name>marine_backscatter</name>
   <version>0.0.0</version>
   <description>
-    Modality-agnostic backscatter processing core: best-source compositor
-    (ProcessedAccumulator), grazing-angle quality, and the provenance registry,
-    shared by the sidescan (marine_sidescan_mosaic) and MBES (cube) backscatter
-    layers. Home for the GeoCoder radiometry chain. See unh_marine_autonomy#191 / #180.
+    Modality-agnostic backscatter processing core shared by the sidescan
+    (marine_sidescan_mosaic) and MBES (cube) backscatter layers: grazing-angle
+    quality, the provenance registry, and (later) the GeoCoder radiometry chain.
+    The compositor is per-store, so this package ships the sidescan best-source
+    ProcessedAccumulator (uint16); MBES adds its own Welford accumulator (float,
+    ADR-0007 D6). See unh_marine_autonomy#191 / #180.
   </description>
   <maintainer email="roland.arsenault@unh.edu">Roland Arsenault</maintainer>
   <license>MIT</license>
