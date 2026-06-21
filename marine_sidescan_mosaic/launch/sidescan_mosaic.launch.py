@@ -22,6 +22,8 @@
 # Generic launch for the live sidescan mosaicker. Topics default to the Garmin
 # GCV driver's relative names; remap or namespace as needed for a platform.
 
+import os
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PythonExpression
@@ -29,9 +31,14 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    # The live node writes the operator `draft` layer (splat=newest) of the
+    # sidescan store; default to the canonical split-store layout
+    # ~/data/stores/<modality>/<maturity>/ (ADR-0006). Override per platform.
+    default_output_dir = os.path.expanduser('~/data/stores/sidescan/draft')
     args = [
-        DeclareLaunchArgument('output_dir', default_value='sidescan_mosaic',
-                              description='Directory for the GGGS GeoTIFF tiles'),
+        DeclareLaunchArgument('output_dir', default_value=default_output_dir,
+                              description='GGGS GeoTIFF tile dir; default = the sidescan '
+                                          'store draft layer (~/data/stores/sidescan/draft)'),
         DeclareLaunchArgument('gggs_level', default_value='13',
                               description='GGGS level (13 ~= 0.11 m cells)'),
         DeclareLaunchArgument('splat', default_value='newest',
