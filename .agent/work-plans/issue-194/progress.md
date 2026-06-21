@@ -20,3 +20,15 @@ issue: 194
 - [ ] Include missing-companion 0-fill test (when one tile of the three is absent, others default to no-data without throwing) mirroring #178 pattern.
 - [ ] Verify `draft` recency policy is newest-valid-wins (not accumulating across runs).
 - [ ] Ensure package README (if included) states the bag-retention dependency from ADR-0007 D1.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-20 19:10 +00:00
+**By**: Claude Code Agent (Claude Sonnet 4.6)
+
+**Plan**: `.agent/work-plans/issue-194/plan.md` at `fd85eab`
+**Branch**: feature/issue-194 at `fd85eab`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
