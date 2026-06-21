@@ -103,3 +103,31 @@ pass on both packages.
 ### Left to do
 Nothing in scope. Follow-ons (out of scope, per plan): cube_bathymetry#54 (CUBE
 node-output producer that calls store.set(Draft, ...)); Phase 4 offline Processed build.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-21 00:26 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: approved
+
+**Branch**: feature/issue-194 at `c02de7d`
+**Mode**: pre-push
+**Depth**: Deep (reason: new package + new-package-scale ~2300 LOC + ADR substantive ratify + cross-layer raster instantiation)
+**Must-fix**: 0 | **Suggestions**: 4
+**Round**: 1 | **Ship**: recommended — no must-fix; new-package code is layering-safe, well-tested (30/30 green), and faithfully mirrors the marine_bathymetry_store sibling.
+
+### Findings
+- [ ] (suggestion) loadRegistry: duplicate source_id at distinct contiguous indices desyncs by_index_/by_source_id_; the error string claims to reject "duplicate entries" but only checks index contiguity — add an explicit by_source_id_ membership check. Same pre-existing pattern in marine_bathymetry_store (not a #194 regression). — `marine_mbes_backscatter_store/src/registry.cpp:178`
+- [ ] (suggestion) Branch is 2 commits behind jazzy (merge-base cf2ec01 predates #195/PR#196 `0dde99d`); the jazzy..HEAD review diff therefore shows a spurious 21-line deletion of the `--policy` flag in marine_sidescan_mosaic/src/sidescan_tier2_flat.cpp. Not authored by #194. Merge/rebase jazzy before opening the PR so the diff reflects only #194's changes. — `marine_sidescan_mosaic/src/sidescan_tier2_flat.cpp`
+- [ ] (suggestion) saveRegistry leaves registry.json.tmp orphaned if fs::rename throws (cross-device/ENOSPC/perms); self-heals on next save. Consider try/catch{ fs::remove(tmp); throw; }. — `marine_mbes_backscatter_store/src/registry.cpp:119`
+- [ ] (suggestion) marine_backscatter is a declared+linked PRIVATE dep with no actual symbol use (justified by ADR-0007 D6 / future GeoCoder per the plan); sibling bathy store does not link it. Honest-dependency-hygiene nit — keep per ADR or document "not yet linked-against." — `marine_mbes_backscatter_store/CMakeLists.txt:57`
+
+### Notes (verified correct, no finding)
+- Layering: package.xml + CMake do NOT depend on cube_bathymetry. Confirmed.
+- 3-tile float schema: 2-band Float32 value + Int64 ns time + UInt16 source; GDT_Float32 instantiated at all four sites (saveTile/loadTile/saveTiles/loadTiles). Round-trip EXPECT_FLOAT_EQ assertions use only exactly-f32-representable values.
+- Backward-compat/robustness mirrors #178: missing _time/_source -> 0-fill (tested both ways); directory scan excludes _time/_source companions; GridIndex-consistency guard on companions (tested); SourceRegistry index-contiguity validation + atomic write-then-rename.
+- Recency: Draft set() overwrites unconditionally (newest-valid-wins); "valid" is the caller's contract — identical to bathy sibling, not a regression. bestSource walks Processed-before-Draft (tests pass).
+- marine_backscatter: only writeRegistry referenced conceptually; no ProcessedAccumulator / grazingQuality leaked in.
+- ADR-0007 flip: Status Accepted; D6 (float tile) + D9 (placement) ratify notes internally consistent.
+- Plan adherence: implementation matches plan exactly; no scope drift.
+- Ignored noise per task: local uncrustify-0.78.1 ternary mass-fail (CI drift); clangd gggs.h LSP artifact.
