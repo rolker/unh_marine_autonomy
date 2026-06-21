@@ -1,4 +1,4 @@
-# ADR-0006: Multi-Platform Backscatter Store (Two-Tier, GeoCoder-Processed)
+# ADR-0006: Sidescan Backscatter Store (Two-Tier, GeoCoder-Processed)
 
 ## Status
 
@@ -7,12 +7,25 @@ Proposed (2026-06-20). Tracked by
 Part of the sidescan-mosaic umbrella
 [#171](https://github.com/rolker/unh_marine_autonomy/issues/171).
 
+**Amended 2026-06-20 ([#190](https://github.com/rolker/unh_marine_autonomy/issues/190)):
+this ADR is the *sidescan* backscatter store only.** It originally framed itself as
+the single backscatter store for *all* sensors (Garmin side-scan first, EM2040 / M3
+backscatter as later adopters into the same store). That is superseded: **MBES
+backscatter (Norbit M3, Kongsberg EM2040) has its own store** — single-tier and
+CUBE-coupled — in **ADR-0007**, because it is co-estimated with bathymetry by the
+CUBE pass and so has a fundamentally different ingest path and tiering than
+slant-archived sidescan (ADR-0007 draws the contrast). The two remain **sibling
+backscatter stores** that share the ADR-0005 registry and GGGS GridIndex, so they
+still fuse for a "best backscatter here" answer — but **cross-sensor-class
+arbitration happens at the fusion / query (or central-server) layer across the two
+stores, not inside either one** (D8). This store ingests `sensor_class: sidescan`
+sources.
+
 Builds on **ADR-0002** (bathymetric store — tiling, layer-as-subdirectory,
 content-hash sync, datum-at-import) and **ADR-0005** (cross-store
-provenance/registry). First sensor: **BizzyBoat Garmin GCV** side-scan; Kongsberg
-EM2040 / Norbit M3 backscatter are later adopters. A **cross-cutting** ADR per
-the ADR-0001 convention (spans `marine_sidescan_mosaic`, `marine_tiled_raster_store`,
-`marine_autonomy` GGGS, and the bathy store it reads).
+provenance/registry). First sensor: **BizzyBoat Garmin GCV** side-scan. A
+**cross-cutting** ADR per the ADR-0001 convention (spans `marine_sidescan_mosaic`,
+`marine_tiled_raster_store`, `marine_autonomy` GGGS, and the bathy store it reads).
 
 ## Context
 
@@ -164,13 +177,17 @@ today; CAMP consumes the tiles via the #175 GPU display-warp path.)
 The per-cell band carries a compact **local source index** (ADR-0005 D2); the
 registry resolves it to the **global, origin-namespaced `source-id`** (ADR-0005
 D2/D4). v1 ingests one source (BizzyBoat/Garmin, `sensor_class: sidescan`) but
-allocates a namespaced global id and a registry entry so the second sensor (EM2040
-`mbes-backscatter`, M3) needs no migration. Cross-source arbitration is the
-**curated-mode** rule of ADR-0005 D5 — **priority-first**: `sensor_class` is the
-primary key (calibrated `mbes-backscatter` outranks `sidescan`), quality breaks
-ties *within* a class; the numeric table is deferred with multi-sensor ingest.
-Because Tier-1 archives every ping (D1), a priority change or new source
-**re-arbitrates by a cheap Tier-2 re-projection — no reimport** (cf. ADR-0005 D6).
+allocates a namespaced global id and a registry entry so a **second sidescan-class
+platform** needs no migration. Within this store all sources are `sensor_class:
+sidescan`, so the ADR-0005 D5 **curated-mode** arbitration reduces to **quality-first**
+(the grazing-angle score of D5) across passes — there is no in-store sensor-class
+tiebreak to apply. **Cross-sensor-class arbitration** (sidescan vs MBES backscatter,
+where ADR-0005 D5 makes calibrated `mbes-backscatter` outrank `sidescan`) happens
+**across the two sibling stores at the fusion / query — or central-server — layer**
+(ADR-0007; ADR-0005 D5/D7), *not* inside this store, since MBES backscatter lives in
+its own store (ADR-0007). Because Tier-1 archives every ping (D1), a priority change
+or new sidescan source **re-arbitrates by a cheap Tier-2 re-projection — no reimport**
+(cf. ADR-0005 D6).
 
 ### D9 — Bathy coupling is a direct tile file-read, not a package dependency
 
@@ -239,9 +256,9 @@ The live `draft` recency policy is the separate, already-filed #177.
 
 ## Consequences
 
-- **Positive:** a durable, multi-survey, multi-platform backscatter product that
-  serves both detection (best-source, crisp) and a cartographic drape (feathered
-  render) from one store; bathy refinement is cheap (re-project Tier-2, no
+- **Positive:** a durable, multi-survey, multi-platform (sidescan-class) backscatter
+  product that serves both detection (best-source, crisp) and a cartographic drape
+  (feathered render) from one store; bathy refinement is cheap (re-project Tier-2, no
   reimport); reuses ADR-0002's tiling/sync and ADR-0005's provenance; GeoCoder
   preserves the reflectors/shadows that detection needs.
 - **Safety non-goal (explicit):** this is a perception / cartographic product and
