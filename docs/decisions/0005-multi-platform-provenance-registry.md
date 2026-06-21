@@ -7,8 +7,9 @@ Proposed (2026-06-20). Tracked by
 
 This is a **cross-cutting** decision in the sense ADR-0001 establishes for this
 repo's `docs/decisions/`: it spans the bathymetric store (ADR-0002 / #86) and the
-backscatter store (ADR-0006 / #180), and defines the provenance contract both
-share. It is foundational to those store ADRs rather than owned by either.
+backscatter stores — **sidescan** (ADR-0006) and **MBES** (ADR-0007), both under
+#180 — and defines the provenance contract all three share. It is foundational to
+those store ADRs rather than owned by any one of them.
 
 ## Context
 
@@ -42,9 +43,18 @@ different layer of the design:
 
 1. **Modality → which store.** Bathymetry and backscatter are different value
    types, dtypes, and consumers, so they are **separate stores**. DriX EM2040
-   bathy and BizzyBoat M3 bathy both land in the bathy store; EM2040 backscatter
-   and Garmin sidescan both land in **one** backscatter store (a unified
-   "best backscatter here" surface across sensor types).
+   bathy and BizzyBoat M3 bathy both land in the bathy store. Backscatter is a
+   **family of sibling stores keyed by `sensor_class` ingest architecture** — a
+   **sidescan** store (two-tier, slant-archived: Garmin GCV; ADR-0006) and an
+   **MBES-backscatter** store (single-tier, co-estimated with bathy by the CUBE
+   pass: M3 / EM2040; ADR-0007) — because those ingest paths differ fundamentally
+   (sidescan has no bathy of its own and must archive + project later; MBES
+   backscatter is a co-registered by-product of the depth solution). The sibling
+   stores share this registry and the GGGS GridIndex, so a unified
+   "best backscatter here" surface is composed **across** them at the query /
+   central-server layer (D5/D7), not inside one monolithic store. *(Updated
+   2026-06-20, [#190](https://github.com/rolker/unh_marine_autonomy/issues/190);
+   the original wording put EM2040 and Garmin in a single backscatter store.)*
 2. **Quality / maturity → layer subdirectory** (`processed` / `draft`), exactly
    as ADR-0002 D3/D5. Unchanged.
 3. **Platform / sensor / campaign → a compact per-cell `source-id` plus a
@@ -200,19 +210,23 @@ costmap arbitration is validated in `unh_marine_simulation` before field use.
 ### D6 — Provenance is per-contribution; re-arbitration cost depends on the store
 
 Every tile cell records the **winning** `source-id`. Whether a re-arbitration (new
-platform data, or a priority change) can be done **without reimport** depends on
-whether the store keeps a per-contribution archive:
+platform data, or a priority change) can be done **without re-reading the source
+bags** depends on what archive the store keeps:
 
-- The **backscatter store keeps a Tier-1 per-ping archive** (ADR-0006), so it
-  re-projects from the retained contributions and re-arbitrates without reimport.
-- The **bathy store has no such archive today** (ADR-0002's draft layer is
+- The **sidescan backscatter store keeps a slant-indexed Tier-1 per-ping archive**
+  (ADR-0006), so it re-projects from the retained contributions and re-arbitrates
+  without re-reading bags.
+- The **MBES backscatter store is single-tier** (ADR-0007): it keeps no separate
+  per-contribution archive because the **soundings bags are its archive**, so a
+  re-arbitration / bathy-refine re-runs the CUBE + node-output pass over the bags
+  (the same offline path the bathy store uses).
+- The **bathy store likewise has no in-store archive** (ADR-0002's draft layer is
   in-memory CUBE tiles arbitrated in place), so re-arbitration there means
-  re-importing the affected sources — until/unless it grows a contribution archive
-  of its own.
+  re-importing the affected sources from their bags.
 
-The provenance contract (per-cell `source-id` + registry) is identical for both;
-only the no-reimport *guarantee* is specific to a store that archives its
-contributions.
+The provenance contract (per-cell `source-id` + registry) is identical for all
+three; only the *no-bag-reread guarantee* is specific to a store that keeps an
+in-store contribution archive (the sidescan Tier-1).
 
 ### D7 — The central server is a third sync tier
 
@@ -228,8 +242,8 @@ registry is the only addition to the existing manifest sync.
 
 ### D8 — Both stores adopt this; ADR-0002 gains it additively
 
-The backscatter store (ADR-0006) is designed against this from the start. The
-bathy store (ADR-0002) **adopts it additively**: its existing `processed` /
+Both backscatter stores (ADR-0006 sidescan, ADR-0007 MBES) are designed against
+this from the start. The bathy store (ADR-0002) **adopts it additively**: its existing `processed` /
 `draft` / `chart` remain the **quality/maturity layer** axis, while
 platform/sensor moves to `source-id` + registry. The additive change for bathy is
 the per-cell `source-id` band (D2, amending ADR-0002 D5) plus the registry;
@@ -265,7 +279,7 @@ navigation query.
 ## References
 
 - Bathymetric store: ADR-0002 / [#86](https://github.com/rolker/unh_marine_autonomy/issues/86)
-- Backscatter store: ADR-0006 (proposed) / [#180](https://github.com/rolker/unh_marine_autonomy/issues/180)
+- Backscatter stores: ADR-0006 sidescan, ADR-0007 MBES (both proposed) / [#180](https://github.com/rolker/unh_marine_autonomy/issues/180); ADR split [#190](https://github.com/rolker/unh_marine_autonomy/issues/190)
 - Sidescan mosaic umbrella: [#171](https://github.com/rolker/unh_marine_autonomy/issues/171)
 - Bathy time-band Int64 alignment: [#178](https://github.com/rolker/unh_marine_autonomy/issues/178)
 - Spatial index: `marine_autonomy` GGGS (`marine_autonomy/include/marine_autonomy/gggs/`)
