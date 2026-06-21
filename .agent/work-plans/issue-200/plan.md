@@ -78,7 +78,7 @@ roll-intensity) can consume it without another pass through the node.
 |------|--------|
 | `marine_sidescan_mosaic/src/mosaic_node.cpp` | Steps 1–5: replace `ecefPoseToGeoHeading` with `ecefPoseToGeoBeam`; add valid guard; redefault + rename `beam_azimuth_trim_deg`; strip Side from azimuth; store depression_rad; update comment block |
 | `marine_sidescan_mosaic/include/marine_sidescan_mosaic/projection.hpp` | Step 6: update `acrossTrackAzimuth` doc |
-| `marine_sidescan_mosaic/test/test_projection.cpp` | Step 7: add `BeamVsHeadingLevel`, `RollChangesDepressionNotAzimuth`, and `BeamAzimuthDivergesUnderCombinedAttitude` tests |
+| `marine_sidescan_mosaic/test/test_projection.cpp` | Step 7: add `BeamVsHeadingLevel`, `BeamVsHeadingLevelPort`, `RollChangesDepressionNotAzimuth`, and `BeamAzimuthDivergesUnderCombinedAttitude` tests |
 
 ## Principles Self-Check
 

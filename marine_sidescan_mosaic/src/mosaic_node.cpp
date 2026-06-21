@@ -94,6 +94,19 @@ public:
         "azimuth offset on top of the sensor +Z beam direction",
         beam_azimuth_trim_deg_);
     }
+    // Migration guard: `across_track_offset_deg` (90° default) was renamed to
+    // `beam_azimuth_trim_deg` (now a residual trim, default 0). rclcpp silently
+    // ignores an override for an undeclared parameter, so a stale config carrying the
+    // old name would drift in unnoticed — surface it loudly instead.
+    for (const auto & p : get_node_options().parameter_overrides()) {
+      if (p.get_name() == "across_track_offset_deg") {
+        RCLCPP_WARN(
+          get_logger(),
+          "parameter 'across_track_offset_deg' was renamed to 'beam_azimuth_trim_deg' "
+          "(now a residual trim, default 0); the old value (%s) is ignored",
+          p.value_to_string().c_str());
+      }
+    }
     nadir_staleness_s_ = declare_parameter<double>("nadir_staleness_s", 5.0);
     no_nadir_policy_ = declare_parameter<std::string>("no_nadir_policy", "drop");
     max_tf_age_s_ = declare_parameter<double>("max_tf_age_s", 1.0);
