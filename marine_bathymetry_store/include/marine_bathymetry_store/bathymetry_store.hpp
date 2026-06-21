@@ -45,21 +45,34 @@ std::size_t save(
 std::size_t load(
   BathymetryStore & store, const std::string & dir, SourceRegistry * registry);
 
-/// @brief In-memory, GGGS-tiled, multi-layer bathymetric store (Phase 1 core).
+/// @brief In-memory, GGGS-tiled, multi-layer, **multi-level** bathymetric store.
 ///
-/// Holds one tile map per `SourceLayer`, keyed by `gggs::GridIndex`. All tiles
-/// live at a single GGGS level fixed at construction. Source priority is a
-/// **non-destructive query-time overlay** (see `query.hpp`): the layers are
-/// independent, so a noisy draft write never clobbers a trusted processed cell
-/// and a later processed import never has to merge with draft (ADR-0002 §D3).
+/// Holds one tile map per `SourceLayer`, keyed by `gggs::GridIndex` (which
+/// itself carries its level). The store is **level-agnostic**: tiles at
+/// heterogeneous GGGS levels coexist in the same layer (ADR-0002 §D2,
+/// amendment #151/#153). The constructor's `gggs_level` is retained only as a
+/// **default for `cellIndex(lat,lon)`** (the write/query convenience that turns
+/// coordinates into a cell) — it is *not* an invariant on stored tiles, so a
+/// coarse chart prior and a fine survey grid can live in the same store and the
+/// query resolves the best-available level per cell.
 ///
-/// This phase has no importers, ROS interface, or distribution — just storage,
-/// in-process queries (`query.hpp`), and per-tile GeoTIFF persistence
-/// (`tile_io.hpp`).
+/// Source priority is a **non-destructive query-time overlay** (see
+/// `query.hpp`): the layers are independent, so a noisy draft write never
+/// clobbers a trusted processed cell and a later processed import never has to
+/// merge with draft (ADR-0002 §D3).
+///
+/// This phase has no ROS interface or distribution — just storage, in-process
+/// queries (`query.hpp`), per-tile GeoTIFF persistence (`tile_io.hpp`), and the
+/// GeoTIFF importer (`geotiff_import.hpp`).
 class BathymetryStore
 {
 public:
-  /// @brief Construct a store whose tiles live at GGGS quadtree @p gggs_level.
+  /// @brief Construct a store with a default level of GGGS quadtree
+  ///        @p gggs_level.
+  ///
+  /// The default level only governs `cellIndex(lat,lon)` (the coordinate→cell
+  /// convenience); stored tiles may be at any level (this store is multi-level,
+  /// ADR-0002 §D2).
   ///
   /// @param chart_writable Opt in to per-cell `set()` writes on the read-only
   ///   `Chart` prior layer. Default `false` — only the chart importer (which
@@ -73,8 +86,8 @@ public:
   explicit BathymetryStore(uint8_t gggs_level, bool chart_writable = false)
   : level_(gggs_level), chart_writable_(chart_writable) {}
 
-  /// @brief Construct a store at the coarsest GGGS level whose cells are no
-  ///        larger than @p cell_size_m (clamped to the finest level, 20).
+  /// @brief Construct a store whose **default** level is the coarsest GGGS level
+  ///        whose cells are no larger than @p cell_size_m (clamped to level 20).
   static BathymetryStore fromCellSize(float cell_size_m, bool chart_writable = false)
   {
     return BathymetryStore(
@@ -84,13 +97,17 @@ public:
   /// @brief Whether per-cell `set()` may write the read-only `Chart` layer.
   bool chartWritable() const noexcept {return chart_writable_;}
 
-  /// @brief The GGGS level all tiles in this store use.
+  /// @brief The store's **default** level (used by `cellIndex(lat,lon)` only).
+  ///
+  /// Stored tiles are not pinned to this level — the store is multi-level
+  /// (ADR-0002 §D2). This is the level the coordinate convenience resolves at.
   const gggs::Level & level() const noexcept {return level_;}
 
-  /// @brief CellIndex at this store's level for a geographic position.
+  /// @brief CellIndex at this store's **default** level for a geographic position.
   ///
-  /// Convenience for callers who think in coordinates — guarantees the returned
-  /// CellIndex is at the store's level (so `set`/`get` won't be rejected).
+  /// Convenience for callers who think in coordinates. The returned CellIndex is
+  /// at the default level; callers wanting a specific level should build the
+  /// CellIndex from a `gggs::Level` of their choosing (the store accepts any).
   gggs::CellIndex cellIndex(double latitude, double longitude) const
   {
     return level_.cellIndex(gggs::geoPoint(latitude, longitude));
@@ -98,9 +115,9 @@ public:
 
   /// @brief Write @p value into @p layer at @p cell.
   ///
-  /// Creates the backing tile on first write to its grid. The cell's grid must
-  /// be at this store's level.
-  /// @throws std::invalid_argument if @p cell is invalid or at the wrong level.
+  /// Creates the backing tile on first write to its grid. The cell may be at
+  /// **any** valid GGGS level — the store is multi-level (ADR-0002 §D2).
+  /// @throws std::invalid_argument if @p cell is invalid.
   /// @throws std::logic_error if @p layer is `Chart` and the store was not
   ///   constructed `chart_writable` — the prior is read-only (ADR-0002 §D3).
   void set(SourceLayer layer, const gggs::CellIndex & cell, const BathyCell & value);
@@ -110,7 +127,8 @@ public:
   ///         A returned cell may still be no-data (`!hasData()`).
   std::optional<BathyCell> get(SourceLayer layer, const gggs::CellIndex & cell) const;
 
-  /// @brief The tiles of a layer (for persistence / iteration).
+  /// @brief The tiles of a layer (for persistence / iteration). Tiles may be at
+  ///        heterogeneous levels (multi-level, ADR-0002 §D2).
   const std::map<gggs::GridIndex, BathymetryTile> & tiles(SourceLayer layer) const
   {
     return layerMap(layer);
@@ -129,8 +147,9 @@ private:
   /// Private: the only mutable tile access. Public mutation goes through `set`
   /// (which gates `Chart`); persistence reaches this via friendship. This is
   /// what makes the Chart read-only guarantee hold by construction, not just by
-  /// convention — external code cannot obtain a mutable Chart tile.
-  /// @throws std::invalid_argument if @p grid is invalid or at the wrong level.
+  /// convention — external code cannot obtain a mutable Chart tile. @p grid may
+  /// be at any valid level (multi-level store, ADR-0002 §D2).
+  /// @throws std::invalid_argument if @p grid is invalid.
   BathymetryTile & getOrCreateTile(SourceLayer layer, const gggs::GridIndex & grid);
 
   std::map<gggs::GridIndex, BathymetryTile> & layerMap(SourceLayer layer)

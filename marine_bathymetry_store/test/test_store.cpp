@@ -96,12 +96,27 @@ TEST(Store, NoDataCellReadsBackAsNoData)
   EXPECT_FALSE(got->hasData());      // but the cell carries no usable depth
 }
 
-TEST(Store, WrongLevelCellThrows)
+TEST(Store, MultiLevelTilesCoexist)
 {
+  // The store is multi-level (ADR-0002 §D2): a cell at a level other than the
+  // store's default level is accepted, stored, and read back independently.
   BathymetryStore store(5);
-  gggs::Level other(6);
-  const auto level6_cell = other.cellIndex(gggs::geoPoint(43.0, -70.5));
-  EXPECT_THROW(store.set(SourceLayer::Draft, level6_cell, BathyCell{}), std::invalid_argument);
+  gggs::Level fine(6);
+  const auto fine_cell = fine.cellIndex(gggs::geoPoint(43.0, -70.5));
+  const auto default_cell = store.cellIndex(43.0, -70.5);
+  ASSERT_NE(fine_cell.level(), default_cell.level());
+
+  EXPECT_NO_THROW(store.set(SourceLayer::Draft, fine_cell, BathyCell{-22.0, 0.3, 1LL}));
+  store.set(SourceLayer::Draft, default_cell, BathyCell{-20.0, 0.5, 2LL});
+
+  // Both tiles exist in the same layer at different levels.
+  EXPECT_EQ(store.tiles(SourceLayer::Draft).size(), 2u);
+  const auto fine_got = store.get(SourceLayer::Draft, fine_cell);
+  ASSERT_TRUE(fine_got.has_value());
+  EXPECT_DOUBLE_EQ(fine_got->depth, -22.0);
+  const auto default_got = store.get(SourceLayer::Draft, default_cell);
+  ASSERT_TRUE(default_got.has_value());
+  EXPECT_DOUBLE_EQ(default_got->depth, -20.0);
 }
 
 TEST(Store, InvalidCellThrows)

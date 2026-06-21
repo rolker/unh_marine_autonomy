@@ -183,6 +183,69 @@ TEST(Query, ShallowestReliableUnaffectedBySourceIndex)
   EXPECT_EQ(result2->source, SourceLayer::Draft);
 }
 
+TEST(Query, BestSourcePrefersFinerLevelAcrossLevels)
+{
+  // Multi-level store (ADR-0002 §D2): a coarse chart prior and a fine survey
+  // grid in the SAME layer at DIFFERENT levels. best-available resolves the
+  // finest level present that has data at the query position.
+  BathymetryStore store(5, /*chart_writable=*/true);
+  gggs::Level coarse(4);
+  gggs::Level fine(7);
+  const auto pt = gggs::geoPoint(43.0, -70.5);
+
+  store.set(SourceLayer::Chart, coarse.cellIndex(pt), BathyCell{38.0, 3.0, 1LL});
+  store.set(SourceLayer::Chart, fine.cellIndex(pt), BathyCell{40.0, 0.5, 2LL});
+
+  // Query at the finest present level (its center is closest to the survey
+  // point, so the coarse cell also covers it): best-available resolves the
+  // finer (level 7) value, not the coarse prior, where both cover the cell.
+  const auto best = bestSource(store, fine.cellIndex(pt));
+  ASSERT_TRUE(best.has_value());
+  EXPECT_EQ(best->source, SourceLayer::Chart);
+  EXPECT_DOUBLE_EQ(best->depth, 40.0);   // finer level wins
+  EXPECT_EQ(best->level, 7u);
+}
+
+TEST(Query, BestSourceFallsToCoarseLevelWhereFineAbsent)
+{
+  // Where only the coarse level covers a cell, the query falls through to it.
+  BathymetryStore store(5, /*chart_writable=*/true);
+  gggs::Level coarse(4);
+  gggs::Level fine(7);
+  const auto surveyed = gggs::geoPoint(43.0, -70.5);
+  const auto unsurveyed = gggs::geoPoint(43.0, -70.4);
+
+  store.set(SourceLayer::Chart, coarse.cellIndex(surveyed), BathyCell{38.0, 3.0, 1LL});
+  store.set(SourceLayer::Chart, coarse.cellIndex(unsurveyed), BathyCell{37.0, 3.0, 1LL});
+  store.set(SourceLayer::Chart, fine.cellIndex(surveyed), BathyCell{40.0, 0.5, 2LL});
+
+  // Cell with no fine-level data: only the coarse level covers it -> resolves
+  // to the coarse value.
+  const auto best = bestSource(store, store.cellIndex(43.0, -70.4));
+  ASSERT_TRUE(best.has_value());
+  EXPECT_DOUBLE_EQ(best->depth, 37.0);
+  EXPECT_EQ(best->level, 4u);
+}
+
+TEST(Query, ShallowestReliableConsidersAllLevels)
+{
+  // The safety query must examine every level present: a coarse level can be
+  // both shallower and reliable where a finer one is too uncertain.
+  BathymetryStore store(5);
+  gggs::Level coarse(4);
+  gggs::Level fine(7);
+  const auto pt = gggs::geoPoint(43.0, -70.5);
+
+  // Fine level: shallower but too uncertain. Coarse: deeper but reliable.
+  store.set(SourceLayer::Draft, fine.cellIndex(pt), BathyCell{-20.0, 5.0, 2LL});
+  store.set(SourceLayer::Draft, coarse.cellIndex(pt), BathyCell{-30.0, 0.2, 1LL});
+
+  const auto result = shallowestReliable(store, store.cellIndex(43.0, -70.5), 1.0);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_DOUBLE_EQ(result->depth, -30.0);   // fine excluded by uncertainty
+  EXPECT_EQ(result->level, 4u);
+}
+
 TEST(Query, ShallowestReliableGatesChartByUncertainty)
 {
   // The coarse Chart prior carries a fixed import uncertainty (3.0 m). It feeds

@@ -41,16 +41,29 @@ namespace marine_bathymetry_store
 /// *greater* (less negative) value. See `shallowestReliable`.
 struct DepthSample
 {
-  double depth;          ///< Ellipsoidal height (WGS84, m, up-positive).
-  double uncertainty;    ///< 1-sigma vertical uncertainty (m).
-  int64_t timestamp;     ///< Acquisition / import time (ns since the Unix epoch).
-  SourceLayer source;    ///< Which layer this value came from.
+  double depth;            ///< Ellipsoidal height (WGS84, m, up-positive).
+  double uncertainty;      ///< 1-sigma vertical uncertainty (m).
+  int64_t timestamp;       ///< Acquisition / import time (ns since the Unix epoch).
+  SourceLayer source;      ///< Which layer this value came from.
+  /// Per-cell registry source index (ADR-0005 D2/D8): which platform/sensor
+  /// contributed this value. 0 = unset (pre-migration / single-platform data).
+  /// The navigation-safety query (`shallowestReliable`) ignores this axis
+  /// (ADR-0005 D5 carve-out); it is exposed so provenance-aware consumers can
+  /// resolve the record off a query result.
+  uint16_t source_index = 0;
+  /// GGGS level of the cell this value was resolved at. The store is
+  /// multi-level (ADR-0002 §D2); the query resolves the best-available level
+  /// per cell, so a single region scan can return samples at mixed levels.
+  uint8_t level = 0;
 };
 
-/// @brief Highest-priority layer that has data at @p cell.
+/// @brief Best-available depth at @p cell across layers **and levels**.
 ///
-/// Walks layers in `source_layers_by_priority` order and returns the first with
-/// usable data. `std::nullopt` means **unknown** — no layer has data here; a
+/// Walks layers in `source_layers_by_priority` order; within a layer it resolves
+/// the **finest GGGS level present** that has data at the query position (the
+/// store is multi-level, ADR-0002 §D2 — a fine survey grid is preferred over the
+/// coarse prior where both cover the cell). Returns the first layer that
+/// resolves. `std::nullopt` means **unknown** — no layer has data here; a
 /// safety-conscious caller must treat that as not-safe (ADR-0002 §D7), not as
 /// deep water.
 std::optional<DepthSample> bestSource(
@@ -58,20 +71,24 @@ std::optional<DepthSample> bestSource(
 
 /// @brief Shallowest reliable depth at @p cell (navigation-safety query).
 ///
-/// Among all layers that (a) have data and (b) have uncertainty ≤
-/// @p max_uncertainty (a NaN uncertainty is never reliable), returns the
-/// **shallowest** — i.e. the greatest ellipsoidal height, the value closest to
-/// the surface and therefore the most hazardous. `std::nullopt` means no
-/// reliable layer covers the cell; the caller must treat that as not-safe.
+/// Among all layers and **all levels present** that (a) have data and (b) have
+/// uncertainty ≤ @p max_uncertainty (a NaN uncertainty is never reliable),
+/// returns the **shallowest** — i.e. the greatest ellipsoidal height, the value
+/// closest to the surface and therefore the most hazardous. `std::nullopt`
+/// means no reliable data covers the cell; the caller must treat that as
+/// not-safe.
 std::optional<DepthSample> shallowestReliable(
   const BathymetryStore & store, const gggs::CellIndex & cell, double max_uncertainty);
 
 /// @brief Visit every GGGS cell overlapping the geographic box, with its best source.
 ///
 /// Iterates the cells covered by the lat/lon box [@p minimum, @p maximum] at the
-/// store's level and invokes @p visitor with each `CellIndex` and its
-/// `bestSource` result (`std::nullopt` = unknown cell). Region form of
-/// `bestSource`; work is bounded by the requested box, so callers control cost.
+/// store's **default** level and invokes @p visitor with each `CellIndex` and
+/// its `bestSource` result (`std::nullopt` = unknown cell). The per-cell
+/// resolution is still multi-level (the returned `DepthSample.level` may differ
+/// from the iteration level); only the iteration granularity is the default
+/// level. Region form of `bestSource`; work is bounded by the requested box, so
+/// callers control cost.
 void forEachCellBestSource(
   const BathymetryStore & store,
   const geographic_msgs::msg::GeoPoint & minimum,

@@ -32,15 +32,10 @@ void BathymetryStore::set(
 {
   // Validate the inputs first, then the layer permission — so a malformed cell
   // always reports invalid_argument (the more actionable error), and the
-  // read-only logic_error fires only for an otherwise-valid Chart write.
+  // read-only logic_error fires only for an otherwise-valid Chart write. The
+  // cell may be at any valid level — the store is multi-level (ADR-0002 §D2).
   if (!cell.valid()) {
     throw std::invalid_argument("BathymetryStore::set: invalid CellIndex");
-  }
-  if (cell.level() != level_.level()) {
-    throw std::invalid_argument(
-            "BathymetryStore::set: CellIndex at level " +
-            std::to_string(cell.level()) + " but store is at level " +
-            std::to_string(level_.level()));
   }
   if (layer == SourceLayer::Chart && !chart_writable_) {
     throw std::logic_error(
@@ -68,14 +63,10 @@ std::optional<BathyCell> BathymetryStore::get(
 BathymetryTile & BathymetryStore::getOrCreateTile(
   SourceLayer layer, const gggs::GridIndex & grid)
 {
+  // Any valid level is accepted — the store is multi-level (ADR-0002 §D2). The
+  // GridIndex carries its own level, so tiles at different levels coexist.
   if (!grid.valid()) {
     throw std::invalid_argument("BathymetryStore::getOrCreateTile: invalid GridIndex");
-  }
-  if (grid.level() != level_.level()) {
-    throw std::invalid_argument(
-            "BathymetryStore::getOrCreateTile: GridIndex at level " +
-            std::to_string(grid.level()) + " but store is at level " +
-            std::to_string(level_.level()));
   }
   auto & m = layerMap(layer);
   auto it = m.find(grid);
