@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#include "marine_bathymetry_store/registry.hpp"
+#include "marine_mbes_backscatter_store/registry.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -32,9 +32,11 @@
 
 /// @file
 /// @brief `SourceRegistry` implementation: in-memory interning plus atomic
-/// `registry.json` persistence (ADR-0005 D2/D8).
+/// `registry.json` persistence (ADR-0005 D2/D8). Mirrors
+/// `marine_bathymetry_store::SourceRegistry`; `marine_backscatter::writeRegistry`
+/// is write-only / single-source and does not cover the load/intern path here.
 
-namespace marine_bathymetry_store
+namespace marine_mbes_backscatter_store
 {
 
 namespace
@@ -51,7 +53,7 @@ nlohmann::json recordToJson(uint16_t index, const SourceRecord & r)
     {"sensor", r.sensor},
     {"sensor_class", r.sensor_class},
     {"campaign", r.campaign},
-    {"datum", r.datum},
+    {"calibration_ref", r.calibration_ref},
   };
 }
 
@@ -155,17 +157,14 @@ void SourceRegistry::loadRegistry(const std::string & store_root_dir)
   // Records carry an explicit "index"; validate them against the expected
   // position (1-based, contiguous, monotonically increasing by +1).  A
   // reordered, sparse, or duplicate hand-edited registry.json would produce
-  // mismatches between the stored index and the reconstructed by_index_ /
-  // by_source_id_ maps — silently delivering wrong provenance.  Reject early
-  // with a clear error rather than silently diverge.
+  // mismatches between the stored index and the reconstructed maps — silently
+  // delivering wrong provenance.  Reject early with a clear error.
   for (const auto & entry : *sources) {
     SourceRecord r{
       jsonStr(entry, "source_id"), jsonStr(entry, "platform"),
       jsonStr(entry, "sensor"), jsonStr(entry, "sensor_class"),
-      jsonStr(entry, "campaign"), jsonStr(entry, "datum")};
-    // Expected index for this entry (1-based: position 0 → index 1, etc.).
+      jsonStr(entry, "campaign"), jsonStr(entry, "calibration_ref")};
     const uint16_t expected = static_cast<uint16_t>(by_index_.size() + 1);
-    // Stored index field — must match.
     const auto idx_it = entry.find("index");
     if (idx_it == entry.end() || !idx_it->is_number_unsigned()) {
       throw std::runtime_error(
@@ -193,4 +192,4 @@ void SourceRegistry::loadRegistry(const std::string & store_root_dir)
   }
 }
 
-}  // namespace marine_bathymetry_store
+}  // namespace marine_mbes_backscatter_store
