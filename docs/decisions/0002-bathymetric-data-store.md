@@ -23,6 +23,14 @@ provenance registry) and aligns the on-disk encodings with
 `Int64`-ns time tile and `uint16` source band). D6 (content hash) is updated to
 cover all three tile files. See D5/D6 below.
 
+**Amendment A1 — per-day epoch model (2026-06-21,
+[#147](https://github.com/rolker/unh_marine_autonomy/issues/147)):** Phase 2
+(import) adds an **epoch dimension** to each source layer — a layer holds dated
+instances, never fused across days, so repeat surveys *locate* change instead of
+averaging it away. Composed against the already-merged D2 (heterogeneous levels)
+and D5/#178 (registry provenance); it does **not** replace D2 — epoch directories
+compose with mixed-level `<level>_<row>_<col>` tile filenames. See **A1** below.
+
 The full design is in the issue body; this ADR records the load-bearing
 architecture decisions and their rationale so they survive the issue. It is a
 **cross-cutting** decision in the sense ADR-0001 establishes for this repo's
@@ -286,6 +294,88 @@ each as its own sub-issue and PR (`Part of #86`):
 
 Phase 1 is decoupled from the mru_transform datum work (D4); only the chart layer
 waits on it.
+
+## Amendment A1 — Per-day epoch model (Phase 2, #147)
+
+Phase 2 introduces import. Imports raised a question the Phase-1 core did not
+answer: when the **same area is surveyed on multiple days**, what does the store
+hold? Fusing all observations into one surface (a single CUBE estimate over all
+days) averages real change — siltation, scour, a newly-deposited object — into
+the mean, which is exactly the signal a repeat survey exists to find. So the
+store keeps observations **separated by day**, not fused across days.
+
+### A1.1 — A layer is a map of epochs; differencing locates change
+
+Each `SourceLayer` (Processed / Draft / Chart) becomes a map of **epochs**. An
+epoch is a labeled instance of the layer, by convention the local acquisition
+date in ISO-8601 (`"2026-06-10"`) — labels must sort chronologically as plain
+strings (ISO dates do) and be filesystem-safe (single path component,
+`[0-9A-Za-z._-]`, never `.`/`..`), because they are also on-disk directory
+names. A cell surveyed on N days keeps N records; **differencing two epochs**
+(cells observed in *both*) yields a change map. Cells observed in only one epoch
+are *coverage* change, not depth change, and are not part of the difference.
+This composes with **D2**: an epoch holds tiles at heterogeneous levels, and the
+on-disk path is `<layer>/<epoch>/<level>_<row>_<col>{,_time,_source}.tif`.
+
+### A1.2 — Provenance ordering: replayed supersedes live-fused, then immutable
+
+Within a day there are two ways an epoch's surface is produced, captured by a
+per-epoch **`Provenance`** (orthogonal to the per-cell `SourceRegistry` index of
+D5/#178 — see A1.4):
+
+- **`LiveFused`** — built incrementally underway from live session snapshots
+  (the Phase-3 live node writes today's `draft/<today>/` epoch as it goes).
+- **`Replayed`** — the authoritative end-of-day **compaction**: one CUBE run over
+  the whole day's bags (deterministic, no live-graph QoS cap), replacing the live
+  surface.
+
+Ordering rule: **`Replayed` supersedes `LiveFused` for the same epoch, never the
+reverse.** Once compacted, an epoch is **immutable** — a later live write or a
+live-fused re-import is a refused no-op. A re-compaction (`Replayed` over
+`Replayed`) is allowed. This is enforced in the store: `set` and `importEpoch`
+return `false` rather than regress a `Replayed` epoch. Persistence records the
+provenance in a per-epoch `provenance` marker file (CRLF-safe on load — a marker
+that round-tripped through a Windows/mixed checkout must not be mis-read and
+silently downgrade a compacted epoch to live-fused).
+
+A wholesale import flags the epoch `supersedes_disk`: persistence clears the
+epoch's stale tile files before writing, so a compacted epoch covering *fewer*
+grids than the live surface it replaces never resurrects a removed tile on the
+next load.
+
+### A1.3 — Query walks epochs newest-first; no cross-epoch fusion
+
+Best-available and shallowest-reliable resolve a layer by walking its epochs
+**newest-first** and taking the first that has data (best-available) or the first
+that passes the reliability gate (shallowest-reliable). A fresh-but-noisy epoch
+that fails the uncertainty gate falls through to the prior epoch's confident
+value — a recently observed shoal keeps protecting navigation — **with no
+cross-epoch fusion**. This walk is *inside* the existing D2 multi-level and D3
+source-priority resolution: layer priority first, then newest epoch within the
+winning layer, then best level within that epoch.
+
+### A1.4 — Two orthogonal provenance axes, both retained
+
+`Provenance{LiveFused, Replayed}` (this amendment) is the **compaction-maturity**
+axis — which CUBE run produced an epoch's surface, governing the
+immutable-after-compaction ordering. The **`SourceRegistry`** `uint16` index
+(D5/#178, ADR-0005 D2/D8) is the **platform/sensor** axis — who contributed a
+cell. They are orthogonal (one epoch-scoped, one cell-scoped) and never alias;
+the store carries both. The Phase-2 importers (GeoTIFF here; bag-replay in the
+follow-on) register a `SourceRecord` and stamp its index on every imported cell,
+making them the first writers of real registry records. The **D5 safety
+carve-out** is unchanged: `shallowestReliable` ignores both provenance axes and
+selects by depth + uncertainty only.
+
+### A1.5 — D6 manifest key generalizes; no CUBE seeding
+
+The D6 sync manifest key generalizes from `layer/GridIndex → content-hash` to
+**`layer/epoch/GridIndex → content-hash`** (single-writer per epoch — draft =
+boat-produced, processed = operator/dev-produced — and epochs immutable after
+compaction, so only today's live-fused epoch is ever hot). No hash implementation
+lands this phase (Phase 6). The store is **never seeded from CUBE state**: the
+bag-replay path produces one `Replayed` epoch per day from the raw bags, so the
+store is always re-derivable from the append-only bag record.
 
 ## Consequences
 

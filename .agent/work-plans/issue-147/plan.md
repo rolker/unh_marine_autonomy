@@ -96,10 +96,12 @@ PR boundaries.
      source-layer priority and the D7 shallowest-reliable mode, optionally bounded
      by a caller-supplied target resolution. Refinement/decimation (LOD) stays
      **staged** per D2 — query reads what's present; it does not generate overviews.
-   - `tile_io`: `loadTile` recovers each tile's level from its geotransform
-     (already does — it just currently *rejects* non-store levels); load accepts
-     mixed levels. Delete/replace `test_tile_io.cpp:LoadRejectsTilesFromAnotherLevel`
-     (it bakes in forbidden behavior).
+   - `tile_io`: mixed-level load (Plan-Review must-fix 2). `loadTile(path, level)`
+     takes the level as an INPUT (it validates the file's geotransform against the
+     supplied level), so mixed-level load needs a concrete new step: parse the
+     level prefix from the `<level>_<row>_<col>.tif` filename and pass per-file
+     level. **Implemented** as `levelFromTileFilename` + per-file load in `load()`.
+     `LoadRejectsTilesFromAnotherLevel` replaced by `LoadAcceptsMixedLevelTiles`.
 
 2. **Epoch dimension on the store.** Harvest `epoch.hpp` verbatim-as-design
    (`Epoch`, `validateEpochLabel`). For the **provenance enum**, see Open Question
@@ -132,8 +134,13 @@ PR boundaries.
 4. **Query change-map + epoch-walk.** Add `forEachChangedCell(layer, epoch_a,
    epoch_b, visitor)` (cells in both → depth Δ) and make the default/reliable
    queries walk epochs newest-first within each layer. `DepthSample` gains an
-   `epoch` field (and `source_index` is already available via the per-cell record;
-   keep the D5 carve-out — shallowest-reliable ignores provenance).
+   `epoch` field — and, per Plan-Review must-fix 5, an explicit **`source_index`**
+   field too: `source_index` lives on `BathyCell` but `DepthSample` (what queries
+   return) carried only depth/uncertainty/timestamp/source-layer, so consumers
+   needing the registry index off a query result get it via the added field
+   (`level` is added alongside for the multi-level resolve). The D5 carve-out is
+   kept — `shallowestReliable` ignores provenance. **Done** (DepthSample gains
+   `source_index` + `level` + `epoch`).
 
 5. **GeoTIFF importer.** Harvest `geotiff_import.hpp/.cpp` design onto the
    epoch+multi-level store. Key change vs #148: the importer must **register a
@@ -145,37 +152,63 @@ PR boundaries.
    import at the GGGS level matching the source resolution (or a caller-specified
    level), not a fixed store level. CLI `import_geotiff` updated for the new args.
 
-6. **Bag-replay importer (via #43).** New offline tool (cube-side or a bridge
-   package — see Open Question 2), modeled on `bag_to_geotiff.cpp -d`:
-   SequentialReader over a day's detection bags (timestamp-merged) → populate
-   `tf2::BufferCore` from `/tf`+`/tf_static` → `DetectionsProjector::project`
-   (vessel_speed NaN for detections-only bags) → `GeoMapSheet::addSoundings` →
-   one CUBE run for the whole day → iterate `GeoMapSheet::grids()` /
-   `GeoGrid::values()` → build `BathymetryTile`s keyed by the `CellIndex`'s grid →
-   `importEpoch(Draft, <date>, tiles, Replayed)`. Deterministic (direct reader,
-   no QoS cap) so content hashes are stable (D6). Registers a `SourceRecord` for
-   the contributing platform/sensor.
+6. **Bag-replay importer (via #43). — PR-B, out of PR-A scope.** New offline tool
+   (cube-side or a bridge package — see Open Question 2), modeled on
+   `bag_to_geotiff.cpp -d`: SequentialReader over a day's detection bags
+   (timestamp-merged) → populate `tf2::BufferCore` from `/tf`+`/tf_static` →
+   `DetectionsProjector::project` (vessel_speed NaN for detections-only bags) →
+   **per-sounding `Sounding`→`GeoSounding` earth-frame georeferencing**
+   (Plan-Review must-fix 3): `project()` returns `cube::Sounding` (sonar-frame
+   x/y/z), and `bag_to_geotiff.cpp -d` inserts a per-sounding
+   `lookupTransform("earth", sonar_frame, stamp)` loop converting to
+   `cube::GeoSounding` (lat/lon) **before** `addSoundings` — that loop is where
+   the bag's earth-frame TF is consumed; it must be in PR-B's chain.
+   → `GeoMapSheet::addSoundings` → one CUBE run for the whole day →
+   `GeoMapSheet::grids()` / `GeoGrid::values()`. **`GeoGrid::values()` is a flat
+   positional `std::vector<DepthAndUncertainty>` in `CellAreaIterator(index_)`
+   order (full grid, NaN-filled empties) — NOT a `CellIndex`-keyed map**
+   (Plan-Review must-fix 4): the importer walks `CellAreaIterator` in lockstep
+   with the vector to recover each cell's `CellIndex`. `values()` also mutates
+   node state (it calls `queueFlush`/`extractDepthAndUncertainty`, advancing the
+   median pre-filter), and `DepthAndUncertainty` is `float` (the store is `double`
+   — a safe widening). → build `BathymetryTile`s keyed by the `CellIndex`'s grid →
+   `importEpoch(Draft, <date>, tiles, Replayed)`. Deterministic (direct reader, no
+   QoS cap, fixed sounding-insertion order) so content hashes are stable (D6); the
+   determinism test must assert same bag + same order → byte-identical tiles.
+   Registers a `SourceRecord` for the contributing platform/sensor.
 
-7. **Tests.** Per the issue deliverables, on the new substrate:
-   - Epoch model: same-session replace vs cross-session 1/σ² fusion; compaction
-     supersession + `Replayed`-beats-`LiveFused` ordering (and the no-op reverse);
-     CRLF-safe provenance sidecar round-trip (harvest the #148 regression).
-   - Multi-level: store holds two levels, query returns best-available across them;
-     load accepts mixed-level tiles (replaces the deleted reject test).
-   - Importer round-trips: GeoTIFF in → query out (datum conversion, footprint,
-     lowest-uncertainty, non-positive-uncertainty-as-missing); registry index
-     stamped + persisted.
-   - Bag-replay determinism: same bag → byte-identical tiles across two runs
-     (content-hash stability), on a small synthetic or trimmed fixture.
-   - Change map: difference of two epochs (cells-in-both only).
-   - `importEpoch` grid/tile-index match guard (harvest #148 Copilot med-fix).
+7. **Tests.** Per the issue deliverables, on the new substrate. **PR-A** (this
+   PR) lands all of these except the bag-replay determinism test (PR-B):
+   - Epoch model (PR-A): N-epochs-never-fused; wholesale replace; compaction
+     supersession + `Replayed`-beats-`LiveFused` ordering (and the no-op reverse,
+     for both `set` and `importEpoch`); CRLF-safe provenance marker round-trip
+     (harvested #148 regression); `supersedes_disk` stale-tile cleanup. *The
+     cross-session 1/σ² live-fusion rule is a Phase-3 live-path concern (OQ3 cut)
+     and is not implemented in PR-A* — PR-A's importers each produce one wholesale
+     epoch.
+   - Multi-level (PR-A): store holds two levels, query returns best-available
+     across them (and shallowest-reliable considers all levels); load accepts
+     mixed-level tiles (replaces the deleted reject test); `levelFromTileFilename`.
+   - Importer round-trips (PR-A): GeoTIFF in → query out (datum conversion,
+     footprint, lowest-uncertainty, non-positive-uncertainty-as-missing); registry
+     index registered + stamped; caller-specified import level.
+   - Bag-replay determinism (**PR-B**): same bag + same insertion order →
+     byte-identical tiles across two runs (content-hash stability), on a small
+     synthetic or trimmed fixture.
+   - Change map (PR-A): `forEachChangedCell` difference of two epochs
+     (cells-in-both only).
+   - `importEpoch` grid/tile-index match guard (PR-A, harvested #148 Copilot med-fix).
 
-8. **ADR-0002 reconciliation.** Replace #148's pre-#153 Amendment A1 with one
-   reconciled against the merged D2 (heterogeneous levels) and D5/#178 (registry
-   provenance): epoch dirs compose with mixed-level `<GridIndex>` filenames;
-   provenance enum vs registry relationship (Open Question 1) recorded;
-   immutable-after-compaction; D7 newest-reliable epoch walk; no-CUBE-seeding
-   rationale. This is the only `docs/` change.
+8. **ADR-0002 reconciliation.** Per Plan-Review must-fix 5, the merged jazzy
+   ADR-0002 has **no** Amendment A1 / epoch content (that lived only on the #148
+   branch, never merged) — so the epoch amendment is authored **FRESH** here, not
+   "replaced". Composed against the already-merged D2 (heterogeneous levels) and
+   D5/#178 (registry provenance): epoch dirs compose with mixed-level
+   `<level>_<row>_<col>` filenames; the two orthogonal provenance axes (OQ1)
+   recorded; immutable-after-compaction; A1.3 newest-reliable epoch walk;
+   no-CUBE-seeding rationale; D6 manifest key generalized to `layer/epoch/
+   GridIndex`. **Done** — added as "Amendment A1 — Per-day epoch model" (A1.1–
+   A1.5). This is the only `docs/` change.
 
 ## Files to Change
 
@@ -227,12 +260,13 @@ PR boundaries.
 
 ## Branch Strategy
 
-The local `feature/issue-147` has been **reset to current `jazzy`** (0 behind);
-the rebuild happens here. The new PR opened from this branch will **supersede
-#148**, which stays OPEN as the harvest reference until then. **Closing #148 is a
-checkpoint decision for the operator** — recommend closing it with a comment
-pointing at the superseding PR once that PR is green, not before (the diff is the
-harvest source).
+Per Plan-Review must-fix 1 (branch strategy): the rebuild happens on a **new
+branch `feature/issue-147-replatform`** (0 behind `jazzy`), leaving
+`origin/feature/issue-147` / **PR #148 untouched** as the harvest reference — no
+force-push over #148's diff. The new PR opened from `feature/issue-147-replatform`
+**supersedes #148** by comment. **Closing #148 is a checkpoint decision for the
+operator** — recommend closing it with a comment pointing at the superseding PR
+once that PR is green, not before (the diff is the harvest source).
 
 ## Open Questions
 
