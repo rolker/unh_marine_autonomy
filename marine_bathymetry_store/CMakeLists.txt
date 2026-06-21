@@ -12,17 +12,21 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(marine_autonomy REQUIRED)
-# GDAL is no longer used directly here — tile_io delegates all GeoTIFF I/O to
-# marine_tiled_raster_store, which carries (and re-exports) the GDAL dependency.
 find_package(marine_tiled_raster_store REQUIRED)
 find_package(geographic_msgs REQUIRED)
 # nlohmann_json backs the source registry (registry.json sidecar, #178). Declared
 # explicitly here (and in package.xml) — it was only available transitively
 # before, which is not a dependency this package may rely on.
 find_package(nlohmann_json REQUIRED)
+# GDAL is used directly by the GeoTIFF importer (geotiff_import.cpp): it opens
+# the source raster and reads bands/geotransform/SRS. tile_io still delegates its
+# GeoTIFF I/O to marine_tiled_raster_store; the importer needs GDAL directly, so
+# declare it explicitly (also in package.xml).
+find_package(GDAL REQUIRED)
 
 add_library(${PROJECT_NAME}
   src/bathymetry_store.cpp
+  src/geotiff_import.cpp
   src/query.cpp
   src/registry.cpp
   src/tile_io.cpp
@@ -43,10 +47,14 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
   ${geographic_msgs_TARGETS}
 )
 # nlohmann_json is header-only and used only inside registry.cpp (the public
-# registry.hpp keeps it out of its interface), so link it PRIVATE.
+# registry.hpp keeps it out of its interface); GDAL is used only inside
+# geotiff_import.cpp (the public geotiff_import.hpp keeps it out of its
+# interface). Both are PRIVATE.
 target_link_libraries(${PROJECT_NAME} PRIVATE
   nlohmann_json::nlohmann_json
+  ${GDAL_LIBRARIES}
 )
+target_include_directories(${PROJECT_NAME} PRIVATE ${GDAL_INCLUDE_DIRS})
 
 # Headers are laid out as include/${PROJECT_NAME}/*.hpp, so install the include/
 # tree to `include` (not include/${PROJECT_NAME}) to avoid a doubled
@@ -60,8 +68,14 @@ install(TARGETS ${PROJECT_NAME}
   RUNTIME DESTINATION bin
 )
 
+# The `import_geotiff` CLI: import a GeoTIFF as one epoch of a store.
+add_executable(import_geotiff src/import_geotiff_main.cpp)
+target_link_libraries(import_geotiff ${PROJECT_NAME})
+
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(marine_autonomy marine_tiled_raster_store geographic_msgs)
+
+install(TARGETS import_geotiff RUNTIME DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -78,6 +92,12 @@ if(BUILD_TESTING)
   # nlohmann_json is used directly in the test (registry tamper fixtures);
   # link it explicitly since it is PRIVATE in the library target.
   target_link_libraries(test_tile_io ${PROJECT_NAME} nlohmann_json::nlohmann_json)
+
+  # The GeoTIFF importer test writes fixture rasters with GDAL directly, so it
+  # links GDAL (PRIVATE in the library target).
+  ament_add_gtest(test_geotiff_import test/test_geotiff_import.cpp)
+  target_link_libraries(test_geotiff_import ${PROJECT_NAME} ${GDAL_LIBRARIES})
+  target_include_directories(test_geotiff_import PRIVATE ${GDAL_INCLUDE_DIRS})
 endif()
 
 ament_package()
