@@ -103,3 +103,54 @@ deps first: `geodesy` (underlay_ws/src/geographic_info) was unbuilt — built it
 - [ ] (suggestion) Trim now applied same-sign to both channels (was ±per-side); symmetric per-side mount-yaw no longer correctable with one param — document the semantic change — `marine_sidescan_mosaic/src/mosaic_node.cpp:298`
 - [ ] (suggestion) `valid` guard misses straight-down/up +Z (`zN≈zE≈0` ⇒ `atan2(0,0)`); azimuth ill-defined while valid stays true — note-level, unlikely for sidescan — `marine_sidescan_mosaic/src/projection.cpp:130`
 - [ ] (gate, pre-existing) URDF +Z sweep (echoboats#303) and bag-replay delta sign-off still open — operational, not code defects, but must clear before merge
+
+## Implementation (Pre-Push Review Fixes)
+**Status**: complete
+**When**: 2026-06-21 14:10 +00:00
+**By**: Claude Opus
+
+**Branch**: feature/issue-200 at `5a6f96b` (two commits on `fb6a41b`: `322865c` code+tests, `5a6f96b` README)
+**Build/test**: built + `colcon test` for `marine_sidescan_mosaic` in-container (jazzy).
+Had to build sibling deps first: `geographic_msgs` + `geodesy` (underlay_ws) were
+unbuilt this pass — built them (warnings only, not code issues); core deps
+(marine_autonomy, marine_tiled_raster_store) already installed.
+
+### Must-fixes addressed
+- **(must-fix) Stale README** — `marine_sidescan_mosaic/README.md`: removed
+  `across_track_offset_deg` (90°) + yaw-only `heading ± 90°` convention. Now documents
+  `beam_azimuth_trim_deg` (default 0°, residual fine-trim) and the +Z full-attitude
+  model via `ecefPoseToGeoBeam` (azimuth + depression from the per-channel sensor +Z;
+  look side, mount tilt, roll/pitch compose in). Notes URDF must mount +Z abeam
+  (e.g. echoboats `sidescan.xacro`); the param is only a small trim. Pipeline step 1
+  + the Key-parameters table row updated too.
+- **(must-fix) Port-channel test gap** — `test/test_projection.cpp`: added
+  `BeamVsHeadingLevelPort`, the mirror of `BeamVsHeadingLevel` — a level port-look
+  pose must give beam azimuth == `heading − 90°` (vs starboard `+ 90°`), zero
+  depression, across the same heading sweep. `shipSensorBodyNed` gained a look-side
+  param (defaults to starboard; port mirrors the +Z mount about the forward axis).
+  Existing starboard cases kept.
+
+### Folded / optional
+- **(suggestion, flagged ×2) Legacy-param warning** — `mosaic_node.cpp`: scan
+  `get_node_options().parameter_overrides()` at startup; `RCLCPP_WARN` if
+  `across_track_offset_deg` is still present ("renamed to beam_azimuth_trim_deg; old
+  value ignored"), since rclcpp silently drops an unknown override. Existing non-zero
+  `beam_azimuth_trim_deg` warning kept.
+- **(optional) projection.cpp note** — added a one-line comment at the azimuth
+  `atan2(zE, zN)` noting the non-degenerate-horizontal +Z assumption (a sidescan +Z is
+  never vertical). No guard added per "don't over-engineer".
+- `plan.md` synced to list the new port test (test-name change).
+
+### Tests/lint
+- gtest: ALL suites PASS — Projection **10/10** (was 9; +`BeamVsHeadingLevelPort`),
+  Accumulator 10, Normalizer 5, Tier1 5; 0 failures / 0 errors (verified via
+  `*.gtest.xml`).
+- Lint: cpplint 2 failures are in untouched `sidescan_mosaic_bag.cpp:130` +
+  `sidescan_tier2_flat.cpp` (not my files). uncrustify mass-fails ~15 files including
+  ones never touched (accumulator/decode/normalizer) — the known 0.78.1 base drift;
+  did NOT reformat base files per instructions.
+
+### Still open (unchanged, pre-merge gates — not code defects)
+- [ ] URDF +Z sweep (echoboats#303): confirm channel TFs orient +Z abeam before merge.
+- [ ] Bag-replay delta for non-trivial-roll surveys — survey-team sign-off.
+- Did NOT `git push` (host pushes with its own credentials).
