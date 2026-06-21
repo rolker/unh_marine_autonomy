@@ -175,8 +175,13 @@ int main(int argc, char * argv[])
     timestamp = timestampFromEpochLabel(epoch);
   }
 
+  // The importer is the one sanctioned writer of the read-only Chart prior, so
+  // it opts into chart_writable only when the target layer is Chart (ADR-0002
+  // §D3). For Processed/Draft this stays false, so a typo'd layer can't touch
+  // Chart.
+  const bool chart_writable = (layer == marine_bathymetry_store::SourceLayer::Chart);
   auto store = marine_bathymetry_store::BathymetryStore::fromCellSize(
-    static_cast<float>(cell_size));
+    static_cast<float>(cell_size), chart_writable);
   std::cout << "store default level: " << static_cast<int>(store.level().level()) << "\n";
 
   marine_bathymetry_store::SourceRegistry registry;

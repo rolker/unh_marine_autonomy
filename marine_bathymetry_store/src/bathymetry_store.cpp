@@ -81,6 +81,23 @@ bool BathymetryStore::importEpoch(
   std::map<gggs::GridIndex, BathymetryTile> tiles, Provenance provenance)
 {
   validateEpochLabel(epoch);
+  // Chart is a read-only prior (ADR-0002 §D3). importEpoch is a public mutator
+  // just like set(), so it must honor the same gate -- otherwise the CLI or any
+  // library consumer could overwrite the Chart prior wholesale on a default
+  // store, defeating the read-only guarantee. Only an importer that explicitly
+  // opted in (chart_writable=true) may write Chart.
+  if (layer == SourceLayer::Chart && !chart_writable_) {
+    throw std::logic_error(
+            "BathymetryStore::importEpoch: Chart is a read-only prior layer; construct "
+            "the store with chart_writable=true (importer only) to write it");
+  }
+  // An import with no tiles (e.g. an entirely no-data GeoTIFF) would create an
+  // epoch that holds nothing and silently vanishes on the next load (save writes
+  // only a provenance marker; load reconstructs epochs only from .tif files).
+  // Reject it so epochs(layer) is stable across a save/load round-trip.
+  if (tiles.empty()) {
+    return false;
+  }
   for (const auto & [grid, tile] : tiles) {
     if (!grid.valid()) {
       throw std::invalid_argument("BathymetryStore::importEpoch: invalid GridIndex key");

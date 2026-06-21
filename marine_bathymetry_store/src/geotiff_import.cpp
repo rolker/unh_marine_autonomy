@@ -109,6 +109,16 @@ std::optional<std::size_t> importGeoTiff(
   int has_nodata = 0;
   const double nodata =
     in.ds->GetRasterBand(options.depth_band)->GetNoDataValue(&has_nodata);
+  // Honor the uncertainty band's no-data sentinel too: a positive finite
+  // sentinel (e.g. 9999) would otherwise pass the isfinite/>0 gate below and
+  // import as a real, huge-but-finite uncertainty rather than being treated as
+  // missing -- the same trap the depth band is guarded against.
+  int unc_has_nodata = 0;
+  double unc_nodata = 0.0;
+  if (options.uncertainty_band > 0) {
+    unc_nodata =
+      in.ds->GetRasterBand(options.uncertainty_band)->GetNoDataValue(&unc_has_nodata);
+  }
 
   std::map<gggs::GridIndex, BathymetryTile> tiles;
   std::size_t imported = 0;
@@ -142,7 +152,8 @@ std::optional<std::size_t> importGeoTiff(
       // = never reliable — conservative).
       double uncertainty = options.default_uncertainty;
       if (options.uncertainty_band > 0 && std::isfinite(uncertainty_row[x]) &&
-        uncertainty_row[x] > 0.0)
+        uncertainty_row[x] > 0.0 &&
+        !(unc_has_nodata && uncertainty_row[x] == unc_nodata))
       {
         uncertainty = uncertainty_row[x];
       }

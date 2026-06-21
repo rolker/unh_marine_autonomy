@@ -211,7 +211,8 @@ TEST_F(GeoTiffImportTest, NoSourceIdStampsUnsetIndex)
 TEST_F(GeoTiffImportTest, ImportsAtCallerSpecifiedLevel)
 {
   // Multi-level (ADR-0002 §D2): import at a level other than the store default.
-  BathymetryStore store(11);   // default level 11
+  // Importing to the read-only Chart prior requires the importer opt-in.
+  BathymetryStore store(11, /*chart_writable=*/true);   // default level 11
   const std::vector<float> depth{-30.0f};
   const std::vector<float> unc{0.1f};
   gggs::Level coarse(8);
@@ -298,7 +299,7 @@ TEST_F(GeoTiffImportTest, DepthScaleOffsetAndFiniteNoData)
 {
   // A lake-prior product: depths positive-down below the surface, with a FINITE
   // no-data value (-9999) that must not import as a 9 km depth.
-  BathymetryStore store(11);
+  BathymetryStore store(11, /*chart_writable=*/true);  // imports to Chart
   const std::vector<float> depth{4.0f, -9999.0f};   // 4 m of water; one no-data
   const std::vector<float> unc{0.0f, 0.0f};         // source has no real band
   const auto tif = writeTestTiff(dir_ / "lake.tif", store.level(), 2, 1, depth, unc);
@@ -331,7 +332,7 @@ TEST_F(GeoTiffImportTest, CoarserInputFillsPixelFootprint)
   // A 5x-coarser pixel must fill its whole footprint of store cells — coverage,
   // not isolated dots (the contour-prior case). The helper only does integer
   // pixels-per-cell, so build the 1x1 raster with a 5-cell pixel directly.
-  BathymetryStore store(11);
+  BathymetryStore store(11, /*chart_writable=*/true);  // imports to Chart
   const std::vector<float> depth{-30.0f};
   const std::vector<float> unc{3.0f};
   const gggs::GridIndex grid = store.level().gridIndex(43.0, -70.5);

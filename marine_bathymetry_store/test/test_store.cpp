@@ -263,3 +263,33 @@ TEST(Store, ImportEpochRejectsTileKeyMismatch)
     marine_bathymetry_store::Provenance::Replayed),
     std::invalid_argument);
 }
+
+TEST(Store, ImportEpochHonorsChartReadOnlyGate)
+{
+  // importEpoch is a public mutator like set(), so it must honor the Chart
+  // read-only gate (ADR-0002 §D3) — otherwise a wholesale import would overwrite
+  // the prior on a default store. Only a chart_writable (importer) store may.
+  const auto cell = BathymetryStore(5).cellIndex(43.0, -70.5);
+
+  BathymetryStore read_only(5);
+  EXPECT_THROW(
+    read_only.importEpoch(SourceLayer::Chart, kEpoch,
+    oneTile(cell, BathyCell{-10.0, 3.0, 1LL}),
+    marine_bathymetry_store::Provenance::Replayed),
+    std::logic_error);
+
+  BathymetryStore importer(5, /*chart_writable=*/true);
+  EXPECT_TRUE(importer.importEpoch(
+      SourceLayer::Chart, kEpoch, oneTile(cell, BathyCell{-10.0, 3.0, 1LL}),
+      marine_bathymetry_store::Provenance::Replayed));
+}
+
+TEST(Store, ImportEpochRejectsEmptyTiles)
+{
+  // An empty import (e.g. an entirely no-data GeoTIFF) must not create a phantom
+  // epoch that vanishes on the next load — it returns false and adds no epoch.
+  BathymetryStore store(5);
+  EXPECT_FALSE(store.importEpoch(
+      SourceLayer::Draft, kEpoch, {}, marine_bathymetry_store::Provenance::Replayed));
+  EXPECT_TRUE(store.epochs(SourceLayer::Draft).empty());
+}
