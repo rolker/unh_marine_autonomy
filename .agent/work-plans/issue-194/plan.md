@@ -30,8 +30,9 @@ The `float` tile type does not yet exist in `marine_tiled_raster_store/src/tile_
 2. **Add `float`/`GDT_Float32` instantiation to `marine_tiled_raster_store`** (`src/tile_io.cpp`):
    - Add `template<> GDALDataType gdalType<float>() {return GDT_Float32;}` alongside the existing
      `double`, `uint16_t`, `int64_t` specializations.
-   - Add three explicit instantiation blocks at the bottom mirroring the `int64_t` pattern exactly:
-     `saveTile<float>`, `loadTile<float>`, `saveTiles<float>`, `loadTiles<float>`.
+   - Add **four** explicit instantiation blocks at the bottom mirroring the `int64_t` pattern
+     exactly: `saveTile<float>`, `loadTile<float>`, `saveTiles<float>`, `loadTiles<float>`
+     (the existing `int64_t` pattern in `tile_io.cpp` has exactly these four).
    - Update `tile_io.hpp` doc comment to list `float` in the supported element-type list.
    - Add a `RoundTripFloatSingleBand` test in `marine_tiled_raster_store/test/test_tile_io.cpp`
      mirroring `RoundTripInt64SingleBand`: write known float values including NaN no-data, reload,
@@ -56,7 +57,11 @@ The `float` tile type does not yet exist in `marine_tiled_raster_store/src/tile_
    e. `include/marine_mbes_backscatter_store/mbes_store.hpp` — `MbesBackscatterStore` class:
       - Constructor `(uint8_t gggs_level)`.
       - `cellIndex(lat, lon)` convenience.
-      - `set(SourceLayer layer, CellIndex, MbesCell)` — creates tile on first write.
+      - `set(SourceLayer layer, CellIndex, MbesCell)` — creates tile on first write. **The
+        struct-taking setter is the chosen seam** (mirrors `marine_bathymetry_store::set`). The
+        issue's loose `set(cell, intensity, variance, …)` wording maps onto this struct: the
+        cube#54 producer fills an `MbesCell` and calls `set(layer, cell, mbes_cell)`. A struct
+        keeps the call site stable as fields are added and matches the sibling bathy store.
       - `get(SourceLayer layer, CellIndex) -> optional<MbesCell>`.
       - `tiles(SourceLayer)` const accessor for persistence.
       - `SourceLayer` enum: `Draft = 0`, `Processed = 1` (no Chart layer — no chart prior for
@@ -70,21 +75,33 @@ The `float` tile type does not yet exist in `marine_tiled_raster_store/src/tile_
    g. `include/marine_mbes_backscatter_store/tile_io.hpp` — declares `save`, `load`, `tileFilename`,
       `layerDirName` free functions; includes companion-path helpers (`_time`, `_source` suffixes).
 
-   h. `src/mbes_store.cpp`, `src/query.cpp`, `src/tile_io.cpp` — implementations mirroring
-      `marine_bathymetry_store`'s patterns:
+   g2. `include/marine_mbes_backscatter_store/registry.hpp` — `SourceRecord` + `SourceRegistry`
+      (own class, mirrors bathy store: intern by `source_id`, 0 = unset sentinel, atomic
+      `registry.json`). `marine_backscatter::writeRegistry` is write-only/single-source so it
+      can't back load/intern; mirror the bathy writer instead.
+
+   h. `src/mbes_store.cpp`, `src/query.cpp`, `src/tile_io.cpp`, `src/registry.cpp` —
+      implementations mirroring `marine_bathymetry_store`'s patterns:
       - `tile_io.cpp`: per-tile save writes value tile first (safety: value is the load-bearing
         file), then time, then source. Load checks for missing companions and 0-fills them.
         GridIndex consistency check on companion tiles (same guard as bathy store).
-        Layer subdirectories: `draft/` and `processed/`. Registry persist via
-        `marine_backscatter::writeRegistry` at the store root. Load calls
-        `marine_backscatter::writeRegistry` is write-only; load parses `registry.json` via
-        `nlohmann_json` (same as bathy store registry, but calls `marine_backscatter::writeRegistry`
-        only on save).
+        **Companion-suffix skip guard in the directory scan**: when iterating a layer directory,
+        skip files whose stem ends in `_time` or `_source` so companions aren't loaded as value
+        tiles (mirror bathy store's `load()` `ends_with` guard). Layer subdirectories: `draft/`
+        and `processed/`.
       - `query.cpp`: `bestSource` walks `source_layers_by_priority` and returns first layer
         with `hasData()`. `forEachCellBestSource` iterates GGGS cells in the geographic box.
       - Draft recency policy: `set()` on `Draft` always overwrites the existing cell
         (newest-valid-wins — callers supply angle-corrected values; the store does no
         accumulation).
+      - `registry.cpp`: the MBES store gets its **own `SourceRegistry`** class (load/intern +
+        `registry.json` atomic write-then-rename), mirroring `marine_bathymetry_store`'s
+        `SourceRegistry`. `marine_backscatter::writeRegistry` is **write-only and single-source**
+        (`writeRegistry(path, source_id, platform, sensor, sensor_class, campaign)`), so it
+        does not cover the multi-record load/intern path the store and tests need; the signature
+        does not line up with a multi-source registry, so we **mirror the bathy writer** rather
+        than delegate. The `marine_backscatter` dependency stays (for `writeRegistry` /
+        provenance-schema alignment and future GeoCoder), per ADR-0007 D6.
 
    i. `README.md` — one-paragraph description, 3-tile schema reference, dependency note
       (no `cube_bathymetry`), bag-retention dependency from ADR-0007 D1.
@@ -100,6 +117,8 @@ The `float` tile type does not yet exist in `marine_tiled_raster_store/src/tile_
       - `LayersWriteToSeparateSubdirectories` — `draft/` and `processed/` both created.
       - `LoadRejectsTilesFromAnotherLevel` — load with wrong GGGS level throws.
       - `CompanionGridMismatchThrows` — replace `_time.tif` with one from different grid; load throws.
+      - `RegistryWriteInternRoundTrip` — register two sources, save, reload; verify intern is
+        idempotent on `source_id`, indices are dense from 1, and `registry.json` round-trips.
 
    b. `test_store.cpp`:
       - `SetGetRoundTrip` — set a cell, get it back without save/load.
@@ -130,9 +149,11 @@ The `float` tile type does not yet exist in `marine_tiled_raster_store/src/tile_
 | `marine_mbes_backscatter_store/include/marine_mbes_backscatter_store/mbes_store.hpp` | New file |
 | `marine_mbes_backscatter_store/include/marine_mbes_backscatter_store/query.hpp` | New file |
 | `marine_mbes_backscatter_store/include/marine_mbes_backscatter_store/tile_io.hpp` | New file |
+| `marine_mbes_backscatter_store/include/marine_mbes_backscatter_store/registry.hpp` | New file |
 | `marine_mbes_backscatter_store/src/mbes_store.cpp` | New file |
 | `marine_mbes_backscatter_store/src/query.cpp` | New file |
 | `marine_mbes_backscatter_store/src/tile_io.cpp` | New file |
+| `marine_mbes_backscatter_store/src/registry.cpp` | New file |
 | `marine_mbes_backscatter_store/test/test_tile_io.cpp` | New file |
 | `marine_mbes_backscatter_store/test/test_store.cpp` | New file |
 | `marine_mbes_backscatter_store/test/test_query.cpp` | New file |
@@ -154,7 +175,7 @@ The `float` tile type does not yet exist in `marine_tiled_raster_store/src/tile_
 |---|---|---|
 | ADR-0007 (MBES backscatter store) | Yes | Implements D9 phase 3; flip Status to Accepted in step 1 |
 | ADR-0002 (bathy store tiling/layering) | Yes | Same layer-as-subdir, save/load patterns, no-cube layering respected |
-| ADR-0005 (cross-store provenance/registry) | Yes | Source index via `marine_backscatter::writeRegistry`; 0 = unset sentinel |
+| ADR-0005 (cross-store provenance/registry) | Yes | Own `SourceRegistry` (load/intern + atomic `registry.json`) mirroring the bathy store; `marine_backscatter` is depended on for `writeRegistry` **only** (the variance IS the quality for MBES, ADR-0007 D6 — `grazingQuality` is sidescan/Phase-4, not used here); 0 = unset sentinel |
 | ADR-0006 (sidescan backscatter store) | Referenced | `ProcessedAccumulator` NOT reused; draft/processed overlay pattern mirrors ADR-0006 |
 
 ## Consequences
