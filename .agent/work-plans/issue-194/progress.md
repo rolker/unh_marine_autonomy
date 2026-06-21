@@ -131,3 +131,46 @@ node-output producer that calls store.set(Draft, ...)); Phase 4 offline Processe
 - ADR-0007 flip: Status Accepted; D6 (float tile) + D9 (placement) ratify notes internally consistent.
 - Plan adherence: implementation matches plan exactly; no scope drift.
 - Ignored noise per task: local uncrustify-0.78.1 ternary mass-fail (CI drift); clangd gggs.h LSP artifact.
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-21 00:41 +00:00
+**By**: Claude Code Agent (Claude Sonnet 4.6)
+**Commit**: d382d03
+
+### Fix #1 — duplicate source_id validation in loadRegistry (both registries)
+
+Added a `by_source_id_.count(r.source_id)` check in the load loop of both:
+- `marine_mbes_backscatter_store/src/registry.cpp` (lines 177–181 after fix)
+- `marine_bathymetry_store/src/registry.cpp` (same pattern, bathy twin)
+
+If a duplicate source_id is found at a distinct contiguous index, throws
+`std::runtime_error` with message naming the duplicate source_id. Previously
+the index-contiguity check only caught reordering/gaps, not same-source_id
+at two valid sequential indices — error message claimed to reject duplicates
+but did not.
+
+New gtests in `test_tile_io.cpp` for both packages:
+- `LoadRegistryRejectsDuplicateSourceId` — two entries sharing source_id "dup"
+  at indices 1 and 2 (expects `std::runtime_error`)
+- `LoadRegistryRejectsReorderedIndex` and `LoadRegistryRejectsMissingIndexField`
+  also added to MBES test file (bathy already had these; now consistent)
+
+### Fix #3 — tmp-file cleanup on rename failure (both registries)
+
+Wrapped `fs::rename(tmp, final)` in `try { } catch (...) { fs::remove(tmp, ec); throw; }`
+in both `saveRegistry` implementations to avoid orphaning `registry.json.tmp`
+on ENOSPC / cross-device / permission failures.
+
+### Build & test results
+
+Build: clean (4 packages: marine_tiled_raster_store, marine_backscatter,
+marine_bathymetry_store, marine_mbes_backscatter_store — 0 errors, 0 warnings
+from our code).
+
+Gtest results (failures = 0 in all suites):
+- marine_mbes_backscatter_store: test_store 9/9, test_query 5/5, test_tile_io 12/12 (was 9)
+- marine_bathymetry_store: test_store 12/12, test_query 10/10, test_tile_io 18/18 (was 15)
+
+Only failures are local uncrustify-0.78.1 style drift (pre-existing; ignored per known noise).
+Suggestion #4 (marine_backscatter PRIVATE link) not touched — intentional per ADR-0007.
