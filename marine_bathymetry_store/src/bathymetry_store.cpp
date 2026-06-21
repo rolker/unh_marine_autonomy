@@ -23,64 +23,145 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace marine_bathymetry_store
 {
 
-void BathymetryStore::set(
-  SourceLayer layer, const gggs::CellIndex & cell, const BathyCell & value)
+bool BathymetryStore::set(
+  SourceLayer layer, const Epoch & epoch, const gggs::CellIndex & cell,
+  const BathyCell & value)
 {
   // Validate the inputs first, then the layer permission — so a malformed cell
   // always reports invalid_argument (the more actionable error), and the
-  // read-only logic_error fires only for an otherwise-valid Chart write.
+  // read-only logic_error fires only for an otherwise-valid Chart write. The
+  // cell may be at any valid level — the store is multi-level (ADR-0002 §D2).
+  validateEpochLabel(epoch);
   if (!cell.valid()) {
     throw std::invalid_argument("BathymetryStore::set: invalid CellIndex");
-  }
-  if (cell.level() != level_.level()) {
-    throw std::invalid_argument(
-            "BathymetryStore::set: CellIndex at level " +
-            std::to_string(cell.level()) + " but store is at level " +
-            std::to_string(level_.level()));
   }
   if (layer == SourceLayer::Chart && !chart_writable_) {
     throw std::logic_error(
             "BathymetryStore::set: Chart is a read-only prior layer; construct "
             "the store with chart_writable=true (importer only) to write it");
   }
-  BathymetryTile & tile = getOrCreateTile(layer, cell.grid());
+  // A compacted (Replayed) epoch is immutable: a live write must not regress it
+  // (ADR-0002 §A1.2). Report the no-op so the caller can log it.
+  auto & m = layerMap(layer);
+  const auto existing = m.find(epoch);
+  if (existing != m.end() && existing->second.provenance == Provenance::Replayed) {
+    return false;
+  }
+  BathymetryTile & tile = getOrCreateTile(layer, epoch, cell.grid());
   tile.set(cell.row(), cell.column(), value);
+  return true;
 }
 
 std::optional<BathyCell> BathymetryStore::get(
-  SourceLayer layer, const gggs::CellIndex & cell) const
+  SourceLayer layer, const Epoch & epoch, const gggs::CellIndex & cell) const
 {
   if (!cell.valid()) {
     return std::nullopt;
   }
   const auto & m = layerMap(layer);
-  const auto it = m.find(cell.grid());
-  if (it == m.end()) {
+  const auto epoch_it = m.find(epoch);
+  if (epoch_it == m.end()) {
     return std::nullopt;
   }
-  return it->second.get(cell.row(), cell.column());
+  const auto & tiles = epoch_it->second.tiles;
+  const auto tile_it = tiles.find(cell.grid());
+  if (tile_it == tiles.end()) {
+    return std::nullopt;
+  }
+  return tile_it->second.get(cell.row(), cell.column());
+}
+
+bool BathymetryStore::importEpoch(
+  SourceLayer layer, const Epoch & epoch,
+  std::map<gggs::GridIndex, BathymetryTile> tiles, Provenance provenance)
+{
+  validateEpochLabel(epoch);
+  // Chart is a read-only prior (ADR-0002 §D3). importEpoch is a public mutator
+  // just like set(), so it must honor the same gate -- otherwise the CLI or any
+  // library consumer could overwrite the Chart prior wholesale on a default
+  // store, defeating the read-only guarantee. Only an importer that explicitly
+  // opted in (chart_writable=true) may write Chart.
+  if (layer == SourceLayer::Chart && !chart_writable_) {
+    throw std::logic_error(
+            "BathymetryStore::importEpoch: Chart is a read-only prior layer; construct "
+            "the store with chart_writable=true (importer only) to write it");
+  }
+  // An import with no tiles (e.g. an entirely no-data GeoTIFF) would create an
+  // epoch that holds nothing and silently vanishes on the next load (save writes
+  // only a provenance marker; load reconstructs epochs only from .tif files).
+  // Reject it so epochs(layer) is stable across a save/load round-trip.
+  if (tiles.empty()) {
+    return false;
+  }
+  for (const auto & [grid, tile] : tiles) {
+    if (!grid.valid()) {
+      throw std::invalid_argument("BathymetryStore::importEpoch: invalid GridIndex key");
+    }
+    // The tile must have been built for the grid it is keyed under: a mismatch
+    // would write a tile under one grid's filename but with another grid's
+    // georeference, corrupting the store on the next load (harvested #148
+    // Copilot med-fix).
+    if (!(tile.index() == grid)) {
+      throw std::invalid_argument(
+              "BathymetryStore::importEpoch: tile GridIndex does not match its map key");
+    }
+  }
+
+  auto & m = layerMap(layer);
+  const auto existing = m.find(epoch);
+  // §A1.2 ordering: live-fused never replaces replayed.
+  if (existing != m.end() &&
+    existing->second.provenance == Provenance::Replayed &&
+    provenance == Provenance::LiveFused)
+  {
+    return false;
+  }
+
+  EpochTiles replacement;
+  replacement.provenance = provenance;
+  replacement.supersedes_disk = true;   // persistence clears stale files first
+  replacement.tiles = std::move(tiles);
+  // A wholesale import is a fresh surface: mark every tile dirty so it persists.
+  for (auto & [grid, tile] : replacement.tiles) {
+    (void)grid;
+    tile.markDirty();
+  }
+  m[epoch] = std::move(replacement);
+  return true;
+}
+
+EpochTiles & BathymetryStore::getOrCreateEpoch(
+  SourceLayer layer, const Epoch & epoch, Provenance provenance)
+{
+  validateEpochLabel(epoch);
+  auto & m = layerMap(layer);
+  auto it = m.find(epoch);
+  if (it == m.end()) {
+    EpochTiles fresh;
+    fresh.provenance = provenance;
+    it = m.emplace(epoch, std::move(fresh)).first;
+  }
+  return it->second;
 }
 
 BathymetryTile & BathymetryStore::getOrCreateTile(
-  SourceLayer layer, const gggs::GridIndex & grid)
+  SourceLayer layer, const Epoch & epoch, const gggs::GridIndex & grid)
 {
+  // Any valid level is accepted — the store is multi-level (ADR-0002 §D2). The
+  // GridIndex carries its own level, so tiles at different levels coexist.
   if (!grid.valid()) {
     throw std::invalid_argument("BathymetryStore::getOrCreateTile: invalid GridIndex");
   }
-  if (grid.level() != level_.level()) {
-    throw std::invalid_argument(
-            "BathymetryStore::getOrCreateTile: GridIndex at level " +
-            std::to_string(grid.level()) + " but store is at level " +
-            std::to_string(level_.level()));
-  }
-  auto & m = layerMap(layer);
-  auto it = m.find(grid);
-  if (it == m.end()) {
-    it = m.emplace(grid, BathymetryTile(grid)).first;
+  EpochTiles & epoch_tiles = getOrCreateEpoch(layer, epoch, Provenance::LiveFused);
+  auto & tiles = epoch_tiles.tiles;
+  auto it = tiles.find(grid);
+  if (it == tiles.end()) {
+    it = tiles.emplace(grid, BathymetryTile(grid)).first;
   }
   return it->second;
 }

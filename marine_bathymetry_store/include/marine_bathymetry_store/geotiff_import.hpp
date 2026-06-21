@@ -1,0 +1,106 @@
+// Copyright 2026 Center for Coastal and Ocean Mapping & NOAA-UNH Joint
+// Hydrographic Center, University of New Hampshire
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+#ifndef MARINE_BATHYMETRY_STORE__GEOTIFF_IMPORT_HPP_
+#define MARINE_BATHYMETRY_STORE__GEOTIFF_IMPORT_HPP_
+
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <optional>
+#include <string>
+
+#include "marine_bathymetry_store/bathymetry_store.hpp"
+#include "marine_bathymetry_store/epoch.hpp"
+#include "marine_bathymetry_store/registry.hpp"
+
+/// @file
+/// @brief Import a depth/uncertainty GeoTIFF as one wholesale epoch of a store
+/// (ADR-0002 Phase 2, §A1.2 + §D4). Footprint fill, datum conversion at import,
+/// lowest-uncertainty contention resolution, and per-cell SourceRegistry
+/// provenance stamping (ADR-0005 D2/D8).
+
+namespace marine_bathymetry_store
+{
+
+/// @brief Options governing a GeoTIFF import.
+struct GeoTiffImportOptions
+{
+  /// 1-based raster band holding depth as **ellipsoidal height** (WGS84, m,
+  /// up-positive — the store convention; `bag_to_geotiff` band 1). Non-finite
+  /// pixels are no-data and skipped.
+  int depth_band = 1;
+  /// 1-based raster band holding 1-sigma vertical uncertainty (m), or 0 if
+  /// the file has none (cells then get `default_uncertainty`).
+  int uncertainty_band = 2;
+  /// Uncertainty assigned when `uncertainty_band == 0` or the band reads
+  /// non-finite **or non-positive** (zero uncertainty is treated as missing,
+  /// not perfect — it would pass every reliability gate and carry infinite
+  /// weight in 1/sigma^2 fusion). NaN (the default) makes such cells
+  /// never-reliable in the safety query — the conservative choice.
+  double default_uncertainty = std::numeric_limits<double>::quiet_NaN();
+  /// Acquisition time (Unix seconds) recorded on every imported cell — a
+  /// whole-file product carries no per-cell time. 0 = unset.
+  double timestamp = 0.0;
+  /// Vertical conversion applied at import (ADR-0002 §D4):
+  /// `height = depth_scale * pixel + depth_offset`. The defaults pass
+  /// store-convention inputs (ellipsoidal height, up-positive) through
+  /// unchanged. A positive-down depths-below-lake-surface product imports
+  /// with `depth_scale = -1` and `depth_offset` = the lake surface's
+  /// ellipsoidal height.
+  double depth_scale = 1.0;
+  double depth_offset = 0.0;
+  /// GGGS level to import at. The store is multi-level (ADR-0002 §D2): a coarse
+  /// chart prior imports at a coarse level, a fine survey grid at a fine level,
+  /// and both can share the store. `std::nullopt` (the default) uses the
+  /// store's default level (`store.level()`), preserving the single-level
+  /// caller's behaviour; pass a level to match the source resolution.
+  std::optional<uint8_t> level = std::nullopt;
+  /// Provenance record to register in the store's `SourceRegistry` (ADR-0005
+  /// D2/D8). Every imported cell is stamped with the returned source index. If
+  /// `source.source_id` is empty the importer skips registration and stamps the
+  /// unset index (0) — for callers that don't track provenance.
+  SourceRecord source;
+};
+
+/// @brief Import @p path as the whole content of @p layer's @p epoch.
+///
+/// Reads the GeoTIFF, fills each pixel's **footprint** of GGGS cells at the
+/// target level (every store cell a pixel covers, so a coarser-than-store source
+/// still produces coverage), converts the vertical datum at import (§D4), keeps
+/// the lowest-uncertainty value on contention, and replaces @p epoch wholesale
+/// via `importEpoch`. If `options.source.source_id` is non-empty, registers the
+/// `SourceRecord` in @p registry and stamps its index on every imported cell.
+///
+/// @return The number of distinct cells imported, or `std::nullopt` if
+///         `importEpoch` refused the write (existing epoch is `Replayed` and
+///         @p provenance is `LiveFused`, ADR-0002 §A1.2).
+/// @throws std::invalid_argument on a bad epoch label or band index;
+///         std::runtime_error on GDAL failure, a non-WGS84 / rotated raster, or
+///         a missing geotransform.
+std::optional<std::size_t> importGeoTiff(
+  BathymetryStore & store, SourceRegistry & registry, SourceLayer layer,
+  const Epoch & epoch, const std::string & path, Provenance provenance,
+  const GeoTiffImportOptions & options = GeoTiffImportOptions{});
+
+}  // namespace marine_bathymetry_store
+
+#endif  // MARINE_BATHYMETRY_STORE__GEOTIFF_IMPORT_HPP_
