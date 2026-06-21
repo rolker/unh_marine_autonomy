@@ -234,3 +234,28 @@ current code below.
 ### False positives
 - (none) — all Copilot R1 findings were valid and are fixed; the Post-PR blockers all
   reproduce against current code.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-21 00:46 -0400
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**Plan**: `.agent/work-plans/issue-147/plan.md` at `71bc52c`
+**Branch**: feature/issue-147 at `71bc52c` (reset to current jazzy; new PR will SUPERSEDE #148)
+**Phases**: 2-PR split recommended (PR-A store foundation + GeoTIFF import; PR-B bag-replay importer)
+
+**Re-plan rationale**: PR #148's Phase-2 code was written against the pre-refactor
+store. Since then jazzy landed #172 (generic tiled-raster core), #178/ADR-0005
+(Int64-time + UInt16 source-tile + SourceRegistry provenance), and #151/#153
+(heterogeneous levels + read-only Chart). A merge = 17+ conflicts = re-platforming.
+This plan HARVESTS #148's designs (epoch model, GeoTIFF footprint importer,
+change-map, end-to-end-validated behavior) and REBUILDS them on the current store:
+multi-level / level-aware from the start (the old M1 blocker) and SourceRegistry
+provenance integrated (the #178/#179 axis #148 predated). Bag-replay importer
+rebuilt via the just-merged #43 DetectionsProjector (offline, no live ROS graph).
+
+### Open questions
+- [ ] OQ1 — Provenance enum (LiveFused/Replayed, compaction-maturity) vs SourceRegistry (platform/sensor): recommend keeping both, orthogonal — confirm before coding so ADR A1 wording is right.
+- [ ] OQ2 — Bag-replay tool location: recommend cube_bathymetry-side (mirrors bag_to_geotiff, depends on store via public API) — confirm.
+- [ ] OQ3 — GeoMapSheet live-path importer: recommend OUT of Phase 2 (belongs with Phase-3 live node) — confirm the cut.
+- [ ] Checkpoint — close #148 when the superseding PR is green (it stays the harvest reference until then) — operator decision.
