@@ -101,3 +101,17 @@ This unblocks #164 (the Nav2 `bathymetry_layer` costmap plugin on the global cos
 
 ### Open questions
 - [ ] No open questions — plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-06-21 12:03 -0400
+**By**: Claude Code Agent (Claude Sonnet 4.6)
+
+**Plan**: `.agent/work-plans/issue-205/plan.md` at `ada4f5a`
+**PR**: PR-less
+**Verdict**: changes-requested
+
+### Findings
+- [ ] (must-fix) `gridIndexFromTileFilename()` cannot directly construct `GridIndex(level, row, col)` — that constructor is `private` in `grid_index.h` (line 166), accessible only to `gggs::Level`, `GridAreaIterator`, and `GridBounds`. The plan says "reconstruct the `GridIndex` from the filename stem" but doesn't specify how. The implementation must go through `gggs::Level(lvl).gridIndex(lat, lon)` with a lat/lon derived from the parsed row/col (e.g., `southLat = -96.0 + row * span`, `westLon = -180.0 + col * longitudinalSpan(row)`, then call `Level(lvl).gridIndex(southLat + epsilon, westLon + epsilon)`). The plan should document this non-obvious indirection so the implementer does not attempt to call the private constructor. — `plan.md:62-63`
+- [ ] (suggestion) The mutable-access path for `evictOutside` erasing from `epoch_tiles.tiles` is correctly identified as requiring friendship, but the plan only mentions erasing from `epoch_tiles.tiles` without specifying that the implementation will call the private `store.layerMap(layer)` (the non-const overload) to get a mutable `std::map<Epoch, EpochTiles> &`. Noting this explicitly would prevent the implementer from mistakenly trying to cast away const from `store.epochs(layer)`. — `plan.md:65-74`
+- [ ] (suggestion) Test case (d) `EvictOutsideDirtyTileNotEvicted` calls `BathymetryTile::markDirty()` — this method exists (verified in `bathymetry_tile.hpp` line 124). However the test will need to populate the tile via `importEpoch` (not `store.set()`) so the tile can be in any SourceLayer including Chart. The plan says "mark a Draft tile dirty" and uses `importEpoch` for `evictOutside` tests — confirm the test constructs a tile with `markDirty()` called on it before the import, since `importEpoch` marks tiles dirty on import anyway (meaning the dirty state is already set). Just verify the test doesn't inadvertently save the store between population and calling `evictOutside` (which would clear dirty flags). — `plan.md:104-106`
