@@ -350,3 +350,28 @@ cross-repo/internal API claims (loadTile level recovery, the Sounding→GeoSound
 mutation/determinism) are mis-described against the actual code and must be corrected so the implementer builds the right
 thing. Fix those five and it's ready.
 
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-21 09:24 -0400
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: approved
+**Round**: 1
+**Ship**: recommended
+
+**Branch**: feature/issue-147-replatform at `9465564` (PR-A; supersedes PR #148)
+**Mode**: pre-push
+**Depth**: Deep (reason: ~2260-line store change — multi-level query + epoch model + persistence + GeoTIFF importer + ADR)
+**Must-fix**: 1 (resolved) | **Suggestions**: 2 (resolved)
+
+Two disjoint-lens Claude adversarial passes. Lens A: epoch never-fused, Replayed-immutable,
+multi-level resolution, persistence round-trip, importer math all VERIFIED correct; 2 low-sev
+suggestions. Lens B: 1 must-fix (Chart read-only gate bypass in importEpoch). All resolved.
+68 gtests pass (the 3 test.sh "failures" are the known local uncrustify-0.78.1 drift on
+unmodified base files — cpplint+uncrustify clean on all changed files).
+
+### Findings
+- [x] (must-fix) importEpoch bypassed the read-only-Chart gate set() enforces (CLI could overwrite the Chart prior) — gated; CLI opts into chart_writable only for Chart — `bathymetry_store.cpp:83`, `import_geotiff_main.cpp:178`
+- [x] (suggestion) empty-tiles import created a phantom epoch that vanished on reload — importEpoch rejects empty — `bathymetry_store.cpp`
+- [x] (suggestion) importer honored depth no-data but not uncertainty no-data — symmetric guard added — `geotiff_import.cpp`
+- [ ] (PR-B, deferred) bag-replay importer needs Sounding→GeoSounding georef + GeoGrid::values() is positional float — recorded in plan §6 for PR-B
