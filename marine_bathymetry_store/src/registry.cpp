@@ -116,7 +116,14 @@ void SourceRegistry::saveRegistry(const std::string & store_root_dir) const
   }
   // Atomic publish: rename over the existing registry. rename() on the same
   // filesystem is atomic, so a reader sees either the old or the new file whole.
-  fs::rename(tmp, final);
+  // On rename failure, remove the tmp file to avoid leaving an orphan.
+  try {
+    fs::rename(tmp, final);
+  } catch (...) {
+    std::error_code ec;
+    fs::remove(tmp, ec);
+    throw;
+  }
 }
 
 void SourceRegistry::loadRegistry(const std::string & store_root_dir)
@@ -174,6 +181,12 @@ void SourceRegistry::loadRegistry(const std::string & store_root_dir)
               " but expected " + std::to_string(expected) +
               " (indices must be contiguous from 1; the registry may have been"
               " reordered, has gaps, or contains duplicate entries)");
+    }
+    if (by_source_id_.count(r.source_id)) {
+      throw std::runtime_error(
+              "SourceRegistry::loadRegistry: duplicate source_id=\"" + r.source_id +
+              "\" at index " + std::to_string(expected) +
+              " (each source_id must appear at most once in registry.json)");
     }
     by_index_.push_back(r);
     by_source_id_.emplace(r.source_id, expected);

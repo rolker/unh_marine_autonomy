@@ -23,8 +23,11 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
+
+#include <nlohmann/json.hpp>
 
 #include "marine_mbes_backscatter_store/mbes_store.hpp"
 #include "marine_mbes_backscatter_store/registry.hpp"
@@ -248,4 +251,70 @@ TEST_F(TileIoTest, RegistryWriteInternRoundTrip)
   EXPECT_EQ(rec->platform, "bizzyboat");
   EXPECT_EQ(rec->sensor_class, "mbes-backscatter");
   EXPECT_EQ(rec->campaign, "massabesic-2026");
+}
+
+// --- Fix #1: registry.cpp loadRegistry index and duplicate source_id validation ---
+
+TEST_F(TileIoTest, LoadRegistryRejectsReorderedIndex)
+{
+  // A hand-edited registry.json with a swapped/reordered "index" field must be
+  // rejected with a clear error (not silently accepted as a contiguous sequence).
+  fs::create_directories(dir_);
+  const nlohmann::json bad_registry = {
+    {"version", 1},
+    {"sources", nlohmann::json::array({
+      {{"index", 2}, {"source_id", "a"}, {"platform", "p1"}, {"sensor", "s"},
+       {"sensor_class", ""}, {"campaign", ""}, {"calibration_ref", ""}},
+      {{"index", 1}, {"source_id", "b"}, {"platform", "p2"}, {"sensor", "s"},
+       {"sensor_class", ""}, {"campaign", ""}, {"calibration_ref", ""}},
+    })}
+  };
+  {
+    std::ofstream out(dir_ / "registry.json");
+    out << bad_registry.dump(2);
+  }
+  SourceRegistry reg;
+  EXPECT_THROW(reg.loadRegistry(dir_.string()), std::runtime_error);
+}
+
+TEST_F(TileIoTest, LoadRegistryRejectsMissingIndexField)
+{
+  // An entry that lacks the "index" field entirely must also be rejected.
+  fs::create_directories(dir_);
+  const nlohmann::json bad_registry = {
+    {"version", 1},
+    {"sources", nlohmann::json::array({
+      // "index" field deliberately omitted
+      {{"source_id", "a"}, {"platform", "p1"}, {"sensor", "s"},
+       {"sensor_class", ""}, {"campaign", ""}, {"calibration_ref", ""}},
+    })}
+  };
+  {
+    std::ofstream out(dir_ / "registry.json");
+    out << bad_registry.dump(2);
+  }
+  SourceRegistry reg;
+  EXPECT_THROW(reg.loadRegistry(dir_.string()), std::runtime_error);
+}
+
+TEST_F(TileIoTest, LoadRegistryRejectsDuplicateSourceId)
+{
+  // Two entries with the same source_id at distinct contiguous indices must be
+  // rejected: duplicate source_id desynchronises by_index_ and by_source_id_.
+  fs::create_directories(dir_);
+  const nlohmann::json bad_registry = {
+    {"version", 1},
+    {"sources", nlohmann::json::array({
+      {{"index", 1}, {"source_id", "dup"}, {"platform", "p1"}, {"sensor", "s"},
+       {"sensor_class", ""}, {"campaign", ""}, {"calibration_ref", ""}},
+      {{"index", 2}, {"source_id", "dup"}, {"platform", "p2"}, {"sensor", "s"},
+       {"sensor_class", ""}, {"campaign", ""}, {"calibration_ref", ""}},
+    })}
+  };
+  {
+    std::ofstream out(dir_ / "registry.json");
+    out << bad_registry.dump(2);
+  }
+  SourceRegistry reg;
+  EXPECT_THROW(reg.loadRegistry(dir_.string()), std::runtime_error);
 }

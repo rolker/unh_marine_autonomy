@@ -347,6 +347,28 @@ TEST_F(TileIoTest, LoadRegistryRejectsMissingIndexField)
   EXPECT_THROW(reg.loadRegistry(dir_.string()), std::runtime_error);
 }
 
+TEST_F(TileIoTest, LoadRegistryRejectsDuplicateSourceId)
+{
+  // Two entries with the same source_id at distinct contiguous indices must be
+  // rejected: duplicate source_id desynchronises by_index_ and by_source_id_.
+  fs::create_directories(dir_);
+  const nlohmann::json bad_registry = {
+    {"version", 1},
+    {"sources", nlohmann::json::array({
+      {{"index", 1}, {"source_id", "dup"}, {"platform", "p1"}, {"sensor", "s"},
+       {"sensor_class", ""}, {"campaign", ""}, {"datum", ""}},
+      {{"index", 2}, {"source_id", "dup"}, {"platform", "p2"}, {"sensor", "s"},
+       {"sensor_class", ""}, {"campaign", ""}, {"datum", ""}},
+    })}
+  };
+  {
+    std::ofstream out(dir_ / "registry.json");
+    out << bad_registry.dump(2);
+  }
+  SourceRegistry reg;
+  EXPECT_THROW(reg.loadRegistry(dir_.string()), std::runtime_error);
+}
+
 // --- Item 2: tile_io.cpp loadTile — legacy 3-band guard ---
 
 TEST_F(TileIoTest, LoadTileRejectsLegacyThreeBandValueTile)
