@@ -154,3 +154,33 @@ unbuilt this pass — built them (warnings only, not code issues); core deps
 - [ ] URDF +Z sweep (echoboats#303): confirm channel TFs orient +Z abeam before merge.
 - [ ] Bag-replay delta for non-trivial-roll surveys — survey-team sign-off.
 - Did NOT `git push` (host pushes with its own credentials).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-21 13:41 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-200 at `e313f00`
+**Mode**: pre-push
+**Depth**: Standard (reason: correctness-sensitive projection geometry + ROS param rename/default change)
+**Must-fix**: 0 | **Suggestions**: 1
+**Round**: 2 | **Ship**: recommended — both round-1 must-fixes verified fixed; 2 disjoint-lens adversarial passes + ament_cpplint clean; no new code defects
+
+### Findings
+- [ ] (suggestion, optional) Launch file exposes neither param name; `beam_azimuth_trim_deg` is not a `DeclareLaunchArgument` — default 0 is correct, so this is an operability nicety only — `marine_sidescan_mosaic/launch/sidescan_mosaic.launch.py:39`
+
+### Round-1 follow-up verified
+- [x] (was must-fix) Stale README → now documents `beam_azimuth_trim_deg` (0°) + the +Z full-attitude model — `marine_sidescan_mosaic/README.md`
+- [x] (was must-fix) Port-channel test gap → `BeamVsHeadingLevelPort` added (azimuth = heading − 90°), verified — `marine_sidescan_mosaic/test/test_projection.cpp`
+- [x] (was suggestion) Legacy-param silent drift → startup `parameter_overrides()` loop warns on stale `across_track_offset_deg` — `marine_sidescan_mosaic/src/mosaic_node.cpp:101`
+- [x] (was note) Degenerate horizontal +Z → comment added — `marine_sidescan_mosaic/src/projection.cpp:136`
+
+### Static + adversarial
+- ament_cpplint: clean on all 4 changed C++ files (mosaic_node.cpp, projection.cpp, projection.hpp, test_projection.cpp); no lines >100 chars.
+- Claude Adversarial Lens A (logic/correctness) + Lens B (systemic/safety): both clean. Verified by hand the rotation/azimuth/depression math, the `shipSensorBodyNed` mount matrices (stbd +Z→East, port +Z→West at zero attitude), and that pure roll gives `depression == roll` with azimuth invariant.
+
+### Still open (unchanged pre-merge gates — operational, not code defects)
+- [ ] URDF +Z sweep (echoboats#303): Lens B reports echoboats `sidescan.xacro` already mounts +Z abeam, but this crosses repos and `gh` is unauthenticated here — confirm authoritatively before merge.
+- [ ] Bag-replay delta for non-trivial-roll surveys — survey-team sign-off.
+- Did NOT `git push` (host pushes with its own credentials).
