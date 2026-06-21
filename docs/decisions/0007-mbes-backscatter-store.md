@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-06-20). Tracked by
+Accepted (2026-06-20). Tracked by
 [rolker/unh_marine_autonomy#190](https://github.com/rolker/unh_marine_autonomy/issues/190),
 Part of [#180](https://github.com/rolker/unh_marine_autonomy/issues/180).
 
@@ -192,7 +192,8 @@ here; the variance *is* the quality/uncertainty signal (mirroring the bathy stor
 depth uncertainty). A float value tile needs a `float` instantiation of the generic
 `marine_tiled_raster_store` tile IO, mirroring the `Int64` instantiation
 [#178](https://github.com/rolker/unh_marine_autonomy/issues/178) added for the time
-band. *(Float-value tile = a position to ratify in review.)*
+band. *(Float-value tile **ratified** with this ADR's Accepted status — the
+`GDT_Float32` instantiation landed in #194.)*
 
 **Shared code vs. per-store code — the `marine_backscatter` boundary.** What this
 store **shares** with the sidescan store is *library code*, not just a schema:
@@ -233,7 +234,7 @@ quality tiebreak within a class. Neither store arbitrates across the other's cla
 internally (ADR-0006 D8 says the same from its side). The shared GGGS GridIndex makes
 the cross-store composition a tile-by-tile merge, not a resample.
 
-### D9 — Package placement and phasing (positions to ratify in review)
+### D9 — Package placement and phasing (ratified)
 
 The CUBE-coupled accumulation (intensity-in-`Hypothesis`, node-output correction)
 lives in **`cube_bathymetry`** (where CUBE and the hypothesis/grid machinery are; it
@@ -245,7 +246,8 @@ sits in `sensors_ws`, above `core_ws`, and already feeds the bathy store). The
 `marine_sidescan_mosaic → marine_backscatter`, rather than a thin instantiation
 beside the bathy store — the float value tile, the Welford accumulator, and the
 node-output correction stage are enough store-specific logic to warrant its own
-package. (Placement remains a position to ratify.) `cube_bathymetry` may depend on
+package. (Placement **ratified** with this ADR's Accepted status; the
+`marine_mbes_backscatter_store` package landed in #194.) `cube_bathymetry` may depend on
 the core store package (same direction it already feeds bathy); the store package
 must **not** depend on `cube_bathymetry` (layering, ADR-0002 D9). Phases (sub-issues,
 Part of #180 / #190):
@@ -277,8 +279,9 @@ Part of #180 / #190):
   limited by the sensor and aspirational, as in ADR-0006).
 - **Cost:** invasive change to the CUBE hypothesis core (per-beam sufficient stats on
   the hypothesis; node-output correction stage); a dependency on cube#15 slope; a new
-  store package / instantiation and its `draft`/`processed` build to maintain. Two
-  positions to ratify (D6 float-vs-uint16 value tile, D9 package placement).
+  store package / instantiation and its `draft`/`processed` build to maintain. The
+  two positions to ratify (D6 float-vs-uint16 value tile, D9 package placement) are
+  **ratified** with this ADR's Accepted status (both landed in #194).
 - **Risk if ignored:** accumulating *raw* reflectivity in the node (skipping D3)
   would bake angle-mixing into the stored value and ruin both the detection product
   and any later characterization; bolting MBES onto the sidescan store (the rejected
