@@ -32,6 +32,11 @@
 ///
 /// Per ADR-0006 D7 the stored value is the decoded magnitude (clamped to
 /// `uint16`), not the live node's display-normalized value.
+///
+/// The splat policy is selectable with `--policy {mean,newest,maxhold}` (default
+/// `mean`). `newest` reproduces the **live operator `draft` layer** (newest-valid
+/// wins) offline from Tier-1, enabling a faithful draft-vs-`processed` compositing
+/// comparison without replaying the bag (#195); `maxhold` keeps the brightest look.
 
 #include <algorithm>
 #include <cstdint>
@@ -72,6 +77,15 @@ int toInt(const std::string & s, const std::string & flag)
     std::exit(2);
   }
 }
+
+SplatPolicy parsePolicy(const std::string & s)
+{
+  if (s == "mean") {return SplatPolicy::Mean;}
+  if (s == "newest") {return SplatPolicy::Newest;}
+  if (s == "maxhold") {return SplatPolicy::MaxHold;}
+  std::cerr << "error: --policy must be one of mean|newest|maxhold, got '" << s << "'\n";
+  std::exit(2);
+}
 }  // namespace
 
 int main(int argc, char ** argv)
@@ -79,13 +93,16 @@ int main(int argc, char ** argv)
   if (argc < 3) {
     std::cerr <<
       "usage: sidescan_tier2_flat <tier1.sst1> <out_dir>\n"
-      "       [--level N] [--no-nadir-policy drop|assume_zero]\n";
+      "       [--level N] [--no-nadir-policy drop|assume_zero]\n"
+      "       [--policy mean|newest|maxhold]   (mean=default; newest=live draft layer)\n";
     return 2;
   }
   const std::string tier1_path = argv[1];
   const std::string out_dir = argv[2];
   const int level_n = toInt(argValue(argc, argv, "--level", "13"), "--level");
   const std::string no_nadir = argValue(argc, argv, "--no-nadir-policy", "drop");
+  const std::string policy_s = argValue(argc, argv, "--policy", "mean");
+  const SplatPolicy policy = parsePolicy(policy_s);
 
   std::ifstream in(tier1_path, std::ios::binary);
   if (!in) {
@@ -98,7 +115,7 @@ int main(int argc, char ** argv)
   }
 
   const gggs::Level level(level_n);
-  MosaicAccumulator acc(level, SplatPolicy::Mean);
+  MosaicAccumulator acc(level, policy);
 
   Tier1Ping p;
   std::size_t n_in = 0, n_proj = 0, n_no_nadir = 0, n_placed = 0, n_bad_pose = 0;
@@ -151,8 +168,8 @@ int main(int argc, char ** argv)
     return 1;
   }
 
-  std::cerr << "tier2: projected " << n_proj << "/" << n_in << " pings ("
-            << n_placed << " samples placed; dropped no-nadir=" << n_no_nadir
+  std::cerr << "tier2: policy=" << policy_s << ", projected " << n_proj << "/" << n_in
+            << " pings (" << n_placed << " samples placed; dropped no-nadir=" << n_no_nadir
             << " bad-pose=" << n_bad_pose << "), flushed " << written << " tiles to "
             << out_dir << "\n";
   return 0;
