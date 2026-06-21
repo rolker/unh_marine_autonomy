@@ -37,7 +37,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -49,11 +48,14 @@
 #include "marine_autonomy/gggs.h"
 #include "marine_tiled_raster_store/tile_io.hpp"
 
-#include "marine_sidescan_mosaic/processed_accumulator.hpp"
+#include "marine_backscatter/processed_accumulator.hpp"
+#include "marine_backscatter/quality.hpp"
+#include "marine_backscatter/registry.hpp"
 #include "marine_sidescan_mosaic/projection.hpp"
 #include "marine_sidescan_mosaic/tier1.hpp"
 
-using namespace marine_sidescan_mosaic;  // NOLINT(build/namespaces) — local tool.
+using namespace marine_backscatter;       // NOLINT(build/namespaces) — shared engine.
+using namespace marine_sidescan_mosaic;   // NOLINT(build/namespaces) — local tool.
 
 namespace
 {
@@ -77,60 +79,6 @@ int toInt(const std::string & s, const std::string & flag)
   }
 }
 
-// Escape a string for embedding in a JSON value (operator-typed registry fields
-// may contain quotes/backslashes/control chars that would otherwise corrupt the
-// ADR-0005 registry and poison downstream merges).
-std::string jsonEscape(const std::string & s)
-{
-  std::string out;
-  out.reserve(s.size() + 8);
-  for (const char ch : s) {
-    switch (ch) {
-      case '"': out += "\\\""; break;
-      case '\\': out += "\\\\"; break;
-      case '\n': out += "\\n"; break;
-      case '\r': out += "\\r"; break;
-      case '\t': out += "\\t"; break;
-      default:
-        if (static_cast<unsigned char>(ch) < 0x20) {
-          char buf[8];
-          std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(ch));
-          out += buf;
-        } else {
-          out += ch;
-        }
-    }
-  }
-  return out;
-}
-
-// Mid-swath grazing-angle quality in [1, 65535]; peaks at 45 deg, ~0 at nadir/far.
-std::uint16_t gradingQuality(double altitude, double ground_range)
-{
-  const double grazing = std::atan2(altitude, ground_range);   // rad, 90deg at nadir.
-  const double q = std::sin(2.0 * grazing);                    // peak at 45 deg.
-  const double scaled = std::clamp(q, 0.0, 1.0) * 65535.0;
-  return static_cast<std::uint16_t>(std::max(1.0, scaled));    // floor 1: real return.
-}
-
-void writeRegistry(
-  const std::string & path, std::uint16_t source_id, const std::string & platform,
-  const std::string & sensor, const std::string & sensor_class, const std::string & campaign)
-{
-  // ADR-0005: per-cell band is the compact LOCAL index; the registry resolves it
-  // to the (eventually origin-namespaced, ADR-0005 D4) global source-id + record.
-  // TODO(#179): v1 writes a single-source registry write-once; multi-source / a
-  // reimport over the same out_dir must MERGE append-only (ADR-0005 D8), not
-  // overwrite — load existing + union before writing.
-  std::ofstream r(path);
-  r << "{\n  \"version\": 1,\n  \"sources\": {\n    \"" << source_id << "\": {\n"
-    << "      \"source_id\": " << source_id << ",\n"
-    << "      \"platform\": \"" << jsonEscape(platform) << "\",\n"
-    << "      \"sensor\": \"" << jsonEscape(sensor) << "\",\n"
-    << "      \"sensor_class\": \"" << jsonEscape(sensor_class) << "\",\n"
-    << "      \"campaign\": \"" << jsonEscape(campaign) << "\"\n"
-    << "    }\n  }\n}\n";
-}
 }  // namespace
 
 int main(int argc, char ** argv)
@@ -206,7 +154,7 @@ int main(int argc, char ** argv)
       }
       const auto intensity =
         static_cast<std::uint16_t>(std::clamp(static_cast<double>(p.samples[j]), 0.0, 65535.0));
-      const std::uint16_t quality = gradingQuality(altitude, ground);
+      const std::uint16_t quality = grazingQuality(altitude, ground);
       acc.add(projectSample(origin, azimuth, ground, level), intensity, quality, source_id);
       ++n_placed;
     }

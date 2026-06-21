@@ -19,8 +19,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#ifndef MARINE_SIDESCAN_MOSAIC__PROCESSED_ACCUMULATOR_HPP_
-#define MARINE_SIDESCAN_MOSAIC__PROCESSED_ACCUMULATOR_HPP_
+#ifndef MARINE_BACKSCATTER__PROCESSED_ACCUMULATOR_HPP_
+#define MARINE_BACKSCATTER__PROCESSED_ACCUMULATOR_HPP_
 
 #include <cstdint>
 #include <map>
@@ -30,18 +30,16 @@
 
 /// @file
 /// @brief Best-source compositor for the durable `processed` backscatter layer
-///   (ADR-0006 D5/D7).
+///   (ADR-0006 D5/D7) — shared by the sidescan and MBES backscatter layers.
 ///
-/// Unlike the live `MosaicAccumulator` (mean / max-hold / newest, single band),
-/// the processed layer is **best-source**: per GGGS cell it keeps the sample with
-/// the highest **quality** and stores that sample's `{intensity, quality,
-/// source-id}` — the 3-band `uint16` tile of ADR-0006 D7. Mean stays a
-/// *within-pass* concern upstream; this composites *across* passes by quality, so
-/// a poorer look never overwrites a better one. The `source-id` band is the
-/// compact per-store local index that ADR-0005's registry resolves to the global
-/// source.
+/// Per GGGS cell it keeps the sample with the highest **quality** and stores that
+/// sample's `{intensity, quality, source-id}` — the 3-band `uint16` tile of
+/// ADR-0006 D7. Mean stays a *within-pass* concern in each ingest; this
+/// composites *across* passes by quality, so a poorer look never overwrites a
+/// better one. The `source-id` band is the compact per-store local index that
+/// ADR-0005's registry resolves to the global source.
 
-namespace marine_sidescan_mosaic
+namespace marine_backscatter
 {
 
 class ProcessedAccumulator
@@ -79,6 +77,6 @@ private:
   std::map<gggs::GridIndex, Tile> output_;
 };
 
-}  // namespace marine_sidescan_mosaic
+}  // namespace marine_backscatter
 
-#endif  // MARINE_SIDESCAN_MOSAIC__PROCESSED_ACCUMULATOR_HPP_
+#endif  // MARINE_BACKSCATTER__PROCESSED_ACCUMULATOR_HPP_

@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>marine_backscatter</name>
+  <version>0.0.0</version>
+  <description>
+    Modality-agnostic backscatter processing core: best-source compositor
+    (ProcessedAccumulator), grazing-angle quality, and the provenance registry,
+    shared by the sidescan (marine_sidescan_mosaic) and MBES (cube) backscatter
+    layers. Home for the GeoCoder radiometry chain. See unh_marine_autonomy#191 / #180.
+  </description>
+  <maintainer email="roland.arsenault@unh.edu">Roland Arsenault</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>marine_autonomy</depend>
+  <depend>marine_tiled_raster_store</depend>
+  <depend>geographic_msgs</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

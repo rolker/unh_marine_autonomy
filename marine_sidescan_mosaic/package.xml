@@ -25,6 +25,7 @@
   <depend>builtin_interfaces</depend>
   <depend>marine_autonomy</depend>
   <depend>marine_tiled_raster_store</depend>
+  <depend>marine_backscatter</depend>
   <depend>rosbag2_cpp</depend>
   <depend>rosbag2_storage</depend>
 

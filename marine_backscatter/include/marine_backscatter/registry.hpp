@@ -19,39 +19,30 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#include "marine_sidescan_mosaic/processed_accumulator.hpp"
+#ifndef MARINE_BACKSCATTER__REGISTRY_HPP_
+#define MARINE_BACKSCATTER__REGISTRY_HPP_
 
-namespace marine_sidescan_mosaic
+#include <cstdint>
+#include <string>
+
+/// @file
+/// @brief The ADR-0005 provenance registry sidecar (shared across backscatter layers).
+
+namespace marine_backscatter
 {
 
-ProcessedAccumulator::Tile & ProcessedAccumulator::ensureOutput(const gggs::GridIndex & grid)
-{
-  auto it = output_.find(grid);
-  if (it == output_.end()) {
-    // 3 bands {intensity, quality, source}, all no-data (0).
-    it = output_.emplace(grid, Tile(grid, kBands, 0)).first;
-  }
-  return it->second;
-}
+/// @brief Escape a string for embedding in a JSON value (operator-typed registry
+///   fields may contain quotes / backslashes / control chars).
+std::string jsonEscape(const std::string & s);
 
-void ProcessedAccumulator::add(
-  const gggs::CellIndex & cell,
-  std::uint16_t intensity, std::uint16_t quality, std::uint16_t source_id)
-{
-  if (!cell.valid()) {
-    return;
-  }
-  const std::uint16_t row = cell.row();
-  const std::uint16_t col = cell.column();
-  Tile & tile = ensureOutput(cell.grid());
-  // Best-source: keep the highest-quality look; a poorer pass never overwrites a
-  // better one. Ties (==) keep the incumbent, so the order of equally-good passes
-  // is stable.
-  if (quality > tile.get(row, col, kQuality)) {
-    tile.set(row, col, kIntensity, intensity);
-    tile.set(row, col, kQuality, quality);
-    tile.set(row, col, kSource, source_id);
-  }
-}
+/// @brief Write the `registry.json` sidecar resolving the per-cell **local source
+///   index** to its provenance record (ADR-0005). v1 is single-source, write-once.
+///   TODO(#179): multi-source / reimport over the same dir must MERGE append-only
+///   (ADR-0005 D8), not overwrite.
+void writeRegistry(
+  const std::string & path, std::uint16_t source_id, const std::string & platform,
+  const std::string & sensor, const std::string & sensor_class, const std::string & campaign);
 
-}  // namespace marine_sidescan_mosaic
+}  // namespace marine_backscatter
+
+#endif  // MARINE_BACKSCATTER__REGISTRY_HPP_

@@ -23,9 +23,9 @@
 
 #include "geographic_msgs/msg/geo_point.hpp"
 #include "marine_autonomy/gggs.h"
-#include "marine_sidescan_mosaic/processed_accumulator.hpp"
+#include "marine_backscatter/processed_accumulator.hpp"
 
-using marine_sidescan_mosaic::ProcessedAccumulator;
+using marine_backscatter::ProcessedAccumulator;
 
 namespace
 {
