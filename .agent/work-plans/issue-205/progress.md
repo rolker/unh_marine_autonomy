@@ -203,3 +203,25 @@ Pre-existing uncrustify issues are in code not touched by this PR and were prese
 - **cpplint:** `runtime/int` on the `unsigned long` decls → switched to `std::uint64_t` + `std::stoull`. `ament_cpplint` clean.
 
 **Build:** clean. **Tests:** `test_tile_io` **29/29 PASSED** (was 28; +1 malformed-filename test). **Uncrustify (bare-jazzy, CI-accurate):** new lines clean; the only remaining divergences are pre-existing `loadTile()` ternaries + #178/#194 registry tests (not this PR; the store package is not in unh_marine_autonomy CI).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-21 23:51 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: approved
+
+**Branch**: feature/issue-205 at `922528c`
+**Mode**: pre-push
+**Depth**: Standard (focused Round-2 re-review of `git show 922528c` — confirm the Round-1 must-fix is correctly + completely resolved, no regression)
+**Must-fix**: 0 | **Suggestions**: 0
+**Round**: 2 | **Ship**: recommended — Round-1 UB must-fix correctly and completely resolved; rebuilt + ran the gtest (29/29 green), cpplint clean; no regression, no new findings.
+
+### Findings
+- [ ] No issues found. LGTM.
+
+Verification detail (this re-review):
+- **UB closed (confirmed):** `gridIndexFromTileFilename` range-checks `lvl_raw >= gggs::levels.size()` (`tile_io.cpp:141`) BEFORE indexing `gggs::levels[lvl]` (`tile_io.cpp:153`). `gggs::levels` is `std::array<LevelSpecs, 21>` (`marine_autonomy/.../gggs/level_spec.h:109`), so the Round-1 out-of-bounds `operator[]` was genuine UB. Digit-validation (`:126`) + `std::out_of_range` rethrow (`:135`) → all malformed inputs (non-numeric, overflow, out-of-range level) throw `std::runtime_error`, matching the documented `@throws` contract. No path reaches `levels[lvl]` unchecked.
+- **Scan reaches the guard (confirmed):** `loadWindow` calls `gridIndexFromTileFilename` at `tile_io.cpp:526` for every value-tile (after the companion `_time`/`_source` skip), pre-GDAL — a malformed `99_0_0.tif` value-tile name throws there before any I/O.
+- **Tests (confirmed):** `LoadWindowRejectsMalformedTileFilename` drops `99_0_0.tif` and `EXPECT_THROW(..., std::runtime_error)`; `LoadWindowLoadsOnlyOverlappingTiles` now `EXPECT_EQ(n, 2u)`. Rebuilt (`core_ws/build.sh marine_bathymetry_store`, clean) and ran `build/marine_bathymetry_store/test_tile_io` — **29/29 PASSED**.
+- **No regression (confirmed):** valid `<level>_<row>_<col>.tif` still parses (overlap/boundary/idempotent tests green). `stoull`→`uint8_t`/`uint32_t` truncation sound for valid in-range tiles (max level 20 < 256; GGGS row/col within uint32); overflowing names are caught by the `out_of_range` rethrow.
+- **cpplint:** `ament_cpplint tile_io.cpp test_tile_io.cpp` → No problems found (`runtime/int` fixed via `std::uint64_t`/`stoull`). `evictOutside` empty-shell doc note present (`tile_io.hpp:195-199`).
