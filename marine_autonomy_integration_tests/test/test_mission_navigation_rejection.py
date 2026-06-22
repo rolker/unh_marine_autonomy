@@ -124,7 +124,8 @@ class TestMissionNavigationRejection(unittest.TestCase):
         end_time = time.time() + timeout
         while time.time() < end_time:
             rclpy.spin_once(self.node, timeout_sec=0.1)
-            if self.cmd_pub.get_subscription_count() > 0:
+            if (self.cmd_pub.get_subscription_count() > 0
+                    and self.heartbeat_sub.get_publisher_count() > 0):
                 return True
         return False
 
