@@ -265,3 +265,58 @@ the step so the implementer doesn't accidentally pass tight bounds.
   at the point of the clearance calculation. *(comment at the clearance line.)*
 - [x] **[S2]** Use buffered (not tight) costmap bounds for `evictOutside` in `matchSize()`.
   *(both `loadWindow` and `evictOutside` use the buffered box.)*
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-22
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**Branch**: feature/issue-164
+
+### What changed
+- **Plan update** (commit `12cf720`): folded review M1 (two-query no-data policy),
+  S1 (clearance sign-convention comment), S2 (buffered evictOutside bounds), and
+  the corrected test case 4 (LETHAL on over-uncertain surveyed) into `plan.md`.
+- **PIC enabler** (commit `72124eb`): `POSITION_INDEPENDENT_CODE ON` on
+  `marine_bathymetry_store` and `marine_tiled_raster_store` static libs — required
+  so they can be linked into the SHARED `bathymetry_layer` plugin (otherwise
+  R_X86_64_PC32 relocation link failure). Both packages are in this repo.
+- **New package `bathymetry_layer`** (core_ws): `package.xml` (format-3, BSD,
+  C++17), `CMakeLists.txt`, `costmap_plugins.xml`, `src/bathymetry_layer.{hpp,cpp}`,
+  `test/test_bathymetry_layer.cpp`, `test/test_plugin_loading.cpp`, `README.md`.
+  - `BathymetryLayer` mirrors `s57_layer` lifecycle
+    (onInitialize/matchSize/updateBounds/updateCosts), pluginlib-exported as
+    `nav2_costmap_2d::Layer`. Params: store_path, minimum_depth,
+    maximum_caution_depth, max_uncertainty, max_age, map_tide_frame, buffer_fraction.
+  - Windowed residency via `loadWindow`/`evictOutside` keyed to the BUFFERED
+    bounds (S2). Clearance = `z(map_tide) − seafloor_ellipsoidal_height` (map_tide
+    z via TF at TimePointZero; world→latlon via the `earth` frame, mirroring
+    s57_layer). Sign-convention comment at the clearance line (S1).
+  - **M1 two-query no-data policy** implemented in `evaluateCell`: `bestSource`
+    (existence, quality-blind) → nullopt ⇒ leave master untouched; non-null ⇒
+    `shallowestReliable` (safety gate); over-uncertain OR stale ⇒ LETHAL_OBSTACLE;
+    else clearance ramp. Max-cost combine with the master grid.
+
+### Build / test
+- Build: clean (`colcon build --packages-up-to bathymetry_layer`, with
+  `--allow-overriding` for the merged-underlay packages). No warnings in the new
+  sources (the only warnings are pre-existing gz4d_geo.h ones in marine_autonomy).
+- gtests: **7/7 pass** — `test_bathymetry_layer` (6: ClearanceRampBoundaries,
+  UnsurveyedCellLeavesMasterUntouched, SurveyedCellMapsClearanceToCost,
+  OverUncertainSurveyedCellIsLethal [M1], StaleCellIsLethal,
+  WindowedResidencyStaysBounded) + `test_plugin_loading` (1: LoadsViaPluginlib).
+  `colcon test-result`: 29 tests, 0 errors, 0 failures, 4 skipped.
+- Lint (CI-accurate bare-jazzy): `ament_uncrustify`, `ament_cpplint`,
+  `ament_xmllint` all clean on the new files. (Fixed: cpplint header guard
+  `BATHYMETRY_LAYER_HPP_`; xmllint format-3 `<author>` after `<license>`;
+  uncrustify auto-reformat of the .cpp.)
+
+### nav2_params decision
+Bizzy's and the echoboats' `nav2_params` live in **separate platforms_ws repos**
+(`unh_echoboats_project11/bizzyboat_project11`,
+`seafloor_echoboat_project11/echoboat_project11`) — NOT in this worktree. Per the
+cross-repo rule, the registration was **not** edited here; the snippet (both
+costmaps) + Layer Coexistence are documented in `bathymetry_layer/README.md`, and
+the wiring is named as a follow-on (own issue on the platform repo).
+
+**Not pushed** (per handoff contract).
