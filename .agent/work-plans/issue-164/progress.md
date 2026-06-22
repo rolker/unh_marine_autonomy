@@ -137,3 +137,128 @@ The following items should be in scope for PR D1 or explicitly tracked as follow
 
 ### Open questions
 - [ ] Does bizzy's `nav2_params.yaml` live in `bizzyboat_project11` (platforms_ws) or `unh_marine_autonomy/config/`? Confirm at implementation time; if separate repo, file a follow-on issue for the YAML wiring.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-06-22
+**By**: Claude Code Agent (Claude Sonnet 4.6)
+
+**Plan file**: `.agent/work-plans/issue-164/plan.md`
+**Verdict**: CONDITIONAL PASS — 1 must-fix safety defect; 2 suggestions
+
+---
+
+### Summary
+
+The plan is well-structured, appropriately scoped to D1, and correctly mirrors
+`s57_layer` in lifecycle, parameter naming, and pluginlib wiring. Scope discipline
+is good: D2 and the sim acceptance run are explicitly deferred with named follow-on
+issues. The clearance math, ramp boundaries, memory-bound windowed load gtest, nav2_params
+wiring, and s57_layer coexistence documentation are all present and correct in the plan.
+
+One **must-fix safety defect** exists in the Step 2 pseudocode and test case 4,
+verified against the actual `query.cpp` source. The remaining items are suggestions.
+
+---
+
+### Must-Fix
+
+**[M1] Over-uncertain surveyed cells wrongly treated as unsurveyed (safety regression)**
+
+Verified against `marine_bathymetry_store/src/query.cpp`:
+
+`shallowestReliable()` returns `std::nullopt` for TWO distinct situations:
+1. Cell has **no data at all** in any layer/epoch/level.
+2. Cell **has data** but every sample fails the uncertainty gate
+   (`c->uncertainty > max_uncertainty` or `std::isnan(c->uncertainty)`).
+
+The plan's settled policy (correctly stated in the "No-data semantics" section,
+lines 113–119 of plan.md) is:
+- Unsurveyed (no data) → leave master untouched (let s57_layer fill in)
+- Has data but stale/over-uncertain → **LETHAL_OBSTACLE** (conservative, ADR-0002 §D7)
+
+But the Step 2 pseudocode block (lines 82–110) **does not implement this split**.
+The code does:
+```cpp
+std::optional<DepthSample> sample = shallowestReliable(store_, cell, max_uncertainty_);
+if (!sample) {
+    continue; // skip — unsurveyed cells leave master untouched
+}
+```
+The comment even says "impossible path — shallowestReliable already filtered" for the
+over-uncertain case. This is wrong: `shallowestReliable` **does** return nullopt for
+over-uncertain cells that have data. The `continue` path silently treats over-uncertain
+surveyed cells as NO_INFORMATION instead of LETHAL — a safety regression.
+
+**Required fix**: The implementation must use a two-query pattern:
+1. `bestSource(store_, cell)` — returns non-null iff **any data exists**, regardless
+   of quality.
+2. If `bestSource` → nullopt → truly unsurveyed → `continue` (leave master untouched).
+3. If `bestSource` → non-null → has data → call `shallowestReliable`; if it returns
+   nullopt → over-uncertain → `LETHAL_OBSTACLE`.
+
+Update the Step 2 pseudocode block to reflect this two-query logic explicitly.
+
+**Test case 4 has the same defect**: It asserts "the plugin does not write that cell"
+for an over-uncertain cell. It must instead assert the plugin writes `LETHAL_OBSTACLE`.
+
+Corrected test case 4 assertion: insert a tile with `uncertainty > max_uncertainty_`.
+Assert `shallowestReliable` returns nullopt. Assert `bestSource` returns non-null.
+Assert the master grid cell is **LETHAL_OBSTACLE** (not NO_INFORMATION).
+
+---
+
+### Suggestions
+
+**[S1] Clearance math sign convention — verify `depth` is ellipsoidal height (up-positive)**
+
+The plan uses `clearance = map_tide_z_ - sample->depth`. This is correct IF
+`sample->depth` is the ellipsoidal **height** of the seafloor (up-positive, WGS84 m) —
+a seafloor 5 m below the ellipsoid has `depth = -5.0`, giving `clearance = z_water - (-5.0)`.
+Confirmed correct from `DepthSample` docs in `query.hpp`: "Ellipsoidal height (WGS84, m,
+up-positive)." The plan's formula is right, but the variable name `depth` is
+misleading — implementers may interpret it as a positive downward depth and negate
+it incorrectly. Suggest renaming to `seafloor_height` or adding a prominent comment:
+`// sample->depth is ellipsoidal HEIGHT (up-positive); seafloor at -5m → depth=-5`.
+
+**[S2] `matchSize()` eviction bounds — clarify direction of the `evictOutside` call**
+
+Step 2 says "`matchSize()` — evict outside tiles then reload window." The `evictOutside`
+API (from `bathymetry_store.hpp`) takes a geographic bounding box. The plan should
+specify that the eviction box is the costmap bounds **plus margin** (same buffered box
+used for `loadWindow`), not the tight costmap bounds — otherwise the margin tiles loaded
+in `onInitialize` get immediately evicted on every `matchSize()` call. This is implicit
+from the "matching s57_layer convention" statement but should be stated explicitly in
+the step so the implementer doesn't accidentally pass tight bounds.
+
+---
+
+### Verified Correct
+
+- Clearance formula `z(map_tide) − seafloor_ellipsoidal_height` is correct (up-positive convention confirmed).
+- Ramp boundaries: `clearance < minimum_depth_` → LETHAL; `clearance >= maximum_caution_depth_` → FREE_SPACE; between → linear scale. Matches `s57_layer::get_cost_from_grid`.
+- Staleness check is separate from uncertainty gate — stale + reliable sample → LETHAL (correct, data exists, just untrusted for currency).
+- `loadWindow`/`evictOutside` keyed to buffered costmap bounds.
+- Memory-bound gtest (test case 5) asserts bounded residency after eviction — correct acceptance criterion.
+- Pluginlib export via `PLUGINLIB_EXPORT_CLASS` + `costmap_plugins.xml` mirrors `s57_layer` pattern.
+- `package.xml` format 3, BSD, ament_cmake per ADR-0008.
+- Nav2 Layer lifecycle: `onInitialize` / `matchSize` / `updateBounds` / `updateCosts` — present and correctly described.
+- D2 deferred as named follow-on: correct.
+- Sim acceptance gating on #163 A2 + sim #75/#76: correct out-of-scope placement.
+- `map_tide` TF lookup at `tf2::TimePointZero` (same as `s57_layer`) — correct.
+- nav2_params bizzy wiring in Step 4 with explicit defer-if-separate-repo fallback — scope handled correctly.
+- s57_layer coexistence documented in Step 5 README section — present.
+- `test_plugin_loading.cpp` smoke test mirrors `s57_layer` pattern — present.
+
+---
+
+### Actions for Implementer
+
+- [ ] **[M1-code]** Replace single `shallowestReliable` nullopt → skip with two-query
+  pattern: `bestSource` for existence check, then `shallowestReliable`; over-uncertain
+  → LETHAL. Update the Step 2 pseudocode and implementation accordingly.
+- [ ] **[M1-test]** Fix test case 4: assert LETHAL_OBSTACLE (not "plugin does not write")
+  for a cell with data but uncertainty > max_uncertainty_.
+- [ ] **[S1]** Add a comment on `sample->depth` clarifying the up-positive sign convention
+  at the point of the clearance calculation.
+- [ ] **[S2]** Use buffered (not tight) costmap bounds for `evictOutside` in `matchSize()`.
