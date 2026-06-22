@@ -187,9 +187,15 @@ void splatAlongTrack(
     // ceil (not round): a 1.0–1.5-cell footprint must paint 2 cells, else round
     // collapses it to a single deposit and the along-track gap it was added to fill
     // survives. A sub-cell footprint still yields ceil→1 (the legacy point-deposit).
-    n_steps = std::min(
-      kMaxSplatSteps,
-      std::max(1, static_cast<int>(std::ceil(footprint_m / cell_size))));
+    //
+    // Clamp the step count to [1, kMaxSplatSteps] *in double, before the cast*: a
+    // finite-but-huge footprint (a degrees-for-radians beamwidth, or a corrupt
+    // per-ping value) can drive footprint_m/cell_size past INT_MAX, and
+    // static_cast<int> of an out-of-range double is UB — the isfinite guard above
+    // only catches NaN/inf. Bounding in double keeps the cast operand in range.
+    const double steps = std::ceil(footprint_m / cell_size);
+    n_steps = static_cast<int>(
+      std::min(static_cast<double>(kMaxSplatSteps), std::max(1.0, steps)));
   }
   for (int k = 0; k < n_steps; ++k) {
     // Symmetric centring: offsets are spaced cell_size apart about 0 (n_steps=1 →
