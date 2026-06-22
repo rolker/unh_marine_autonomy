@@ -420,3 +420,25 @@ silently invalidate them.
   `StaleReliableSampleIsLethalWhenNewerEpochOverUncertain` (S1/MF3),
   `ComputeCostDegenerateRampAndBoundary` (S4).
 - **Lint**: `ament_uncrustify` + `ament_cpplint` clean on all 3 changed files.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-22 08:10 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: approved
+
+**Branch**: feature/issue-164 at `b770575`
+**Mode**: pre-push (focused Round-2 re-review of `b770575` against round-1 findings)
+**Depth**: Deep (reason: safety-critical Nav2 costmap plugin; re-verifying the 3 fail-open/staleness must-fixes)
+**Must-fix**: 0 | **Suggestions**: 1
+**Round**: 2 | **Ship**: recommended — all 3 round-1 must-fixes correctly + completely resolved; tests green (32/32 gtests pass, 9+1, 0 failures); one new lower-severity robustness suggestion (datum-refresh staleness) is out of round-1 scope and matches the s57_layer TimePointZero precedent.
+
+### MF / suggestion verification
+- **MF1 (fail-open on invalid tide) — RESOLVED.** `map_tide_valid_` defaults false (hpp:95), set true ONLY after a successful `lookupTransform` (cpp:272), reset false in `reset()` (cpp:106). `evaluateCell()` returns `std::nullopt` (skip → NO_INFORMATION) when `!map_tide_valid_` (cpp:342-344), placed BEFORE the two-query block and the clearance math — so there is no path that computes a clearance cost from the default `map_tide_z_=0.0`. `InvalidTideYieldsNoInformation` genuinely asserts no-write even with a surveyed/reliable/fresh cell and a "correct" z=52.3 (the flag, not the value, gates). Site-dependent sign direction documented in `updateBounds` (cpp:256-266).
+- **MF2 (unconditional current_) — RESOLVED.** `current_ = map_tide_valid_ && window_valid_` (cpp:427); a degraded cycle reports stale to Nav2.
+- **MF3 (wrong staleness timestamp) — RESOLVED.** `isStale(sample->timestamp, now_ns)` now ages the reliable record (cpp:363), after the `!sample` guard. Verified against `query.cpp`: `bestSource` returns the newest epoch quality-blind; `shallowestReliable` falls through to the older reliable epoch — so `any->timestamp` (fresh, over-uncertain) and `sample->timestamp` (ancient, reliable) genuinely differ. `StaleReliableSampleIsLethalWhenNewerEpochOverUncertain` pins LETHAL (epochs are ISO-date string keys → `rbegin` = chronological-newest-first; test setup is sound).
+- **S2/S3/S4/S5 — all applied + sound.** S2: one-shot `RCLCPP_ERROR` on persistent loadWindow failure + `window_valid_=false`; one-shot flag reset in `openStore()`. S3: explicit `tf2_geometry_msgs/tf2_geometry_msgs.hpp` include in the header. S4: `range <= 0.0` → LETHAL guard + `ComputeCostDegenerateRampAndBoundary` (incl. `computeCost(minimum_depth_)==MAX_NON_OBSTACLE`). S5: reload tolerance coarsened to `resolution_ * 1e-5`.
+- **No regression.** M1 two-query intact (`bestSource` existence → nullopt skip; non-null → `shallowestReliable` → nullopt/stale → LETHAL; else ramp). Ramp/clearance unchanged. Memory-bound `WindowedResidencyStaysBounded` intact. Build clean (0 warnings new sources); lint clean (bare-jazzy uncrustify/cpplint, per known-gate note). `test_bathymetry_layer`=9, `test_plugin_loading`=1, 0 failures (4 "skipped" are lint/xunit suites, not gtests).
+
+### Findings
+- [ ] (suggestion) Datum-refresh staleness: `map_tide_valid_` is not reset when a subsequent `lookupTransform` throws (cpp:273-278), nor in `matchSize()` (cpp:131-141). After a first success a later TF dropout keeps the last-known `map_tide_z_` in use. Low severity and NOT the MF1 fail-open (last-good datum is bounded, vs. the wildly-wrong 0.0 default), `map_tide` is a near-static TimePointZero datum, and z is geographically global so the new-resolution-store framing overstates it. Matches the s57_layer TimePointZero precedent this plugin mirrors. Out of round-1 scope; track as optional D2-era hardening (e.g. reset on TF exception / in matchSize, or age-check the datum) — `bathymetry_layer.cpp:273-278,140`
