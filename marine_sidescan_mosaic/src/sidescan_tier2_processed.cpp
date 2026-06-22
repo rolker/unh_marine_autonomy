@@ -79,6 +79,16 @@ int toInt(const std::string & s, const std::string & flag)
   }
 }
 
+double toDouble(const std::string & s, const std::string & flag)
+{
+  try {
+    return std::stod(s);
+  } catch (const std::exception &) {
+    std::cerr << "error: expected a number for " << flag << ", got '" << s << "'\n";
+    std::exit(2);
+  }
+}
+
 }  // namespace
 
 int main(int argc, char ** argv)
@@ -87,6 +97,8 @@ int main(int argc, char ** argv)
     std::cerr <<
       "usage: sidescan_tier2_processed <tier1.sst1> <out_dir>\n"
       "       [--level N] [--no-nadir-policy drop|assume_zero]\n"
+      "       [--tx-beamwidth-fallback-rad R]   (along-track footprint when the ping\n"
+      "                                          lacks tx_beamwidths; 0=point-deposit)\n"
       "       [--source-id N] [--platform P] [--sensor S] [--sensor-class C] [--campaign X]\n";
     return 2;
   }
@@ -94,6 +106,8 @@ int main(int argc, char ** argv)
   const std::string out_dir = argv[2];
   const int level_n = toInt(argValue(argc, argv, "--level", "13"), "--level");
   const std::string no_nadir = argValue(argc, argv, "--no-nadir-policy", "drop");
+  const double bw_fallback = toDouble(
+    argValue(argc, argv, "--tx-beamwidth-fallback-rad", "0.0"), "--tx-beamwidth-fallback-rad");
   const int source_id_arg = toInt(argValue(argc, argv, "--source-id", "1"), "--source-id");
   if (source_id_arg < 1 || source_id_arg > 65535) {
     std::cerr << "error: --source-id must be in [1, 65535] (the per-cell band is the uint16 "
@@ -145,6 +159,10 @@ int main(int argc, char ** argv)
     origin.longitude = gb.longitude_deg;
     origin.altitude = 0.0;
     const double azimuth = gb.azimuth_rad;
+    // Along-track footprint splat (#208): per-sample beamwidth from Tier-1 v2, else
+    // the CLI fallback (0 → point-deposit, unchanged).
+    const double bw = p.tx_beamwidth_rad > 0.0F
+      ? static_cast<double>(p.tx_beamwidth_rad) : bw_fallback;
 
     for (std::size_t j = 0; j < p.samples.size(); ++j) {
       const double slant = slantRange(static_cast<int>(j), p.sample0, p.sound_speed, p.sample_rate);
@@ -155,7 +173,12 @@ int main(int argc, char ** argv)
       const auto intensity =
         static_cast<std::uint16_t>(std::clamp(static_cast<double>(p.samples[j]), 0.0, 65535.0));
       const std::uint16_t quality = grazingQuality(altitude, ground);
-      acc.add(projectSample(origin, azimuth, ground, level), intensity, quality, source_id);
+      const double footprint_m = footprintAlongTrack(slant, bw);
+      splatAlongTrack(
+        origin, gb.heading_rad, footprint_m, azimuth, ground, level,
+        [&acc, intensity, quality, source_id](const gggs::CellIndex & cell) {
+          acc.add(cell, intensity, quality, source_id);
+        });
       ++n_placed;
     }
     ++n_proj;

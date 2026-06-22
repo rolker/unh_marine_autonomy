@@ -84,6 +84,11 @@ public:
     earth_frame_ = declare_parameter<std::string>("earth_frame", "earth");
     output_dir_ = declare_parameter<std::string>("output_dir", "sidescan_mosaic");
     sound_speed_ = declare_parameter<double>("sound_speed", 1500.0);
+    // Fallback along-track beamwidth (rad) for pings whose `ping_info.tx_beamwidths`
+    // is empty; 0 (default) keeps the legacy point-deposit (n_steps=1). GCV-20
+    // SideVü nominal is radians(0.44) ≈ 0.00768.
+    tx_beamwidth_fallback_rad_ =
+      declare_parameter<double>("tx_beamwidth_fallback_rad", 0.0);
     beam_azimuth_trim_deg_ = declare_parameter<double>("beam_azimuth_trim_deg", 0.0);
     if (beam_azimuth_trim_deg_ != 0.0) {
       // The beam +Z direction already carries the look side and mount/roll tilt;
@@ -310,9 +315,17 @@ private:
     // azimuth — it only selects the per-channel normalizer below.
     const double azimuth = gb.azimuth_rad + beam_azimuth_trim_deg_ * M_PI / 180.0;
 
-    // Beam depression below horizontal, staged for Stage 3 (footprint /
-    // roll-intensity, #185); not consumed by accumulator_.add yet.
+    // Beam depression below horizontal, staged for Stage 4 (roll-intensity
+    // radiometry, #185); not consumed by the footprint splat below.
     [[maybe_unused]] const double depression_rad = gb.depression_rad;
+
+    // Along-track footprint splat (#208): each sample is deposited across its
+    // per-sample footprint (slant · beamwidth). Beamwidth comes from the ping's
+    // `tx_beamwidths[0]` when populated, else the configured fallback (0 → unchanged
+    // point-deposit).
+    const double tx_beamwidth_rad =
+      (!msg.ping_info.tx_beamwidths.empty() && msg.ping_info.tx_beamwidths[0] > 0.0)
+      ? static_cast<double>(msg.ping_info.tx_beamwidths[0]) : tx_beamwidth_fallback_rad_;
 
     const std::vector<double> raw = decodeSamples(msg);
     if (msg.samples_per_beam > 0 && raw.size() != msg.samples_per_beam) {
@@ -334,7 +347,10 @@ private:
       if (ground <= 0.0) {
         continue;   // inside the nadir cone; nothing to place on the ground
       }
-      accumulator_.add(projectSample(origin, azimuth, ground, level_), norm[j]);
+      const double footprint_m = footprintAlongTrack(slant, tx_beamwidth_rad);
+      splatAlongTrack(
+        origin, gb.heading_rad, footprint_m, azimuth, ground, level_,
+        [this, j, &norm](const gggs::CellIndex & cell) {accumulator_.add(cell, norm[j]);});
     }
   }
 
@@ -373,6 +389,7 @@ private:
   std::string output_dir_;
   std::string no_nadir_policy_;
   double sound_speed_ = 1500.0;
+  double tx_beamwidth_fallback_rad_ = 0.0;
   double beam_azimuth_trim_deg_ = 0.0;
   double nadir_staleness_s_ = 5.0;
   double max_tf_age_s_ = 1.0;

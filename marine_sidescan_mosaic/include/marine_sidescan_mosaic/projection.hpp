@@ -22,8 +22,10 @@
 #ifndef MARINE_SIDESCAN_MOSAIC__PROJECTION_HPP_
 #define MARINE_SIDESCAN_MOSAIC__PROJECTION_HPP_
 
+#include <algorithm>
 #include <cmath>
 
+#include "geodesy/geodesics.h"
 #include "geographic_msgs/msg/geo_point.hpp"
 #include "marine_autonomy/gggs.h"
 
@@ -78,8 +80,10 @@ struct GeoBeam
                                  ///<   Side, mounting tilt, and dynamic roll all compose in.
   double depression_rad = 0.0;   ///< +Z axis depression below horizontal (>0 = down);
                                  ///<   the beam grazing seed for radiometry (#185).
+  double heading_rad = 0.0;      ///< Sensor body +x azimuth (vessel ground track),
+                                 ///<   clockwise from north — the along-track splat axis.
   bool valid = true;             ///< false if the quaternion was near-zero/degenerate
-                                 ///<   (azimuth/depression are 0); callers should skip.
+                                 ///<   (azimuth/depression/heading are 0); callers should skip.
 };
 
 /// @brief Full-attitude counterpart to @ref ecefPoseToGeoHeading: returns the
@@ -133,6 +137,60 @@ inline double acrossTrackAzimuth(double heading_rad, Side side)
 gggs::CellIndex projectSample(
   const geographic_msgs::msg::GeoPoint & origin,
   double azimuth_rad, double ground_range, const gggs::Level & level);
+
+/// @brief Along-track footprint length (m) for one sample: `slant_range ·
+///   tx_beamwidth_rad` (small-angle arc at the sample's own slant range).
+///
+/// Uses the **per-sample** slant range, so near-range samples get a shorter
+/// footprint than far-range ones. Returns 0 when either input is 0 — the
+/// caller then collapses to a single point-deposit (@ref splatAlongTrack).
+inline double footprintAlongTrack(double slant_range, double tx_beamwidth_rad)
+{
+  return slant_range * tx_beamwidth_rad;
+}
+
+/// @brief Deposit one across-track sample across its along-track footprint.
+///
+/// Splats the sample over `n_steps = max(1, round(footprint_m / cell_size))` cells
+/// centred on @p origin and stepped along @p heading_rad (the vessel ground track),
+/// invoking @p deposit once per covered @ref gggs::CellIndex. The steps are spaced
+/// `cell_size` apart and centred **symmetrically** about the ping, so an even
+/// `n_steps` straddles the origin (±half-cell) instead of under-covering by one.
+/// With `footprint_m < cell_size` (or 0) this reduces to a single deposit at the
+/// across-track sample position — bit-for-bit the legacy point-deposit.
+///
+/// @param origin Sensor ground position — **altitude must be 0** (the
+///   `geodesy::wgs84::direct` precondition; the along-track step preserves it).
+/// @param heading_rad Along-track azimuth (vessel ground track, clockwise from north).
+/// @param footprint_m Along-track footprint length (m); see @ref footprintAlongTrack.
+/// @param azimuth_rad Across-track azimuth to the sample (clockwise from north).
+/// @param ground_range Horizontal range to the sample (m).
+/// @param level GGGS level (supplies the cell size and resolves each cell).
+/// @param deposit Callback `void(const gggs::CellIndex &)` run once per covered cell.
+template<typename Deposit>
+void splatAlongTrack(
+  const geographic_msgs::msg::GeoPoint & origin,
+  double heading_rad, double footprint_m,
+  double azimuth_rad, double ground_range,
+  const gggs::Level & level, Deposit && deposit)
+{
+  const double cell_size = level.cellSize();
+  const int n_steps =
+    std::max(1, static_cast<int>(std::round(footprint_m / cell_size)));
+  for (int k = 0; k < n_steps; ++k) {
+    // Symmetric centring: offsets are spaced cell_size apart about 0 (n_steps=1 →
+    // offset 0 → origin untouched, so the single-deposit path is unchanged).
+    const double offset = (static_cast<double>(k) - (n_steps - 1) / 2.0) * cell_size;
+    geographic_msgs::msg::GeoPoint splat_origin = origin;
+    if (offset != 0.0) {
+      // wgs84::direct takes a non-negative distance; a negative offset is the
+      // reciprocal heading. The step keeps altitude 0 (direct copies p1.altitude).
+      const double along_az = offset >= 0.0 ? heading_rad : heading_rad + M_PI;
+      splat_origin = geodesy::wgs84::direct(origin, along_az, std::abs(offset));
+    }
+    deposit(projectSample(splat_origin, azimuth_rad, ground_range, level));
+  }
+}
 
 }  // namespace marine_sidescan_mosaic
 

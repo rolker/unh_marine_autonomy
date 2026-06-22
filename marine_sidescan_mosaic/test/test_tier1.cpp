@@ -49,6 +49,7 @@ Tier1Ping makePing()
   p.sample_rate = 51202.0;
   p.sample0 = 13;
   p.nadir_altitude_m = 2.08F;
+  p.tx_beamwidth_rad = 0.00768F;   // GCV-20 SideVü 0.44° along-track (v2 field).
   p.samples = {0.0F, 1.0F, 65535.0F, 42.5F};
   return p;
 }
@@ -75,6 +76,7 @@ TEST(Tier1, HeaderAndRecordRoundTrip)
   EXPECT_DOUBLE_EQ(b.sample_rate, a.sample_rate);
   EXPECT_EQ(b.sample0, a.sample0);
   EXPECT_FLOAT_EQ(b.nadir_altitude_m, a.nadir_altitude_m);
+  EXPECT_FLOAT_EQ(b.tx_beamwidth_rad, a.tx_beamwidth_rad);   // v2 field round-trips.
   EXPECT_EQ(b.samples, a.samples);
 
   // A second read on an exhausted stream is a clean EOF, not a partial record.

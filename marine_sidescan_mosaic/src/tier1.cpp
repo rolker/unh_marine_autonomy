@@ -86,6 +86,9 @@ void writeTier1Ping(std::ostream & os, const Tier1Ping & p)
   put(os, p.sample_rate);
   put(os, p.sample0);
   put(os, p.nadir_altitude_m);
+  put(os, p.tx_beamwidth_rad);
+  // The sample count stays the trailing field before the sample block (corruption
+  // guard in readTier1Ping + RejectsBogusSampleCount rely on it being last).
   const std::uint32_t n = static_cast<std::uint32_t>(p.samples.size());
   put(os, n);
   if (n > 0) {
@@ -107,7 +110,8 @@ bool readTier1Ping(std::istream & is, Tier1Ping & p)
     !get(is, p.tx) || !get(is, p.ty) || !get(is, p.tz) ||
     !get(is, p.qx) || !get(is, p.qy) || !get(is, p.qz) || !get(is, p.qw) ||
     !get(is, p.sound_speed) || !get(is, p.sample_rate) ||
-    !get(is, p.sample0) || !get(is, p.nadir_altitude_m))
+    !get(is, p.sample0) || !get(is, p.nadir_altitude_m) ||
+    !get(is, p.tx_beamwidth_rad))
   {
     return false;
   }

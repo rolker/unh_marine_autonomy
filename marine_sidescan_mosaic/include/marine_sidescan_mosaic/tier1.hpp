@@ -64,13 +64,16 @@ struct Tier1Ping
   double sample_rate = 0.0;            ///< Hz (RawSonarImage.sample_rate).
   std::int32_t sample0 = 0;            ///< near-field gate (RawSonarImage.sample0).
   float nadir_altitude_m = -1.0F;      ///< held transducer height above bottom; <0 = none.
+  float tx_beamwidth_rad = 0.0F;       ///< along-track tx −3 dB beamwidth (rad), from
+                                       ///<   `ping_info.tx_beamwidths[0]`; 0 = not published
+                                       ///<   (Tier-2 falls back / point-deposits). v2 field.
 
   std::vector<float> samples;          ///< decoded backscatter magnitude, slant-indexed.
 };
 
 /// @brief Magic + version for a Tier-1 stream (validated on read).
 constexpr std::uint32_t kTier1Magic = 0x53'53'54'31u;  ///< "SST1".
-constexpr std::uint32_t kTier1Version = 1u;
+constexpr std::uint32_t kTier1Version = 2u;   ///< v2 adds `tx_beamwidth_rad` (#208).
 
 /// @brief Write/parse the stream header (call once, first).
 void writeTier1Header(std::ostream & os);

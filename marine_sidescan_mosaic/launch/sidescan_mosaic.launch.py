@@ -45,6 +45,11 @@ def generate_launch_description():
                               description='Per-cell combine: newest | mean | max_hold'),
         DeclareLaunchArgument('no_nadir_policy', default_value='drop',
                               description='When no fresh nadir: drop | assume_zero'),
+        DeclareLaunchArgument('tx_beamwidth_fallback_rad', default_value='0.0',
+                              description='Along-track tx beamwidth (rad) used to splat '
+                                          'each sample over its footprint when the ping '
+                                          'lacks tx_beamwidths; 0 = point-deposit. '
+                                          'GCV-20 SideVu nominal radians(0.44) ~= 0.00768'),
         DeclareLaunchArgument('flush_period_s', default_value='2.0'),
         DeclareLaunchArgument('earth_frame', default_value='earth'),
         DeclareLaunchArgument('port_topic', default_value='sonar_image_port'),
@@ -62,6 +67,8 @@ def generate_launch_description():
             'gggs_level': PythonExpression([LaunchConfiguration('gggs_level')]),
             'splat': LaunchConfiguration('splat'),
             'no_nadir_policy': LaunchConfiguration('no_nadir_policy'),
+            'tx_beamwidth_fallback_rad': PythonExpression(
+                [LaunchConfiguration('tx_beamwidth_fallback_rad')]),
             'flush_period_s': PythonExpression([LaunchConfiguration('flush_period_s')]),
             'earth_frame': LaunchConfiguration('earth_frame'),
             'port_topic': LaunchConfiguration('port_topic'),
