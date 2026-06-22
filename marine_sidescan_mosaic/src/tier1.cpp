@@ -61,14 +61,28 @@ void writeTier1Header(std::ostream & os)
   put(os, kTier1Version);
 }
 
-bool readTier1Header(std::istream & is)
+Tier1HeaderStatus checkTier1Header(std::istream & is, std::uint32_t * found_version)
 {
   std::uint32_t magic = 0;
   std::uint32_t version = 0;
   if (!get(is, magic) || !get(is, version)) {
-    return false;
+    return Tier1HeaderStatus::BadMagic;   // too short to be a Tier-1 header.
   }
-  return magic == kTier1Magic && version == kTier1Version;
+  if (magic != kTier1Magic) {
+    return Tier1HeaderStatus::BadMagic;
+  }
+  if (version != kTier1Version) {
+    if (found_version != nullptr) {
+      *found_version = version;
+    }
+    return Tier1HeaderStatus::BadVersion;
+  }
+  return Tier1HeaderStatus::Ok;
+}
+
+bool readTier1Header(std::istream & is)
+{
+  return checkTier1Header(is) == Tier1HeaderStatus::Ok;
 }
 
 void writeTier1Ping(std::ostream & os, const Tier1Ping & p)

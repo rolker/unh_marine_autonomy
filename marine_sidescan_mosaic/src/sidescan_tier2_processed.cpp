@@ -126,9 +126,22 @@ int main(int argc, char ** argv)
   const std::string campaign = argValue(argc, argv, "--campaign", "unknown");
 
   std::ifstream in(tier1_path, std::ios::binary);
-  if (!in || !readTier1Header(in)) {
-    std::cerr << "error: " << tier1_path << " is not a readable Tier-1 stream\n";
+  if (!in) {
+    std::cerr << "error: cannot open " << tier1_path << "\n";
     return 1;
+  }
+  std::uint32_t found_version = 0;
+  switch (checkTier1Header(in, &found_version)) {
+    case Tier1HeaderStatus::Ok:
+      break;
+    case Tier1HeaderStatus::BadVersion:
+      std::cerr << "error: " << tier1_path << " is a Tier-1 stream but version "
+                << found_version << " (this build expects v" << kTier1Version
+                << "); re-run the importer to regenerate it\n";
+      return 1;
+    case Tier1HeaderStatus::BadMagic:
+      std::cerr << "error: " << tier1_path << " is not a Tier-1 stream\n";
+      return 1;
   }
 
   const gggs::Level level(level_n);

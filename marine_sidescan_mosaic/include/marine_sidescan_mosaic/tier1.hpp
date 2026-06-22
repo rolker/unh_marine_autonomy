@@ -75,8 +75,24 @@ struct Tier1Ping
 constexpr std::uint32_t kTier1Magic = 0x53'53'54'31u;  ///< "SST1".
 constexpr std::uint32_t kTier1Version = 2u;   ///< v2 adds `tx_beamwidth_rad` (#208).
 
-/// @brief Write/parse the stream header (call once, first).
+/// @brief Outcome of validating a Tier-1 stream header (@ref checkTier1Header).
+enum class Tier1HeaderStatus
+{
+  Ok,           ///< Tier-1 magic and the current version.
+  BadMagic,     ///< not a Tier-1 stream (wrong magic, or header too short to read).
+  BadVersion,   ///< Tier-1 magic but an unsupported version (e.g. an older v1 file).
+};
+
+/// @brief Write the stream header (call once, first).
 void writeTier1Header(std::ostream & os);
+
+/// @brief Parse + validate the stream header, distinguishing a non-Tier-1 file
+///   (@ref Tier1HeaderStatus::BadMagic) from a version mismatch
+///   (@ref Tier1HeaderStatus::BadVersion). On a version mismatch @p found_version
+///   (when non-null) receives the file's version, for a precise diagnostic.
+Tier1HeaderStatus checkTier1Header(std::istream & is, std::uint32_t * found_version = nullptr);
+
+/// @brief Convenience wrapper over @ref checkTier1Header. Call once, first.
 bool readTier1Header(std::istream & is);   ///< false on bad magic/version.
 
 /// @brief Append one record / read the next.
