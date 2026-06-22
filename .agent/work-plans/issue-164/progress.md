@@ -121,7 +121,19 @@ The following items should be in scope for PR D1 or explicitly tracked as follow
   of outside tiles.
 
 ### Actions
-- [ ] Plan-task must specify the no-data/null-sample cost policy (NO_INFORMATION vs. LETHAL_OBSTACLE) as an explicit design decision per ADR-0002 §D7 safety-conservative requirement.
-- [ ] Plan-task should verify that D1 scopes the nav2_params registration for bizzy (or explicitly defers it with a rationale).
-- [ ] Plan-task should add a gtest for the memory-bounded windowed-load behavior (the acceptance criterion "memory stays bounded" must not be manual-check-only).
-- [ ] Verify during implementation that s57_layer coexistence is documented or tested (which layer wins per cell when both are active in the same costmap).
+- [x] Plan-task must specify the no-data/null-sample cost policy (NO_INFORMATION vs. LETHAL_OBSTACLE) as an explicit design decision per ADR-0002 §D7 safety-conservative requirement.
+- [x] Plan-task should verify that D1 scopes the nav2_params registration for bizzy (or explicitly defers it with a rationale).
+- [x] Plan-task should add a gtest for the memory-bounded windowed-load behavior (the acceptance criterion "memory stays bounded" must not be manual-check-only).
+- [x] Verify during implementation that s57_layer coexistence is documented or tested (which layer wins per cell when both are active in the same costmap).
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-22 00:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet 4.6)
+
+**Plan**: `.agent/work-plans/issue-164/plan.md` at `5b48754`
+**Branch**: feature/issue-164 at `5b48754`
+**Phases**: single
+
+### Open questions
+- [ ] Does bizzy's `nav2_params.yaml` live in `bizzyboat_project11` (platforms_ws) or `unh_marine_autonomy/config/`? Confirm at implementation time; if separate repo, file a follow-on issue for the YAML wiring.
