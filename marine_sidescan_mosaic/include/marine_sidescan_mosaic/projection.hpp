@@ -151,7 +151,7 @@ inline double footprintAlongTrack(double slant_range, double tx_beamwidth_rad)
 
 /// @brief Deposit one across-track sample across its along-track footprint.
 ///
-/// Splats the sample over `n_steps = max(1, round(footprint_m / cell_size))` cells
+/// Splats the sample over `n_steps = max(1, ceil(footprint_m / cell_size))` cells
 /// centred on @p origin and stepped along @p heading_rad (the vessel ground track),
 /// invoking @p deposit once per covered @ref gggs::CellIndex. The steps are spaced
 /// `cell_size` apart and centred **symmetrically** about the ping, so an even
@@ -175,8 +175,22 @@ void splatAlongTrack(
   const gggs::Level & level, Deposit && deposit)
 {
   const double cell_size = level.cellSize();
-  const int n_steps =
-    std::max(1, static_cast<int>(std::round(footprint_m / cell_size)));
+  // Safety backstop (#208 review): a non-finite footprint_m (NaN/inf slant or a
+  // garbage beamwidth) would make the static_cast<int> below UB, and an
+  // absurd-but-finite footprint (e.g. a degrees-for-radians beamwidth) would
+  // deposit thousands of cells per sample in the live real-time onPing callback.
+  // Collapse a non-finite/zero footprint to the single point-deposit and hard-cap
+  // the step count so one sample can never run away.
+  constexpr int kMaxSplatSteps = 1024;
+  int n_steps = 1;
+  if (std::isfinite(footprint_m) && footprint_m > 0.0) {
+    // ceil (not round): a 1.0–1.5-cell footprint must paint 2 cells, else round
+    // collapses it to a single deposit and the along-track gap it was added to fill
+    // survives. A sub-cell footprint still yields ceil→1 (the legacy point-deposit).
+    n_steps = std::min(
+      kMaxSplatSteps,
+      std::max(1, static_cast<int>(std::ceil(footprint_m / cell_size))));
+  }
   for (int k = 0; k < n_steps; ++k) {
     // Symmetric centring: offsets are spaced cell_size apart about 0 (n_steps=1 →
     // offset 0 → origin untouched, so the single-deposit path is unchanged).

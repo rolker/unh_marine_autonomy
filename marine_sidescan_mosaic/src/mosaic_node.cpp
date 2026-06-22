@@ -36,6 +36,7 @@
 /// 0) is added on top for sensors whose URDF +Z is not exactly abeam.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -89,6 +90,26 @@ public:
     // SideVü nominal is radians(0.44) ≈ 0.00768.
     tx_beamwidth_fallback_rad_ =
       declare_parameter<double>("tx_beamwidth_fallback_rad", 0.0);
+    // Guard the fallback before it reaches the real-time splat: a NaN/inf or
+    // negative value would poison the footprint math, and a degrees-for-radians
+    // slip (e.g. 0.44 instead of radians(0.44) ≈ 0.00768) would splat hundreds of
+    // cells per sample. Clamp the unusable; warn loudly on the merely suspicious.
+    if (!std::isfinite(tx_beamwidth_fallback_rad_) || tx_beamwidth_fallback_rad_ < 0.0) {
+      RCLCPP_WARN(
+        get_logger(),
+        "tx_beamwidth_fallback_rad=%.6g is not a finite non-negative radian value; "
+        "ignoring it (no along-track splat fallback)",
+        tx_beamwidth_fallback_rad_);
+      tx_beamwidth_fallback_rad_ = 0.0;
+    } else if (tx_beamwidth_fallback_rad_ > 0.1) {
+      // A real along-track tx beamwidth is well under 0.1 rad (~5.7°); a wider
+      // value is almost certainly degrees mistaken for radians.
+      RCLCPP_WARN(
+        get_logger(),
+        "tx_beamwidth_fallback_rad=%.4f rad (~%.1f deg) is implausibly wide for an "
+        "along-track beamwidth; did you pass degrees? expected radians (e.g. 0.00768)",
+        tx_beamwidth_fallback_rad_, tx_beamwidth_fallback_rad_ * 180.0 / M_PI);
+    }
     beam_azimuth_trim_deg_ = declare_parameter<double>("beam_azimuth_trim_deg", 0.0);
     if (beam_azimuth_trim_deg_ != 0.0) {
       // The beam +Z direction already carries the look side and mount/roll tilt;
