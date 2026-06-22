@@ -162,3 +162,29 @@ Ready for `review-code`.
 - [x] (suggestion) `onPing` has no try/catch around projection; `geodesy::wgs84::direct` can throw (largely pre-existing, low-probability) — `src/mosaic_node.cpp`
 
 Static analysis clean (only known-broken local uncrustify 0.78.1 `?:` drift + pre-existing >100-char lines untouched by this PR). Plan adherence full; all prior review folds implemented. No `review-context.yaml` found (review used `.agents/README.md` + project PRINCIPLES/ADRs).
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-22 11:01 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-208 at `e394814`
+**Addressed**: Local Review (Pre-Push) (2026-06-22 05:51 +00:00, branch feature/issue-208 at `a387093`) — its 1 must-fix + 4 suggestions, all actioned (none deferred).
+**Commits**: `3bcf3b6`, `05d744a`, `11e49f2`, `e394814`
+
+### Actions
+- [x] (must-fix) Bound the along-track splat — `splatAlongTrack` now guards `footprint_m` with `std::isfinite` (a NaN/inf cast to `int` was UB) and hard-caps `n_steps` at `kMaxSplatSteps=1024`; `mosaic_node` validates `tx_beamwidth_fallback_rad` at startup (resets a non-finite/negative value to 0, warns on a >0.1 rad degrees-for-radians slip) — `include/marine_sidescan_mosaic/projection.hpp`, `src/mosaic_node.cpp` (`3bcf3b6`)
+- [x] (suggestion) `round` → `ceil` for `n_steps` so a 1.0–1.5-cell footprint paints 2 cells instead of collapsing the gap; sub-cell footprints still yield 1 (legacy point-deposit preserved) — `include/marine_sidescan_mosaic/projection.hpp` (`3bcf3b6`)
+- [x] (suggestion) Distinguish Tier-1 version-mismatch from bad-magic — new `checkTier1Header()` → `Tier1HeaderStatus {Ok, BadMagic, BadVersion}`; both tier2 tools print a distinct, actionable message on a version mismatch (reporting found vs expected version) — `include/marine_sidescan_mosaic/tier1.hpp`, `src/tier1.cpp`, `src/sidescan_tier2_flat.cpp`, `src/sidescan_tier2_processed.cpp` (`05d744a`)
+- [x] (suggestion) Strengthen splat tests — `SplatCoverageSpansFootprint` now pins even-step symmetry (mean cell latitude within a cell of the origin); `SplatStepsAlongHeading` pins longitude ~constant (within a cell or two) while latitude spreads — `test/test_projection.cpp` (`11e49f2`)
+- [x] (suggestion) Wrap the `onPing` per-sample projection loop in try/catch (`geodesy::wgs84::direct` can throw); drop the offending ping with a throttled warn rather than tearing down the executor — `src/mosaic_node.cpp` (`e394814`)
+
+### Build & test
+`./build.sh marine_sidescan_mosaic` succeeded (only pre-existing geodesy-header warnings). All gtest suites green on the rebuilt binaries: `test_projection` 14/14 (incl. the two new symmetry/along-heading assertions), `test_tier1` 5/5, `test_accumulator` 10/10, `test_normalizer` 5/5.
+
+The only `colcon test` non-gtest failures are the **known/pre-existing** ones documented in the source review, untouched by this pass: 2 cpplint >100-char lines in `src/sidescan_mosaic_bag.cpp` (113/115 chars, not modified here) and the broken local uncrustify 0.78.1 leading-vs-trailing `?:` drift on the pre-existing `tx_beamwidth_rad` ternary (`mosaic_node.cpp` line ~348, not modified here). No new lint introduced by these fixes.
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 208 --skill review-code
