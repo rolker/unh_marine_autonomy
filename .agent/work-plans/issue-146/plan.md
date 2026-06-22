@@ -29,6 +29,12 @@ count.
    before returning `True`. The existing `get_subscription_count()` pattern on the publisher
    side is symmetric; `get_publisher_count()` on the subscriber side is the idiomatic
    rclpy API (confirmed available via `Subscription.get_publisher_count()`).
+   **Also update the discovery-timeout assert message (`:142-143`)** — it currently
+   says only "no subscribers were discovered", but with the new gate the loop can
+   also time out on the heartbeat-*publisher* side; reword to name both conditions
+   (command-bridge subscriber **and** heartbeat publisher) so a future timeout is
+   diagnosable (review-plan suggestion; only `command_flow.py` has the specific
+   message — the four nav files use a generic "DDS discovery timed out.").
 
 2. **Apply the same fix to the other four affected test files** — `_wait_for_discovery()`
    in each of these files gates only on `cmd_pub.get_subscription_count() > 0`, leaving
@@ -46,7 +52,7 @@ count.
 
 | File | Change |
 |------|--------|
-| `marine_autonomy_integration_tests/test/test_mission_command_flow.py` | Add `and self.heartbeat_sub.get_publisher_count() > 0` to the `_wait_for_discovery` condition (line 155) |
+| `marine_autonomy_integration_tests/test/test_mission_command_flow.py` | Add `and self.heartbeat_sub.get_publisher_count() > 0` to the `_wait_for_discovery` condition (line 155); update the discovery-timeout assert message (`:142-143`) to name both the command-bridge subscriber and the heartbeat publisher |
 | `marine_autonomy_integration_tests/test/test_mission_navigation_flow.py` | Same gate addition in `_wait_for_discovery` (line 134) |
 | `marine_autonomy_integration_tests/test/test_mission_navigation_override.py` | Same gate addition in `_wait_for_discovery` (line 129) |
 | `marine_autonomy_integration_tests/test/test_mission_navigation_rejection.py` | Same gate addition in `_wait_for_discovery` (line 127) |
