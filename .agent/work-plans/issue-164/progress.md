@@ -254,11 +254,14 @@ the step so the implementer doesn't accidentally pass tight bounds.
 
 ### Actions for Implementer
 
-- [ ] **[M1-code]** Replace single `shallowestReliable` nullopt → skip with two-query
+- [x] **[M1-code]** Replace single `shallowestReliable` nullopt → skip with two-query
   pattern: `bestSource` for existence check, then `shallowestReliable`; over-uncertain
   → LETHAL. Update the Step 2 pseudocode and implementation accordingly.
-- [ ] **[M1-test]** Fix test case 4: assert LETHAL_OBSTACLE (not "plugin does not write")
+  *(plan updated; implemented in `bathymetry_layer.cpp::computeCost` + `updateCosts`.)*
+- [x] **[M1-test]** Fix test case 4: assert LETHAL_OBSTACLE (not "plugin does not write")
   for a cell with data but uncertainty > max_uncertainty_.
-- [ ] **[S1]** Add a comment on `sample->depth` clarifying the up-positive sign convention
-  at the point of the clearance calculation.
-- [ ] **[S2]** Use buffered (not tight) costmap bounds for `evictOutside` in `matchSize()`.
+  *(plan + `test_bathymetry_layer.cpp` OverUncertainSurveyedCellIsLethal.)*
+- [x] **[S1]** Add a comment on `sample->depth` clarifying the up-positive sign convention
+  at the point of the clearance calculation. *(comment at the clearance line.)*
+- [x] **[S2]** Use buffered (not tight) costmap bounds for `evictOutside` in `matchSize()`.
+  *(both `loadWindow` and `evictOutside` use the buffered box.)*

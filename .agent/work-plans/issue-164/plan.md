@@ -22,9 +22,17 @@ is `z(map_tide) − seafloor_ellipsoidal_height`.
 
 **Settled decisions (do not relitigate):**
 - Scope = D1 prior-only (static) this PR.
-- No-data policy: `std::nullopt` from `shallowestReliable` (truly unsurveyed) →
-  `NO_INFORMATION`; a cell with data but stale/over-uncertain (data exists,
-  fails the quality gate) → `LETHAL_OBSTACLE` (conservative per ADR-0002 §D7).
+- No-data policy (**TWO-QUERY** pattern — see review M1):
+  1. `bestSource(store, cell)` — returns a sample iff ANY data exists
+     (quality-blind).
+  2. `bestSource` → `nullopt` ⇒ **truly unsurveyed** ⇒ leave the master cost
+     untouched (NO_INFORMATION); `continue`.
+  3. `bestSource` → non-null ⇒ cell **HAS data** ⇒ call
+     `shallowestReliable(store, cell, max_uncertainty)` + check staleness
+     (timestamp age vs `max_age`). If `shallowestReliable` is `nullopt`
+     (over-uncertain) OR stale ⇒ **`LETHAL_OBSTACLE`**; else clearance ramp.
+  A single `shallowestReliable`→`nullopt`→NO_INFORMATION is WRONG: it would mark
+  a surveyed-but-noisy cell as unsurveyed = safety regression (ADR-0002 §D7).
 - D2 and its tile-change detection mechanism → follow-on issue.
 
 ## Approach
@@ -69,7 +77,10 @@ Call `loadWindow(store_, store_path_, min_geo, max_geo)` for the buffered costma
 window.
 
 **`matchSize()`** — evict outside tiles then reload window (re-call when costmap
-resizes). Clear the cached per-costmap-cell cost array.
+resizes). Clear the cached per-costmap-cell cost array. **S2:** the `evictOutside`
+box is the costmap bounds **plus the same buffer margin** used by `loadWindow`
+(the buffered, not tight, bounds) — otherwise the margin tiles loaded for the
+window get immediately evicted on every `matchSize()`/bounds pass.
 
 **`updateBounds()`** — look up `map_tide` z-height via TF (`lookupTransform(global_frame, map_tide_frame_, tf2::TimePointZero).transform.translation.z`); if the change exceeds a threshold, invalidate cached costs (same `tide_invalidate_threshold` pattern as `s57_layer`). Expand `loadWindow` window if the costmap has shifted beyond the inner buffer.
 
@@ -78,21 +89,28 @@ convert world coordinates to `gggs::CellIndex` via `store_.cellIndex(lat, lon)`
 (lat/lon from TF `earth` transform, same as `s57_layer::worldToLatLon`), call
 `shallowestReliable(store_, cell, max_uncertainty_)`, then apply the cost mapping:
 
-```
+```cpp
+// M1 two-query pattern: distinguish "no data" from "data but unusable".
+std::optional<DepthSample> any = bestSource(store_, cell);  // quality-blind
+if (!any) {
+    // Truly unsurveyed — leave master cell untouched (NO_INFORMATION) so
+    // s57_layer or another prior can contribute. Never WRITE NO_INFORMATION.
+    continue;
+}
+// The cell HAS data. Now apply the navigation-safety gate.
 std::optional<DepthSample> sample = shallowestReliable(store_, cell, max_uncertainty_);
-if (!sample) {
-    // Truly unsurveyed — NO_INFORMATION (let other layers fill in, e.g. s57_layer)
-    // Do NOT overwrite master with NO_INFORMATION: leave master untouched so
-    // s57_layer or another prior can contribute. Only write NO_INFORMATION if
-    // the cell is currently NO_INFORMATION in master (i.e. nothing wrote it).
-    // Actually: never write NO_INFORMATION — leave master cell unchanged.
-    continue; // skip — unsurveyed cells leave master untouched
+unsigned char cost;
+if (!sample || is_stale(any->timestamp)) {
+    // Data exists but every sample is over-uncertain (shallowestReliable ==
+    // nullopt) OR the freshest data is stale → conservative LETHAL (ADR-0002 §D7).
+    cost = nav2_costmap_2d::LETHAL_OBSTACLE;
 } else {
-    double clearance = map_tide_z_ - sample->depth; // both ellipsoidal
-    unsigned char cost;
-    if (is_stale(sample->timestamp) || /* sample existed but failed uncertainty gate (impossible path — shallowestReliable already filtered) */false) {
-        cost = nav2_costmap_2d::LETHAL_OBSTACLE;
-    } else if (clearance < minimum_depth_) {
+    // sample->depth is ellipsoidal HEIGHT (WGS84, up-positive): a seafloor 5 m
+    // below the ellipsoid has depth=-5.0, so a shallower (more hazardous)
+    // seafloor has a LARGER (less-negative) depth → SMALLER clearance → higher
+    // cost. clearance = water-surface height − seafloor height (both ellipsoidal).
+    double clearance = map_tide_z_ - sample->depth;
+    if (clearance < minimum_depth_) {
         cost = nav2_costmap_2d::LETHAL_OBSTACLE;
     } else if (clearance >= maximum_caution_depth_) {
         cost = nav2_costmap_2d::FREE_SPACE;
@@ -101,28 +119,34 @@ if (!sample) {
                (1.0 - (clearance - minimum_depth_) /
                       (maximum_caution_depth_ - minimum_depth_));
     }
-    // Write only where cost > master (max-cost combines; s57_layer wins when it
-    // assigns a higher cost, bathymetry_layer wins when it knows depth is lethal
-    // but s57_layer has no chart coverage).
-    unsigned char existing = master_grid.getCost(i, j);
-    if (existing == nav2_costmap_2d::NO_INFORMATION || cost > existing)
-        master_grid.setCost(i, j, cost);
 }
+// Write only where cost > master (max-cost combines; s57_layer wins when it
+// assigns a higher cost, bathymetry_layer wins when it knows depth is lethal
+// but s57_layer has no chart coverage).
+unsigned char existing = master_grid.getCost(i, j);
+if (existing == nav2_costmap_2d::NO_INFORMATION || cost > existing)
+    master_grid.setCost(i, j, cost);
 ```
 
-**No-data semantics (ADR-0002 §D7, settled decision):**
-- `std::nullopt` (no data at all) → leave master cell untouched (effectively
-  `NO_INFORMATION`; `s57_layer` or another layer fills in). Document this in the
-  header.
+**No-data semantics (ADR-0002 §D7, settled decision — M1 two-query):**
+- `bestSource` → `std::nullopt` (no data at all) → leave master cell untouched
+  (effectively `NO_INFORMATION`; `s57_layer` or another layer fills in). Document
+  this in the header.
+- `bestSource` → non-null but `shallowestReliable` → `std::nullopt`
+  (over-uncertain: data exists, fails the quality gate) → `LETHAL_OBSTACLE`
+  (conservative). This is the safety-critical case M1 corrected — a single
+  `shallowestReliable`→nullopt→skip would silently mis-classify a noisy surveyed
+  cell as unsurveyed.
 - Data found but stale (`timestamp != 0 && max_age > 0 && age > max_age`) →
   `LETHAL_OBSTACLE` (conservative). D1 Chart tiles have `timestamp=0`; with
   `max_age=0` (default) the gate is off.
 
-**Note on `shallowestReliable` vs stale path:** `shallowestReliable` already
-filters by `max_uncertainty`. A sample it returns is reliability-gated. Staleness
-is a separate check (timestamp vs `max_age`). A stale but reliable sample →
-LETHAL (conservative), not NO_INFORMATION, because the data exists and tells us
-the seafloor is there; we just don't trust its currency.
+**Note on `shallowestReliable` vs stale path:** `shallowestReliable` filters by
+`max_uncertainty`; a returned sample is reliability-gated. Existence is checked
+*separately* by `bestSource` (quality-blind). Staleness is a third check
+(timestamp vs `max_age`). A stale but reliable sample → LETHAL (conservative),
+not NO_INFORMATION, because the data exists and tells us the seafloor is there;
+we just don't trust its currency.
 
 **`s57_layer` coexistence (action item 4):** the Nav2 LayeredCostmap applies
 layers in order and each layer calls `updateCosts` into the same master grid.
@@ -148,10 +172,12 @@ plugin's class header comment.
 3. **LETHAL on stale data** — insert a tile with `timestamp = 1` (old) and set
    `max_age = 1.0` s with current time >> 1 ns. Assert LETHAL regardless of
    clearance.
-4. **LETHAL on over-uncertain** — insert a tile with uncertainty `> max_uncertainty`.
-   Assert `shallowestReliable` returns `nullopt` for that cell (the
-   reliability gate is in the store API, not the plugin). Verify the plugin
-   does not write that cell.
+4. **LETHAL on over-uncertain (M1)** — insert a cell with data but uncertainty
+   `> max_uncertainty`. Assert `shallowestReliable` returns `nullopt` AND
+   `bestSource` returns non-null (data exists, fails the quality gate). Assert
+   the plugin writes **`LETHAL_OBSTACLE`** (NOT "does not write"). This is the
+   safety-critical M1 case: a surveyed-but-noisy cell must be an obstacle, not
+   treated as unsurveyed.
 5. **Memory-bound windowed load (action item 3)** — construct a store, call
    `loadWindow` with a small geographic box (e.g. 0.01° × 0.01°), then call
    `loadWindow` with a larger box, then `evictOutside` with the original small
