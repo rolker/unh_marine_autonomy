@@ -171,3 +171,22 @@ Ran `ament_uncrustify src/tile_io.cpp test/test_tile_io.cpp` from `/opt/ros/jazz
 - `test_tile_io.cpp`: 4 pre-existing divergences in existing tests (lines 137, 344–389); no divergences in new test code (lines 582+).
 
 Pre-existing uncrustify issues are in code not touched by this PR and were present before this branch. New code is clean.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-21 21:23 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-205 at `6f278f2`
+**Mode**: pre-push
+**Depth**: Standard (reason: new public API + safety-critical eviction; two disjoint-lens Claude adversarial passes)
+**Must-fix**: 1 | **Suggestions**: 4
+**Round**: 1 | **Ship**: continue — one real out-of-bounds (UB) bug in gridIndexFromTileFilename on an out-of-range level prefix; one cheap precise fix.
+
+### Findings
+- [ ] (must-fix) `gridIndexFromTileFilename` reads `gggs::levels[lvl]` (std::array<,21>) before any range check — `99_0_0.tif`/`255_0_0.tif` → out-of-bounds UB; reached before the safe `levelFromTileFilename` re-parse — `marine_bathymetry_store/src/tile_io.cpp:124`
+- [ ] (suggestion) `gridIndexFromTileFilename` `std::stoi`/`std::stoul` throw `std::invalid_argument`/`std::out_of_range`, not the `std::runtime_error` the doc-comment advertises; harden with a digit check like `levelFromTileFilename`, or fix the doc — `marine_bathymetry_store/src/tile_io.cpp:100,116`
+- [ ] (suggestion) `LoadWindowLoadsOnlyOverlappingTiles` uses `EXPECT_GE(n,1u)`; should be `EXPECT_EQ(n,2u)` to actually prove "only overlapping" tiles load — `marine_bathymetry_store/test/test_tile_io.cpp:651`
+- [ ] (suggestion) No gtest feeds a malformed/out-of-range `.tif` filename to `gridIndexFromTileFilename` (would cover the must-fix) and none exercises a multi-level store or the registry-load branch of loadWindow — `marine_bathymetry_store/test/test_tile_io.cpp`
+- [ ] (suggestion) `evictOutside` can leave an empty `EpochTiles` shell when all tiles in an epoch are evicted (benign — query/save unaffected); worth a one-line doc note — `marine_bathymetry_store/src/tile_io.cpp:535`
