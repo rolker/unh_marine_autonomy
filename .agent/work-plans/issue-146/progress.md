@@ -55,3 +55,15 @@ timeout=20.0)` times out with an empty list.
 - [ ] In `_wait_for_discovery()` (or `setUp()`), add heartbeat subscriber match gate: wait until `self.heartbeat_sub.get_publisher_count() > 0` before returning True.
 - [ ] Audit other integration test files for the same subscriber-discovery gap; fix in the same PR or open follow-up issues.
 - [ ] Prefer the subscription-count gate (option 1) over transient-local QoS changes (option 3) — the former fixes the test without altering production topic behavior.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-22 00:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-146/plan.md` at `c9375d4`
+**Branch**: feature/issue-146 at `c9375d4`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
