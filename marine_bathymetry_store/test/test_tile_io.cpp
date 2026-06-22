@@ -577,3 +577,245 @@ TEST_F(TileIoTest, LevelFromTileFilenameParsesPrefix)
   EXPECT_THROW(marine_bathymetry_store::levelFromTileFilename("foo.tif"), std::runtime_error);
   EXPECT_THROW(marine_bathymetry_store::levelFromTileFilename("99_0_0.tif"), std::runtime_error);
 }
+
+// ---------------------------------------------------------------------------
+// Helpers for loadWindow / evictOutside tests
+// ---------------------------------------------------------------------------
+
+namespace
+{
+// Make a GeoPoint from lat/lon (altitude 0).
+geographic_msgs::msg::GeoPoint makeGeoPoint(double lat, double lon)
+{
+  geographic_msgs::msg::GeoPoint p;
+  p.latitude = lat;
+  p.longitude = lon;
+  p.altitude = 0.0;
+  return p;
+}
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// loadWindow tests
+// ---------------------------------------------------------------------------
+
+TEST_F(TileIoTest, LoadWindowLoadsOnlyOverlappingTiles)
+{
+  // Three tiles at level 5: one inside the box, one outside, one at the edge
+  // (boundary straddle).  Write them to separate directories (save merges tiles
+  // in the same layer/epoch), then check that loadWindow loads the two that
+  // overlap.
+  const uint8_t lvl = 5;
+  gggs::Level lev(lvl);
+
+  // inside box: 43.0°N, -70.5°W
+  const gggs::GridIndex inside_grid = lev.gridIndex(43.0, -70.5);
+  // outside box: 50.0°N, -40.0°W (well outside any reasonable test box) —
+  // referenced by geoPoint only, GridIndex not needed at this scope.
+  // boundary straddle: a tile whose south or west edge touches the box min
+  // We will use the exact inside_grid's south edge as the box min, so the grid
+  // itself is the straddler — easiest way to guarantee edge-touch.
+  // Use a second nearby grid as the boundary case: choose a tile one row south
+  // of inside_grid, set the box min to exactly that tile's north edge.
+  const gggs::GridIndex straddle_grid = lev.gridIndex(
+    inside_grid.southLatitude() - 0.001,  // one small step south into the next tile
+    inside_grid.westLongitude() + 0.001);
+
+  // Write all three tiles to disk.
+  {
+    BathymetryStore writer(lvl);
+    const auto c_in = lev.cellIndex(gggs::geoPoint(43.0, -70.5));
+    writer.set(SourceLayer::Draft, kEpoch, c_in, BathyCell{-10.0, 0.5, 1LL});
+    const auto c_out = lev.cellIndex(gggs::geoPoint(50.0, -40.0));
+    writer.set(SourceLayer::Draft, kEpoch, c_out, BathyCell{-20.0, 0.5, 2LL});
+    const auto c_str = lev.cellIndex(
+      gggs::geoPoint(
+        inside_grid.southLatitude() - 0.001,
+        inside_grid.westLongitude() + 0.001));
+    writer.set(SourceLayer::Draft, kEpoch, c_str, BathyCell{-30.0, 0.5, 3LL});
+    ASSERT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 3u);
+  }
+
+  // Box: from straddle_grid's north latitude (so the straddle tile's north edge
+  // exactly touches min_pt.latitude) to well above inside_grid.
+  // Actually simpler: box just covers inside_grid and straddle_grid but not
+  // outside_grid.  The straddle_grid is south of inside_grid.
+  const auto min_pt = makeGeoPoint(straddle_grid.southLatitude(), -72.0);
+  const auto max_pt = makeGeoPoint(inside_grid.northLatitude(), -70.0);
+
+  BathymetryStore result(lvl);
+  const std::size_t n = marine_bathymetry_store::loadWindow(
+    result, dir_.string(), min_pt, max_pt);
+
+  // Both inside_grid and straddle_grid overlap the box; outside_grid does not —
+  // so exactly two tiles load (proves "only overlapping", not just "at least one").
+  EXPECT_EQ(n, 2u);
+  // outside_grid must not have been loaded.
+  EXPECT_FALSE(result.get(SourceLayer::Draft, kEpoch, lev.cellIndex(
+    gggs::geoPoint(50.0, -40.0))).has_value());
+}
+
+TEST_F(TileIoTest, LoadWindowBoundaryStraddle)
+{
+  // A tile whose south edge exactly equals max_pt.latitude must be included
+  // (inclusive boundary semantics).
+  const uint8_t lvl = 5;
+  gggs::Level lev(lvl);
+  const gggs::GridIndex grid = lev.gridIndex(43.0, -70.5);
+
+  {
+    BathymetryStore writer(lvl);
+    const auto cell = lev.cellIndex(gggs::geoPoint(43.0, -70.5));
+    writer.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-15.0, 0.5, 1LL});
+    ASSERT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 1u);
+  }
+
+  // Box whose north edge is exactly the tile's south edge.
+  const auto min_pt = makeGeoPoint(grid.southLatitude() - 1.0, grid.westLongitude());
+  const auto max_pt = makeGeoPoint(grid.southLatitude(), grid.eastLongitude());
+
+  BathymetryStore result(lvl);
+  const std::size_t n = marine_bathymetry_store::loadWindow(
+    result, dir_.string(), min_pt, max_pt);
+  EXPECT_EQ(n, 1u);
+  EXPECT_TRUE(result.get(SourceLayer::Draft, kEpoch,
+    lev.cellIndex(gggs::geoPoint(43.0, -70.5))).has_value());
+}
+
+TEST_F(TileIoTest, LoadWindowIdempotent)
+{
+  // Calling loadWindow twice on the same box must not double-load tiles.
+  const uint8_t lvl = 5;
+  gggs::Level lev(lvl);
+
+  {
+    BathymetryStore writer(lvl);
+    const auto cell = lev.cellIndex(gggs::geoPoint(43.0, -70.5));
+    writer.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-10.0, 0.5, 1LL});
+    ASSERT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 1u);
+  }
+
+  const gggs::GridIndex grid = lev.gridIndex(43.0, -70.5);
+  const auto min_pt = makeGeoPoint(grid.southLatitude(), grid.westLongitude());
+  const auto max_pt = makeGeoPoint(grid.northLatitude(), grid.eastLongitude());
+
+  BathymetryStore result(lvl);
+  const std::size_t first = marine_bathymetry_store::loadWindow(
+    result, dir_.string(), min_pt, max_pt);
+  EXPECT_EQ(first, 1u);
+  const std::size_t second = marine_bathymetry_store::loadWindow(
+    result, dir_.string(), min_pt, max_pt);
+  // Second call should skip the already-resident tile.
+  EXPECT_EQ(second, 0u);
+  // Tile count in store is still 1 (not doubled).
+  EXPECT_EQ(result.epochs(SourceLayer::Draft).at(kEpoch).tiles.size(), 1u);
+}
+
+TEST_F(TileIoTest, LoadWindowRejectsMalformedTileFilename)
+{
+  // A stray tile whose level prefix is out of range (99 > max level 20) must
+  // throw a clean std::runtime_error, NOT index the fixed-size gggs::levels[]
+  // table out of bounds (UB).  Guards the filename parser reached before GDAL.
+  const uint8_t lvl = 5;
+  gggs::Level lev(lvl);
+  {
+    BathymetryStore writer(lvl);
+    writer.set(
+      SourceLayer::Draft, kEpoch, lev.cellIndex(gggs::geoPoint(43.0, -70.5)),
+      BathyCell{-10.0, 0.5, 1LL});
+    ASSERT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 1u);
+  }
+  // Drop a bogus value-tile name (level 99) into the same layer/epoch dir.
+  const std::filesystem::path bogus = dir_ / "draft" / kEpoch / "99_0_0.tif";
+  {
+    std::ofstream(bogus) << "not a tile";
+  }
+
+  BathymetryStore result(lvl);
+  const auto min_pt = makeGeoPoint(-90.0, -180.0);
+  const auto max_pt = makeGeoPoint(90.0, 180.0);
+  EXPECT_THROW(
+    marine_bathymetry_store::loadWindow(result, dir_.string(), min_pt, max_pt),
+    std::runtime_error);
+}
+
+// ---------------------------------------------------------------------------
+// evictOutside tests
+// ---------------------------------------------------------------------------
+
+TEST_F(TileIoTest, EvictOutsideDropsOutsideKeepsInside)
+{
+  // Two tiles: one inside the keep-box, one outside.
+  // Populate in-memory via importEpoch (no disk I/O needed for evictOutside).
+  const uint8_t lvl = 5;
+  gggs::Level lev(lvl);
+  const auto cell_in = lev.cellIndex(gggs::geoPoint(43.0, -70.5));
+  const auto cell_out = lev.cellIndex(gggs::geoPoint(50.0, -40.0));
+  ASSERT_FALSE(cell_in.grid() == cell_out.grid());
+
+  {
+    std::map<gggs::GridIndex, marine_bathymetry_store::BathymetryTile> tiles;
+    marine_bathymetry_store::BathymetryTile t_in(cell_in.grid());
+    t_in.set(cell_in.row(), cell_in.column(), BathyCell{-10.0, 0.5, 1LL});
+    tiles.emplace(cell_in.grid(), std::move(t_in));
+    marine_bathymetry_store::BathymetryTile t_out(cell_out.grid());
+    t_out.set(cell_out.row(), cell_out.column(), BathyCell{-20.0, 0.5, 2LL});
+    tiles.emplace(cell_out.grid(), std::move(t_out));
+
+    BathymetryStore store(lvl);
+    ASSERT_TRUE(
+      store.importEpoch(
+        SourceLayer::Draft, kEpoch, std::move(tiles), Provenance::LiveFused));
+    // Save so tiles are clean (importEpoch marks them dirty; we want to test
+    // eviction of clean tiles here — the dirty-guard test is separate).
+    marine_bathymetry_store::save(store, dir_.string());
+    ASSERT_TRUE(store.get(SourceLayer::Draft, kEpoch, cell_in).has_value());
+    ASSERT_TRUE(store.get(SourceLayer::Draft, kEpoch, cell_out).has_value());
+
+    const gggs::GridIndex grid_in = cell_in.grid();
+    const auto min_pt =
+      makeGeoPoint(grid_in.southLatitude(), grid_in.westLongitude());
+    const auto max_pt =
+      makeGeoPoint(grid_in.northLatitude(), grid_in.eastLongitude());
+
+    const std::size_t evicted = marine_bathymetry_store::evictOutside(
+      store, min_pt, max_pt);
+
+    EXPECT_EQ(evicted, 1u);
+    EXPECT_TRUE(store.get(SourceLayer::Draft, kEpoch, cell_in).has_value());
+    EXPECT_FALSE(store.get(SourceLayer::Draft, kEpoch, cell_out).has_value());
+  }
+}
+
+TEST_F(TileIoTest, EvictOutsideDirtyTileNotEvicted)
+{
+  // A dirty (unsaved) Draft tile outside the keep-box must NOT be evicted.
+  // importEpoch marks tiles dirty, so we skip save() intentionally.
+  const uint8_t lvl = 5;
+  gggs::Level lev(lvl);
+  const auto cell_out = lev.cellIndex(gggs::geoPoint(50.0, -40.0));
+
+  std::map<gggs::GridIndex, marine_bathymetry_store::BathymetryTile> tiles;
+  marine_bathymetry_store::BathymetryTile t(cell_out.grid());
+  t.set(cell_out.row(), cell_out.column(), BathyCell{-20.0, 0.5, 1LL});
+  tiles.emplace(cell_out.grid(), std::move(t));
+
+  BathymetryStore store(lvl);
+  ASSERT_TRUE(
+    store.importEpoch(
+      SourceLayer::Draft, kEpoch, std::move(tiles), Provenance::LiveFused));
+  // Tile is dirty (importEpoch marks it dirty); do NOT save here.
+  ASSERT_TRUE(store.get(SourceLayer::Draft, kEpoch, cell_out)->depth == -20.0);
+
+  // Keep-box is far from the tile's position.
+  const auto min_pt = makeGeoPoint(42.0, -71.0);
+  const auto max_pt = makeGeoPoint(44.0, -70.0);
+
+  const std::size_t evicted = marine_bathymetry_store::evictOutside(
+    store, min_pt, max_pt);
+
+  // Dirty-tile guard: evicted count must be 0 (tile was outside but dirty).
+  EXPECT_EQ(evicted, 0u);
+  // Tile must still be present.
+  EXPECT_TRUE(store.get(SourceLayer::Draft, kEpoch, cell_out).has_value());
+}

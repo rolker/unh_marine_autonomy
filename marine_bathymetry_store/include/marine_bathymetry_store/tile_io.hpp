@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <string>
 
+#include "geographic_msgs/msg/geo_point.hpp"
 #include "marine_autonomy/gggs.h"
 #include "marine_bathymetry_store/bathy_cell.hpp"
 #include "marine_bathymetry_store/bathymetry_store.hpp"
@@ -138,6 +139,69 @@ std::size_t save(
 std::size_t load(
   BathymetryStore & store, const std::string & dir,
   SourceRegistry * registry = nullptr);
+
+/// @brief Load only tiles whose geographic AABB intersects [@p min_pt, @p max_pt].
+///
+/// Mirrors `load()` in structure (layer × epoch × epoch-dir scan, companion-skip,
+/// level-recovery, backward-compat 0-fill for missing companions, provenance
+/// restore) but gates each tile on two conditions before paying the GDAL I/O
+/// cost:
+/// 1. The tile's geographic bounding box (derived from its `<level>_<row>_<col>`
+///    filename, not from a file open) intersects the box [min_pt, max_pt]
+///    (inclusive on all boundaries — a tile whose edge exactly touches the box
+///    boundary is included, matching `forEachCellBestSource` semantics).
+/// 2. The tile is not already resident in @p store for this epoch (idempotent:
+///    a second call on the same box skips already-loaded tiles).
+///
+/// Tiles at any GGGS level are handled correctly (ADR-0002 §D2): each tile's
+/// overlap is tested using its own `GridIndex` geographic accessors rather than
+/// a single-level `GridAreaIterator`.
+///
+/// If @p registry is non-null, `registry.json` is loaded into it (same as
+/// `load()`). Loaded tiles are clean.
+///
+/// @note Concurrency: safe only if no concurrent writer is active in the same
+///   process. A writer racing to dirty a tile between the overlap check and the
+///   tile-insertion is undefined behaviour — acceptable before issue #189 because
+///   the store is currently single-threaded. The #189 implementer must re-audit.
+///
+/// @return The number of tiles loaded (already-resident tiles not counted).
+/// @throws std::runtime_error on any GDAL failure or a per-file level mismatch;
+///         std::filesystem::filesystem_error on a directory-iteration failure.
+std::size_t loadWindow(
+  BathymetryStore & store, const std::string & dir,
+  const geographic_msgs::msg::GeoPoint & min_pt,
+  const geographic_msgs::msg::GeoPoint & max_pt,
+  SourceRegistry * registry = nullptr);
+
+/// @brief Remove all **clean** tiles outside [@p min_pt, @p max_pt] from @p store.
+///
+/// Iterates every layer × epoch in the store and erases tiles whose geographic
+/// AABB does not intersect [min_pt, max_pt] (same inclusive-boundary semantics as
+/// `loadWindow`).
+///
+/// **Dirty-tile guard (safety invariant)**: a tile flagged `dirty()` is **never**
+/// evicted, regardless of its position. A dirty Draft or Processed tile is live
+/// sensor data that has not yet reached disk; evicting it would lose that data
+/// with no reload path. Chart tiles are always clean (never mutated at runtime)
+/// and are always safely evictable. Save the store before calling `evictOutside`
+/// if you want all outside tiles to be eligible for eviction.
+///
+/// @note Concurrency: safe only if no concurrent writer is active in the same
+///   process. A writer racing to dirty a tile between the dirty check and the
+///   erase is undefined behaviour — acceptable before issue #189. See `loadWindow`
+///   for the full concurrency note.
+///
+/// @note If every tile in an epoch is evicted, an empty `EpochTiles` shell is
+///   left in the layer map (the epoch entry itself is not erased). This is
+///   benign: best-source/newest-wins queries skip empty epochs and `save()` is
+///   unaffected (no tiles to write). A later `loadWindow` repopulates it.
+///
+/// @return The number of tiles evicted (dirty tiles that were skipped not counted).
+std::size_t evictOutside(
+  BathymetryStore & store,
+  const geographic_msgs::msg::GeoPoint & min_pt,
+  const geographic_msgs::msg::GeoPoint & max_pt);
 
 }  // namespace marine_bathymetry_store
 

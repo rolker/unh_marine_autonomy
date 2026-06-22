@@ -29,6 +29,7 @@
 #include <string>
 #include <utility>
 
+#include "geographic_msgs/msg/geo_point.hpp"
 #include "marine_autonomy/gggs.h"
 #include "marine_bathymetry_store/bathy_cell.hpp"
 #include "marine_bathymetry_store/bathymetry_tile.hpp"
@@ -40,13 +41,23 @@ namespace marine_bathymetry_store
 class BathymetryStore;
 class SourceRegistry;
 // Persistence free functions (defined in tile_io.cpp). Forward-declared here so
-// the store can friend them: `load` must reach getOrCreateEpoch /
+// the store can friend them: `load` / `loadWindow` must reach getOrCreateEpoch /
 // getOrCreateTile on any layer — including the read-only `Chart` prior — which
-// the public API otherwise forbids.
+// the public API otherwise forbids.  `evictOutside` must reach the non-const
+// layerMap() to erase tiles without const_cast.
 std::size_t save(
   BathymetryStore & store, const std::string & dir, const SourceRegistry * registry);
 std::size_t load(
   BathymetryStore & store, const std::string & dir, SourceRegistry * registry);
+std::size_t loadWindow(
+  BathymetryStore & store, const std::string & dir,
+  const geographic_msgs::msg::GeoPoint & min_pt,
+  const geographic_msgs::msg::GeoPoint & max_pt,
+  SourceRegistry * registry);
+std::size_t evictOutside(
+  BathymetryStore & store,
+  const geographic_msgs::msg::GeoPoint & min_pt,
+  const geographic_msgs::msg::GeoPoint & max_pt);
 
 /// @brief One epoch's tile set within a layer, with its provenance.
 ///
@@ -186,10 +197,21 @@ private:
   // both creators private, this is what makes the Chart read-only guarantee hold
   // by construction, not just by convention: the only public mutator is `set`
   // (which gates `Chart`), and external code cannot obtain a mutable tile.
+  // `loadWindow` needs the same private access as `load`; `evictOutside` needs
+  // the non-const layerMap() to erase tiles without const_cast.
   friend std::size_t save(
     BathymetryStore & store, const std::string & dir, const SourceRegistry * registry);
   friend std::size_t load(
     BathymetryStore & store, const std::string & dir, SourceRegistry * registry);
+  friend std::size_t loadWindow(
+    BathymetryStore & store, const std::string & dir,
+    const geographic_msgs::msg::GeoPoint & min_pt,
+    const geographic_msgs::msg::GeoPoint & max_pt,
+    SourceRegistry * registry);
+  friend std::size_t evictOutside(
+    BathymetryStore & store,
+    const geographic_msgs::msg::GeoPoint & min_pt,
+    const geographic_msgs::msg::GeoPoint & max_pt);
 
   /// @brief Find or create @p epoch in @p layer with @p provenance (load path).
   ///
