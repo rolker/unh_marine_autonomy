@@ -85,3 +85,40 @@ timeout=20.0)` times out with an empty list.
 - Line numbers in the Files-to-Change table (155/134/129/127/135) all match the current code. `Subscription.get_publisher_count()` is a valid rclpy/Jazzy API and mirrors the existing `get_subscription_count()` pattern — idiomatic per ADR-0008.
 - review-issue findings are all addressed: the subscription-count gate (option 1) is chosen over transient-local QoS (option 3), and all four sibling files flagged in the consequences are in scope.
 - Discovery timeout stays at 10s; since the heartbeat publisher only matches after configure+activate, confirm CI brings the lifecycle node to active well within 10s (the downstream `_spin_until(has_active_heartbeat, timeout=20.0)` already assumes this, so no added risk). No change requested.
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-22 02:53 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-146/plan.md` at `eb920a3`
+**Branch**: feature/issue-146 at `4d76935`
+**Phases**: single
+
+### What changed
+Extended the `_wait_for_discovery()` return condition in all five affected
+integration test files to also require the heartbeat subscriber to have matched
+a publisher (`and self.heartbeat_sub.get_publisher_count() > 0`) before
+returning `True`. Confirmed the subscriber attribute is `self.heartbeat_sub` in
+each file. This closes the DDS subscriber-discovery race that allowed the
+~0.6 s heartbeat burst to be lost before subscriber matching completed.
+
+- `marine_autonomy_integration_tests/test/test_mission_command_flow.py` — gate added; **also** reworded the discovery-timeout assert message (was "no subscribers were discovered") to name *both* conditions: the `marine/send_command` command-bridge subscriber **and** the `marine/status/mission_manager` heartbeat publisher, so a future timeout is diagnosable.
+- `marine_autonomy_integration_tests/test/test_mission_navigation_flow.py` — gate added.
+- `marine_autonomy_integration_tests/test/test_mission_navigation_override.py` — gate added.
+- `marine_autonomy_integration_tests/test/test_mission_navigation_rejection.py` — gate added (the heartbeat-*absence* assertion benefits most: the gate prevents a false pass from an undiscovered subscriber).
+- `marine_autonomy_integration_tests/test/test_mission_navigation_failure.py` — gate added.
+
+No QoS, timeout, or production-code changes (per plan §3 and review-plan).
+
+### Verification
+- `python3 -m py_compile` on all five edited files — clean.
+- Integration test (`test_mission_reaches_navigator_and_heartbeat`) was **not**
+  run locally: this layer worktree has no built workspace (no `core_ws/install`),
+  and these `launch_testing` tests require the full mission stack (mission_manager
+  lifecycle node, command bridge, mock navigator). CI is the real gate. As noted
+  in the task, a single green run would be necessary-not-sufficient for a timing
+  race anyway.
+
+### Open questions
+- [ ] None.
