@@ -390,19 +390,22 @@ TEST(Projection, SplatCoverageSpansFootprint)
   const auto wide = collect(0.3);
   EXPECT_GE(wide.size(), 2u);
 
-  // An even step count (~0.22 m ≈ 2 cells) is symmetric — straddles the ping
-  // rather than under-covering to a single cell.
-  const auto even = collect(0.22);
+  // An even step count is symmetric — it straddles the ping rather than
+  // under-covering to one side. Use a *larger* even n_steps (8, via a 7.5-cell
+  // footprint → ceil = 8) so the centroid check has teeth: a one-sided splat biases
+  // the centroid by (n_steps-1)/2 = 3.5 cells, far outside the half-cell tolerance
+  // below, whereas the n_steps=2 case could drift only ±0.5 cell and slip a full-cell
+  // tolerance. For a north-bound track the spread is in latitude, so the mean latitude
+  // of the splat cells must sit within half a cell of the origin.
+  const double cell_m = level.cellSize();
+  const auto even = collect(7.5 * cell_m);   // 7.5 cells → ceil = 8 steps (even)
   EXPECT_GE(even.size(), 2u);
-  // ...and it stays centred on the ping: for a north-bound track the spread is in
-  // latitude, so the mean latitude of the splat cells must sit within a cell of the
-  // origin. An asymmetric (one-sided) splat would bias the centroid off the ping.
-  const double cell_deg = level.cellSize() / 111320.0;   // ~m per deg latitude
+  const double cell_deg = cell_m / 111320.0;   // ~m per deg latitude
   double lat_sum = 0.0;
   for (const auto & c : even) {
     lat_sum += c.position().latitude;
   }
-  EXPECT_NEAR(lat_sum / static_cast<double>(even.size()), origin.latitude, cell_deg);
+  EXPECT_NEAR(lat_sum / static_cast<double>(even.size()), origin.latitude, 0.5 * cell_deg);
 }
 
 // The cells of a north-bound ground track must differ in latitude (the splat steps
