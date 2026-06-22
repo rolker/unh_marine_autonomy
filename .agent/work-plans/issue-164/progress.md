@@ -341,4 +341,82 @@ the wiring is named as a follow-on (own issue on the platform repo).
 - [ ] (suggestion) persistent loadWindow / wrong store_path failure makes the layer silently contribute nothing while reporting current_=true; emit a one-shot ERROR (not throttled WARN) and reflect in current_ — `bathymetry_layer.cpp:209-223`
 - [ ] (suggestion) add explicit `#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"` for the PointStamped doTransform specialization (currently transitive; latent build-break) — `bathymetry_layer.cpp`
 - [ ] (suggestion) computeCost div-by-zero / cast-NaN-UB on the test-seam path when maximum_caution_depth_ == minimum_depth_ (onInitialize validates, setters do not); add a guard + a boundary test at computeCost(minimum_depth_) — `bathymetry_layer.cpp:265-275`
-- [ ] (suggestion) refreshWindow redundant-reload short-circuit uses a 1e-9 deg (~0.1 mm) tolerance; sub-mm TF round-trip jitter can force evict+loadWindow disk I/O every costmap cycle — coarsen the tolerance or compare in cell-index space — `bathymetry_layer.cpp:200-207`
+- [x] (must-fix) TF tide lookup failure leaves map_tide_z_=0.0 → clearance computed from a bogus 0 m water surface (Massabesic datum ~52 m ellipsoidal) → real shoals classified FREE_SPACE; fail-open on a lethal-obstacle layer. Track map-tide validity and skip/conservative-LETHAL until first valid lookup — `bathymetry_layer.cpp:235-246,317`
+- [x] (must-fix) updateCosts sets current_=true unconditionally, even when map_tide_z_ was never valid or loadWindow silently failed — masks a degraded cycle from Nav2 — `bathymetry_layer.cpp:365`
+- [x] (must-fix) Staleness gate ages any->timestamp (bestSource, quality-blind) not sample->timestamp (the reliable record actually used for clearance); when shallowestReliable falls through to an older confident epoch the age check tests the wrong record → can both miss genuinely-stale reliable data and false-stale a fresh one. Inert for D1 (timestamp 0 / max_age 0) but the path is shipped + tested. Use sample->timestamp after the !sample guard — `bathymetry_layer.cpp:306`
+- [x] (suggestion) test StaleCellIsLethal is vacuous w.r.t. the timestamp-source bug (single sample → any==sample); add a two-epoch case (newest over-uncertain+fresh, older reliable+ancient) to pin the contract — `test_bathymetry_layer.cpp:168-194`
+- [x] (suggestion) persistent loadWindow / wrong store_path failure makes the layer silently contribute nothing while reporting current_=true; emit a one-shot ERROR (not throttled WARN) and reflect in current_ — `bathymetry_layer.cpp:209-223`
+- [x] (suggestion) add explicit `#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"` for the PointStamped doTransform specialization (currently transitive; latent build-break) — `bathymetry_layer.cpp`
+- [x] (suggestion) computeCost div-by-zero / cast-NaN-UB on the test-seam path when maximum_caution_depth_ == minimum_depth_ (onInitialize validates, setters do not); add a guard + a boundary test at computeCost(minimum_depth_) — `bathymetry_layer.cpp:265-275`
+- [x] (suggestion) refreshWindow redundant-reload short-circuit uses a 1e-9 deg (~0.1 mm) tolerance; sub-mm TF round-trip jitter can force evict+loadWindow disk I/O every costmap cycle — coarsen the tolerance or compare in cell-index space — `bathymetry_layer.cpp:200-207`
+
+## Address Findings
+**Status**: complete
+**When**: 2026-06-22
+**By**: Claude Code Agent (Claude Sonnet 4.6)
+
+**Commit**: `b770575`
+**Branch**: feature/issue-164
+
+### Clearance sign direction (verified for MF1)
+
+The store uses WGS84 ellipsoidal heights (up-positive). At Lake Massabesic
+the water surface is ~+52.3 m (map_tide_z_) and the seafloor is ~+47–51 m.
+With the unset default `map_tide_z_=0.0`, clearance = `0 − 47 = −47 m` → LETHAL
+(incidentally fail-safe at this site). However for any site where the seafloor
+is at a negative ellipsoidal height (ocean, deep water), clearance =
+`0 − (−depth) = +depth` → large-positive → FREE_SPACE (fail-open, shoals
+erased). The direction is **site-dependent** and cannot be assumed safe as a
+fallback. Conservative fix: refuse to write any cost until the first valid tide
+arrives (`map_tide_valid_` flag), regardless of sign direction.
+
+### Changes made (commit `b770575`)
+
+**MF1 (SAFETY)**: Added `map_tide_valid_` flag (false at startup, true only after
+a successful `lookupTransform`; reset to false in `reset()`). `evaluateCell()`
+returns `std::nullopt` (NO_INFORMATION, skip write) when `!map_tide_valid_`.
+Comment in `updateBounds()` documents the verified site-dependent sign direction.
+
+**MF2**: `updateCosts()` now sets `current_ = map_tide_valid_ && window_valid_`
+instead of unconditionally `true`. A degraded cycle (no tide yet, or
+`loadWindow` failed) reports as stale to Nav2.
+
+**MF3**: Changed `isStale(any->timestamp, now_ns)` → `isStale(sample->timestamp, now_ns)`
+(after the `!sample` guard). The age check now uses the reliable record's epoch,
+not the quality-blind `bestSource` record which may be a newer over-uncertain
+epoch.
+
+**S1**: Replaced single-sample `StaleCellIsLethal` test with a two-epoch test
+`StaleReliableSampleIsLethalWhenNewerEpochOverUncertain` pinning the MF3
+timestamp-source contract (newest epoch: over-uncertain+fresh; older epoch:
+reliable+ancient → must yield LETHAL).
+
+**S2**: `refreshWindow()` persistent `loadWindow` failure now emits a one-shot
+`RCLCPP_ERROR` (not throttled WARN) and sets `window_valid_=false` (reflecting
+into MF2's `current_` gate). Added `store_path_error_logged_` flag, reset in
+`openStore()` so a path reconfigure gets a fresh error.
+
+**S3**: Added explicit `#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"` to
+`bathymetry_layer.hpp` (the `doTransform` specialization was previously transitive
+— latent build-break risk).
+
+**S4**: Added `range <= 0.0` guard in `computeCost()` returning LETHAL (avoids
+div-by-zero when `maximum_caution_depth_ == minimum_depth_`). Added
+`ComputeCostDegenerateRampAndBoundary` test; also pins
+`computeCost(minimum_depth_) == MAX_NON_OBSTACLE` on a normal ramp.
+
+**S5**: Coarsened redundant-reload tolerance from `1e-9°` (~0.1 mm) to
+`resolution_ * 1e-5` (~1 cell-width in degrees at mid-lat). Sub-mm TF
+round-trip jitter was forcing `evict+loadWindow` disk I/O every cycle.
+
+Also: `setMapTideValid(true)` added to `BathymetryLayerForTest` test subclass
+and called in all `evaluateCell`-calling tests so the MF1 gate does not
+silently invalidate them.
+
+### Build / test / lint
+- **Build**: clean (`build.sh bathymetry_layer`), 0 warnings in new sources.
+- **Tests**: 32 total (was 29), 0 errors, 0 failures, 4 skipped. New tests:
+  `InvalidTideYieldsNoInformation` (MF1),
+  `StaleReliableSampleIsLethalWhenNewerEpochOverUncertain` (S1/MF3),
+  `ComputeCostDegenerateRampAndBoundary` (S4).
+- **Lint**: `ament_uncrustify` + `ament_cpplint` clean on all 3 changed files.
