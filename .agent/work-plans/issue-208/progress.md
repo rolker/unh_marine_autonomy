@@ -208,3 +208,25 @@ Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand of
 - [x] (suggestion) `onPing` try/catch wraps the whole per-sample loop, so one throwing sample drops the ping's already-deposited good samples; per-sample skip would preserve the rest of the swath (executor protection itself is correct) — `src/mosaic_node.cpp:368`
 
 Static analysis clean for new code (only known pre-existing uncrustify 0.78.1 `?:` drift + untouched >100-char lines in `sidescan_mosaic_bag.cpp`; the lone >100-char added line is a Markdown table row, not linted). Plan adherence full; all Round-1 pre-push findings (1 must-fix + 4 suggestions) confirmed addressed. No `review-context.yaml` found; offline review diffed against local `origin/jazzy`.
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-22 11:45 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-208 at `987f296`
+**Addressed**: Local Review (Pre-Push), Round 2 — When 2026-06-22 11:16 +00:00 at `ac66578`
+**Commits**: `c8e75a6`, `266cc95`, `43d2bcb`, `987f296`
+
+### Actions
+- [x] (must-fix) Clamp the splat step count in `double` before the `static_cast<int>` — a finite-but-huge `footprint_m/cell_size` (>INT_MAX) was UB; now bounded to `[1, kMaxSplatSteps]` in `double` before the cast — `include/marine_sidescan_mosaic/projection.hpp:186` (`c8e75a6`)
+- [x] (suggestion) Added shared `sanitizeBeamwidthRad()` helper (finiteness/negative→0, degrees-slip flag) and routed every beamwidth input through it — node fallback, per-ping `tx_beamwidths[0]`, and the Tier-2 stored/CLI beamwidth — so the dominant input path gets the same validation as the fallback — `include/marine_sidescan_mosaic/projection.hpp`, `src/mosaic_node.cpp`, `src/sidescan_tier2_flat.cpp`, `src/sidescan_tier2_processed.cpp` (`266cc95`)
+- [x] (suggestion) Tightened the splat-symmetry test: larger even `n_steps` (8, via a 7.5-cell footprint) and a half-cell centroid tolerance, so a one-sided splat (centroid biased by `(n_steps-1)/2` cells) now fails where the old full-cell tolerance let it pass — `test/test_projection.cpp` (`987f296`)
+- [x] (suggestion) Moved the `onPing` projection try/catch *inside* the per-sample loop, so a single throwing sample is skipped (`continue`) while the rest of the swath's already-good deposits survive — `src/mosaic_node.cpp` (`43d2bcb`)
+
+Verified: `colcon build` clean (only pre-existing `geodesy` header warnings); all 34 package GTests pass (test_projection 14/14, including the tightened symmetry assertion). The remaining `colcon test` lint failures are the pre-existing uncrustify `?:` drift and `sidescan_mosaic_bag.cpp` >100-char lines noted by the Round-2 review — confirmed not from these changes (my edited files are uncrustify-clean; the Tier-2 `?:` divergence was actually reduced by one hunk).
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 208 --skill review-code
