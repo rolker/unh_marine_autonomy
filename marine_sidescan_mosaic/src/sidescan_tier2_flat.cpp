@@ -39,6 +39,7 @@
 /// comparison without replaying the bag (#195); `maxhold` keeps the brightest look.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -78,6 +79,16 @@ int toInt(const std::string & s, const std::string & flag)
   }
 }
 
+double toDouble(const std::string & s, const std::string & flag)
+{
+  try {
+    return std::stod(s);
+  } catch (const std::exception &) {
+    std::cerr << "error: expected a number for " << flag << ", got '" << s << "'\n";
+    std::exit(2);
+  }
+}
+
 SplatPolicy parsePolicy(const std::string & s)
 {
   if (s == "mean") {return SplatPolicy::Mean;}
@@ -94,7 +105,9 @@ int main(int argc, char ** argv)
     std::cerr <<
       "usage: sidescan_tier2_flat <tier1.sst1> <out_dir>\n"
       "       [--level N] [--no-nadir-policy drop|assume_zero]\n"
-      "       [--policy mean|newest|maxhold]   (mean=default; newest=live draft layer)\n";
+      "       [--policy mean|newest|maxhold]   (mean=default; newest=live draft layer)\n"
+      "       [--tx-beamwidth-fallback-rad R]  (along-track footprint when the ping\n"
+      "                                         lacks tx_beamwidths; 0=point-deposit)\n";
     return 2;
   }
   const std::string tier1_path = argv[1];
@@ -103,15 +116,38 @@ int main(int argc, char ** argv)
   const std::string no_nadir = argValue(argc, argv, "--no-nadir-policy", "drop");
   const std::string policy_s = argValue(argc, argv, "--policy", "mean");
   const SplatPolicy policy = parsePolicy(policy_s);
+  const double bw_fallback_raw = toDouble(
+    argValue(argc, argv, "--tx-beamwidth-fallback-rad", "0.0"), "--tx-beamwidth-fallback-rad");
+  // Same validation the live node applies to its fallback (shared helper): drop a
+  // non-finite/negative value to 0 (point-deposit), warn on a degrees-for-radians slip.
+  bool bw_fallback_suspicious = false;
+  const double bw_fallback = sanitizeBeamwidthRad(bw_fallback_raw, &bw_fallback_suspicious);
+  if (bw_fallback == 0.0 && bw_fallback_raw != 0.0) {
+    std::cerr << "warning: --tx-beamwidth-fallback-rad " << bw_fallback_raw
+              << " is not a finite non-negative radian value; ignoring it\n";
+  } else if (bw_fallback_suspicious) {
+    std::cerr << "warning: --tx-beamwidth-fallback-rad " << bw_fallback
+              << " rad (~" << bw_fallback * 180.0 / M_PI << " deg) is implausibly wide for an "
+              << "along-track beamwidth; did you pass degrees? expected radians (e.g. 0.00768)\n";
+  }
 
   std::ifstream in(tier1_path, std::ios::binary);
   if (!in) {
     std::cerr << "error: cannot open " << tier1_path << "\n";
     return 1;
   }
-  if (!readTier1Header(in)) {
-    std::cerr << "error: " << tier1_path << " is not a Tier-1 stream\n";
-    return 1;
+  std::uint32_t found_version = 0;
+  switch (checkTier1Header(in, &found_version)) {
+    case Tier1HeaderStatus::Ok:
+      break;
+    case Tier1HeaderStatus::BadVersion:
+      std::cerr << "error: " << tier1_path << " is a Tier-1 stream but version "
+                << found_version << " (this build expects v" << kTier1Version
+                << "); re-run the importer to regenerate it\n";
+      return 1;
+    case Tier1HeaderStatus::BadMagic:
+      std::cerr << "error: " << tier1_path << " is not a Tier-1 stream\n";
+      return 1;
   }
 
   const gggs::Level level(level_n);
@@ -119,6 +155,7 @@ int main(int argc, char ** argv)
 
   Tier1Ping p;
   std::size_t n_in = 0, n_proj = 0, n_no_nadir = 0, n_placed = 0, n_bad_pose = 0;
+  bool warned_wide_per_ping = false;   // throttle the degrees-slip warning to once.
   while (readTier1Ping(in, p)) {
     ++n_in;
     if (p.sample_rate <= 0.0) {
@@ -145,6 +182,20 @@ int main(int argc, char ** argv)
     origin.longitude = gb.longitude_deg;
     origin.altitude = 0.0;   // projectSample precondition.
     const double azimuth = gb.azimuth_rad;
+    // Along-track footprint splat (#208): per-sample beamwidth from Tier-1 v2, else
+    // the CLI fallback (0 → point-deposit, unchanged). Run the stored width through
+    // the shared validator too (non-finite/negative falls back; a degrees slip is
+    // flagged once before the splat hard-caps it).
+    bool per_ping_suspicious = false;
+    const double per_ping_bw =
+      sanitizeBeamwidthRad(static_cast<double>(p.tx_beamwidth_rad), &per_ping_suspicious);
+    const double bw = per_ping_bw > 0.0 ? per_ping_bw : bw_fallback;
+    if (per_ping_bw > 0.0 && per_ping_suspicious && !warned_wide_per_ping) {
+      warned_wide_per_ping = true;
+      std::cerr << "warning: stored per-ping tx_beamwidth " << per_ping_bw
+                << " rad (~" << per_ping_bw * 180.0 / M_PI << " deg) is implausibly wide; "
+                << "capping the splat (further such pings not warned)\n";
+    }
 
     for (std::size_t j = 0; j < p.samples.size(); ++j) {
       const double slant = slantRange(static_cast<int>(j), p.sample0, p.sound_speed, p.sample_rate);
@@ -152,8 +203,12 @@ int main(int argc, char ** argv)
       if (ground <= 0.0) {
         continue;   // inside the nadir cone.
       }
-      const double v = std::clamp(static_cast<double>(p.samples[j]), 0.0, 65535.0);
-      acc.add(projectSample(origin, azimuth, ground, level), static_cast<std::uint16_t>(v));
+      const auto v = static_cast<std::uint16_t>(
+        std::clamp(static_cast<double>(p.samples[j]), 0.0, 65535.0));
+      const double footprint_m = footprintAlongTrack(slant, bw);
+      splatAlongTrack(
+        origin, gb.heading_rad, footprint_m, azimuth, ground, level,
+        [&acc, v](const gggs::CellIndex & cell) {acc.add(cell, v);});
       ++n_placed;
     }
     ++n_proj;

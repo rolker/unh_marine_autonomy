@@ -36,6 +36,7 @@
 /// 0) is added on top for sensors whose URDF +Z is not exactly abeam.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -84,6 +85,32 @@ public:
     earth_frame_ = declare_parameter<std::string>("earth_frame", "earth");
     output_dir_ = declare_parameter<std::string>("output_dir", "sidescan_mosaic");
     sound_speed_ = declare_parameter<double>("sound_speed", 1500.0);
+    // Fallback along-track beamwidth (rad) for pings whose `ping_info.tx_beamwidths`
+    // is empty; 0 (default) keeps the legacy point-deposit (n_steps=1). GCV-20
+    // SideVü nominal is radians(0.44) ≈ 0.00768.
+    const double tx_beamwidth_fallback_raw =
+      declare_parameter<double>("tx_beamwidth_fallback_rad", 0.0);
+    // Guard the fallback before it reaches the real-time splat via the shared
+    // validator: a NaN/inf or negative value would poison the footprint math, and
+    // a degrees-for-radians slip (e.g. 0.44 instead of radians(0.44) ≈ 0.00768)
+    // would splat hundreds of cells per sample. Clamp the unusable to 0; warn
+    // loudly on the merely suspicious.
+    bool tx_beamwidth_fallback_suspicious = false;
+    tx_beamwidth_fallback_rad_ =
+      sanitizeBeamwidthRad(tx_beamwidth_fallback_raw, &tx_beamwidth_fallback_suspicious);
+    if (tx_beamwidth_fallback_rad_ == 0.0 && tx_beamwidth_fallback_raw != 0.0) {
+      RCLCPP_WARN(
+        get_logger(),
+        "tx_beamwidth_fallback_rad=%.6g is not a finite non-negative radian value; "
+        "ignoring it (no along-track splat fallback)",
+        tx_beamwidth_fallback_raw);
+    } else if (tx_beamwidth_fallback_suspicious) {
+      RCLCPP_WARN(
+        get_logger(),
+        "tx_beamwidth_fallback_rad=%.4f rad (~%.1f deg) is implausibly wide for an "
+        "along-track beamwidth; did you pass degrees? expected radians (e.g. 0.00768)",
+        tx_beamwidth_fallback_rad_, tx_beamwidth_fallback_rad_ * 180.0 / M_PI);
+    }
     beam_azimuth_trim_deg_ = declare_parameter<double>("beam_azimuth_trim_deg", 0.0);
     if (beam_azimuth_trim_deg_ != 0.0) {
       // The beam +Z direction already carries the look side and mount/roll tilt;
@@ -310,9 +337,33 @@ private:
     // azimuth — it only selects the per-channel normalizer below.
     const double azimuth = gb.azimuth_rad + beam_azimuth_trim_deg_ * M_PI / 180.0;
 
-    // Beam depression below horizontal, staged for Stage 3 (footprint /
-    // roll-intensity, #185); not consumed by accumulator_.add yet.
+    // Beam depression below horizontal, staged for Stage 4 (roll-intensity
+    // radiometry, #185); not consumed by the footprint splat below.
     [[maybe_unused]] const double depression_rad = gb.depression_rad;
+
+    // Along-track footprint splat (#208): each sample is deposited across its
+    // per-sample footprint (slant · beamwidth). Beamwidth comes from the ping's
+    // `tx_beamwidths[0]` when populated, else the configured fallback (0 → unchanged
+    // point-deposit). Run the per-ping value through the same validator as the
+    // fallback (the dominant input path was previously only `>0.0`-guarded): a
+    // non-finite/negative per-ping width falls back, and a suspiciously wide one is
+    // flagged once before the splat hard-caps it.
+    double tx_beamwidth_rad = tx_beamwidth_fallback_rad_;
+    if (!msg.ping_info.tx_beamwidths.empty()) {
+      bool per_ping_suspicious = false;
+      const double per_ping = sanitizeBeamwidthRad(
+        static_cast<double>(msg.ping_info.tx_beamwidths[0]), &per_ping_suspicious);
+      if (per_ping > 0.0) {
+        tx_beamwidth_rad = per_ping;
+        if (per_ping_suspicious) {
+          RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 5000,
+            "per-ping tx_beamwidth %.4f rad (~%.1f deg) is implausibly wide for an "
+            "along-track beamwidth; did the source emit degrees? capping the splat",
+            per_ping, per_ping * 180.0 / M_PI);
+        }
+      }
+    }
 
     const std::vector<double> raw = decodeSamples(msg);
     if (msg.samples_per_beam > 0 && raw.size() != msg.samples_per_beam) {
@@ -327,14 +378,30 @@ private:
     (side == Side::Port ? port_norm_ : stbd_norm_).normalize(raw, norm);
 
     const int sample0 = static_cast<int>(msg.sample0);
+    // Bound the geodesy/projection work in a *per-sample* try: `geodesy::wgs84::direct`
+    // (used by the along-track splat) can throw on a pathological geometry, and an
+    // uncaught throw out of this subscription callback would tear down the executor and
+    // the whole live mosaicker. Catching per sample (rather than around the whole loop)
+    // skips only the offending sample and preserves the rest of the swath's already-good
+    // deposits, instead of dropping the entire ping on one bad sample.
     for (std::size_t j = 0; j < norm.size(); ++j) {
-      const double slant = slantRange(
-        static_cast<int>(j), sample0, sound_speed, msg.sample_rate);
-      const double ground = groundRange(slant, altitude);
-      if (ground <= 0.0) {
-        continue;   // inside the nadir cone; nothing to place on the ground
+      try {
+        const double slant = slantRange(
+          static_cast<int>(j), sample0, sound_speed, msg.sample_rate);
+        const double ground = groundRange(slant, altitude);
+        if (ground <= 0.0) {
+          continue;   // inside the nadir cone; nothing to place on the ground
+        }
+        const double footprint_m = footprintAlongTrack(slant, tx_beamwidth_rad);
+        splatAlongTrack(
+          origin, gb.heading_rad, footprint_m, azimuth, ground, level_,
+          [this, j, &norm](const gggs::CellIndex & cell) {accumulator_.add(cell, norm[j]);});
+      } catch (const std::exception & e) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "projection threw for a sample (%s); skipping it", e.what());
+        continue;
       }
-      accumulator_.add(projectSample(origin, azimuth, ground, level_), norm[j]);
     }
   }
 
@@ -373,6 +440,7 @@ private:
   std::string output_dir_;
   std::string no_nadir_policy_;
   double sound_speed_ = 1500.0;
+  double tx_beamwidth_fallback_rad_ = 0.0;
   double beam_azimuth_trim_deg_ = 0.0;
   double nadir_staleness_s_ = 5.0;
   double max_tf_age_s_ = 1.0;

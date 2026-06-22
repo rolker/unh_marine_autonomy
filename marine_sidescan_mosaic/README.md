@@ -25,7 +25,12 @@ and the dirty-region distribution topic (P4) are separate sub-issues.
    azimuth → GGGS `CellIndex` (grid resolved per sample, no edge clamp).
 4. **Normalize** — rolling AGC (`RollingNormalizer`) maps sample magnitudes to
    `uint16` so the mosaic stays legible (live stand-in for PINGMapper's EGN).
-5. **Splat** — `MosaicAccumulator` folds into tiles (`newest` default / `mean` / `max_hold`).
+5. **Splat** — each sample is deposited across its **along-track footprint**
+   (`slant_range · tx_beamwidth`, centred on the ping and stepped along the vessel
+   ground track) so consecutive pings don't leave gaps at survey speed; the
+   `MosaicAccumulator` then folds the covered cells into tiles (`newest` default /
+   `mean` / `max_hold`). Beamwidth comes from the ping's `tx_beamwidths[0]`, else
+   `tx_beamwidth_fallback_rad` (0 → single point-deposit, the legacy behaviour).
 6. **Flush** — dirty tiles → GeoTIFF on a timer (`saveTiles`).
 
 ## Key parameters
@@ -37,6 +42,7 @@ and the dirty-region distribution topic (P4) are separate sub-issues.
 | `splat` | `newest` | Per-cell combine: `newest` (recency — live operator view, default) / `mean` (despeckle) / `max_hold` (target-cue) |
 | `no_nadir_policy` | `drop` | On a stale/missing nadir: `drop` the ping or `assume_zero` |
 | `nadir_staleness_s` | `5.0` | How long a held nadir altitude stays valid |
+| `tx_beamwidth_fallback_rad` | `0.0` | Along-track tx beamwidth (rad) for the footprint splat when the ping lacks `tx_beamwidths`; `0` = single point-deposit. GCV-20 SideVü nominal `radians(0.44) ≈ 0.00768` |
 | `beam_azimuth_trim_deg` | `0` | Residual fine-trim added to the beam azimuth (see frame note) |
 | `flush_period_s` | `2.0` | Tile flush cadence |
 | `norm_*` | — | Normalizer tuning (`target_level`, `percentile`, `ema_alpha`) |

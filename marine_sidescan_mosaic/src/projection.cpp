@@ -138,6 +138,9 @@ GeoBeam ecefPoseToGeoBeam(
     // would be ill-defined.  Not guarded here as that geometry can't occur abeam.
     out.azimuth_rad = std::atan2(zE, zN);
     out.depression_rad = std::atan2(zD, std::hypot(zN, zE));
+    // Body +X axis (column 0 of body→NED): the vessel ground-track azimuth, same
+    // yaw as ecefPoseToGeoHeading — the along-track splat axis (#208).
+    out.heading_rad = std::atan2(p.r_body_ned[1 * 3 + 0], p.r_body_ned[0 * 3 + 0]);
   }
   return out;
 }

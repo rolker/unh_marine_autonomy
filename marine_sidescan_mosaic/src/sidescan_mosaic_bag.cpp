@@ -229,6 +229,11 @@ int main(int argc, char ** argv)
     p.sample0 = static_cast<std::int32_t>(msg.sample0);
     const double age_s = std::abs(ping_ns - held_nadir_ns) / 1e9;
     p.nadir_altitude_m = (held_nadir > 0.0F && age_s <= nadir_staleness_s) ? held_nadir : -1.0F;
+    // Along-track tx −3 dB beamwidth (Tier-1 v2), so offline Tier-2 reproduces the
+    // footprint without re-reading the bag; 0 when the driver didn't publish it.
+    p.tx_beamwidth_rad =
+      (!msg.ping_info.tx_beamwidths.empty() && msg.ping_info.tx_beamwidths[0] > 0.0F)
+      ? msg.ping_info.tx_beamwidths[0] : 0.0F;
     const auto raw = marine_sidescan_mosaic::decodeSamples(msg);
     p.samples.assign(raw.begin(), raw.end());   // double -> float (lossless for GCV range).
 

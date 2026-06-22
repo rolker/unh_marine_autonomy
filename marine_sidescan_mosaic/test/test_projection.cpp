@@ -23,6 +23,7 @@
 
 #include <array>
 #include <cmath>
+#include <set>
 
 #include "geodesy/ecef.h"
 #include "geographic_msgs/msg/geo_point.hpp"
@@ -332,4 +333,101 @@ TEST(Projection, SampleCrossesGridBoundary)
   const auto cell = msm::projectSample(origin, M_PI / 2.0, 5.0, level);    // 5 m east
   EXPECT_NE(cell.grid(), origin_grid);
   EXPECT_EQ(cell.grid().column(), origin_grid.column() + 1);
+}
+
+// GeoBeam.heading_rad (#208 along-track splat axis) is the body +X (ground-track)
+// yaw — the same value ecefPoseToGeoHeading returns, even under full attitude.
+TEST(Projection, BeamHeadingMatchesGroundTrack)
+{
+  geodesy::ECEFPoint e;
+  geodesy::fromMsg(geoPoint(43.07, -71.42, 0.0), e);
+  for (double h_deg : {0.0, 35.0, 200.0, 315.0}) {
+    const double h = h_deg * M_PI / 180.0;
+    const Mat3 r = shipSensorBodyNed(h, 12.0 * M_PI / 180.0, 20.0 * M_PI / 180.0);
+    const auto q = bodyEcefQuatForBodyNed(43.07, -71.42, r);
+    const auto gh = msm::ecefPoseToGeoHeading(e.x, e.y, e.z, q[0], q[1], q[2], q[3]);
+    const auto gb = msm::ecefPoseToGeoBeam(e.x, e.y, e.z, q[0], q[1], q[2], q[3]);
+    ASSERT_TRUE(gb.valid) << "heading " << h_deg;
+    EXPECT_NEAR(std::cos(gb.heading_rad), std::cos(gh.heading_rad), 1e-9) << "heading " << h_deg;
+    EXPECT_NEAR(std::sin(gb.heading_rad), std::sin(gh.heading_rad), 1e-9) << "heading " << h_deg;
+  }
+}
+
+TEST(Projection, FootprintAlongTrack)
+{
+  EXPECT_NEAR(msm::footprintAlongTrack(30.0, 0.00768), 0.2304, 1e-9);   // 30 m @ 0.44°
+  EXPECT_DOUBLE_EQ(msm::footprintAlongTrack(0.0, 0.00768), 0.0);        // zero range
+  EXPECT_DOUBLE_EQ(msm::footprintAlongTrack(30.0, 0.0), 0.0);           // zero beamwidth
+}
+
+// A footprint of a few cells must paint several distinct cells stepped along the
+// ground track; a zero footprint collapses to the single point-deposit cell.
+TEST(Projection, SplatCoverageSpansFootprint)
+{
+  const gggs::Level level(13);                 // ~0.11 m cells
+  const auto origin = geoPoint(43.07, -71.42, 0.0);
+  const double heading = 0.0;                  // ground track due north
+  const double azimuth = M_PI / 2.0;           // beam due east
+  const double ground = 20.0;
+
+  auto collect = [&](double footprint_m) {
+      std::set<gggs::CellIndex> cells;
+      msm::splatAlongTrack(
+        origin, heading, footprint_m, azimuth, ground, level,
+        [&cells](const gggs::CellIndex & c) {cells.insert(c);});
+      return cells;
+    };
+
+  // Zero footprint → exactly one cell, identical to the legacy point-deposit.
+  const auto none = collect(0.0);
+  EXPECT_EQ(none.size(), 1u);
+  EXPECT_EQ(*none.begin(), msm::projectSample(origin, azimuth, ground, level));
+
+  // Sub-cell footprint still collapses to one cell (n_steps = 1).
+  EXPECT_EQ(collect(0.05).size(), 1u);
+
+  // A ~0.3 m footprint (≈ 3 cells) paints several distinct cells.
+  const auto wide = collect(0.3);
+  EXPECT_GE(wide.size(), 2u);
+
+  // An even step count is symmetric — it straddles the ping rather than
+  // under-covering to one side. Use a *larger* even n_steps (8, via a 7.5-cell
+  // footprint → ceil = 8) so the centroid check has teeth: a one-sided splat biases
+  // the centroid by (n_steps-1)/2 = 3.5 cells, far outside the half-cell tolerance
+  // below, whereas the n_steps=2 case could drift only ±0.5 cell and slip a full-cell
+  // tolerance. For a north-bound track the spread is in latitude, so the mean latitude
+  // of the splat cells must sit within half a cell of the origin.
+  const double cell_m = level.cellSize();
+  const auto even = collect(7.5 * cell_m);   // 7.5 cells → ceil = 8 steps (even)
+  EXPECT_GE(even.size(), 2u);
+  const double cell_deg = cell_m / 111320.0;   // ~m per deg latitude
+  double lat_sum = 0.0;
+  for (const auto & c : even) {
+    lat_sum += c.position().latitude;
+  }
+  EXPECT_NEAR(lat_sum / static_cast<double>(even.size()), origin.latitude, 0.5 * cell_deg);
+}
+
+// The cells of a north-bound ground track must differ in latitude (the splat steps
+// along heading, not across the beam) — pins the along-track orientation.
+TEST(Projection, SplatStepsAlongHeading)
+{
+  const gggs::Level level(13);
+  const auto origin = geoPoint(43.07, -71.42, 0.0);
+  std::set<double> lats;
+  std::set<double> lons;
+  msm::splatAlongTrack(
+    origin, 0.0 /*north*/, 0.5 /*m*/, M_PI / 2.0 /*east beam*/, 20.0, level,
+    [&lats, &lons](const gggs::CellIndex & c) {
+      lats.insert(c.position().latitude);
+      lons.insert(c.position().longitude);
+    });
+  EXPECT_GE(lats.size(), 2u);   // stepped in latitude (north-south), as expected
+  // ...and held ~constant in longitude: the splat steps run along heading (north),
+  // not across the beam, so every deposit shares the same across-track (east)
+  // placement. Bound the longitude spread to a cell or two — far tighter than the
+  // multi-cell latitude spread above — so an accidental across-track step regresses.
+  const double cell_deg = level.cellSize() / 111320.0;   // ~m per deg latitude
+  const double lon_span = *lons.rbegin() - *lons.begin();
+  EXPECT_LT(lon_span, 2.0 * cell_deg);
 }
