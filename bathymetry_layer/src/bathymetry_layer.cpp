@@ -103,10 +103,14 @@ void BathymetryLayer::reset()
 {
   current_ = false;
   window_valid_ = false;
+  map_tide_valid_ = false;
 }
 
 void BathymetryLayer::openStore()
 {
+  // A new store path is being tried — reset the one-shot error flag so any
+  // subsequent loadWindow failure gets a fresh ERROR log.
+  store_path_error_logged_ = false;
   if (store_path_.empty()) {
     store_.reset();
     return;
@@ -197,11 +201,16 @@ void BathymetryLayer::refreshWindow()
   }
 
   // Skip redundant reloads if the window has not changed materially.
+  // S5: use a cell-width tolerance (~resolution_ in degrees, ≈ 1e-5° at mid
+  // latitudes for 1 m cells) rather than 1e-9° (~0.1 mm). Sub-mm TF round-trip
+  // jitter in the world→lat/lon projection would otherwise force
+  // evict+loadWindow disk I/O on every costmap cycle.
+  const double tol = resolution_ * 1e-5;  // ~1 cell in degrees at mid-lat
   if (window_valid_ &&
-    std::abs(min_geo.latitude - window_min_.latitude) < 1e-9 &&
-    std::abs(min_geo.longitude - window_min_.longitude) < 1e-9 &&
-    std::abs(max_geo.latitude - window_max_.latitude) < 1e-9 &&
-    std::abs(max_geo.longitude - window_max_.longitude) < 1e-9)
+    std::abs(min_geo.latitude - window_min_.latitude) < tol &&
+    std::abs(min_geo.longitude - window_min_.longitude) < tol &&
+    std::abs(max_geo.latitude - window_max_.latitude) < tol &&
+    std::abs(max_geo.longitude - window_max_.longitude) < tol)
   {
     return;
   }
@@ -216,10 +225,21 @@ void BathymetryLayer::refreshWindow()
     window_max_ = max_geo;
     window_valid_ = true;
   } catch (const std::exception & e) {
-    RCLCPP_WARN_THROTTLE(
-      logger_, *clock_, 10000,
-      "bathymetry_layer '%s': failed to (re)load store window from '%s': %s",
-      name_.c_str(), store_path_.c_str(), e.what());
+    // A persistent failure here (bad store_path or corrupt tiles) means this
+    // layer contributes nothing — that must be visible to Nav2 as a degraded
+    // cycle. Emit a one-shot ERROR so operators can see the root cause without
+    // being spammed; current_ is kept false (MF2 / S2: updateCosts gates on
+    // window_valid_).
+    if (!store_path_error_logged_) {
+      RCLCPP_ERROR_STREAM(
+        logger_,
+        "bathymetry_layer '" << name_ << "': failed to load store window from '"
+                             << store_path_ << "': " << e.what()
+                             << " — this layer will contribute no costs until the "
+                             << "store is reachable.");
+      store_path_error_logged_ = true;
+    }
+    window_valid_ = false;
   }
 }
 
@@ -232,11 +252,24 @@ void BathymetryLayer::updateBounds(
 
   // Cache the water-surface ellipsoidal height from the map_tide frame's
   // z-origin (mirror s57_layer's tide lookup at TimePointZero).
+  //
+  // Verified sign direction (MF1): store depths are WGS84 ellipsoidal heights
+  // (up-positive). At Lake Massabesic the water surface is ~+52.3 m (map_tide_z_)
+  // and the seafloor is a few metres below that, e.g. +47–51 m. So clearance =
+  // map_tide_z_ − seafloor_height > 0 (a few metres). With the UNSET default
+  // map_tide_z_=0.0 the clearance for those same cells would be 0 − 47 = −47 m
+  // → LETHAL (coincidentally fail-safe for this lake). However, for any site where
+  // the seafloor elevation is negative (e.g. ocean, depth > ellipsoid zero),
+  // clearance = 0 − (−depth) = +depth → large-positive → FREE_SPACE (fail-open,
+  // i.e. shoals hidden). The direction is therefore SITE-DEPENDENT and cannot be
+  // relied upon for safety. The conservative fix (MF1) is to refuse to write any
+  // cost until at least one valid tide has been received, regardless of sign.
   if (!map_tide_frame_.empty()) {
     try {
       auto transform =
         tf_->lookupTransform(global_frame_id_, map_tide_frame_, tf2::TimePointZero);
       map_tide_z_ = transform.transform.translation.z;
+      map_tide_valid_ = true;
     } catch (const tf2::TransformException & e) {
       RCLCPP_WARN_THROTTLE(
         logger_, *clock_, 10000,
@@ -268,10 +301,20 @@ unsigned char BathymetryLayer::computeCost(double clearance) const
   if (clearance >= maximum_caution_depth_) {
     return nav2_costmap_2d::FREE_SPACE;
   }
+  // S4: guard div-by-zero when parameters are degenerate (maximum_caution_depth_
+  // == minimum_depth_). onInitialize() validates and resets to defaults, but
+  // setters (used in tests and via parameter-change callbacks) do not. At the
+  // ramp boundary clearance == minimum_depth_ with a zero-width window, any cost
+  // in [LETHAL+1, MAX_NON_OBSTACLE] is defensible; LETHAL is the conservative
+  // choice.
+  const double range = maximum_caution_depth_ - minimum_depth_;
+  if (range <= 0.0) {
+    return nav2_costmap_2d::LETHAL_OBSTACLE;
+  }
   // Linear ramp between minimum_depth_ (LETHAL boundary) and maximum_caution_depth_
   // (FREE boundary), matching s57_layer::get_cost_from_grid.
-  const double scaled = nav2_costmap_2d::MAX_NON_OBSTACLE *
-    (1.0 - (clearance - minimum_depth_) / (maximum_caution_depth_ - minimum_depth_));
+  const double scaled =
+    nav2_costmap_2d::MAX_NON_OBSTACLE * (1.0 - (clearance - minimum_depth_) / range);
   return static_cast<unsigned char>(scaled);
 }
 
@@ -291,6 +334,15 @@ std::optional<unsigned char> BathymetryLayer::evaluateCell(
     return std::nullopt;
   }
 
+  // MF1: refuse to compute clearance from an invalid (never-received) tide.
+  // The clearance direction is SITE-DEPENDENT (see comment in updateBounds), so
+  // map_tide_z_=0.0 (the default) cannot be treated as a safe fallback. Leave the
+  // cell as NO_INFORMATION (do not write) so the costmap does not assert bogus
+  // FREE or spurious LETHAL costs before the first valid tide arrives.
+  if (!map_tide_valid_) {
+    return std::nullopt;
+  }
+
   // Two-query no-data policy (review M1, ADR-0002 §D7):
   //   1. bestSource — quality-blind "is there ANY data here?"
   const std::optional<DepthSample> any = bestSource(*store_, cell);
@@ -303,10 +355,15 @@ std::optional<unsigned char> BathymetryLayer::evaluateCell(
   //   2. shallowestReliable — the navigation-safety gate (uncertainty).
   const std::optional<DepthSample> sample = shallowestReliable(*store_, cell, max_uncertainty_);
 
-  if (!sample || isStale(any->timestamp, now_ns)) {
-    // Data exists but every sample is over-uncertain, or the freshest data is
-    // stale → conservative LETHAL (a surveyed-but-unusable cell is NOT treated
-    // as unsurveyed; that mis-classification was review finding M1).
+  // MF3: use sample->timestamp (the reliable record's age) for the staleness
+  // check, not any->timestamp (the quality-blind record). When the newest
+  // epoch's samples are all over-uncertain and the fallback lands on an older
+  // confident epoch, we want to age-check the epoch we are actually using for
+  // clearance — not the newer-but-unreliable one that bestSource found.
+  if (!sample || isStale(sample->timestamp, now_ns)) {
+    // Data exists but every sample is over-uncertain (sample==nullopt), or the
+    // reliable sample is stale → conservative LETHAL. A surveyed-but-unusable
+    // cell must NOT be treated as unsurveyed (review M1).
     return nav2_costmap_2d::LETHAL_OBSTACLE;
   }
 
@@ -362,7 +419,12 @@ void BathymetryLayer::updateCosts(
     }
   }
 
-  current_ = true;
+  // MF2: only report this cycle as "current" when all prerequisites held:
+  // - a valid tide was received (map_tide_valid_) — MF1 safety gate
+  // - the store window was successfully loaded (window_valid_) — S2 gate
+  // A degraded cycle (no tide yet, or loadWindow failed) must not appear fresh
+  // to Nav2's staleness monitor; leave current_=false so Nav2 can detect it.
+  current_ = map_tide_valid_ && window_valid_;
 }
 
 }  // namespace bathymetry_layer

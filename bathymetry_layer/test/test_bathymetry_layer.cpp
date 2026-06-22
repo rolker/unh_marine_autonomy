@@ -49,6 +49,8 @@ public:
   void setStore(std::unique_ptr<BathymetryStore> store) {store_ = std::move(store);}
   BathymetryStore & store() {return *store_;}
   void setMapTideZ(double z) {map_tide_z_ = z;}
+  // Explicitly mark the tide as valid (as if a successful TF lookup arrived).
+  void setMapTideValid(bool v) {map_tide_valid_ = v;}
   void setMinimumDepth(double v) {minimum_depth_ = v;}
   void setMaximumCautionDepth(double v) {maximum_caution_depth_ = v;}
   void setMaxUncertainty(double v) {max_uncertainty_ = v;}
@@ -99,6 +101,7 @@ TEST(BathymetryLayer, UnsurveyedCellLeavesMasterUntouched)
   BathymetryLayerForTest layer;
   layer.setStore(std::make_unique<BathymetryStore>(5));
   layer.setMapTideZ(0.0);
+  layer.setMapTideValid(true);
 
   // A cell with no data anywhere in the store.
   const auto cell = layer.store().cellIndex(kLat, kLon);
@@ -123,6 +126,7 @@ TEST(BathymetryLayer, SurveyedCellMapsClearanceToCost)
   // Shoal: seafloor 0.5 m below the water surface → clearance 0.5 m < 1.0 → LETHAL.
   store->set(SourceLayer::Processed, kEpoch, cell, BathyCell{-0.5, 0.1, 1LL});
   layer.setStore(std::move(store));
+  layer.setMapTideValid(true);
   auto shoal = layer.evaluateCell(cell, /*now_ns=*/0);
   ASSERT_TRUE(shoal.has_value());
   EXPECT_EQ(*shoal, nav2_costmap_2d::LETHAL_OBSTACLE);
@@ -132,6 +136,7 @@ TEST(BathymetryLayer, SurveyedCellMapsClearanceToCost)
   const auto deep_cell = deep_store->cellIndex(kLat, kLon);
   deep_store->set(SourceLayer::Processed, kEpoch, deep_cell, BathyCell{-5.0, 0.1, 1LL});
   layer.setStore(std::move(deep_store));
+  layer.setMapTideValid(true);
   auto deep = layer.evaluateCell(deep_cell, /*now_ns=*/0);
   ASSERT_TRUE(deep.has_value());
   EXPECT_EQ(*deep, nav2_costmap_2d::FREE_SPACE);
@@ -154,6 +159,7 @@ TEST(BathymetryLayer, OverUncertainSurveyedCellIsLethal)
   // (shallowestReliable nullopt).
   store->set(SourceLayer::Processed, kEpoch, cell, BathyCell{-10.0, 5.0, 1LL});
   layer.setStore(std::move(store));
+  layer.setMapTideValid(true);
 
   const auto result = layer.evaluateCell(cell, /*now_ns=*/0);
   ASSERT_TRUE(result.has_value())
@@ -179,6 +185,7 @@ TEST(BathymetryLayer, StaleCellIsLethal)
   // Deep + reliable (clearance would be FREE), but timestamp is 1 ns — ancient.
   store->set(SourceLayer::Processed, kEpoch, cell, BathyCell{-5.0, 0.1, 1LL});
   layer.setStore(std::move(store));
+  layer.setMapTideValid(true);
 
   const int64_t now_ns = 10 * kNsPerSec;  // 10 s now, max_age 1 s → stale.
   const auto stale = layer.evaluateCell(cell, now_ns);
@@ -194,7 +201,110 @@ TEST(BathymetryLayer, StaleCellIsLethal)
 }
 
 // ---------------------------------------------------------------------------
-// Test case 6 (acceptance criterion): memory-bound windowed residency. After
+// Test case 6 (MF1): invalid tide → evaluateCell returns nullopt even for a
+// well-surveyed, reliable, fresh cell. This pins the safety contract: the
+// layer must not compute clearance from an uninitialised tide value.
+// ---------------------------------------------------------------------------
+TEST(BathymetryLayer, InvalidTideYieldsNoInformation)
+{
+  BathymetryLayerForTest layer;
+  layer.setMinimumDepth(1.0);
+  layer.setMaximumCautionDepth(3.0);
+  layer.setMaxUncertainty(0.5);
+  // Deliberately do NOT call setMapTideValid(true) — map_tide_valid_ defaults false.
+  layer.setMapTideZ(52.3);  // Even a "correct" z must be rejected without a valid flag.
+
+  auto store = std::make_unique<BathymetryStore>(5);
+  const auto cell = store->cellIndex(kLat, kLon);
+  // A perfectly good surveyed cell (deep, reliable, fresh) must still be skipped.
+  store->set(SourceLayer::Processed, kEpoch, cell, BathyCell{47.0, 0.1, 1LL});
+  layer.setStore(std::move(store));
+
+  const auto result = layer.evaluateCell(cell, /*now_ns=*/0);
+  EXPECT_FALSE(result.has_value())
+    << "No tide yet: layer must not write any cost (MF1 safety gate).";
+}
+
+// ---------------------------------------------------------------------------
+// Test case 7 (S1/MF3): two-epoch StaleCell — pins the MF3 timestamp-source
+// contract. Set up a cell with TWO epochs:
+//   newest epoch: over-uncertain (shallowestReliable skips it), fresh timestamp.
+//   older epoch:  reliable (shallowestReliable uses it), ancient timestamp.
+// evaluateCell must use the RELIABLE sample's (old) timestamp for the staleness
+// check and return LETHAL. Before MF3, the code used any->timestamp (the
+// over-uncertain fresh epoch), which would have incorrectly passed the age gate
+// and produced a clearance-based cost instead of LETHAL.
+// ---------------------------------------------------------------------------
+TEST(BathymetryLayer, StaleReliableSampleIsLethalWhenNewerEpochOverUncertain)
+{
+  BathymetryLayerForTest layer;
+  layer.setMinimumDepth(1.0);
+  layer.setMaximumCautionDepth(3.0);
+  layer.setMaxUncertainty(0.5);
+  layer.setMaxAge(1.0);   // 1-second window.
+  layer.setMapTideZ(0.0);
+  layer.setMapTideValid(true);
+
+  auto store = std::make_unique<BathymetryStore>(5);
+  const auto cell = store->cellIndex(kLat, kLon);
+
+  const int64_t now_ns = 10 * kNsPerSec;  // "now" = 10 s.
+
+  // Newer epoch (e.g. "2026-06-11"): deep, but OVER-UNCERTAIN + FRESH timestamp.
+  // bestSource will find this epoch first (it is newest), but shallowestReliable
+  // cannot use it. Before MF3 this fresh timestamp would have been used for the
+  // age check → the age gate passes → clearance computed → FREE_SPACE (wrong).
+  const int64_t fresh_ns = 9 * kNsPerSec;  // 1 s ago — within max_age of 1 s.
+  store->set(SourceLayer::Processed, "2026-06-11", cell, BathyCell{-5.0, 5.0, fresh_ns});
+
+  // Older epoch ("2026-06-10"): deep, RELIABLE, but ANCIENT timestamp.
+  // shallowestReliable will select this record. Its timestamp is ancient → LETHAL.
+  const int64_t ancient_ns = 1LL;  // nanosecond 1 — effectively epoch 0, very old.
+  store->set(SourceLayer::Processed, kEpoch, cell, BathyCell{-5.0, 0.1, ancient_ns});
+
+  layer.setStore(std::move(store));
+
+  const auto result = layer.evaluateCell(cell, now_ns);
+  ASSERT_TRUE(result.has_value())
+    << "Cell has data → must write something (not skip as unsurveyed).";
+  EXPECT_EQ(*result, nav2_costmap_2d::LETHAL_OBSTACLE)
+    << "Reliable sample is ancient → LETHAL (MF3: must use sample->timestamp, "
+       "not any->timestamp).";
+}
+
+// ---------------------------------------------------------------------------
+// Test case 8 (S4): computeCost boundary guard — degenerate ramp
+// (maximum_caution_depth_ == minimum_depth_) must not divide by zero or
+// produce a NaN cast. Also pins computeCost(minimum_depth_) == LETHAL.
+// ---------------------------------------------------------------------------
+TEST(BathymetryLayer, ComputeCostDegenerateRampAndBoundary)
+{
+  BathymetryLayerForTest layer;
+  layer.setMinimumDepth(2.0);
+  layer.setMaximumCautionDepth(2.0);  // degenerate: range == 0
+
+  // Degenerate range: any clearance < maximum_caution_depth_ falls through to
+  // the ramp but the range guard returns LETHAL (S4).
+  EXPECT_EQ(layer.computeCost(1.9), nav2_costmap_2d::LETHAL_OBSTACLE)
+    << "Below the (degenerate) boundary → LETHAL";
+  // At exactly the boundary both the < minimum_depth_ check and the range guard
+  // fire in sequence; the result must be LETHAL or FREE — not UB.
+  const unsigned char at_boundary = layer.computeCost(2.0);
+  EXPECT_TRUE(
+    at_boundary == nav2_costmap_2d::LETHAL_OBSTACLE ||
+    at_boundary == nav2_costmap_2d::FREE_SPACE)
+    << "At minimum_depth_ with degenerate range: must be LETHAL or FREE, not UB.";
+
+  // With a normal ramp, computeCost(minimum_depth_) must equal MAX_NON_OBSTACLE
+  // (the top of the caution band, just inside LETHAL).
+  layer.setMinimumDepth(1.0);
+  layer.setMaximumCautionDepth(3.0);
+  EXPECT_EQ(layer.computeCost(1.0), nav2_costmap_2d::MAX_NON_OBSTACLE)
+    << "At minimum_depth_ on a normal ramp → MAX_NON_OBSTACLE (highest caution).";
+}
+
+// ---------------------------------------------------------------------------
+// Test case 9 (acceptance criterion): memory-bound windowed residency. After
 // loading a small window and then evicting outside a small box, the resident
 // tile count stays bounded — the layer never holds the whole store.
 // ---------------------------------------------------------------------------

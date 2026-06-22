@@ -15,6 +15,7 @@
 #include "nav2_costmap_2d/layer.hpp"
 #include "nav2_costmap_2d/layered_costmap.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
 namespace bathymetry_layer
 {
@@ -87,6 +88,11 @@ protected:
   // can populate a synthetic store and drive cost evaluation without TF.
   std::unique_ptr<marine_bathymetry_store::BathymetryStore> store_;
   double map_tide_z_ = 0.0;
+  // True only after at least one successful map_tide TF lookup. When false,
+  // evaluateCell() refuses to compute clearance — tide height 0.0 (the default)
+  // is not a valid water-surface datum and would produce arbitrary clearance
+  // values. updateCosts() also gates current_=true on this flag (MF1/MF2).
+  bool map_tide_valid_ = false;
 
   // Parameters (protected so the test fixture can configure them directly).
   double minimum_depth_ = 1.0;
@@ -119,6 +125,12 @@ private:
   geographic_msgs::msg::GeoPoint window_min_;
   geographic_msgs::msg::GeoPoint window_max_;
   bool window_valid_ = false;
+
+  // One-shot flag: the first loadWindow/evictOutside failure is logged at ERROR
+  // level; subsequent failures from the same root cause (e.g. bad store_path_)
+  // are suppressed to avoid log spam. Reset in openStore() so a path reconfigure
+  // gets a fresh error if it also fails.
+  bool store_path_error_logged_ = false;
 };
 
 }  // namespace bathymetry_layer
