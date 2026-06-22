@@ -67,3 +67,21 @@ timeout=20.0)` times out with an empty list.
 
 ### Open questions
 - [ ] No open questions — plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-06-22 01:59 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-146/plan.md` at `c9375d4`
+**PR**: PR-less (--issue mode)
+**Verdict**: approve-with-suggestions
+
+### Findings
+- [ ] (suggestion) `test_mission_command_flow.py:142-143` assert message still says "no subscribers were discovered"; after adding the heartbeat-publisher gate the loop can also fail on the subscriber side. Update the message to name both conditions so a future discovery timeout is diagnosable. (The four nav files use a generic "DDS discovery timed out." message, so this only affects command_flow.) — `plan.md:49`
+- [ ] (verified, no action) All four nav-test files share the exact gap: same `heartbeat_sub` on `marine/status/mission_manager`, gated only on `cmd_pub.get_subscription_count()`. Each genuinely consumes heartbeats (incl. `test_mission_navigation_rejection`, which asserts heartbeat *absence* — the gate prevents a false pass from an undiscovered subscriber). Consequence coverage is complete. — `plan.md:33-39`
+
+### Notes
+- Line numbers in the Files-to-Change table (155/134/129/127/135) all match the current code. `Subscription.get_publisher_count()` is a valid rclpy/Jazzy API and mirrors the existing `get_subscription_count()` pattern — idiomatic per ADR-0008.
+- review-issue findings are all addressed: the subscription-count gate (option 1) is chosen over transient-local QoS (option 3), and all four sibling files flagged in the consequences are in scope.
+- Discovery timeout stays at 10s; since the heartbeat publisher only matches after configure+activate, confirm CI brings the lifecycle node to active well within 10s (the downstream `_spin_until(has_active_heartbeat, timeout=20.0)` already assumes this, so no added risk). No change requested.
