@@ -158,7 +158,7 @@ Ready for `review-code`.
 - [x] (must-fix) Validate/bound `tx_beamwidth_fallback_rad`: `static_cast<int>` of a NaN/inf `footprint_m` is UB, and a unit-confusion value (0.44 rad vs 0.00768) blows `n_steps` to ~117k deposits/ping with no clamp in the real-time callback — add `std::isfinite` guard + `n_steps` ceiling (cross-pass confirmed, Lens A+B) — `src/mosaic_node.cpp:88`, `include/marine_sidescan_mosaic/projection.hpp:178`
 - [x] (suggestion) `round()` collapses 1.0–1.5-cell footprints to a single deposit, can still leave the gap; consider `ceil` — `include/marine_sidescan_mosaic/projection.hpp:178`
 - [x] (suggestion) v1 `.sst1` files now report "not a Tier-1 stream"; distinguish version-mismatch from bad-magic — `src/sidescan_tier2_flat.cpp`, `src/sidescan_tier2_processed.cpp`
-- [ ] (suggestion) Splat tests assert only `size>=2`; pin symmetry (centroid≈origin) and along-heading (longitude≈const) — `test/test_projection.cpp:402`, `test/test_projection.cpp:410`
+- [x] (suggestion) Splat tests assert only `size>=2`; pin symmetry (centroid≈origin) and along-heading (longitude≈const) — `test/test_projection.cpp:402`, `test/test_projection.cpp:410`
 - [ ] (suggestion) `onPing` has no try/catch around projection; `geodesy::wgs84::direct` can throw (largely pre-existing, low-probability) — `src/mosaic_node.cpp`
 
 Static analysis clean (only known-broken local uncrustify 0.78.1 `?:` drift + pre-existing >100-char lines untouched by this PR). Plan adherence full; all prior review folds implemented. No `review-context.yaml` found (review used `.agents/README.md` + project PRINCIPLES/ADRs).

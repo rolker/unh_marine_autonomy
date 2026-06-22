@@ -392,7 +392,17 @@ TEST(Projection, SplatCoverageSpansFootprint)
 
   // An even step count (~0.22 m ≈ 2 cells) is symmetric — straddles the ping
   // rather than under-covering to a single cell.
-  EXPECT_GE(collect(0.22).size(), 2u);
+  const auto even = collect(0.22);
+  EXPECT_GE(even.size(), 2u);
+  // ...and it stays centred on the ping: for a north-bound track the spread is in
+  // latitude, so the mean latitude of the splat cells must sit within a cell of the
+  // origin. An asymmetric (one-sided) splat would bias the centroid off the ping.
+  const double cell_deg = level.cellSize() / 111320.0;   // ~m per deg latitude
+  double lat_sum = 0.0;
+  for (const auto & c : even) {
+    lat_sum += c.position().latitude;
+  }
+  EXPECT_NEAR(lat_sum / static_cast<double>(even.size()), origin.latitude, cell_deg);
 }
 
 // The cells of a north-bound ground track must differ in latitude (the splat steps
@@ -402,8 +412,19 @@ TEST(Projection, SplatStepsAlongHeading)
   const gggs::Level level(13);
   const auto origin = geoPoint(43.07, -71.42, 0.0);
   std::set<double> lats;
+  std::set<double> lons;
   msm::splatAlongTrack(
     origin, 0.0 /*north*/, 0.5 /*m*/, M_PI / 2.0 /*east beam*/, 20.0, level,
-    [&lats](const gggs::CellIndex & c) {lats.insert(c.position().latitude);});
+    [&lats, &lons](const gggs::CellIndex & c) {
+      lats.insert(c.position().latitude);
+      lons.insert(c.position().longitude);
+    });
   EXPECT_GE(lats.size(), 2u);   // stepped in latitude (north-south), as expected
+  // ...and held ~constant in longitude: the splat steps run along heading (north),
+  // not across the beam, so every deposit shares the same across-track (east)
+  // placement. Bound the longitude spread to a cell or two — far tighter than the
+  // multi-cell latitude spread above — so an accidental across-track step regresses.
+  const double cell_deg = level.cellSize() / 111320.0;   // ~m per deg latitude
+  const double lon_span = *lons.rbegin() - *lons.begin();
+  EXPECT_LT(lon_span, 2.0 * cell_deg);
 }
