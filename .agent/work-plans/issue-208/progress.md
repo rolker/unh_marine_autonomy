@@ -188,3 +188,23 @@ The only `colcon test` non-gtest failures are the **known/pre-existing** ones do
 Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 208 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-22 11:16 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-208 at `ac66578`
+**Mode**: pre-push
+**Depth**: Deep (reason: Tier-1 binary-format change in a real-time safety pipeline; cross-file change)
+**Must-fix**: 1 | **Suggestions**: 3
+**Round**: 2 | **Ship**: recommended — one mechanical must-fix (cap-before-cast reorder), not rising from Round 1; apply it (and ideally suggestion #1) and push rather than another full round
+
+### Findings
+- [ ] (must-fix) `static_cast<int>(ceil(footprint_m/cell_size))` runs before the `kMaxSplatSteps` clamp; a large-but-finite footprint (>INT_MAX cells, reachable via Tier-2 CLI `--tx-beamwidth-fallback-rad 1e30` or a corrupt per-ping beamwidth) is UB — the isfinite guard only catches NaN/inf. Clamp the ratio in `double` before the cast (cross-pass confirmed, Lens A + Lens B) — `include/marine_sidescan_mosaic/projection.hpp:190`
+- [ ] (suggestion) Per-ping `ping_info.tx_beamwidths[0]` (and the Tier-2 stored/CLI beamwidth) get only a `>0.0` guard — the finiteness/upper-bound/degrees-slip validation applied to `tx_beamwidth_fallback_rad_` is bypassed for the dominant input path; share it via a helper — `src/mosaic_node.cpp:347`, `src/sidescan_tier2_flat.cpp`, `src/sidescan_tier2_processed.cpp`
+- [ ] (suggestion) Even-n_steps symmetry test uses a full-cell tolerance; a one-sided splat (centroid +0.5 cell) would still pass. Tighten to <0.5*cell_deg or test a larger even n_steps — `test/test_projection.cpp:670`
+- [ ] (suggestion) `onPing` try/catch wraps the whole per-sample loop, so one throwing sample drops the ping's already-deposited good samples; per-sample skip would preserve the rest of the swath (executor protection itself is correct) — `src/mosaic_node.cpp:368`
+
+Static analysis clean for new code (only known pre-existing uncrustify 0.78.1 `?:` drift + untouched >100-char lines in `sidescan_mosaic_bag.cpp`; the lone >100-char added line is a Markdown table row, not linted). Plan adherence full; all Round-1 pre-push findings (1 must-fix + 4 suggestions) confirmed addressed. No `review-context.yaml` found; offline review diffed against local `origin/jazzy`.
