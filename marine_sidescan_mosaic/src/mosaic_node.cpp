@@ -378,12 +378,14 @@ private:
     (side == Side::Port ? port_norm_ : stbd_norm_).normalize(raw, norm);
 
     const int sample0 = static_cast<int>(msg.sample0);
-    // Bound the geodesy/projection work in a try: `geodesy::wgs84::direct` (used by
-    // the along-track splat) can throw on a pathological geometry, and an uncaught
-    // throw out of this subscription callback would tear down the executor and the
-    // whole live mosaicker. Drop the offending ping instead.
-    try {
-      for (std::size_t j = 0; j < norm.size(); ++j) {
+    // Bound the geodesy/projection work in a *per-sample* try: `geodesy::wgs84::direct`
+    // (used by the along-track splat) can throw on a pathological geometry, and an
+    // uncaught throw out of this subscription callback would tear down the executor and
+    // the whole live mosaicker. Catching per sample (rather than around the whole loop)
+    // skips only the offending sample and preserves the rest of the swath's already-good
+    // deposits, instead of dropping the entire ping on one bad sample.
+    for (std::size_t j = 0; j < norm.size(); ++j) {
+      try {
         const double slant = slantRange(
           static_cast<int>(j), sample0, sound_speed, msg.sample_rate);
         const double ground = groundRange(slant, altitude);
@@ -394,12 +396,12 @@ private:
         splatAlongTrack(
           origin, gb.heading_rad, footprint_m, azimuth, ground, level_,
           [this, j, &norm](const gggs::CellIndex & cell) {accumulator_.add(cell, norm[j]);});
+      } catch (const std::exception & e) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "projection threw for a sample (%s); skipping it", e.what());
+        continue;
       }
-    } catch (const std::exception & e) {
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 5000,
-        "projection threw (%s); dropping ping", e.what());
-      return;
     }
   }
 
