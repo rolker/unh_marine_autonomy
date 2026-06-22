@@ -73,7 +73,13 @@ add_executable(import_geotiff src/import_geotiff_main.cpp)
 target_link_libraries(import_geotiff ${PROJECT_NAME})
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(marine_autonomy marine_tiled_raster_store geographic_msgs)
+# nlohmann_json and GDAL are PRIVATE link deps, but a static library propagates them
+# into the export's INTERFACE_LINK_LIBRARIES as $<LINK_ONLY:...>, so a consumer that
+# just find_package(marine_bathymetry_store) + links it must still resolve those
+# targets at generate time. Export them so consumers don't each have to re-find them
+# (#203; cube_bathymetry#57 hit this).
+ament_export_dependencies(
+  marine_autonomy marine_tiled_raster_store geographic_msgs nlohmann_json GDAL)
 
 install(TARGETS import_geotiff RUNTIME DESTINATION lib/${PROJECT_NAME})
 
