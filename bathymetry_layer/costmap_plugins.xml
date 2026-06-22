@@ -1,0 +1,8 @@
+<library path="bathymetry_layer">
+  <class type="bathymetry_layer::BathymetryLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      A bathymetric-store costmap layer: clearance from the depth store becomes
+      occupancy cost (shoals lethal), with windowed (lazy) tile residency.
+    </description>
+  </class>
+</library>
