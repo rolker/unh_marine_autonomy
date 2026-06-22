@@ -139,8 +139,10 @@ class TestMissionCommandFlow(unittest.TestCase):
         discovered = self._wait_for_discovery()
         self.assertTrue(
             discovered,
-            'DDS discovery did not complete for "marine/send_command" '
-            'within 10 seconds; no subscribers were discovered.',
+            'DDS discovery did not complete within 10 seconds: '
+            'either the "marine/send_command" subscriber (command bridge) '
+            'or the "marine/status/mission_manager" heartbeat publisher '
+            'was not discovered.',
         )
 
     def tearDown(self):
@@ -152,7 +154,8 @@ class TestMissionCommandFlow(unittest.TestCase):
         end_time = time.time() + 10.0
         while time.time() < end_time:
             rclpy.spin_once(self.node, timeout_sec=0.1)
-            if self.send_command_pub.get_subscription_count() > 0:
+            if (self.send_command_pub.get_subscription_count() > 0
+                    and self.heartbeat_sub.get_publisher_count() > 0):
                 return True
         return False
 
