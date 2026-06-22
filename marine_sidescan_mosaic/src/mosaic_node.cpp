@@ -88,22 +88,23 @@ public:
     // Fallback along-track beamwidth (rad) for pings whose `ping_info.tx_beamwidths`
     // is empty; 0 (default) keeps the legacy point-deposit (n_steps=1). GCV-20
     // SideVü nominal is radians(0.44) ≈ 0.00768.
-    tx_beamwidth_fallback_rad_ =
+    const double tx_beamwidth_fallback_raw =
       declare_parameter<double>("tx_beamwidth_fallback_rad", 0.0);
-    // Guard the fallback before it reaches the real-time splat: a NaN/inf or
-    // negative value would poison the footprint math, and a degrees-for-radians
-    // slip (e.g. 0.44 instead of radians(0.44) ≈ 0.00768) would splat hundreds of
-    // cells per sample. Clamp the unusable; warn loudly on the merely suspicious.
-    if (!std::isfinite(tx_beamwidth_fallback_rad_) || tx_beamwidth_fallback_rad_ < 0.0) {
+    // Guard the fallback before it reaches the real-time splat via the shared
+    // validator: a NaN/inf or negative value would poison the footprint math, and
+    // a degrees-for-radians slip (e.g. 0.44 instead of radians(0.44) ≈ 0.00768)
+    // would splat hundreds of cells per sample. Clamp the unusable to 0; warn
+    // loudly on the merely suspicious.
+    bool tx_beamwidth_fallback_suspicious = false;
+    tx_beamwidth_fallback_rad_ =
+      sanitizeBeamwidthRad(tx_beamwidth_fallback_raw, &tx_beamwidth_fallback_suspicious);
+    if (tx_beamwidth_fallback_rad_ == 0.0 && tx_beamwidth_fallback_raw != 0.0) {
       RCLCPP_WARN(
         get_logger(),
         "tx_beamwidth_fallback_rad=%.6g is not a finite non-negative radian value; "
         "ignoring it (no along-track splat fallback)",
-        tx_beamwidth_fallback_rad_);
-      tx_beamwidth_fallback_rad_ = 0.0;
-    } else if (tx_beamwidth_fallback_rad_ > 0.1) {
-      // A real along-track tx beamwidth is well under 0.1 rad (~5.7°); a wider
-      // value is almost certainly degrees mistaken for radians.
+        tx_beamwidth_fallback_raw);
+    } else if (tx_beamwidth_fallback_suspicious) {
       RCLCPP_WARN(
         get_logger(),
         "tx_beamwidth_fallback_rad=%.4f rad (~%.1f deg) is implausibly wide for an "
@@ -343,10 +344,26 @@ private:
     // Along-track footprint splat (#208): each sample is deposited across its
     // per-sample footprint (slant · beamwidth). Beamwidth comes from the ping's
     // `tx_beamwidths[0]` when populated, else the configured fallback (0 → unchanged
-    // point-deposit).
-    const double tx_beamwidth_rad =
-      (!msg.ping_info.tx_beamwidths.empty() && msg.ping_info.tx_beamwidths[0] > 0.0)
-      ? static_cast<double>(msg.ping_info.tx_beamwidths[0]) : tx_beamwidth_fallback_rad_;
+    // point-deposit). Run the per-ping value through the same validator as the
+    // fallback (the dominant input path was previously only `>0.0`-guarded): a
+    // non-finite/negative per-ping width falls back, and a suspiciously wide one is
+    // flagged once before the splat hard-caps it.
+    double tx_beamwidth_rad = tx_beamwidth_fallback_rad_;
+    if (!msg.ping_info.tx_beamwidths.empty()) {
+      bool per_ping_suspicious = false;
+      const double per_ping = sanitizeBeamwidthRad(
+        static_cast<double>(msg.ping_info.tx_beamwidths[0]), &per_ping_suspicious);
+      if (per_ping > 0.0) {
+        tx_beamwidth_rad = per_ping;
+        if (per_ping_suspicious) {
+          RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 5000,
+            "per-ping tx_beamwidth %.4f rad (~%.1f deg) is implausibly wide for an "
+            "along-track beamwidth; did the source emit degrees? capping the splat",
+            per_ping, per_ping * 180.0 / M_PI);
+        }
+      }
+    }
 
     const std::vector<double> raw = decodeSamples(msg);
     if (msg.samples_per_beam > 0 && raw.size() != msg.samples_per_beam) {

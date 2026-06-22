@@ -149,6 +149,35 @@ inline double footprintAlongTrack(double slant_range, double tx_beamwidth_rad)
   return slant_range * tx_beamwidth_rad;
 }
 
+/// @brief Plausibility ceiling (rad) for an along-track transmit beamwidth.
+///   A real SideVü-class along-track beamwidth is well under this (~5.7°); a
+///   wider value is almost certainly degrees mistaken for radians (#208 review).
+constexpr double kMaxPlausibleBeamwidthRad = 0.1;
+
+/// @brief Validate a transmit beamwidth (rad) before the along-track splat.
+///
+/// One definition shared by every beamwidth input path — the live
+/// `tx_beamwidths[0]`, the node's configured fallback, and the Tier-2
+/// stored/CLI beamwidth — so they agree on what is usable. A non-finite or
+/// negative value is unusable and collapses to 0 (the legacy point-deposit,
+/// `n_steps = 1`). A finite value wider than @ref kMaxPlausibleBeamwidthRad is
+/// returned unchanged but flagged via @p suspicious, so the caller can warn in
+/// its own logging idiom (RCLCPP in the node, stderr in the CLI tools); it is
+/// still hard-capped per-sample by `kMaxSplatSteps` in @ref splatAlongTrack.
+inline double sanitizeBeamwidthRad(double bw_rad, bool * suspicious = nullptr)
+{
+  if (suspicious) {
+    *suspicious = false;
+  }
+  if (!std::isfinite(bw_rad) || bw_rad < 0.0) {
+    return 0.0;
+  }
+  if (suspicious && bw_rad > kMaxPlausibleBeamwidthRad) {
+    *suspicious = true;
+  }
+  return bw_rad;
+}
+
 /// @brief Deposit one across-track sample across its along-track footprint.
 ///
 /// Splats the sample over `n_steps = max(1, ceil(footprint_m / cell_size))` cells
