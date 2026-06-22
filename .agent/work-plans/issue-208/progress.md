@@ -87,3 +87,57 @@ self-review annotation is applied. -->
 - [ ] (must-fix) Slant-range derivation is self-contradictory: Context defines `slant_range = altitude / sin(depression_rad)` (per-ping beam-center) but Approach step 4 uses the per-sample `slant` from `slantRange()` already in `onPing`. The per-sample value is correct (footprint scales with each sample's own range); remove/correct the Context formula — resolves review-issue Action #2 — `plan.md:20`, `plan.md:42`
 - [ ] (suggestion) Centering loop `k ∈ [-(n_steps-1)/2, +(n_steps-1)/2]` with integer division under-covers by one cell for even `n_steps` (e.g. `n_steps=2` → only `k=0`); acceptable for gap-fill but note or center symmetrically — `plan.md:43`
 - [ ] (suggestion) `sidescan_tier2_flat.cpp` and `sidescan_tier2_processed.cpp` get the identical splat loop ("same as tier2_flat"); consider a shared helper to keep them from diverging — `plan.md:48`, `plan.md:52`
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-22 05:40 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Commit**: `7bf452b` on `feature/issue-208`
+**Plan**: `.agent/work-plans/issue-208/plan.md` (synced this pass)
+
+### What changed
+Implemented the along-track footprint splat (Stage 3 of #185), folding in all four
+review findings (operator-approved):
+
+- **`projection.hpp`** — `GeoBeam` gains `heading_rad`; new inline `footprintAlongTrack()`
+  and a **shared `splatAlongTrack()` template helper** (fold #4) used by `onPing` and both
+  tier2 tools, so the loop has one implementation. The helper steps `n_steps =
+  max(1, round(footprint/cell_size))` cells along `heading_rad` with **symmetric centering**
+  `offset_k = (k − (n_steps−1)/2)·cell` (fold #3) so even footprints aren't under-covered;
+  `n_steps==1` ⇒ offset 0 ⇒ the legacy point-deposit, bit-for-bit unchanged. The header now
+  includes `geodesy/geodesics.h` for the along-track step.
+- **`projection.cpp`** — populate `GeoBeam.heading_rad` (body +X yaw, column 0 of `r_body_ned`).
+- **Per-sample slant range** (must-fix #2) — footprint uses the per-sample `slant` from
+  `slantRange()` already in each loop, not a per-ping beam-center; the bad Context formula was
+  removed from `plan.md`.
+- **Tier-1 v1→v2** — `Tier1Ping.tx_beamwidth_rad`, serialized **before** the trailing
+  sample-count uint32 (must-fix #1) so `readTier1Ping`'s corruption guard and the
+  `RejectsBogusSampleCount` test (which assumes the count is the last 4 bytes) stay valid —
+  verified: the count is still the final field. `kTier1Version` → 2.
+- **`sidescan_mosaic_bag.cpp`** — populate `tx_beamwidth_rad` from `ping_info.tx_beamwidths[0]`.
+- **`mosaic_node.cpp`** — `tx_beamwidth_fallback_rad` ROS param (default 0.0); splat via the
+  shared helper.
+- **`sidescan_tier2_flat.cpp` / `sidescan_tier2_processed.cpp`** — `--tx-beamwidth-fallback-rad`
+  CLI arg + shared-helper splat.
+- **Docs/launch** — README param row + pipeline step-5 note; launch `tx_beamwidth_fallback_rad`.
+- **Tests** — `test_tier1` round-trips the new field (must-fix #1); `test_projection` adds
+  `FootprintAlongTrack`, `SplatCoverageSpansFootprint` (incl. even-n_steps symmetry),
+  `SplatStepsAlongHeading`, and `BeamHeadingMatchesGroundTrack`.
+
+### Build & test
+Built sibling deps first (geodesy in underlay; marine_autonomy/backscatter/
+tiled_raster_store via `--packages-up-to`) — these were unbuilt in the worktree, not code
+issues. `colcon build --packages-up-to marine_sidescan_mosaic` succeeded (only pre-existing
+geodesy-header warnings). **gtest XML all green**: `test_projection` 14/14, `test_accumulator`
+10/10, `test_normalizer` 5/5, `test_tier1` 5/5 — no regression in the Stage-2 projection tests.
+
+The only `colcon test` failures are the **known local uncrustify 0.78.1 leading-vs-trailing
+`?:` drift** and two **pre-existing** >100-char lines in `sidescan_mosaic_bag.cpp` (113/115
+chars at HEAD, untouched by this change). My new ternaries match the committed leading-`?:`
+style of the surrounding code (e.g. the adjacent `p.channel`/`p.sound_speed` ternaries), so
+they pass a correct uncrustify and only trip the broken local 0.78.1; per the task guidance I
+did not reformat base files to chase it. Verdict confirmed via gtest XML.
+
+### Next step
+Ready for `review-code`.
