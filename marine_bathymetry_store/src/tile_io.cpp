@@ -113,10 +113,39 @@ gggs::GridIndex gridIndexFromTileFilename(const std::string & filename)
     throw std::runtime_error(
             "gridIndexFromTileFilename: cannot parse row from '" + filename + "'");
   }
-  const uint8_t lvl = static_cast<uint8_t>(std::stoi(stem.substr(0, first_under)));
-  const uint32_t row =
-    static_cast<uint32_t>(std::stoul(stem.substr(first_under + 1, second_under - first_under - 1)));
-  const uint32_t col = static_cast<uint32_t>(std::stoul(stem.substr(second_under + 1)));
+  const std::string level_str = stem.substr(0, first_under);
+  const std::string row_str = stem.substr(first_under + 1, second_under - first_under - 1);
+  const std::string col_str = stem.substr(second_under + 1);
+
+  // Validate digits up front so the documented `std::runtime_error` contract
+  // holds (raw std::stoul would throw std::invalid_argument/std::out_of_range),
+  // then wrap the conversion to rethrow as runtime_error on overflow.
+  const auto all_digits = [](const std::string & s) {
+      return !s.empty() && s.find_first_not_of("0123456789") == std::string::npos;
+    };
+  if (!all_digits(level_str) || !all_digits(row_str) || !all_digits(col_str)) {
+    throw std::runtime_error(
+            "gridIndexFromTileFilename: non-numeric level/row/col in '" + filename + "'");
+  }
+  std::uint64_t lvl_raw = 0, row_raw = 0, col_raw = 0;
+  try {
+    lvl_raw = std::stoull(level_str);
+    row_raw = std::stoull(row_str);
+    col_raw = std::stoull(col_str);
+  } catch (const std::out_of_range &) {
+    throw std::runtime_error(
+            "gridIndexFromTileFilename: level/row/col out of range in '" + filename + "'");
+  }
+  // Range-check the level BEFORE indexing the fixed-size `gggs::levels` table
+  // (out-of-bounds operator[] is UB; a stray name like `99_0_0.tif` would hit it).
+  if (lvl_raw >= gggs::levels.size()) {
+    throw std::runtime_error(
+            "gridIndexFromTileFilename: level " + std::to_string(lvl_raw) +
+            " out of range in '" + filename + "'");
+  }
+  const uint8_t lvl = static_cast<uint8_t>(lvl_raw);
+  const uint32_t row = static_cast<uint32_t>(row_raw);
+  const uint32_t col = static_cast<uint32_t>(col_raw);
 
   // Derive the tile's south-west corner from (level, row, col) using the
   // precomputed LevelSpecs table (same formulas as GridIndex::southLatitude()

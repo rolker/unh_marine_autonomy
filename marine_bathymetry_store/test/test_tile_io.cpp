@@ -647,8 +647,9 @@ TEST_F(TileIoTest, LoadWindowLoadsOnlyOverlappingTiles)
   const std::size_t n = marine_bathymetry_store::loadWindow(
     result, dir_.string(), min_pt, max_pt);
 
-  // Both inside_grid and straddle_grid overlap the box; outside_grid does not.
-  EXPECT_GE(n, 1u);
+  // Both inside_grid and straddle_grid overlap the box; outside_grid does not —
+  // so exactly two tiles load (proves "only overlapping", not just "at least one").
+  EXPECT_EQ(n, 2u);
   // outside_grid must not have been loaded.
   EXPECT_FALSE(result.get(SourceLayer::Draft, kEpoch, lev.cellIndex(
     gggs::geoPoint(50.0, -40.0))).has_value());
@@ -708,6 +709,34 @@ TEST_F(TileIoTest, LoadWindowIdempotent)
   EXPECT_EQ(second, 0u);
   // Tile count in store is still 1 (not doubled).
   EXPECT_EQ(result.epochs(SourceLayer::Draft).at(kEpoch).tiles.size(), 1u);
+}
+
+TEST_F(TileIoTest, LoadWindowRejectsMalformedTileFilename)
+{
+  // A stray tile whose level prefix is out of range (99 > max level 20) must
+  // throw a clean std::runtime_error, NOT index the fixed-size gggs::levels[]
+  // table out of bounds (UB).  Guards the filename parser reached before GDAL.
+  const uint8_t lvl = 5;
+  gggs::Level lev(lvl);
+  {
+    BathymetryStore writer(lvl);
+    writer.set(
+      SourceLayer::Draft, kEpoch, lev.cellIndex(gggs::geoPoint(43.0, -70.5)),
+      BathyCell{-10.0, 0.5, 1LL});
+    ASSERT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 1u);
+  }
+  // Drop a bogus value-tile name (level 99) into the same layer/epoch dir.
+  const std::filesystem::path bogus = dir_ / "draft" / kEpoch / "99_0_0.tif";
+  {
+    std::ofstream(bogus) << "not a tile";
+  }
+
+  BathymetryStore result(lvl);
+  const auto min_pt = makeGeoPoint(-90.0, -180.0);
+  const auto max_pt = makeGeoPoint(90.0, 180.0);
+  EXPECT_THROW(
+    marine_bathymetry_store::loadWindow(result, dir_.string(), min_pt, max_pt),
+    std::runtime_error);
 }
 
 // ---------------------------------------------------------------------------

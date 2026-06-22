@@ -192,6 +192,11 @@ std::size_t loadWindow(
 ///   erase is undefined behaviour — acceptable before issue #189. See `loadWindow`
 ///   for the full concurrency note.
 ///
+/// @note If every tile in an epoch is evicted, an empty `EpochTiles` shell is
+///   left in the layer map (the epoch entry itself is not erased). This is
+///   benign: best-source/newest-wins queries skip empty epochs and `save()` is
+///   unaffected (no tiles to write). A later `loadWindow` repopulates it.
+///
 /// @return The number of tiles evicted (dirty tiles that were skipped not counted).
 std::size_t evictOutside(
   BathymetryStore & store,

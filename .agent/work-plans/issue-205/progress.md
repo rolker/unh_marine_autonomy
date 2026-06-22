@@ -190,3 +190,16 @@ Pre-existing uncrustify issues are in code not touched by this PR and were prese
 - [ ] (suggestion) `LoadWindowLoadsOnlyOverlappingTiles` uses `EXPECT_GE(n,1u)`; should be `EXPECT_EQ(n,2u)` to actually prove "only overlapping" tiles load — `marine_bathymetry_store/test/test_tile_io.cpp:651`
 - [ ] (suggestion) No gtest feeds a malformed/out-of-range `.tif` filename to `gridIndexFromTileFilename` (would cover the must-fix) and none exercises a multi-level store or the registry-load branch of loadWindow — `marine_bathymetry_store/test/test_tile_io.cpp`
 - [ ] (suggestion) `evictOutside` can leave an empty `EpochTiles` shell when all tiles in an epoch are evicted (benign — query/save unaffected); worth a one-line doc note — `marine_bathymetry_store/src/tile_io.cpp:535`
+
+## Implementation
+
+**Round 2 — addressed pre-push review findings (host-inline; dispatcher was 529-overloaded).**
+
+- **Must-fix #1 (UB):** `gridIndexFromTileFilename` now validates the parsed level/row/col are all-digits (throws `std::runtime_error` per the documented contract instead of `std::stoul`'s `std::invalid_argument`), wraps the conversion to rethrow `runtime_error` on `std::out_of_range`, and **range-checks `lvl < gggs::levels.size()` before indexing** the fixed-size `gggs::levels` table — closes the out-of-bounds `operator[]` UB for a stray name like `99_0_0.tif`.
+- **Suggestion #1:** documented-contract holds (runtime_error) — folded into the above.
+- **Suggestion #2:** `LoadWindowLoadsOnlyOverlappingTiles` strengthened `EXPECT_GE(n,1u)` → `EXPECT_EQ(n,2u)`.
+- **Suggestion #3:** added `LoadWindowRejectsMalformedTileFilename` — drops a `99_0_0.tif` into the layer/epoch dir, expects a clean `std::runtime_error` from `loadWindow` (not UB).
+- **Suggestion #4:** `evictOutside` doc notes the benign empty-`EpochTiles`-shell case.
+- **cpplint:** `runtime/int` on the `unsigned long` decls → switched to `std::uint64_t` + `std::stoull`. `ament_cpplint` clean.
+
+**Build:** clean. **Tests:** `test_tile_io` **29/29 PASSED** (was 28; +1 malformed-filename test). **Uncrustify (bare-jazzy, CI-accurate):** new lines clean; the only remaining divergences are pre-existing `loadTile()` ternaries + #178/#194 registry tests (not this PR; the store package is not in unh_marine_autonomy CI).
