@@ -19,6 +19,12 @@ add_library(${PROJECT_NAME}
 )
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
+# Build with position-independent code so this (static) library can be linked
+# into SHARED consumers transitively — the bathymetry_layer Nav2 costmap plugin
+# (#164) is a shared object that links marine_bathymetry_store, which wraps this
+# package's TiledRasterTile. Without PIC the plugin link fails (R_X86_64_PC32).
+set_target_properties(${PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>"

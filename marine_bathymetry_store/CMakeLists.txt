@@ -33,6 +33,12 @@ add_library(${PROJECT_NAME}
 )
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
+# Build with position-independent code so this (static) library can be linked
+# into SHARED consumers — notably the bathymetry_layer Nav2 costmap plugin
+# (#164), which is a shared object loaded by pluginlib. Without PIC the link of
+# the plugin fails (R_X86_64_PC32 relocation against source_layers_by_priority).
+set_target_properties(${PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>"
