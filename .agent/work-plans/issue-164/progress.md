@@ -320,3 +320,25 @@ costmaps) + Layer Coexistence are documented in `bathymetry_layer/README.md`, an
 the wiring is named as a follow-on (own issue on the platform repo).
 
 **Not pushed** (per handoff contract).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-22 07:30 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-164 at `1f96905`
+**Mode**: pre-push
+**Depth**: Deep (reason: new safety-critical Nav2 costmap plugin; lifecycle + lethal-obstacle decisions)
+**Must-fix**: 3 | **Suggestions**: 5
+**Round**: 1 | **Ship**: continue — 3 must-fix incl. a safety failure mode (shoal-erasing on TF tide failure) and a latent staleness-timestamp bug; warrants address + re-review.
+
+### Findings
+- [ ] (must-fix) TF tide lookup failure leaves map_tide_z_=0.0 → clearance computed from a bogus 0 m water surface (Massabesic datum ~52 m ellipsoidal) → real shoals classified FREE_SPACE; fail-open on a lethal-obstacle layer. Track map-tide validity and skip/conservative-LETHAL until first valid lookup — `bathymetry_layer.cpp:235-246,317`
+- [ ] (must-fix) updateCosts sets current_=true unconditionally, even when map_tide_z_ was never valid or loadWindow silently failed — masks a degraded cycle from Nav2 — `bathymetry_layer.cpp:365`
+- [ ] (must-fix) Staleness gate ages any->timestamp (bestSource, quality-blind) not sample->timestamp (the reliable record actually used for clearance); when shallowestReliable falls through to an older confident epoch the age check tests the wrong record → can both miss genuinely-stale reliable data and false-stale a fresh one. Inert for D1 (timestamp 0 / max_age 0) but the path is shipped + tested. Use sample->timestamp after the !sample guard — `bathymetry_layer.cpp:306`
+- [ ] (suggestion) test StaleCellIsLethal is vacuous w.r.t. the timestamp-source bug (single sample → any==sample); add a two-epoch case (newest over-uncertain+fresh, older reliable+ancient) to pin the contract — `test_bathymetry_layer.cpp:168-194`
+- [ ] (suggestion) persistent loadWindow / wrong store_path failure makes the layer silently contribute nothing while reporting current_=true; emit a one-shot ERROR (not throttled WARN) and reflect in current_ — `bathymetry_layer.cpp:209-223`
+- [ ] (suggestion) add explicit `#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"` for the PointStamped doTransform specialization (currently transitive; latent build-break) — `bathymetry_layer.cpp`
+- [ ] (suggestion) computeCost div-by-zero / cast-NaN-UB on the test-seam path when maximum_caution_depth_ == minimum_depth_ (onInitialize validates, setters do not); add a guard + a boundary test at computeCost(minimum_depth_) — `bathymetry_layer.cpp:265-275`
+- [ ] (suggestion) refreshWindow redundant-reload short-circuit uses a 1e-9 deg (~0.1 mm) tolerance; sub-mm TF round-trip jitter can force evict+loadWindow disk I/O every costmap cycle — coarsen the tolerance or compare in cell-index space — `bathymetry_layer.cpp:200-207`
