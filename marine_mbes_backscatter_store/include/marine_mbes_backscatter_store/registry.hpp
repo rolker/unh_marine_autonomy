@@ -55,7 +55,7 @@ struct SourceRecord
 {
   std::string source_id;        ///< Origin-namespaced wide id (ADR-0005 D4).
   std::string platform;         ///< Contributing platform (e.g. "bizzyboat").
-  std::string sensor;           ///< Contributing sensor (e.g. "norbit-m3").
+  std::string sensor;           ///< Contributing sensor (e.g. "kongsberg-m3").
   std::string sensor_class;     ///< Sensor class (e.g. "mbes-backscatter").
   std::string campaign;         ///< Acquisition campaign / deployment.
   std::string calibration_ref;  ///< MBES extension: beam-pattern calibration ref.

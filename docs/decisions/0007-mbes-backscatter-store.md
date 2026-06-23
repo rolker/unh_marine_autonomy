@@ -13,7 +13,7 @@ Sibling to **ADR-0006** (sidescan backscatter store). Builds on **ADR-0002**
 `cube_bathymetry`, the bathy store, `marine_tiled_raster_store`, and
 `marine_autonomy` GGGS).
 
-First sensor: **BizzyBoat Norbit M3** (via `kongsberg_em_bridge`), whose per-beam
+First sensor: **BizzyBoat Kongsberg M3** (via `kongsberg_em_bridge`), whose per-beam
 reflectivity (dB) is now carried into the soundings point cloud by
 [cube_bathymetry#52](https://github.com/rolker/cube_bathymetry/issues/52) (merged).
 Kongsberg EM2040 is a later adopter of the *same* store.
@@ -181,7 +181,7 @@ a separate **`Int64`-ns time tile**. (This is the one place the MBES schema depa
 from ADR-0006, where value/quality/source-index share a dtype and co-locate.)
 Provenance is ADR-0005: the per-cell **local source index** resolves through the
 registry to a global, origin-namespaced `source-id`; the M3 registry entry is
-`platform: bizzyboat, sensor: norbit-m3, sensor_class: mbes-backscatter`, with
+`platform: bizzyboat, sensor: kongsberg-m3, sensor_class: mbes-backscatter`, with
 `calibration_ref` empty until a beam-pattern calibration exists (relative
 backscatter).
 
