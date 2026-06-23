@@ -17,7 +17,7 @@ Depth and backscatter data will increasingly come from **more than one platform
 and sensor**, and be fused on a shared/central server. A representative near-term
 case: a joint operation where a **DriX** carrying a **Kongsberg EM2040** MBES
 contributes bathymetry *and* backscatter, while **BizzyBoat** contributes
-bathymetry from its **Norbit M3** and side-scan imagery from its **Garmin GCV**.
+bathymetry from its **Kongsberg M3** and side-scan imagery from its **Garmin GCV**.
 We want one "best bottom" answer per location — and the ability to ask "show me
 only the DriX EM2040 backscatter," or "what did BizzyBoat see here last week."
 
@@ -111,7 +111,7 @@ not need.
 | Field | Purpose / example |
 |-------|-------------------|
 | `platform` | `bizzyboat`, `drix-12` |
-| `sensor` | model — `garmin-gcv20`, `kongsberg-em2040`, `norbit-m3` |
+| `sensor` | model — `garmin-gcv20`, `kongsberg-em2040`, `kongsberg-m3` |
 | `sensor_class` | the **arbitration class** D5 priority keys on — `sidescan`, `mbes-backscatter`, `mbes-bathy`. Not the store identity (that is implicit). |
 | `campaign` | survey / deployment id + UTC time range |
 

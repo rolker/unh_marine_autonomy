@@ -227,12 +227,12 @@ TEST_F(TileIoTest, RegistryWriteInternRoundTrip)
 
   SourceRegistry registry;
   const uint16_t a = registry.registerSource(
-    SourceRecord{"bizzy:norbit-m3:0", "bizzyboat", "norbit-m3", "mbes-backscatter",
+    SourceRecord{"bizzy:kongsberg-m3:0", "bizzyboat", "kongsberg-m3", "mbes-backscatter",
       "massabesic-2026", ""});
   const uint16_t b = registry.registerSource(
-    SourceRecord{"izzy:norbit-m3:0", "izzyboat", "norbit-m3", "mbes-backscatter", "", ""});
+    SourceRecord{"izzy:kongsberg-m3:0", "izzyboat", "kongsberg-m3", "mbes-backscatter", "", ""});
   const uint16_t a2 = registry.registerSource(
-    SourceRecord{"bizzy:norbit-m3:0", "x", "y", "", "", ""});   // idempotent
+    SourceRecord{"bizzy:kongsberg-m3:0", "x", "y", "", "", ""});   // idempotent
   EXPECT_EQ(a, 1u);                  // first real index (0 reserved)
   EXPECT_EQ(b, 2u);
   EXPECT_EQ(a2, a);                  // same source_id -> same index, no new entry

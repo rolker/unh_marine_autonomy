@@ -11,7 +11,7 @@ Part of the sidescan-mosaic umbrella
 this ADR is the *sidescan* backscatter store only.** It originally framed itself as
 the single backscatter store for *all* sensors (Garmin side-scan first, EM2040 / M3
 backscatter as later adopters into the same store). That is superseded: **MBES
-backscatter (Norbit M3, Kongsberg EM2040) has its own store** — single-tier and
+backscatter (Kongsberg M3, Kongsberg EM2040) has its own store** — single-tier and
 CUBE-coupled — in **ADR-0007**, because it is co-estimated with bathymetry by the
 CUBE pass and so has a fundamentally different ingest path and tiering than
 slant-archived sidescan (ADR-0007 draws the contrast). The two remain **sibling
