@@ -55,6 +55,7 @@ public:
   void setMaximumCautionDepth(double v) {maximum_caution_depth_ = v;}
   void setMaxUncertainty(double v) {max_uncertainty_ = v;}
   void setMaxAge(double v) {max_age_ = v;}
+  void setUnsurveyedIsLethal(bool v) {unsurveyed_is_lethal_ = v;}
 
   using BathymetryLayer::computeCost;
   using BathymetryLayer::evaluateCell;
@@ -107,6 +108,44 @@ TEST(BathymetryLayer, UnsurveyedCellLeavesMasterUntouched)
   const auto cell = layer.store().cellIndex(kLat, kLon);
   const auto result = layer.evaluateCell(cell, /*now_ns=*/0);
   EXPECT_FALSE(result.has_value()) << "Unsurveyed cells must not be written.";
+}
+
+// ---------------------------------------------------------------------------
+// Test case 2b (#216): with unsurveyed_is_lethal enabled, a no-data cell is
+// LETHAL instead of skipped — the closed-basin "no data = land" mode.
+// ---------------------------------------------------------------------------
+TEST(BathymetryLayer, UnsurveyedCellLethalWhenParamEnabled)
+{
+  BathymetryLayerForTest layer;
+  layer.setStore(std::make_unique<BathymetryStore>(5));
+  layer.setMapTideZ(48.88);
+  layer.setMapTideValid(true);
+  layer.setUnsurveyedIsLethal(true);
+
+  const auto cell = layer.store().cellIndex(kLat, kLon);
+  const auto result = layer.evaluateCell(cell, /*now_ns=*/0);
+  ASSERT_TRUE(result.has_value())
+    << "With unsurveyed_is_lethal, a no-data cell must be written.";
+  EXPECT_EQ(*result, nav2_costmap_2d::LETHAL_OBSTACLE);
+}
+
+// ---------------------------------------------------------------------------
+// Test case 2c (#216): unsurveyed_is_lethal stays behind the tide gate (option
+// A). Even with the param set, no-data cells are NOT written before a valid
+// tide — the layer never emits a half-initialised "lethal land + unknown water"
+// costmap at startup.
+// ---------------------------------------------------------------------------
+TEST(BathymetryLayer, UnsurveyedLethalStillGatedByTide)
+{
+  BathymetryLayerForTest layer;
+  layer.setStore(std::make_unique<BathymetryStore>(5));
+  layer.setUnsurveyedIsLethal(true);
+  // Deliberately do NOT mark the tide valid (map_tide_valid_ defaults false).
+
+  const auto cell = layer.store().cellIndex(kLat, kLon);
+  const auto result = layer.evaluateCell(cell, /*now_ns=*/0);
+  EXPECT_FALSE(result.has_value())
+    << "No tide yet: unsurveyed-lethal must still be gated (MF1).";
 }
 
 // ---------------------------------------------------------------------------
