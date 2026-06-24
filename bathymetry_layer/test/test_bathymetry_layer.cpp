@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <limits>
 #include <memory>
@@ -60,7 +61,30 @@ public:
   using BathymetryLayer::computeCost;
   using BathymetryLayer::evaluateCell;
   using BathymetryLayer::isStale;
+  using BathymetryLayer::expandUserPath;
 };
+
+// ---------------------------------------------------------------------------
+// Test case 0 (#218): store_path "~"/"~/" expansion to $HOME — one portable
+// value resolves on both the boat and dev/sim; other paths are untouched.
+// ---------------------------------------------------------------------------
+TEST(BathymetryLayer, ExpandUserPathHandlesTilde)
+{
+  ::setenv("HOME", "/home/tester", 1);
+
+  EXPECT_EQ(
+    BathymetryLayerForTest::expandUserPath("~/data/stores/bathymetry"),
+    "/home/tester/data/stores/bathymetry");
+  EXPECT_EQ(BathymetryLayerForTest::expandUserPath("~"), "/home/tester");
+  // Absolute, relative, and empty paths are returned unchanged.
+  EXPECT_EQ(
+    BathymetryLayerForTest::expandUserPath("/home/field/data/stores/bathymetry"),
+    "/home/field/data/stores/bathymetry");
+  EXPECT_EQ(BathymetryLayerForTest::expandUserPath("relative/path"), "relative/path");
+  EXPECT_EQ(BathymetryLayerForTest::expandUserPath(""), "");
+  // The unsupported "~user" form is left untouched (not expanded).
+  EXPECT_EQ(BathymetryLayerForTest::expandUserPath("~field/x"), "~field/x");
+}
 
 // ---------------------------------------------------------------------------
 // Test case 1: clearance → cost ramp boundaries (lethal / caution / free).
