@@ -32,8 +32,16 @@ namespace bathymetry_layer
 /// **No-data policy (ADR-0002 §D7, two-query safety pattern):** per cell,
 /// `bestSource` first answers "is there ANY data here?" (quality-blind). If not,
 /// the cell is truly unsurveyed and this layer leaves the master cost untouched
-/// (NO_INFORMATION) so another prior — e.g. `s57_layer` — can fill it in. If
-/// there *is* data, `shallowestReliable` applies the navigation-safety gate; a
+/// (NO_INFORMATION) so another prior — e.g. `s57_layer` — can fill it in. The
+/// opt-in `unsurveyed_is_lethal` parameter (default false) overrides this: when
+/// set, a truly-unsurveyed cell is written `LETHAL_OBSTACLE` instead. This suits a
+/// closed-basin water body whose prior covers the whole navigable interior (so the
+/// only no-data cells are land), letting the layer mark the shoreline lethal
+/// without a separate land-mask. It is a blanket rule (every no-data cell, not just
+/// "land") and, via max-cost combine, overrides other priors on those cells — so
+/// choose it per deployment. It is still held behind the tide gate: no cost,
+/// lethal-land included, is emitted before a valid `map_tide` arrives.
+/// If there *is* data, `shallowestReliable` applies the navigation-safety gate; a
 /// cell that has data but fails the uncertainty gate, or whose freshest sample is
 /// stale, is written `LETHAL_OBSTACLE` (conservative). Only the clearance ramp
 /// produces non-lethal cost.
@@ -99,6 +107,11 @@ protected:
   double maximum_caution_depth_ = 2.5;
   double max_uncertainty_ = 0.5;
   double max_age_ = 0.0;
+  // When true, a truly-unsurveyed (no-data) cell is written LETHAL_OBSTACLE
+  // instead of being left untouched (NO_INFORMATION). Opt-in (default false):
+  // a blanket rule suited to a closed basin whose prior covers the whole
+  // interior, so the only no-data cells are land. Still subject to the tide gate.
+  bool unsurveyed_is_lethal_ = false;
 
 private:
   // Convert a costmap world coordinate to WGS84 lat/lon via the `earth` TF frame

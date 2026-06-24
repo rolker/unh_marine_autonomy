@@ -66,6 +66,9 @@ void BathymetryLayer::onInitialize()
   declareParameter("max_age", rclcpp::ParameterValue(max_age_));
   node->get_parameter(name_ + ".max_age", max_age_);
 
+  declareParameter("unsurveyed_is_lethal", rclcpp::ParameterValue(unsurveyed_is_lethal_));
+  node->get_parameter(name_ + ".unsurveyed_is_lethal", unsurveyed_is_lethal_);
+
   declareParameter("map_tide_frame", rclcpp::ParameterValue(map_tide_frame_));
   node->get_parameter(name_ + ".map_tide_frame", map_tide_frame_);
 
@@ -89,12 +92,14 @@ void BathymetryLayer::onInitialize()
         "no costs until one is configured.");
   }
 
+  const char * const unsurveyed_lethal_str = unsurveyed_is_lethal_ ? "true" : "false";
   RCLCPP_INFO_STREAM(
     logger_,
     "bathymetry_layer '" << name_ << "': store_path='" << store_path_ << "', minimum_depth="
                          << minimum_depth_ << " m, maximum_caution_depth=" << maximum_caution_depth_
                          << " m, max_uncertainty=" << max_uncertainty_ << " m, max_age=" << max_age_
-                         << " s, map_tide_frame='" << map_tide_frame_ << "'");
+                         << " s, unsurveyed_is_lethal=" << unsurveyed_lethal_str
+                         << ", map_tide_frame='" << map_tide_frame_ << "'");
 
   matchSize();
 }
@@ -254,10 +259,10 @@ void BathymetryLayer::updateBounds(
   // z-origin (mirror s57_layer's tide lookup at TimePointZero).
   //
   // Verified sign direction (MF1): store depths are WGS84 ellipsoidal heights
-  // (up-positive). At Lake Massabesic the water surface is ~+52.3 m (map_tide_z_)
-  // and the seafloor is a few metres below that, e.g. +47–51 m. So clearance =
-  // map_tide_z_ − seafloor_height > 0 (a few metres). With the UNSET default
-  // map_tide_z_=0.0 the clearance for those same cells would be 0 − 47 = −47 m
+  // (up-positive). At Lake Massabesic the water surface is ~+48.88 m (map_tide_z_,
+  // the full-pool datum) and the seafloor is a few metres below that, e.g. +44–48 m.
+  // So clearance = map_tide_z_ − seafloor_height > 0 (a few metres). With the UNSET
+  // default map_tide_z_=0.0 the clearance for those same cells would be 0 − 47 = −47 m
   // → LETHAL (coincidentally fail-safe for this lake). However, for any site where
   // the seafloor elevation is negative (e.g. ocean, depth > ellipsoid zero),
   // clearance = 0 − (−depth) = +depth → large-positive → FREE_SPACE (fail-open,
@@ -347,8 +352,15 @@ std::optional<unsigned char> BathymetryLayer::evaluateCell(
   //   1. bestSource — quality-blind "is there ANY data here?"
   const std::optional<DepthSample> any = bestSource(*store_, cell);
   if (!any) {
-    // Truly unsurveyed: leave the master cost untouched (NO_INFORMATION) so
-    // another prior (e.g. s57_layer) can contribute.
+    // Truly unsurveyed. By default leave the master cost untouched
+    // (NO_INFORMATION) so another prior (e.g. s57_layer) can contribute. When
+    // unsurveyed_is_lethal_ is set, treat no-data as an obstacle instead — for a
+    // closed basin whose prior fills the whole interior, the only no-data cells
+    // are land (see the class doc). This still sits behind the MF1 tide gate
+    // above, so no lethal-land is written before a valid tide arrives.
+    if (unsurveyed_is_lethal_) {
+      return nav2_costmap_2d::LETHAL_OBSTACLE;
+    }
     return std::nullopt;
   }
 

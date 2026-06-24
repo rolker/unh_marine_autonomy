@@ -37,9 +37,16 @@ as the boat surveys — that is the D2 follow-on (see [Follow-on work](#follow-o
 Per cell the layer uses a **two-query** pattern (ADR-0002 §D7; review finding M1):
 
 1. `bestSource(store, cell)` — quality-blind: "is there *any* data here?"
-2. If `bestSource` is `nullopt` → the cell is **truly unsurveyed** → the layer
-   **leaves the master cost untouched** (NO_INFORMATION) so another prior (e.g.
-   `s57_layer`) can fill it in. The layer never *writes* NO_INFORMATION.
+2. If `bestSource` is `nullopt` → the cell is **truly unsurveyed** → by default the
+   layer **leaves the master cost untouched** (NO_INFORMATION) so another prior
+   (e.g. `s57_layer`) can fill it in. The layer never *writes* NO_INFORMATION.
+   Setting **`unsurveyed_is_lethal: true`** flips this: a no-data cell is written
+   **`LETHAL_OBSTACLE`** instead. This is for a closed-basin water body whose prior
+   covers the whole navigable interior, so the only no-data cells are land — the
+   layer then marks the shoreline lethal without a separate land-mask. It is a
+   blanket rule (every no-data cell, not just "land") and, via max-cost combine,
+   overrides other priors on those cells, so enable it per deployment. It stays
+   behind the tide gate (below): no lethal-land is written before a valid tide.
 3. If `bestSource` is non-null → the cell **has data** → `shallowestReliable`
    applies the navigation-safety (uncertainty) gate. A cell that has data but
    fails the gate (over-uncertain), or whose freshest sample is **stale**
@@ -59,6 +66,7 @@ unsurveyed cell. Treating it as unsurveyed would be a safety regression.
 | `maximum_caution_depth` | double | `2.5` | Clearance (m) at/above which a cell is `FREE_SPACE`; between `minimum_depth` and this the cost ramps. |
 | `max_uncertainty` | double | `0.5` | Max 1-sigma vertical uncertainty (m) for `shallowestReliable`. A surveyed cell exceeding this is LETHAL. |
 | `max_age` | double | `0.0` | Staleness window (s). `0` disables the gate (D1 chart priors have timestamp 0). A cell whose freshest sample is older than `now − max_age` is LETHAL. |
+| `unsurveyed_is_lethal` | bool | `false` | When `true`, a truly-unsurveyed (no-data) cell is `LETHAL_OBSTACLE` instead of left untouched. Blanket rule — suits a closed basin whose prior fills the whole interior (no-data = land). Still gated by the tide (no cost before a valid `map_tide`). |
 | `map_tide_frame` | string | `map_tide` | Frame whose z-origin is the current water-surface ellipsoidal height. Prefix per platform (`<tf_prefix>/map_tide`). |
 | `buffer_fraction` | double | `0.05` | Fractional margin around the costmap window for `loadWindow` / `evictOutside`. |
 
@@ -74,7 +82,10 @@ in a layered Nav2 costmap:
 - **Unsurveyed cells are skipped.** Where `bathymetry_layer` has no store data it
   leaves the master cost untouched, so `s57_layer` (the broad chart prior) is the
   sole contributor there. Conversely, where the store has data but the chart does
-  not, `bathymetry_layer` is the sole contributor.
+  not, `bathymetry_layer` is the sole contributor. **Exception:** with
+  `unsurveyed_is_lethal: true` this layer writes `LETHAL_OBSTACLE` on no-data
+  cells, which (max-cost) overrides `s57_layer` there — so use that mode only when
+  this layer should own the "no data = land" verdict for the whole window.
 - **Where both have data**, the store's measured clearance typically supersedes
   the chart's coarser depth for accurate shoal detection — and because the combine
   is max-cost, the more conservative (higher-cost) opinion always survives.
@@ -106,6 +117,7 @@ local_costmap:
         maximum_caution_depth: 2.5
         max_uncertainty: 0.5
         max_age: 0.0
+        unsurveyed_is_lethal: False   # True for a closed basin (no-data = land)
         map_tide_frame: <tf_prefix>/map_tide
         buffer_fraction: 0.05
 ```
