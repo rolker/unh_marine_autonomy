@@ -61,7 +61,7 @@ unsurveyed cell. Treating it as unsurveyed would be a safety regression.
 | Parameter | Type | Default | Meaning |
 |---|---|---|---|
 | `enabled` | bool | `true` | Enable the layer. |
-| `store_path` | string | `""` | Path to the on-disk store directory. Empty = contributes no cost. |
+| `store_path` | string | `""` | Path to the on-disk store directory. Empty = contributes no cost. A leading `~`/`~/` is expanded to `$HOME`, so one portable value (`~/data/stores/bathymetry`) resolves on both the boat (`field` user) and a dev/sim host. |
 | `minimum_depth` | double | `1.0` | Clearance (m) below which a cell is `LETHAL_OBSTACLE`. |
 | `maximum_caution_depth` | double | `2.5` | Clearance (m) at/above which a cell is `FREE_SPACE`; between `minimum_depth` and this the cost ramps. |
 | `max_uncertainty` | double | `0.5` | Max 1-sigma vertical uncertainty (m) for `shallowestReliable`. A surveyed cell exceeding this is LETHAL. |

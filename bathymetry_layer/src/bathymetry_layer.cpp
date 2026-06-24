@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <string>
@@ -25,6 +26,25 @@ using marine_bathymetry_store::BathymetryStore;
 using marine_bathymetry_store::DepthSample;
 using marine_bathymetry_store::shallowestReliable;
 
+// Expand a leading "~" or "~/" in a path to $HOME so one portable store_path
+// value (e.g. "~/data/stores/bathymetry") resolves on both the boat (field user)
+// and a dev/sim host with a different home. std::filesystem does no such
+// expansion. A bare absolute/relative path, an empty string, or the unsupported
+// "~user" form is returned unchanged (the latter would need getpwnam).
+std::string BathymetryLayer::expandUserPath(const std::string & path)
+{
+  if (path.empty() || path[0] != '~') {
+    return path;
+  }
+  if (path.size() == 1 || path[1] == '/') {
+    const char * home = std::getenv("HOME");
+    if (home != nullptr && home[0] != '\0') {
+      return std::string(home) + path.substr(1);
+    }
+  }
+  return path;
+}
+
 BathymetryLayer::BathymetryLayer() = default;
 
 BathymetryLayer::~BathymetryLayer() = default;
@@ -39,6 +59,8 @@ void BathymetryLayer::onInitialize()
 
   declareParameter("store_path", rclcpp::ParameterValue(store_path_));
   node->get_parameter(name_ + ".store_path", store_path_);
+  // Expand a leading "~" so one portable value works on the boat and dev/sim.
+  store_path_ = expandUserPath(store_path_);
 
   declareParameter("minimum_depth", rclcpp::ParameterValue(minimum_depth_));
   node->get_parameter(name_ + ".minimum_depth", minimum_depth_);

@@ -92,6 +92,11 @@ protected:
   // (max_age_ <= 0) or the timestamp is unset (0).
   bool isStale(int64_t timestamp_ns, int64_t now_ns) const;
 
+  // Expand a leading "~"/"~/" in @p path to $HOME (so one portable store_path
+  // resolves on both the boat and dev/sim). Absolute, empty, and "~user" paths
+  // are returned unchanged. Exposed for unit testing.
+  static std::string expandUserPath(const std::string & path);
+
   // Test seams: the store and the cached water-surface height, so a test fixture
   // can populate a synthetic store and drive cost evaluation without TF.
   std::unique_ptr<marine_bathymetry_store::BathymetryStore> store_;
