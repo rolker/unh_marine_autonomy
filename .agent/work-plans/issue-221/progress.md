@@ -66,3 +66,18 @@ issue: 221
 
 ### Open questions
 - [ ] No open questions — plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-06-25 00:00 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-221/plan.md` at `7cef99d`
+**PR**: PR-less (file-path / dispatched review)
+**Verdict**: approve-with-suggestions
+
+### Findings
+- [ ] (must-fix) Phase 4a prose is inaccurate: `bathymetry_layer.cpp` does NOT call `store_->set(layer, kEpoch, ...)` or `store_.epochs(layer)` — verified, the production plugin only uses `bestSource` / `shallowestReliable` / `loadWindow` / `evictOutside` (none take epochs). Those `set`/`epochs(...)` call sites live in `test_bathymetry_layer.cpp` (correctly covered by Phase 4b). Correct the Phase 4a description so the implementer doesn't hunt for non-existent call sites — `plan.md:110-115`.
+- [ ] (suggestion) `bathymetry_layer.cpp` `costForCell` has a stale comment block (the MF3 staleness rationale) that explicitly narrates the "newest epoch over-uncertain → fall through to older confident epoch" walk. The logic stays correct post-refactor, but the comment becomes misleading. Add comment cleanup to Phase 4a — `bathymetry_layer.cpp:392-396`, `plan.md:110-115`.
+- [ ] (suggestion) Migration shim (Phase 2a `load`): flattening multiple old epoch subdirs into one flat `<layer>/` dir risks tile-filename collision if the existing store ever held >1 epoch (same `<level>_<row>_<col>.tif` in two epoch dirs). Harmless for the current single-coverage store (`draft/2026-06-12/` only), but the plan should state the collision policy (e.g. last-wins or assert-single-epoch) so the shim is deterministic — `plan.md:79-82`.
+- [ ] (suggestion) Geotiff importer signature: plan prose says importer "writes via the store's `set` method (or an equivalent bulk insert)". The current API is a wholesale `importEpoch`; with epochs gone there is no bulk replace. Phase 1b removes `importEpoch` but the importer still needs a bulk-insert path (per-cell `set` works but is slower and bypasses any clear-before-write). Pin the importer's write mechanism explicitly so the store exposes the right method — `plan.md:93-99`, `plan.md:38-54`.
