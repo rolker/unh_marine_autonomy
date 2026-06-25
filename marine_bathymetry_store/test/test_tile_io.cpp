@@ -34,23 +34,18 @@
 
 #include "marine_bathymetry_store/bathymetry_store.hpp"
 #include "marine_bathymetry_store/bathymetry_tile.hpp"
-#include "marine_bathymetry_store/epoch.hpp"
 #include "marine_bathymetry_store/registry.hpp"
 #include "marine_bathymetry_store/tile_io.hpp"
 #include "marine_tiled_raster_store/tile_io.hpp"
 
 using marine_bathymetry_store::BathyCell;
 using marine_bathymetry_store::BathymetryStore;
-using marine_bathymetry_store::Provenance;
 using marine_bathymetry_store::SourceLayer;
 using marine_bathymetry_store::SourceRecord;
 using marine_bathymetry_store::SourceRegistry;
 
 namespace fs = std::filesystem;
 
-// A single ISO-date epoch label used by the persistence round-trip tests. The
-// on-disk layout is `<dir>/<layer>/<epoch>/<level>_<row>_<col>.tif`.
-static const char * const kEpoch = "2026-06-10";
 
 class TileIoTest : public ::testing::Test
 {
@@ -78,10 +73,10 @@ TEST_F(TileIoTest, RoundTripPreservesCells)
   const int64_t ts_draft = 1'780'000'000'123'456'789LL;
   const int64_t ts_proc = 1'790'000'000'987'654'321LL;
   store.set(
-    SourceLayer::Draft, kEpoch, store.cellIndex(43.0, -70.5),
+    SourceLayer::Draft, store.cellIndex(43.0, -70.5),
     BathyCell{-30.123, 0.456, ts_draft, 7u});
   store.set(
-    SourceLayer::Processed, kEpoch, store.cellIndex(44.0, -71.0),
+    SourceLayer::Processed, store.cellIndex(44.0, -71.0),
     BathyCell{-12.5, 0.2, ts_proc, 0u});
 
   EXPECT_EQ(marine_bathymetry_store::save(store, dir_.string()), 2u);
@@ -89,7 +84,7 @@ TEST_F(TileIoTest, RoundTripPreservesCells)
   BathymetryStore reloaded(5);
   EXPECT_EQ(marine_bathymetry_store::load(reloaded, dir_.string()), 2u);
 
-  const auto draft = reloaded.get(SourceLayer::Draft, kEpoch, reloaded.cellIndex(43.0, -70.5));
+  const auto draft = reloaded.get(SourceLayer::Draft, reloaded.cellIndex(43.0, -70.5));
   ASSERT_TRUE(draft.has_value());
   EXPECT_DOUBLE_EQ(draft->depth, -30.123);
   EXPECT_DOUBLE_EQ(draft->uncertainty, 0.456);
@@ -98,7 +93,7 @@ TEST_F(TileIoTest, RoundTripPreservesCells)
   EXPECT_EQ(draft->source_index, 7u);
 
   const auto pcell = reloaded.cellIndex(44.0, -71.0);
-  const auto processed = reloaded.get(SourceLayer::Processed, kEpoch, pcell);
+  const auto processed = reloaded.get(SourceLayer::Processed, pcell);
   ASSERT_TRUE(processed.has_value());
   EXPECT_DOUBLE_EQ(processed->depth, -12.5);
   EXPECT_EQ(processed->timestamp, ts_proc);
@@ -110,17 +105,17 @@ TEST_F(TileIoTest, RoundTripPreservesSourceIndex)
   // through the separate UInt16 _source.tif independently of depth/time.
   BathymetryStore store(5);
   store.set(
-    SourceLayer::Draft, kEpoch, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 10LL, 1u});
+    SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 10LL, 1u});
   store.set(
-    SourceLayer::Draft, kEpoch, store.cellIndex(43.0, -70.4), BathyCell{-31.0, 0.5, 11LL, 4242u});
+    SourceLayer::Draft, store.cellIndex(43.0, -70.4), BathyCell{-31.0, 0.5, 11LL, 4242u});
   EXPECT_EQ(marine_bathymetry_store::save(store, dir_.string()), 1u);
 
   BathymetryStore reloaded(5);
   EXPECT_EQ(marine_bathymetry_store::load(reloaded, dir_.string()), 1u);
   EXPECT_EQ(
-    reloaded.get(SourceLayer::Draft, kEpoch, reloaded.cellIndex(43.0, -70.5))->source_index, 1u);
+    reloaded.get(SourceLayer::Draft, reloaded.cellIndex(43.0, -70.5))->source_index, 1u);
   EXPECT_EQ(
-    reloaded.get(SourceLayer::Draft, kEpoch, reloaded.cellIndex(43.0, -70.4))->source_index, 4242u);
+    reloaded.get(SourceLayer::Draft, reloaded.cellIndex(43.0, -70.4))->source_index, 4242u);
 }
 
 TEST_F(TileIoTest, MissingTimeTileLoadsAsZero)
@@ -129,7 +124,7 @@ TEST_F(TileIoTest, MissingTimeTileLoadsAsZero)
   // must not fail — the timestamp band fills with 0 (backward compatibility).
   BathymetryStore store(5);
   store.set(
-    SourceLayer::Draft, kEpoch, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 99LL, 2u});
+    SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 99LL, 2u});
   marine_bathymetry_store::save(store, dir_.string());
 
   // Remove every _time.tif under the draft layer.
@@ -142,7 +137,7 @@ TEST_F(TileIoTest, MissingTimeTileLoadsAsZero)
 
   BathymetryStore reloaded(5);
   EXPECT_EQ(marine_bathymetry_store::load(reloaded, dir_.string()), 1u);
-  const auto got = reloaded.get(SourceLayer::Draft, kEpoch, reloaded.cellIndex(43.0, -70.5));
+  const auto got = reloaded.get(SourceLayer::Draft, reloaded.cellIndex(43.0, -70.5));
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, -30.0);   // value tile still loaded
   EXPECT_EQ(got->timestamp, 0);          // missing time tile -> 0
@@ -153,7 +148,7 @@ TEST_F(TileIoTest, MissingSourceTileLoadsAsZero)
 {
   BathymetryStore store(5);
   store.set(
-    SourceLayer::Draft, kEpoch, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 99LL, 5u});
+    SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 99LL, 5u});
   marine_bathymetry_store::save(store, dir_.string());
 
   for (const auto & e : fs::recursive_directory_iterator(dir_ / "draft")) {
@@ -166,7 +161,7 @@ TEST_F(TileIoTest, MissingSourceTileLoadsAsZero)
 
   BathymetryStore reloaded(5);
   EXPECT_EQ(marine_bathymetry_store::load(reloaded, dir_.string()), 1u);
-  const auto got = reloaded.get(SourceLayer::Draft, kEpoch, reloaded.cellIndex(43.0, -70.5));
+  const auto got = reloaded.get(SourceLayer::Draft, reloaded.cellIndex(43.0, -70.5));
   ASSERT_TRUE(got.has_value());
   EXPECT_EQ(got->timestamp, 99);         // time tile still loaded
   EXPECT_EQ(got->source_index, 0u);      // missing source tile -> 0
@@ -175,7 +170,7 @@ TEST_F(TileIoTest, MissingSourceTileLoadsAsZero)
 TEST_F(TileIoTest, LoadedTilesAreCleanAndDontResave)
 {
   BathymetryStore store(5);
-  store.set(SourceLayer::Draft, kEpoch, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 1LL});
+  store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 1LL});
 
   EXPECT_EQ(marine_bathymetry_store::save(store, dir_.string()), 1u);
   // No changes since the last save -> nothing re-written (incremental save).
@@ -190,10 +185,10 @@ TEST_F(TileIoTest, LoadedTilesAreCleanAndDontResave)
 TEST_F(TileIoTest, WritingAfterSaveRedirties)
 {
   BathymetryStore store(5);
-  store.set(SourceLayer::Draft, kEpoch, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 1LL});
+  store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 1LL});
   EXPECT_EQ(marine_bathymetry_store::save(store, dir_.string()), 1u);
 
-  store.set(SourceLayer::Draft, kEpoch, store.cellIndex(43.0, -70.5), BathyCell{-31.0, 0.4, 2LL});
+  store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-31.0, 0.4, 2LL});
   EXPECT_EQ(marine_bathymetry_store::save(store, dir_.string()), 1u);
 }
 
@@ -201,8 +196,8 @@ TEST_F(TileIoTest, LayersWriteToSeparateSubdirectories)
 {
   BathymetryStore store(5);
   const auto pcell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Processed, kEpoch, pcell, BathyCell{-10.0, 0.1, 1LL});
-  store.set(SourceLayer::Draft, kEpoch, pcell, BathyCell{-12.0, 0.5, 2LL});
+  store.set(SourceLayer::Processed, pcell, BathyCell{-10.0, 0.1, 1LL});
+  store.set(SourceLayer::Draft, pcell, BathyCell{-12.0, 0.5, 2LL});
   marine_bathymetry_store::save(store, dir_.string());
 
   EXPECT_TRUE(fs::is_directory(dir_ / "processed"));
@@ -219,17 +214,17 @@ TEST_F(TileIoTest, LoadAcceptsMixedLevelTiles)
   gggs::Level fine(7);
   const auto coarse_cell = coarse.cellIndex(gggs::geoPoint(43.0, -70.5));
   const auto fine_cell = fine.cellIndex(gggs::geoPoint(43.0, -70.5));
-  writer.set(SourceLayer::Draft, kEpoch, coarse_cell, BathyCell{-30.0, 0.5, 1LL});
-  writer.set(SourceLayer::Draft, kEpoch, fine_cell, BathyCell{-22.0, 0.3, 2LL});
+  writer.set(SourceLayer::Draft, coarse_cell, BathyCell{-30.0, 0.5, 1LL});
+  writer.set(SourceLayer::Draft, fine_cell, BathyCell{-22.0, 0.3, 2LL});
   EXPECT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 2u);
 
   // Reload into a store whose default level (6) matches NEITHER stored level.
   BathymetryStore reloaded(6);
   EXPECT_EQ(marine_bathymetry_store::load(reloaded, dir_.string()), 2u);
-  const auto coarse_got = reloaded.get(SourceLayer::Draft, kEpoch, coarse_cell);
+  const auto coarse_got = reloaded.get(SourceLayer::Draft, coarse_cell);
   ASSERT_TRUE(coarse_got.has_value());
   EXPECT_DOUBLE_EQ(coarse_got->depth, -30.0);
-  const auto fine_got = reloaded.get(SourceLayer::Draft, kEpoch, fine_cell);
+  const auto fine_got = reloaded.get(SourceLayer::Draft, fine_cell);
   ASSERT_TRUE(fine_got.has_value());
   EXPECT_DOUBLE_EQ(fine_got->depth, -22.0);
 }
@@ -241,7 +236,7 @@ TEST_F(TileIoTest, ChartRoundTripsAndLoadsIntoReadOnlyStore)
   // set(), so the prior loads even though live set(Chart) stays forbidden.
   const int64_t ts = 1'780'000'000'000'000'000LL;
   BathymetryStore writer(5, /*chart_writable=*/true);
-  writer.set(SourceLayer::Chart, kEpoch, writer.cellIndex(43.0, -70.5), BathyCell{38.58, 3.0, ts});
+  writer.set(SourceLayer::Chart, writer.cellIndex(43.0, -70.5), BathyCell{38.58, 3.0, ts});
   EXPECT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 1u);
   EXPECT_TRUE(fs::is_directory(dir_ / "chart"));
 
@@ -250,14 +245,14 @@ TEST_F(TileIoTest, ChartRoundTripsAndLoadsIntoReadOnlyStore)
   EXPECT_EQ(marine_bathymetry_store::load(runtime, dir_.string()), 1u);
 
   const auto rcell = runtime.cellIndex(43.0, -70.5);
-  const auto got = runtime.get(SourceLayer::Chart, kEpoch, rcell);
+  const auto got = runtime.get(SourceLayer::Chart, rcell);
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, 38.58);
   EXPECT_EQ(got->timestamp, ts);
 
   // The read-only guard still holds after the prior is loaded.
   EXPECT_THROW(
-    runtime.set(SourceLayer::Chart, kEpoch, rcell, BathyCell{1.0, 1.0, 1LL}),
+    runtime.set(SourceLayer::Chart, rcell, BathyCell{1.0, 1.0, 1LL}),
     std::logic_error);
 }
 
@@ -266,13 +261,13 @@ TEST_F(TileIoTest, ProcessedDraftOnlyStoreLoadsWithoutChartDir)
   // Back-compat: a Phase-1 store with no chart/ subdir still saves and loads;
   // the absent chart layer is simply skipped, not an error.
   BathymetryStore store(5);
-  store.set(SourceLayer::Draft, kEpoch, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 1LL});
+  store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5, 1LL});
   marine_bathymetry_store::save(store, dir_.string());
   EXPECT_FALSE(fs::exists(dir_ / "chart"));   // no spurious empty chart/ dir
 
   BathymetryStore reloaded(5);
   EXPECT_EQ(marine_bathymetry_store::load(reloaded, dir_.string()), 1u);
-  EXPECT_TRUE(reloaded.epochs(SourceLayer::Chart).empty());
+  EXPECT_TRUE(reloaded.tiles(SourceLayer::Chart).empty());
 }
 
 TEST_F(TileIoTest, RegistryAtomicWrite)
@@ -314,7 +309,7 @@ TEST_F(TileIoTest, SaveWritesRegistryWhenProvided)
 {
   // The store save() persists the registry sidecar once, at the store root.
   BathymetryStore store(5);
-  store.set(SourceLayer::Draft, kEpoch, store.cellIndex(43.0, -70.5),
+  store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5),
     BathyCell{-30.0, 0.5, 1LL, 1u});
   SourceRegistry registry;
   registry.registerSource(SourceRecord{"bizzy:m3:0", "bizzy", "m3", "multibeam", "", "ellipsoid"});
@@ -405,13 +400,13 @@ TEST_F(TileIoTest, LoadTileRejectsLegacyThreeBandValueTile)
   // seconds layout) must be rejected with a clear error on load rather than
   // silently loading 2 bands and discarding the third.
   namespace mtrs = marine_tiled_raster_store;
-  fs::create_directories(dir_ / "draft" / kEpoch);
+  fs::create_directories(dir_ / "draft");
 
   // Create a fake 3-band Float64 tile that mimics the old layout.
   const gggs::Level level(5);
   const gggs::GridIndex grid = level.gridIndex(43.0, -70.5);
   const std::string filename = marine_bathymetry_store::tileFilename(grid);
-  const std::string path = (dir_ / "draft" / kEpoch / filename).string();
+  const std::string path = (dir_ / "draft" / filename).string();
 
   mtrs::TiledRasterTile<double> legacy_tile(grid, 3, 0.0);
   legacy_tile.set(10, 20, 0, -12.5);    // depth
@@ -433,7 +428,7 @@ TEST_F(TileIoTest, LoadTileRejectsCompanionWithWrongGrid)
   // error rather than silently combining cell-for-cell data from two different
   // geographic locations.
   namespace mtrs = marine_tiled_raster_store;
-  fs::create_directories(dir_ / "draft" / kEpoch);
+  fs::create_directories(dir_ / "draft");
 
   const gggs::Level level(5);
   // Two grids in different locations.
@@ -443,7 +438,7 @@ TEST_F(TileIoTest, LoadTileRejectsCompanionWithWrongGrid)
 
   // Save a normal tile for grid_a.
   BathymetryStore store(5);
-  store.set(SourceLayer::Draft, kEpoch, store.cellIndex(43.0, -70.5),
+  store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5),
     BathyCell{-30.0, 0.5, 42LL, 1u});
   marine_bathymetry_store::save(store, dir_.string());
 
@@ -452,7 +447,7 @@ TEST_F(TileIoTest, LoadTileRejectsCompanionWithWrongGrid)
   // + "_time.tif"), but we write a file whose geotransform encodes grid_b.
   const std::string value_filename = marine_bathymetry_store::tileFilename(grid_a);
   const fs::path time_path =
-    dir_ / "draft" / kEpoch / (fs::path(value_filename).stem().string() + "_time.tif");
+    dir_ / "draft" / (fs::path(value_filename).stem().string() + "_time.tif");
   // Write a time tile for grid_b at that path (overwrites any existing companion).
   mtrs::TiledRasterTile<int64_t> wrong_time(grid_b, 1, int64_t{0});
   wrong_time.set(0, 0, 0, 99LL);
@@ -462,112 +457,77 @@ TEST_F(TileIoTest, LoadTileRejectsCompanionWithWrongGrid)
   EXPECT_THROW(marine_bathymetry_store::load(reloaded, dir_.string()), std::runtime_error);
 }
 
-// --- Epoch persistence (ADR-0002 Amendment A1) ---
+// --- Flat layout persistence (#221: per-day epoch subdirectory dropped) ---
 
-TEST_F(TileIoTest, EpochProvenanceRoundTrips)
+TEST_F(TileIoTest, SaveWritesFlatLayoutNoEpochSubdir)
 {
-  // A Replayed epoch's provenance must survive save/load via the marker file,
-  // so a reloaded compacted epoch stays immutable to live writes.
+  // Value tiles persist directly under <dir>/<layer>/ — no per-day epoch
+  // subdirectory and no provenance marker file (#221).
   BathymetryStore writer(5);
   const auto cell = writer.cellIndex(43.0, -70.5);
-  std::map<gggs::GridIndex, marine_bathymetry_store::BathymetryTile> tiles;
-  marine_bathymetry_store::BathymetryTile tile(cell.grid());
-  tile.set(cell.row(), cell.column(), BathyCell{-30.0, 0.5, 1LL});
-  tiles.emplace(cell.grid(), std::move(tile));
-  ASSERT_TRUE(
-    writer.importEpoch(SourceLayer::Draft, kEpoch, std::move(tiles), Provenance::Replayed));
-  marine_bathymetry_store::save(writer, dir_.string());
+  writer.set(SourceLayer::Draft, cell, BathyCell{-30.0, 0.5, 1LL});
+  EXPECT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 1u);
 
-  // The provenance marker exists in the epoch dir.
-  EXPECT_TRUE(fs::is_regular_file(dir_ / "draft" / kEpoch / "provenance"));
-
-  BathymetryStore reloaded(5);
-  EXPECT_EQ(marine_bathymetry_store::load(reloaded, dir_.string()), 1u);
-  // The reloaded epoch is Replayed -> a live write is refused (no-op).
-  EXPECT_FALSE(reloaded.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-99.0, 9.0, 2LL}));
-  EXPECT_DOUBLE_EQ(reloaded.get(SourceLayer::Draft, kEpoch, cell)->depth, -30.0);
-}
-
-TEST_F(TileIoTest, ReadProvenanceMarkerIsCrlfSafe)
-{
-  // A CRLF-terminated provenance marker (Windows / mixed checkout) must not be
-  // mis-parsed as garbage and silently downgraded to LiveFused — that would let
-  // live writes regress a Replayed epoch after a reload (harvested #148 fix).
-  BathymetryStore writer(5);
-  const auto cell = writer.cellIndex(43.0, -70.5);
-  std::map<gggs::GridIndex, marine_bathymetry_store::BathymetryTile> tiles;
-  marine_bathymetry_store::BathymetryTile tile(cell.grid());
-  tile.set(cell.row(), cell.column(), BathyCell{-30.0, 0.5, 1LL});
-  tiles.emplace(cell.grid(), std::move(tile));
-  writer.importEpoch(SourceLayer::Draft, kEpoch, std::move(tiles), Provenance::Replayed);
-  marine_bathymetry_store::save(writer, dir_.string());
-
-  // Rewrite the provenance marker with a CRLF line ending.
-  {
-    std::ofstream out(dir_ / "draft" / kEpoch / "provenance", std::ios::trunc | std::ios::binary);
-    out << "replayed\r\n";
+  // The value tile sits directly in draft/, and no subdirectory or provenance
+  // marker exists.
+  const std::string filename =
+    marine_bathymetry_store::tileFilename(cell.grid());
+  EXPECT_TRUE(fs::is_regular_file(dir_ / "draft" / filename));
+  EXPECT_FALSE(fs::exists(dir_ / "draft" / "provenance"));
+  for (const auto & e : fs::directory_iterator(dir_ / "draft")) {
+    EXPECT_FALSE(e.is_directory()) << "no epoch subdirectory expected: " << e.path();
   }
 
   BathymetryStore reloaded(5);
   EXPECT_EQ(marine_bathymetry_store::load(reloaded, dir_.string()), 1u);
-  // Still recognized as Replayed despite the CRLF -> live write refused.
-  EXPECT_FALSE(reloaded.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-99.0, 9.0, 2LL}));
+  EXPECT_DOUBLE_EQ(reloaded.get(SourceLayer::Draft, cell)->depth, -30.0);
 }
 
-TEST_F(TileIoTest, SupersedesDiskClearsStaleTiles)
+TEST_F(TileIoTest, LoadIgnoresEpochSubdirectories)
 {
-  // A wholesale re-import (importEpoch) that covers fewer grids must remove the
-  // stale tile files of the grids it no longer covers, so they aren't
-  // resurrected on the next load (supersedes_disk).
+  // A stray subdirectory under <layer>/ (e.g. a leftover old-style epoch dir)
+  // is ignored by load, not flattened — there is no production data to migrate
+  // (#221). Only the flat value tiles load.
+  BathymetryStore writer(5);
+  const auto cell = writer.cellIndex(43.0, -70.5);
+  writer.set(SourceLayer::Draft, cell, BathyCell{-30.0, 0.5, 1LL});
+  marine_bathymetry_store::save(writer, dir_.string());
+
+  // Drop an old-style epoch subdirectory containing a (would-be) tile file.
+  const fs::path epoch_dir = dir_ / "draft" / "2026-06-10";
+  fs::create_directories(epoch_dir);
+  {
+    std::ofstream(epoch_dir / "5_0_0.tif") << "stale";
+  }
+
+  BathymetryStore reloaded(5);
+  // Only the flat tile loads; the subdirectory's contents are ignored (not
+  // mis-loaded as a tile, which would have thrown on the bogus file).
+  EXPECT_EQ(marine_bathymetry_store::load(reloaded, dir_.string()), 1u);
+  EXPECT_DOUBLE_EQ(reloaded.get(SourceLayer::Draft, cell)->depth, -30.0);
+}
+
+TEST_F(TileIoTest, ImportTilesPersistAndReload)
+{
+  // The bulk-insert path persists its tiles to the flat layout and reloads.
   BathymetryStore writer(5);
   const auto cell_a = writer.cellIndex(43.0, -70.5);
   const auto cell_b = writer.cellIndex(44.0, -71.0);
   ASSERT_FALSE(cell_a.grid() == cell_b.grid());
 
-  // First import covers two grids.
-  std::map<gggs::GridIndex, marine_bathymetry_store::BathymetryTile> first;
+  std::map<gggs::GridIndex, marine_bathymetry_store::BathymetryTile> tiles;
   for (const auto & c : {cell_a, cell_b}) {
     marine_bathymetry_store::BathymetryTile t(c.grid());
     t.set(c.row(), c.column(), BathyCell{-30.0, 0.5, 1LL});
-    first.emplace(c.grid(), std::move(t));
+    tiles.emplace(c.grid(), std::move(t));
   }
-  writer.importEpoch(SourceLayer::Draft, kEpoch, std::move(first), Provenance::Replayed);
+  EXPECT_EQ(writer.importTiles(SourceLayer::Draft, std::move(tiles)), 2u);
   EXPECT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 2u);
-
-  // Re-import the SAME epoch covering only grid_a.
-  std::map<gggs::GridIndex, marine_bathymetry_store::BathymetryTile> second;
-  {
-    marine_bathymetry_store::BathymetryTile t(cell_a.grid());
-    t.set(cell_a.row(), cell_a.column(), BathyCell{-28.0, 0.4, 2LL});
-    second.emplace(cell_a.grid(), std::move(t));
-  }
-  writer.importEpoch(SourceLayer::Draft, kEpoch, std::move(second), Provenance::Replayed);
-  marine_bathymetry_store::save(writer, dir_.string());
-
-  // grid_b's tile files must be gone; a fresh load sees only grid_a.
-  BathymetryStore reloaded(5);
-  EXPECT_EQ(marine_bathymetry_store::load(reloaded, dir_.string()), 1u);
-  EXPECT_TRUE(reloaded.get(SourceLayer::Draft, kEpoch, cell_a).has_value());
-  EXPECT_FALSE(reloaded.get(SourceLayer::Draft, kEpoch, cell_b).has_value());
-}
-
-TEST_F(TileIoTest, EpochsPersistToSeparateDirectories)
-{
-  // Two epochs of one layer save to distinct subdirectories and both reload.
-  BathymetryStore writer(5);
-  const auto cell = writer.cellIndex(43.0, -70.5);
-  writer.set(SourceLayer::Draft, "2026-06-09", cell, BathyCell{-30.0, 0.5, 1LL});
-  writer.set(SourceLayer::Draft, "2026-06-11", cell, BathyCell{-28.0, 0.5, 2LL});
-  EXPECT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 2u);
-
-  EXPECT_TRUE(fs::is_directory(dir_ / "draft" / "2026-06-09"));
-  EXPECT_TRUE(fs::is_directory(dir_ / "draft" / "2026-06-11"));
 
   BathymetryStore reloaded(5);
   EXPECT_EQ(marine_bathymetry_store::load(reloaded, dir_.string()), 2u);
-  EXPECT_EQ(reloaded.epochs(SourceLayer::Draft).size(), 2u);
-  EXPECT_DOUBLE_EQ(reloaded.get(SourceLayer::Draft, "2026-06-09", cell)->depth, -30.0);
-  EXPECT_DOUBLE_EQ(reloaded.get(SourceLayer::Draft, "2026-06-11", cell)->depth, -28.0);
+  EXPECT_TRUE(reloaded.get(SourceLayer::Draft, cell_a).has_value());
+  EXPECT_TRUE(reloaded.get(SourceLayer::Draft, cell_b).has_value());
 }
 
 TEST_F(TileIoTest, LevelFromTileFilenameParsesPrefix)
@@ -625,14 +585,14 @@ TEST_F(TileIoTest, LoadWindowLoadsOnlyOverlappingTiles)
   {
     BathymetryStore writer(lvl);
     const auto c_in = lev.cellIndex(gggs::geoPoint(43.0, -70.5));
-    writer.set(SourceLayer::Draft, kEpoch, c_in, BathyCell{-10.0, 0.5, 1LL});
+    writer.set(SourceLayer::Draft, c_in, BathyCell{-10.0, 0.5, 1LL});
     const auto c_out = lev.cellIndex(gggs::geoPoint(50.0, -40.0));
-    writer.set(SourceLayer::Draft, kEpoch, c_out, BathyCell{-20.0, 0.5, 2LL});
+    writer.set(SourceLayer::Draft, c_out, BathyCell{-20.0, 0.5, 2LL});
     const auto c_str = lev.cellIndex(
       gggs::geoPoint(
         inside_grid.southLatitude() - 0.001,
         inside_grid.westLongitude() + 0.001));
-    writer.set(SourceLayer::Draft, kEpoch, c_str, BathyCell{-30.0, 0.5, 3LL});
+    writer.set(SourceLayer::Draft, c_str, BathyCell{-30.0, 0.5, 3LL});
     ASSERT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 3u);
   }
 
@@ -651,7 +611,7 @@ TEST_F(TileIoTest, LoadWindowLoadsOnlyOverlappingTiles)
   // so exactly two tiles load (proves "only overlapping", not just "at least one").
   EXPECT_EQ(n, 2u);
   // outside_grid must not have been loaded.
-  EXPECT_FALSE(result.get(SourceLayer::Draft, kEpoch, lev.cellIndex(
+  EXPECT_FALSE(result.get(SourceLayer::Draft, lev.cellIndex(
     gggs::geoPoint(50.0, -40.0))).has_value());
 }
 
@@ -666,7 +626,7 @@ TEST_F(TileIoTest, LoadWindowBoundaryStraddle)
   {
     BathymetryStore writer(lvl);
     const auto cell = lev.cellIndex(gggs::geoPoint(43.0, -70.5));
-    writer.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-15.0, 0.5, 1LL});
+    writer.set(SourceLayer::Draft, cell, BathyCell{-15.0, 0.5, 1LL});
     ASSERT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 1u);
   }
 
@@ -678,7 +638,7 @@ TEST_F(TileIoTest, LoadWindowBoundaryStraddle)
   const std::size_t n = marine_bathymetry_store::loadWindow(
     result, dir_.string(), min_pt, max_pt);
   EXPECT_EQ(n, 1u);
-  EXPECT_TRUE(result.get(SourceLayer::Draft, kEpoch,
+  EXPECT_TRUE(result.get(SourceLayer::Draft,
     lev.cellIndex(gggs::geoPoint(43.0, -70.5))).has_value());
 }
 
@@ -691,7 +651,7 @@ TEST_F(TileIoTest, LoadWindowIdempotent)
   {
     BathymetryStore writer(lvl);
     const auto cell = lev.cellIndex(gggs::geoPoint(43.0, -70.5));
-    writer.set(SourceLayer::Draft, kEpoch, cell, BathyCell{-10.0, 0.5, 1LL});
+    writer.set(SourceLayer::Draft, cell, BathyCell{-10.0, 0.5, 1LL});
     ASSERT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 1u);
   }
 
@@ -708,7 +668,7 @@ TEST_F(TileIoTest, LoadWindowIdempotent)
   // Second call should skip the already-resident tile.
   EXPECT_EQ(second, 0u);
   // Tile count in store is still 1 (not doubled).
-  EXPECT_EQ(result.epochs(SourceLayer::Draft).at(kEpoch).tiles.size(), 1u);
+  EXPECT_EQ(result.tiles(SourceLayer::Draft).size(), 1u);
 }
 
 TEST_F(TileIoTest, LoadWindowRejectsMalformedTileFilename)
@@ -721,12 +681,12 @@ TEST_F(TileIoTest, LoadWindowRejectsMalformedTileFilename)
   {
     BathymetryStore writer(lvl);
     writer.set(
-      SourceLayer::Draft, kEpoch, lev.cellIndex(gggs::geoPoint(43.0, -70.5)),
+      SourceLayer::Draft, lev.cellIndex(gggs::geoPoint(43.0, -70.5)),
       BathyCell{-10.0, 0.5, 1LL});
     ASSERT_EQ(marine_bathymetry_store::save(writer, dir_.string()), 1u);
   }
   // Drop a bogus value-tile name (level 99) into the same layer/epoch dir.
-  const std::filesystem::path bogus = dir_ / "draft" / kEpoch / "99_0_0.tif";
+  const std::filesystem::path bogus = dir_ / "draft" / "99_0_0.tif";
   {
     std::ofstream(bogus) << "not a tile";
   }
@@ -746,7 +706,7 @@ TEST_F(TileIoTest, LoadWindowRejectsMalformedTileFilename)
 TEST_F(TileIoTest, EvictOutsideDropsOutsideKeepsInside)
 {
   // Two tiles: one inside the keep-box, one outside.
-  // Populate in-memory via importEpoch (no disk I/O needed for evictOutside).
+  // Populate in-memory via importTiles (no disk I/O needed for evictOutside).
   const uint8_t lvl = 5;
   gggs::Level lev(lvl);
   const auto cell_in = lev.cellIndex(gggs::geoPoint(43.0, -70.5));
@@ -763,14 +723,12 @@ TEST_F(TileIoTest, EvictOutsideDropsOutsideKeepsInside)
     tiles.emplace(cell_out.grid(), std::move(t_out));
 
     BathymetryStore store(lvl);
-    ASSERT_TRUE(
-      store.importEpoch(
-        SourceLayer::Draft, kEpoch, std::move(tiles), Provenance::LiveFused));
-    // Save so tiles are clean (importEpoch marks them dirty; we want to test
+    ASSERT_EQ(store.importTiles(SourceLayer::Draft, std::move(tiles)), 2u);
+    // Save so tiles are clean (importTiles marks them dirty; we want to test
     // eviction of clean tiles here — the dirty-guard test is separate).
     marine_bathymetry_store::save(store, dir_.string());
-    ASSERT_TRUE(store.get(SourceLayer::Draft, kEpoch, cell_in).has_value());
-    ASSERT_TRUE(store.get(SourceLayer::Draft, kEpoch, cell_out).has_value());
+    ASSERT_TRUE(store.get(SourceLayer::Draft, cell_in).has_value());
+    ASSERT_TRUE(store.get(SourceLayer::Draft, cell_out).has_value());
 
     const gggs::GridIndex grid_in = cell_in.grid();
     const auto min_pt =
@@ -782,15 +740,15 @@ TEST_F(TileIoTest, EvictOutsideDropsOutsideKeepsInside)
       store, min_pt, max_pt);
 
     EXPECT_EQ(evicted, 1u);
-    EXPECT_TRUE(store.get(SourceLayer::Draft, kEpoch, cell_in).has_value());
-    EXPECT_FALSE(store.get(SourceLayer::Draft, kEpoch, cell_out).has_value());
+    EXPECT_TRUE(store.get(SourceLayer::Draft, cell_in).has_value());
+    EXPECT_FALSE(store.get(SourceLayer::Draft, cell_out).has_value());
   }
 }
 
 TEST_F(TileIoTest, EvictOutsideDirtyTileNotEvicted)
 {
   // A dirty (unsaved) Draft tile outside the keep-box must NOT be evicted.
-  // importEpoch marks tiles dirty, so we skip save() intentionally.
+  // importTiles marks tiles dirty, so we skip save() intentionally.
   const uint8_t lvl = 5;
   gggs::Level lev(lvl);
   const auto cell_out = lev.cellIndex(gggs::geoPoint(50.0, -40.0));
@@ -801,11 +759,9 @@ TEST_F(TileIoTest, EvictOutsideDirtyTileNotEvicted)
   tiles.emplace(cell_out.grid(), std::move(t));
 
   BathymetryStore store(lvl);
-  ASSERT_TRUE(
-    store.importEpoch(
-      SourceLayer::Draft, kEpoch, std::move(tiles), Provenance::LiveFused));
-  // Tile is dirty (importEpoch marks it dirty); do NOT save here.
-  ASSERT_TRUE(store.get(SourceLayer::Draft, kEpoch, cell_out)->depth == -20.0);
+  ASSERT_EQ(store.importTiles(SourceLayer::Draft, std::move(tiles)), 1u);
+  // Tile is dirty (importTiles marks it dirty); do NOT save here.
+  ASSERT_TRUE(store.get(SourceLayer::Draft, cell_out)->depth == -20.0);
 
   // Keep-box is far from the tile's position.
   const auto min_pt = makeGeoPoint(42.0, -71.0);
@@ -817,5 +773,5 @@ TEST_F(TileIoTest, EvictOutsideDirtyTileNotEvicted)
   // Dirty-tile guard: evicted count must be 0 (tile was outside but dirty).
   EXPECT_EQ(evicted, 0u);
   // Tile must still be present.
-  EXPECT_TRUE(store.get(SourceLayer::Draft, kEpoch, cell_out).has_value());
+  EXPECT_TRUE(store.get(SourceLayer::Draft, cell_out).has_value());
 }

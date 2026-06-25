@@ -95,9 +95,10 @@ std::size_t BathymetryStore::importTiles(
   std::size_t inserted = 0;
   for (auto & [grid, tile] : tiles) {
     // A bulk import is a fresh surface: mark every inserted tile dirty so it
-    // persists on the next save.
+    // persists on the next save. insert_or_assign (not operator[]) because
+    // BathymetryTile is not default-constructible.
     tile.markDirty();
-    m[grid] = std::move(tile);
+    m.insert_or_assign(grid, std::move(tile));
     ++inserted;
   }
   return inserted;
