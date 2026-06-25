@@ -81,3 +81,28 @@ issue: 221
 - [ ] (suggestion) `bathymetry_layer.cpp` `costForCell` has a stale comment block (the MF3 staleness rationale) that explicitly narrates the "newest epoch over-uncertain → fall through to older confident epoch" walk. The logic stays correct post-refactor, but the comment becomes misleading. Add comment cleanup to Phase 4a — `bathymetry_layer.cpp:392-396`, `plan.md:110-115`.
 - [ ] (suggestion) Migration shim (Phase 2a `load`): flattening multiple old epoch subdirs into one flat `<layer>/` dir risks tile-filename collision if the existing store ever held >1 epoch (same `<level>_<row>_<col>.tif` in two epoch dirs). Harmless for the current single-coverage store (`draft/2026-06-12/` only), but the plan should state the collision policy (e.g. last-wins or assert-single-epoch) so the shim is deterministic — `plan.md:79-82`.
 - [ ] (suggestion) Geotiff importer signature: plan prose says importer "writes via the store's `set` method (or an equivalent bulk insert)". The current API is a wholesale `importEpoch`; with epochs gone there is no bulk replace. Phase 1b removes `importEpoch` but the importer still needs a bulk-insert path (per-cell `set` works but is slower and bypasses any clear-before-write). Pin the importer's write mechanism explicitly so the store exposes the right method — `plan.md:93-99`, `plan.md:38-54`.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-25 21:47 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-221 at `85a9b2d`
+**Mode**: pre-push
+**Depth**: Deep (reason: ~2250 LOC + ADR-0002 A1 supersession + navigation-safety costmap path + cross-layer/cross-repo)
+**Must-fix**: 1 | **Suggestions**: 4
+**Round**: 1 | **Ship**: continue — code is clean (0 code must-fix, all 83 tests green, both adversarial passes clear); blocker is the unrecorded Phase 7 sim acceptance gate.
+
+### Findings
+- [ ] (must-fix) Phase 7 sim re-validation (explicit acceptance gate) has no record it was run for this costmap-affecting change — run+record (costmap loads from flat-layout store; `loadWindow` window-anchor not regressed, #327) or waive with rationale — `.agent/work-plans/issue-221/plan.md:211-221`
+- [ ] (suggestion) `load`/`loadWindow` silently ignore stray `<layer>/` subdirectories — emit a WARN so an accidental old epoch-layout store isn't silently dropped — `marine_bathymetry_store/src/tile_io.cpp:362`
+- [ ] (suggestion) `importTiles` is additive merge + `save()` never deletes; a shrinking re-import leaves stale `.tif` files that `load` resurrects — document the footgun or add `--replace` — `marine_bathymetry_store/src/bathymetry_store.cpp:67`
+- [ ] (suggestion) cppcheck shadowFunction: local `tiles` shadows the new `tiles()` member; rename to `layer_tiles` — `marine_bathymetry_store/src/bathymetry_store.cpp:59`
+- [ ] (suggestion) cross-repo: `set()` now always returns `true`; `cube_bathymetry#69` should drop any `if (!set(...))` refusal handling
+
+### Notes
+- Static analysis: ament_cpplint clean; uncrustify clean (CI test_results); cppcheck only the shadowFunction style nit above (ament_cppcheck disabled on cppcheck 2.13.0).
+- Tests pass against HEAD `85a9b2d` (run 2026-06-25 21:35): marine_bathymetry_store 70/70, bathymetry_layer 13/13, 0 failures.
+- Safety verified: `nullopt → LETHAL` is strictly more conservative than the removed cross-epoch fallback; MF3 staleness still age-checks the reliable record; ADR-0005 source-index orthogonality preserved in code.
+- No active doc/script references the old `import_geotiff <epoch> <provenance>` CLI; only historical issue-147 work-plan files mention it (left as-is, historical record).
