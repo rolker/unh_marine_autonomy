@@ -56,9 +56,9 @@ std::optional<BathyCell> BathymetryStore::get(
   if (!cell.valid()) {
     return std::nullopt;
   }
-  const auto & tiles = layerMap(layer);
-  const auto tile_it = tiles.find(cell.grid());
-  if (tile_it == tiles.end()) {
+  const auto & layer_tiles = layerMap(layer);
+  const auto tile_it = layer_tiles.find(cell.grid());
+  if (tile_it == layer_tiles.end()) {
     return std::nullopt;
   }
   return tile_it->second.get(cell.row(), cell.column());
@@ -112,10 +112,10 @@ BathymetryTile & BathymetryStore::getOrCreateTile(
   if (!grid.valid()) {
     throw std::invalid_argument("BathymetryStore::getOrCreateTile: invalid GridIndex");
   }
-  auto & tiles = layerMap(layer);
-  auto it = tiles.find(grid);
-  if (it == tiles.end()) {
-    it = tiles.emplace(grid, BathymetryTile(grid)).first;
+  auto & layer_tiles = layerMap(layer);
+  auto it = layer_tiles.find(grid);
+  if (it == layer_tiles.end()) {
+    it = layer_tiles.emplace(grid, BathymetryTile(grid)).first;
   }
   return it->second;
 }

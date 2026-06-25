@@ -156,6 +156,14 @@ public:
   /// supersede). Every inserted tile is marked dirty so it persists. The Chart
   /// read-only gate applies, identical to `set()`. Tiles may be at heterogeneous
   /// levels (multi-level, ADR-0002 §D2).
+  ///
+  /// @note Additive-merge footgun: because this never clears and `save()` never
+  ///   deletes on-disk tiles, a *shrinking* re-import (a corrected coverage with
+  ///   fewer grids than a prior import) does NOT remove the now-orphaned `.tif`
+  ///   files — `load()` will resurrect them. This matches the deliberate
+  ///   single-fused-grid merge contract (#221), but a true replace requires
+  ///   clearing the on-disk layer dir first. A `--replace` import path is a
+  ///   future addition if/when corrected re-imports become a workflow.
   /// @return The number of grids inserted/replaced.
   /// @throws std::invalid_argument if any grid key is invalid or a tile's own
   ///   GridIndex does not match its map key.

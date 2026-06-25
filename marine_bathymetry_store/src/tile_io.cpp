@@ -23,6 +23,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <iostream>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -365,8 +366,15 @@ std::size_t load(
     // Flat layout (#221): value tiles live directly under <dir>/<layer>/. A
     // subdirectory entry (e.g. a stale old-style epoch dir) is ignored — there
     // is no production data to migrate, so old epoch-subdir stores are simply
-    // discarded.
+    // discarded. Warn so the dropped tiles are not a silent surprise.
     for (const auto & entry : fs::directory_iterator(layer_dir)) {
+      if (entry.is_directory()) {
+        std::cerr << "[marine_bathymetry_store] WARNING: ignoring unexpected "
+                  << "subdirectory in flat-layout store: " << entry.path()
+                  << " — old epoch-layout tiles are not migrated (#221); its "
+                  << "tiles will NOT be loaded.\n";
+        continue;
+      }
       if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
         continue;
       }
@@ -411,6 +419,13 @@ std::size_t loadWindow(
     }
     // Flat layout (#221): value tiles live directly under <dir>/<layer>/.
     for (const auto & entry : fs::directory_iterator(layer_dir)) {
+      if (entry.is_directory()) {
+        std::cerr << "[marine_bathymetry_store] WARNING: ignoring unexpected "
+                  << "subdirectory in flat-layout store: " << entry.path()
+                  << " — old epoch-layout tiles are not migrated (#221); its "
+                  << "tiles will NOT be loaded.\n";
+        continue;
+      }
       if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
         continue;
       }
