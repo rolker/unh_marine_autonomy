@@ -106,3 +106,26 @@ issue: 221
 - Tests pass against HEAD `85a9b2d` (run 2026-06-25 21:35): marine_bathymetry_store 70/70, bathymetry_layer 13/13, 0 failures.
 - Safety verified: `nullopt → LETHAL` is strictly more conservative than the removed cross-epoch fallback; MF3 staleness still age-checks the reliable record; ADR-0005 source-index orthogonality preserved in code.
 - No active doc/script references the old `import_geotiff <epoch> <provenance>` CLI; only historical issue-147 work-plan files mention it (left as-is, historical record).
+
+## Implementation
+**Status**: partial — suggestions done; must-fix deferred
+**When**: 2026-06-25 22:05 +00:00
+**By**: Claude Code Agent (Claude Opus) — host-inline (run-issue orchestrator)
+
+**Branch**: feature/issue-221 at `e9a484b`
+**Source**: addresses `## Local Review (Pre-Push)` (verdict changes-requested, Round 1)
+
+### Applied (review suggestions)
+- [x] `tile_io.cpp` `load`/`loadWindow` now emit a `std::cerr` WARN when a stray subdirectory under `<layer>/` is skipped (silent-drop → visible) — suggestion 1.
+- [x] `bathymetry_store.hpp` `importTiles` doc: documented the additive-merge / no-delete footgun (shrinking re-import orphans on-disk tiles that `load` resurrects; future `--replace`) — suggestion 2.
+- [x] `bathymetry_store.cpp` renamed shadowing locals `tiles` → `layer_tiles` in `get()`/`getOrCreateTile()` (cppcheck shadowFunction) — suggestion 3.
+- Cross-repo suggestion (`set()` always-true → drop `if (!set(...))`) tracked for `cube_bathymetry#69` (out of scope here).
+
+### Deferred (operator decision 2026-06-25)
+- [ ] (must-fix) **Phase 7 sim re-validation** — costmap loads from a flat-layout store; `loadWindow` window-anchor not regressed (#327). Operator chose "apply suggestions, defer sim": run+record in a dedicated sim session. **Publish is HELD until this passes.**
+
+### Verification
+- Build green (real recompile 10.8s/8.1s). Tests green at `e9a484b`: marine_bathymetry_store 70/70, bathymetry_layer 13/13, 0 gtest failures (only the known local uncrustify 0.78.1 false-positive remains).
+
+### Next
+- A final pre-push `review-code` re-run is intentionally paired with the deferred sim gate (re-reviewing now would only re-flag the known, deliberate deferral). Sequence for the next session: run Phase 7 sim re-val → record here → `review-code` → publish checkpoint → push + PR (store-first) → `cube_bathymetry#69`.
