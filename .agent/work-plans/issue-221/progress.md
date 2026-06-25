@@ -54,3 +54,15 @@ issue: 221
 - [ ] Address the `cube_bathymetry` cross-repo delivery strategy (same PR via sub-issue vs coordinated follow-on).
 - [ ] Add sim re-validation acceptance criterion to the work plan.
 - [ ] Note the `shallowestReliable` fallback behavior change in the ADR-0002 supersession.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-24 22:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-221/plan.md` at `7cef99d`
+**Branch**: feature/issue-221 at `7cef99d`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
