@@ -47,11 +47,12 @@
 /// - `<level>_<row>_<col>_source.tif` — 1-band `UInt16` source-index tile
 ///   (registry index, ADR-0005 D2/D8; 0 = no-data/unset).
 ///
-/// The quality/maturity axis (Processed / Draft / Chart) is still encoded as the
-/// on-disk subdirectory (`processed/`, `draft/`, `chart/`); the platform/sensor
-/// provenance axis moves to the per-cell source index + the store-wide
-/// `registry.json` (ADR-0005 D8). On load, a missing `_time.tif` / `_source.tif`
-/// (pre-migration single-platform data) fills timestamp / source_index with 0.
+/// The quality/maturity axis (Processed / Draft / Chart) is encoded as the
+/// on-disk subdirectory (`processed/`, `draft/`, `chart/`); each holds **one
+/// fused** set of value tiles directly (no per-day epoch subdirectory since
+/// #221). The platform/sensor provenance axis moves to the per-cell source index
+/// + the store-wide `registry.json` (ADR-0005 D8). On load, a missing
+/// `_time.tif` / `_source.tif` fills timestamp / source_index with 0.
 ///
 /// @note Round-trip persistence is validated for **non-polar** latitudes
 /// (|lat| < 72°), the intended lake/coastal survey envelope. Near GGGS's polar
@@ -68,7 +69,8 @@ namespace marine_bathymetry_store
 ///        `<level>_<row>_<col>.tif`.
 std::string tileFilename(const gggs::GridIndex & grid);
 
-/// @brief Subdirectory name for a source layer (`"processed"` / `"draft"`).
+/// @brief Subdirectory name for a source layer (`"processed"` / `"draft"` /
+///        `"chart"`). Each holds one fused set of value tiles directly (#221).
 std::string layerDirName(SourceLayer layer);
 
 /// @brief Write one tile as three GeoTIFFs derived from the value-tile @p path.
@@ -107,14 +109,12 @@ uint8_t levelFromTileFilename(const std::string & filename);
 /// @brief Persist every **dirty** tile of @p store under @p dir, then clear
 ///        their dirty flags. Also writes the store-wide `registry.json`.
 ///
-/// Layout: `<dir>/<layer>/<epoch>/<level>_<row>_<col>{,_time,_source}.tif`, plus
-/// a per-epoch `provenance` marker file and a store-wide `<dir>/registry.json`.
-/// Creates directories as needed. Clean tiles are skipped (incremental save). An
-/// epoch flagged `supersedes_disk` (a wholesale import) has its on-disk tile
-/// directory cleared first, so a compacted epoch covering fewer grids never
-/// resurrects a stale tile on the next load. The registry (a store-wide sidecar,
-/// not per-layer) is written once at the end via @p registry; pass `nullptr` to
-/// skip it (e.g. a caller with no registry to persist).
+/// Layout: `<dir>/<layer>/<level>_<row>_<col>{,_time,_source}.tif` plus a
+/// store-wide `<dir>/registry.json` (flat, no per-day epoch subdirectory since
+/// #221). Creates directories as needed. Clean tiles are skipped (incremental
+/// save). The registry (a store-wide sidecar, not per-layer) is written once at
+/// the end via @p registry; pass `nullptr` to skip it (e.g. a caller with no
+/// registry to persist).
 /// @return The number of tiles written.
 /// @throws std::runtime_error on any GDAL failure; std::filesystem::filesystem_error
 ///         (a std::runtime_error subclass) on a directory-creation failure.
@@ -124,14 +124,14 @@ std::size_t save(
 
 /// @brief Load every tile found under @p dir into @p store, plus the registry.
 ///
-/// Scans `<dir>/<layer>/<epoch>/` for value tiles (`<level>_<row>_<col>.tif`),
+/// Scans `<dir>/<layer>/` for value tiles (`<level>_<row>_<col>.tif`),
 /// **skipping** the `_time.tif` / `_source.tif` companions (loaded with their
 /// value tile). Each tile's level is recovered from its filename
 /// (`levelFromTileFilename`), so a **mixed-level** store loads correctly — the
-/// store's default level is irrelevant to loading (ADR-0002 §D2). Each epoch's
-/// provenance is read from its `provenance` marker (CRLF-safe; default
-/// `live-fused` if absent). If @p registry is non-null, `registry.json` is
-/// loaded into it. Loaded tiles are clean.
+/// store's default level is irrelevant to loading (ADR-0002 §D2). Subdirectory
+/// entries (stale old-style epoch dirs, if any) are ignored — there is no
+/// production data to migrate (#221). If @p registry is non-null, `registry.json`
+/// is loaded into it. Loaded tiles are clean.
 /// @return The number of tiles loaded.
 /// @throws std::runtime_error on any GDAL failure or a per-file level mismatch;
 ///         std::filesystem::filesystem_error (a std::runtime_error subclass) on a
@@ -142,15 +142,14 @@ std::size_t load(
 
 /// @brief Load only tiles whose geographic AABB intersects [@p min_pt, @p max_pt].
 ///
-/// Mirrors `load()` in structure (layer × epoch × epoch-dir scan, companion-skip,
-/// level-recovery, backward-compat 0-fill for missing companions, provenance
-/// restore) but gates each tile on two conditions before paying the GDAL I/O
-/// cost:
+/// Mirrors `load()` in structure (flat layer-dir scan, companion-skip,
+/// level-recovery, backward-compat 0-fill for missing companions) but gates each
+/// tile on two conditions before paying the GDAL I/O cost:
 /// 1. The tile's geographic bounding box (derived from its `<level>_<row>_<col>`
 ///    filename, not from a file open) intersects the box [min_pt, max_pt]
 ///    (inclusive on all boundaries — a tile whose edge exactly touches the box
 ///    boundary is included, matching `forEachCellBestSource` semantics).
-/// 2. The tile is not already resident in @p store for this epoch (idempotent:
+/// 2. The tile is not already resident in @p store for this layer (idempotent:
 ///    a second call on the same box skips already-loaded tiles).
 ///
 /// Tiles at any GGGS level are handled correctly (ADR-0002 §D2): each tile's
@@ -176,8 +175,8 @@ std::size_t loadWindow(
 
 /// @brief Remove all **clean** tiles outside [@p min_pt, @p max_pt] from @p store.
 ///
-/// Iterates every layer × epoch in the store and erases tiles whose geographic
-/// AABB does not intersect [min_pt, max_pt] (same inclusive-boundary semantics as
+/// Iterates every layer in the store and erases tiles whose geographic AABB does
+/// not intersect [min_pt, max_pt] (same inclusive-boundary semantics as
 /// `loadWindow`).
 ///
 /// **Dirty-tile guard (safety invariant)**: a tile flagged `dirty()` is **never**
@@ -191,11 +190,6 @@ std::size_t loadWindow(
 ///   process. A writer racing to dirty a tile between the dirty check and the
 ///   erase is undefined behaviour — acceptable before issue #189. See `loadWindow`
 ///   for the full concurrency note.
-///
-/// @note If every tile in an epoch is evicted, an empty `EpochTiles` shell is
-///   left in the layer map (the epoch entry itself is not erased). This is
-///   benign: best-source/newest-wins queries skip empty epochs and `save()` is
-///   unaffected (no tiles to write). A later `loadWindow` repopulates it.
 ///
 /// @return The number of tiles evicted (dirty tiles that were skipped not counted).
 std::size_t evictOutside(
