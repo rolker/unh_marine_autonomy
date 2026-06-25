@@ -67,6 +67,13 @@ no epochs the function has no meaningful semantics. Change detection is deferred
 
 ### Phase 2 — Persistence: flatten on-disk layout
 
+**No migration shim.** The user confirmed nothing here has been used in
+production, so there is nothing to migrate. The new `load` / `loadWindow`
+simply read the flat `<layer>/<level>_<row>_<col>{,_time,_source}.tif`
+layout. Any old epoch-subdirectory store is discarded/ignored — subdirectory
+entries under `<layer>/` are skipped, not flattened. No epoch-subdir-flattening
+code is written, and there is no migration-collision concern.
+
 **2a. Rewrite `tile_io.cpp`** (`save`, `load`, `loadWindow`, `evictOutside`):
 
 - `save`: remove epoch-dir loop; write tiles directly to `<dir>/<layer>/`.
@@ -75,12 +82,9 @@ no epochs the function has no meaningful semantics. Change detection is deferred
   (there is no `supersedes_disk` flag); instead, the caller simply calls
   `save` after loading new data.
 - `load`: scan `<dir>/<layer>/` directly for `<level>_<row>_<col>.tif` files.
-  Remove epoch-subdirectory iteration. Backward-compat migration: if a
-  `<dir>/<layer>/` entry is a **subdirectory** (old epoch dir), flatten its
-  tiles one level up and discard the epoch directory after migration. This
-  converts the existing materialized `draft/2026-06-12/` store to the new
-  flat layout on first load, without manual intervention.
-- `loadWindow`: mirrors `load` structure; same flattening.
+  Remove epoch-subdirectory iteration. Subdirectory entries (old epoch dirs,
+  if any) are ignored — no flattening migration.
+- `loadWindow`: mirrors `load` structure (flat scan).
 - `evictOutside`: iterates `tiles(layer)` directly.
 - Update `tile_io.hpp` docstring to reflect flat layout.
 
@@ -93,9 +97,12 @@ the save path (Chart tiles come from the importer-only path).
 **3a. Rewrite `geotiff_import.hpp` / `geotiff_import.cpp`** — the public
 function currently takes `(BathymetryStore &, SourceRegistry *, SourceLayer,
 const Epoch &, const std::string & path, Provenance, GeoTiffImportOptions)`.
-Drop the `epoch` and `provenance` parameters; the importer now writes
-directly into the layer's single tile map via the store's `set` method (or
-an equivalent bulk insert that the store exposes for the importer path). The
+Drop the `epoch` and `provenance` parameters. With `importEpoch` removed
+(Phase 1b), the store exposes an explicit **bulk-insert** path for the
+importer: `importTiles(SourceLayer, std::map<gggs::GridIndex, BathymetryTile>)`
+(merges/overwrites the supplied tiles into the layer's single tile map, honors
+the Chart read-only gate, marks inserted tiles dirty). The importer builds its
+tiles exactly as today and hands them to `importTiles` in one call. The
 "lowest-uncertainty contention" resolution logic and SourceRegistry stamping
 are preserved.
 
@@ -107,12 +114,17 @@ fallback if the GeoTIFF has no native timestamp).
 
 ### Phase 4 — bathymetry_layer costmap plugin
 
-**4a. Audit `bathymetry_layer.cpp` / `bathymetry_layer.hpp`** — grep confirms
-the layer currently calls `store_->set(layer, kEpoch, cell, value)` and
-iterates `store_.epochs(layer)` in the window-counting helper. Update all call
-sites to the epoch-free signatures. Verify the `loadWindow` / `evictOutside`
-call sites (the window-anchor bug was diagnosed in #327 follow-up; verify
-these are using the new flat layout).
+**4a. `bathymetry_layer.cpp` / `bathymetry_layer.hpp`** — the production
+plugin does **not** call `store_->set(layer, kEpoch, …)` or
+`store_.epochs(layer)`; it only uses `bestSource` / `shallowestReliable` /
+`loadWindow` / `evictOutside`, none of which take epochs (verified — the
+plan-review must-fix). So no call-site rewrites are needed here. The only
+change is a **comment cleanup**: `costForCell`'s MF3 staleness rationale
+(`bathymetry_layer.cpp:392-396`) narrates the now-removed "newest epoch
+over-uncertain → fall through to an older confident epoch" walk. The age-check
+logic stays correct, but the comment becomes misleading post-refactor; rewrite
+it to reference the single fused surface (still age-check the reliable record
+`shallowestReliable` returns, not the quality-blind `bestSource` record).
 
 **4b. Update `test_bathymetry_layer.cpp`** — the test helper that sums
 resident tiles (`epoch_pair.second.tiles.size()`) and the `kEpoch` constant
@@ -140,6 +152,10 @@ Coverage must be preserved or improved; tests are not deleted.
 - **Add** `DoubleWriteSameCell_LastWriteWins` — the single-surface write
   semantics (no provenance guard) should be explicit: a second write to the
   same cell from a different source overwrites.
+- **Add** `ImportTilesBulkInsert` (replaces `ImportEpochReplacesWholesale`) —
+  the importer's bulk-insert path (`importTiles`) merges a tile map into the
+  layer, marks tiles dirty, honors the Chart read-only gate, and rejects
+  mismatched / invalid grid keys.
 - Keep `MultiLevelTileCoexist`, `EmptyStoreQueries`, Chart-write-gate tests.
 
 **5b. `test_query.cpp`** (346 lines) — rewrite:
@@ -160,8 +176,8 @@ Coverage must be preserved or improved; tests are not deleted.
   (`<dir>/<layer>/<tile>.tif`, no epoch subdirectory).
 - **Remove** `EpochProvenanceRoundTrips`, `ReadProvenanceMarkerIsCrlfSafe`,
   `SupersedeDiskClearsStaleEpochTiles` — epoch-only persistence tests.
-- **Add** `LoadFlatteningMigrates` — load from an old-style epoch-subdirectory
-  layout; verify tiles are flattened into the flat store and are queryable.
+- **Add** `LoadIgnoresEpochSubdirectories` — a stray subdirectory under
+  `<layer>/` (e.g. an old epoch dir) is ignored by `load`, not flattened.
 - Keep all three-tile (value/time/source) round-trip coverage, multi-level,
   loadWindow, evictOutside, dirty-tile guard tests.
 
@@ -214,7 +230,7 @@ This is an explicit acceptance criterion; the PR is not complete until it passes
 | `marine_bathymetry_store/include/marine_bathymetry_store/query.hpp` | Drop `DepthSample.epoch`; remove `forEachChangedCell` declaration |
 | `marine_bathymetry_store/src/query.cpp` | Rewrite `bestSource` / `shallowestReliable` (no epoch walk); remove `forEachChangedCell` |
 | `marine_bathymetry_store/include/marine_bathymetry_store/tile_io.hpp` | Update layout docstring; drop epoch/provenance references |
-| `marine_bathymetry_store/src/tile_io.cpp` | Rewrite save/load/loadWindow/evictOutside for flat layout; add migration shim for old epoch-subdirectory stores |
+| `marine_bathymetry_store/src/tile_io.cpp` | Rewrite save/load/loadWindow/evictOutside for flat layout (no migration shim — old epoch-subdir stores discarded) |
 | `marine_bathymetry_store/include/marine_bathymetry_store/geotiff_import.hpp` | Drop `epoch` / `Provenance` parameters |
 | `marine_bathymetry_store/src/geotiff_import.cpp` | Remove epoch/provenance logic |
 | `marine_bathymetry_store/src/import_geotiff_main.cpp` | Drop `<epoch>` / `<provenance>` CLI args |
@@ -251,7 +267,7 @@ This is an explicit acceptance criterion; the PR is not complete until it passes
 | If we change... | Also update... | Included in plan? |
 |---|---|---|
 | `BathymetryStore::set` signature | All callers: `bathymetry_layer.cpp`, `geotiff_import.cpp`, all test files | Yes — Phases 3–5 |
-| Disk layout flattened | `tile_io.cpp` load adds migration shim for old epoch-subdirectory stores | Yes — Phase 2a |
+| Disk layout flattened | `tile_io.cpp` reads flat layout; no production data exists to migrate, so old epoch-subdir stores are discarded (no shim) | Yes — Phase 2a |
 | `forEachChangedCell` removed | Any future change-detection consumer (none currently exist) | Noted in ADR-0002 as deferred |
 | `DepthSample.epoch` removed | Inspect all non-test callers (`bathymetry_layer.cpp`) | Yes — Phase 4a |
 | `cube_bathymetry` API break | cube#69 (`cube_bathymetry_node.cpp` drops `currentUtcDateString()`) | Out of scope — coordinated follow-on |
@@ -260,7 +276,8 @@ This is an explicit acceptance criterion; the PR is not complete until it passes
 
 - [ ] No open questions — all decisions were made at the host checkpoint before this plan.
   (Scope = flatten all layers; Provenance removed; `forEachChangedCell` removed;
-  cube#69 = separate coordinated follow-on; migration = flatten-on-load shim.)
+  cube#69 = separate coordinated follow-on; migration = none, no production
+  data, old epoch-subdir stores discarded.)
 
 ## Estimated Scope
 
