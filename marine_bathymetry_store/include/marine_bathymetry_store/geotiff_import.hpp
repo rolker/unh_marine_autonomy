@@ -29,14 +29,14 @@
 #include <string>
 
 #include "marine_bathymetry_store/bathymetry_store.hpp"
-#include "marine_bathymetry_store/epoch.hpp"
 #include "marine_bathymetry_store/registry.hpp"
 
 /// @file
-/// @brief Import a depth/uncertainty GeoTIFF as one wholesale epoch of a store
-/// (ADR-0002 Phase 2, §A1.2 + §D4). Footprint fill, datum conversion at import,
+/// @brief Import a depth/uncertainty GeoTIFF into a store layer's single fused
+/// surface (ADR-0002 Phase 2, §D4). Footprint fill, datum conversion at import,
 /// lowest-uncertainty contention resolution, and per-cell SourceRegistry
-/// provenance stamping (ADR-0005 D2/D8).
+/// provenance stamping (ADR-0005 D2/D8). The per-day epoch dimension was dropped
+/// in #221; the importer bulk-inserts its tiles via `BathymetryStore::importTiles`.
 
 namespace marine_bathymetry_store
 {
@@ -81,24 +81,26 @@ struct GeoTiffImportOptions
   SourceRecord source;
 };
 
-/// @brief Import @p path as the whole content of @p layer's @p epoch.
+/// @brief Import @p path into @p layer's single fused surface.
 ///
 /// Reads the GeoTIFF, fills each pixel's **footprint** of GGGS cells at the
 /// target level (every store cell a pixel covers, so a coarser-than-store source
 /// still produces coverage), converts the vertical datum at import (§D4), keeps
-/// the lowest-uncertainty value on contention, and replaces @p epoch wholesale
-/// via `importEpoch`. If `options.source.source_id` is non-empty, registers the
-/// `SourceRecord` in @p registry and stamps its index on every imported cell.
+/// the lowest-uncertainty value on contention, and bulk-inserts the resulting
+/// tiles into @p layer via `BathymetryStore::importTiles` (merging into any
+/// existing surface; last-write-wins per cell). If `options.source.source_id` is
+/// non-empty, registers the `SourceRecord` in @p registry and stamps its index
+/// on every imported cell.
 ///
-/// @return The number of distinct cells imported, or `std::nullopt` if
-///         `importEpoch` refused the write (existing epoch is `Replayed` and
-///         @p provenance is `LiveFused`, ADR-0002 §A1.2).
-/// @throws std::invalid_argument on a bad epoch label or band index;
+/// @return The number of distinct cells imported.
+/// @throws std::invalid_argument on a bad band index;
+///         std::logic_error if @p layer is `Chart` and the store is not
+///         `chart_writable` (the read-only-prior gate);
 ///         std::runtime_error on GDAL failure, a non-WGS84 / rotated raster, or
 ///         a missing geotransform.
-std::optional<std::size_t> importGeoTiff(
+std::size_t importGeoTiff(
   BathymetryStore & store, SourceRegistry & registry, SourceLayer layer,
-  const Epoch & epoch, const std::string & path, Provenance provenance,
+  const std::string & path,
   const GeoTiffImportOptions & options = GeoTiffImportOptions{});
 
 }  // namespace marine_bathymetry_store

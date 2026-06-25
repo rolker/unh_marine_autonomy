@@ -20,25 +20,22 @@
 // THE SOFTWARE.
 
 /// @file
-/// @brief CLI: import a depth/uncertainty GeoTIFF as one epoch of a store.
+/// @brief CLI: import a depth/uncertainty GeoTIFF into a store layer.
 ///
-/// usage: import_geotiff <store_dir> <layer> <epoch> <provenance> <geotiff>
+/// usage: import_geotiff <store_dir> <layer> <geotiff>
 ///                       [--cell-size m] [--level N] [--timestamp unix_seconds]
 ///                       [--uncertainty m] [--depth-scale s] [--depth-offset m]
 ///                       [--source-id ID --platform P --sensor S
 ///                        --sensor-class C --campaign K --datum D]
 ///
-/// Loads any existing tiles under <store_dir>, imports the GeoTIFF as the
-/// whole content of <layer>/<epoch> (wholesale, ADR-0002 §A1.2), registers the
-/// provenance source (if --source-id given) and stamps every cell with its
-/// registry index (ADR-0005 D2/D8), then saves. If --timestamp is omitted and
-/// <epoch> is an ISO date (YYYY-MM-DD), cells are stamped midnight UTC.
+/// Loads any existing tiles under <store_dir>, imports the GeoTIFF into <layer>'s
+/// single fused surface (#221 — no per-day epoch), registers the provenance
+/// source (if --source-id given) and stamps every cell with its registry index
+/// (ADR-0005 D2/D8), then saves. If --timestamp is omitted cells are stamped 0
+/// (unset) — a whole-file product carries no native per-cell time.
 
 #include <cstring>
-#include <ctime>
-#include <iomanip>
 #include <iostream>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -53,19 +50,17 @@ namespace
 void usage()
 {
   std::cout <<
-    "usage: import_geotiff <store_dir> <layer> <epoch> <provenance> <geotiff>\n"
+    "usage: import_geotiff <store_dir> <layer> <geotiff>\n"
     "                      [--cell-size m] [--level N] [--timestamp unix_seconds]\n"
     "                      [--uncertainty m] [--depth-scale s] [--depth-offset m]\n"
     "                      [--source-id ID --platform P --sensor S\n"
     "                       --sensor-class C --campaign K --datum D]\n"
     "  layer:      processed | draft | chart\n"
-    "  epoch:      label, conventionally the acquisition date (YYYY-MM-DD)\n"
-    "  provenance: live-fused | replayed\n"
     "  --cell-size: store default cell size in metres (default 0.5)\n"
     "  --level:     GGGS level to import at (default: derived from --cell-size).\n"
     "               The store is multi-level; pass a level to match the source.\n"
-    "  --timestamp: per-cell acquisition time; defaults to midnight UTC of an\n"
-    "               ISO-date epoch label, else 0\n"
+    "  --timestamp: per-cell acquisition time (Unix seconds); defaults to 0\n"
+    "               (unset) — a whole-file product carries no native per-cell time\n"
     "  --uncertainty: ignore the file's uncertainty band and assign this\n"
     "               constant 1-sigma value (for sources without one)\n"
     "  --depth-scale / --depth-offset: vertical conversion at import,\n"
@@ -92,27 +87,15 @@ marine_bathymetry_store::SourceLayer layerFromName(const std::string & name)
   exit(1);
 }
 
-/// Midnight UTC of an ISO date label, or 0 if the label isn't one.
-double timestampFromEpochLabel(const std::string & label)
-{
-  std::tm tm = {};
-  std::istringstream in(label);
-  in >> std::get_time(&tm, "%Y-%m-%d");
-  if (in.fail() || !in.eof()) {
-    return 0.0;
-  }
-  return static_cast<double>(timegm(&tm));
-}
-
 }  // namespace
 
 int main(int argc, char * argv[])
 {
-  std::string positional[5];
+  std::string positional[3];
   int n_positional = 0;
   double cell_size = 0.5;
   int level = -1;                       // sentinel: derive from --cell-size
-  double timestamp = -1.0;              // sentinel: derive from the epoch label
+  double timestamp = 0.0;               // default: unset (no native per-cell time)
   double constant_uncertainty = -1.0;   // sentinel: use the file's band
   double depth_scale = 1.0;
   double depth_offset = 0.0;
@@ -150,30 +133,18 @@ int main(int argc, char * argv[])
       source.campaign = need_arg(i);
     } else if (std::strcmp(argv[i], "--datum") == 0) {
       source.datum = need_arg(i);
-    } else if (n_positional < 5) {
+    } else if (n_positional < 3) {
       positional[n_positional++] = argv[i];
     } else {
       usage();
     }
   }
-  if (n_positional != 5) {
+  if (n_positional != 3) {
     usage();
   }
   const std::string & store_dir = positional[0];
   const auto layer = layerFromName(positional[1]);
-  const std::string & epoch = positional[2];
-  marine_bathymetry_store::Provenance provenance;
-  try {
-    provenance = marine_bathymetry_store::provenanceFromToken(positional[3]);
-  } catch (const std::invalid_argument &) {
-    std::cerr << "unknown provenance '" << positional[3]
-              << "' (expected live-fused|replayed)\n";
-    return 1;
-  }
-  const std::string & geotiff = positional[4];
-  if (timestamp < 0.0) {
-    timestamp = timestampFromEpochLabel(epoch);
-  }
+  const std::string & geotiff = positional[2];
 
   // The importer is the one sanctioned writer of the read-only Chart prior, so
   // it opts into chart_writable only when the target layer is Chart (ADR-0002
@@ -204,15 +175,9 @@ int main(int argc, char * argv[])
     options.uncertainty_band = 0;
     options.default_uncertainty = constant_uncertainty;
   }
-  const auto imported = marine_bathymetry_store::importGeoTiff(
-    store, registry, layer, epoch, geotiff, provenance, options);
-  if (!imported) {
-    std::cerr << "import refused: epoch '" << epoch << "' is already replayed and the "
-      "requested provenance is live-fused (ADR-0002 A1.2 ordering)\n";
-    return 2;
-  }
-  std::cout << "imported " << *imported << " cell(s) into " << positional[1] << "/" <<
-    epoch << " (" << positional[3] << ")\n";
+  const std::size_t imported = marine_bathymetry_store::importGeoTiff(
+    store, registry, layer, geotiff, options);
+  std::cout << "imported " << imported << " cell(s) into " << positional[1] << "\n";
 
   const std::size_t saved = marine_bathymetry_store::save(store, store_dir, &registry);
   std::cout << "saved " << saved << " tile(s) under " << store_dir << "\n";
