@@ -94,6 +94,19 @@ void BathymetryLayer::onInitialize()
   declareParameter("map_tide_frame", rclcpp::ParameterValue(map_tide_frame_));
   node->get_parameter(name_ + ".map_tide_frame", map_tide_frame_);
 
+  // The water-surface ellipsoidal height is read as the z of map_tide_frame
+  // expressed in map_frame. map_frame MUST be the ellipsoid-referenced world
+  // frame (REP-105 'map'): its z=0 is the WGS84 ellipsoid, matching the store's
+  // ellipsoidal-height datum, so lookupTransform(map_frame, map_tide_frame).z is
+  // the surface ellipsoidal height (~+48.9 m at Lake Massabesic full pool).
+  // This must NOT be the costmap's own global frame: bizzy's costmaps render in
+  // map_tide, so referencing global_frame_id_ (the previous behaviour) was a
+  // degenerate self-lookup → identity → z=0 → every cell LETHAL (#220). Compare
+  // s57_layer, which likewise references a dedicated datum frame
+  // (chart_datum_frame), never the costmap global frame.
+  declareParameter("map_frame", rclcpp::ParameterValue(map_frame_));
+  node->get_parameter(name_ + ".map_frame", map_frame_);
+
   const double default_buffer_fraction = buffer_fraction_;
   declareParameter("buffer_fraction", rclcpp::ParameterValue(buffer_fraction_));
   node->get_parameter(name_ + ".buffer_fraction", buffer_fraction_);
@@ -114,6 +127,23 @@ void BathymetryLayer::onInitialize()
         "no costs until one is configured.");
   }
 
+  // Fail loud on a degenerate tide reference. If map_frame == map_tide_frame the
+  // tide lookup is an identity transform (z=0): clearance collapses to
+  // -seafloor_height and the whole survey reads LETHAL (#220). This is a config
+  // error, not a runtime condition — surface it once, clearly, rather than
+  // letting the MF1 gate silently accept the bogus z=0 (the gate in updateBounds
+  // also rejects this case so no cost is written until it is fixed).
+  if (!map_frame_.empty() && map_frame_ == map_tide_frame_) {
+    RCLCPP_ERROR_STREAM(
+      logger_,
+      "bathymetry_layer '" << name_ << "': map_frame and map_tide_frame are both '"
+                           << map_frame_ << "' — the tide lookup would be a degenerate "
+                           << "identity (z=0) and every cell would read LETHAL. map_frame "
+                           << "must be the ellipsoid-referenced world frame (REP-105 'map'), "
+                           << "distinct from the tide frame. This layer will contribute no "
+                           << "costs until the frames differ.");
+  }
+
   const char * const unsurveyed_lethal_str = unsurveyed_is_lethal_ ? "true" : "false";
   RCLCPP_INFO_STREAM(
     logger_,
@@ -121,7 +151,8 @@ void BathymetryLayer::onInitialize()
                          << minimum_depth_ << " m, maximum_caution_depth=" << maximum_caution_depth_
                          << " m, max_uncertainty=" << max_uncertainty_ << " m, max_age=" << max_age_
                          << " s, unsurveyed_is_lethal=" << unsurveyed_lethal_str
-                         << ", map_tide_frame='" << map_tide_frame_ << "'");
+                         << ", map_frame='" << map_frame_ << "', map_tide_frame='"
+                         << map_tide_frame_ << "'");
 
   matchSize();
 }
@@ -277,32 +308,44 @@ void BathymetryLayer::updateBounds(
     return;
   }
 
-  // Cache the water-surface ellipsoidal height from the map_tide frame's
-  // z-origin (mirror s57_layer's tide lookup at TimePointZero).
+  // Cache the water-surface ellipsoidal height as the z of map_tide_frame
+  // expressed in map_frame (the REP-105 'map' frame, whose z=0 is the WGS84
+  // ellipsoid). lookupTransform(map_frame, map_tide_frame).z is then the surface
+  // ellipsoidal height (~+48.9 m at Lake Massabesic full pool).
   //
-  // Verified sign direction (MF1): store depths are WGS84 ellipsoidal heights
-  // (up-positive). At Lake Massabesic the water surface is ~+48.88 m (map_tide_z_,
-  // the full-pool datum) and the seafloor is a few metres below that, e.g. +44–48 m.
-  // So clearance = map_tide_z_ − seafloor_height > 0 (a few metres). With the UNSET
-  // default map_tide_z_=0.0 the clearance for those same cells would be 0 − 47 = −47 m
-  // → LETHAL (coincidentally fail-safe for this lake). However, for any site where
-  // the seafloor elevation is negative (e.g. ocean, depth > ellipsoid zero),
-  // clearance = 0 − (−depth) = +depth → large-positive → FREE_SPACE (fail-open,
-  // i.e. shoals hidden). The direction is therefore SITE-DEPENDENT and cannot be
-  // relied upon for safety. The conservative fix (MF1) is to refuse to write any
-  // cost until at least one valid tide has been received, regardless of sign.
-  if (!map_tide_frame_.empty()) {
+  // #220: this previously referenced global_frame_id_ (the costmap's global
+  // frame). bizzy's costmaps render in map_tide, so that was a degenerate
+  // self-lookup (lookupTransform(map_tide, map_tide) → identity → z=0), making
+  // clearance = 0 − seafloor_height ≈ −47 m and reading the whole survey LETHAL.
+  // map_frame must be the tide-free ellipsoid frame, distinct from map_tide_frame
+  // — exactly as s57_layer references a dedicated chart_datum_frame rather than
+  // the costmap global frame.
+  //
+  // Sign (MF1): store depths are WGS84 ellipsoidal heights (up-positive); the
+  // seafloor sits below the surface, so clearance = map_tide_z_ − seafloor_height
+  // > 0. The MF1 gate refuses to write any cost until a valid tide is received;
+  // a degenerate frame config (map_frame == map_tide_frame) is treated as no
+  // valid tide so a misconfigured z=0 can never be accepted as a real surface.
+  const bool tide_frames_ok =
+    !map_frame_.empty() && !map_tide_frame_.empty() && map_frame_ != map_tide_frame_;
+  if (tide_frames_ok) {
     try {
       auto transform =
-        tf_->lookupTransform(global_frame_id_, map_tide_frame_, tf2::TimePointZero);
+        tf_->lookupTransform(map_frame_, map_tide_frame_, tf2::TimePointZero);
       map_tide_z_ = transform.transform.translation.z;
       map_tide_valid_ = true;
     } catch (const tf2::TransformException & e) {
       RCLCPP_WARN_THROTTLE(
         logger_, *clock_, 10000,
         "bathymetry_layer '%s': cannot look up %s in %s: %s",
-        name_.c_str(), map_tide_frame_.c_str(), global_frame_id_.c_str(), e.what());
+        name_.c_str(), map_tide_frame_.c_str(), map_frame_.c_str(), e.what());
     }
+  } else {
+    RCLCPP_WARN_THROTTLE(
+      logger_, *clock_, 10000,
+      "bathymetry_layer '%s': no usable tide reference (map_frame='%s', "
+      "map_tide_frame='%s'); contributing no costs.",
+      name_.c_str(), map_frame_.c_str(), map_tide_frame_.c_str());
   }
 
   refreshWindow();

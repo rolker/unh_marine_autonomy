@@ -133,6 +133,10 @@ private:
 
   std::string store_path_;
   std::string map_tide_frame_ = "map_tide";
+  // Ellipsoid-referenced world frame (REP-105 'map'): z=0 is the WGS84 ellipsoid.
+  // The water-surface height is read as map_tide_frame's z in this frame. MUST be
+  // distinct from both map_tide_frame_ and the costmap global frame (#220).
+  std::string map_frame_ = "map";
   double buffer_fraction_ = 0.05;
 
   std::string global_frame_id_;

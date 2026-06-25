@@ -20,6 +20,11 @@
 #include "marine_bathymetry_store/bathymetry_store.hpp"
 #include "marine_bathymetry_store/tile_io.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
+#include "nav2_costmap_2d/layered_costmap.hpp"
+#include "nav2_util/lifecycle_node.hpp"
+#include "tf2_ros/buffer.h"
+#include "geometry_msgs/msg/transform_stamped.hpp"
+#include "rclcpp/rclcpp.hpp"
 
 #include "bathymetry_layer.hpp"
 
@@ -50,8 +55,10 @@ public:
   void setStore(std::unique_ptr<BathymetryStore> store) {store_ = std::move(store);}
   BathymetryStore & store() {return *store_;}
   void setMapTideZ(double z) {map_tide_z_ = z;}
+  double getMapTideZ() const {return map_tide_z_;}
   // Explicitly mark the tide as valid (as if a successful TF lookup arrived).
   void setMapTideValid(bool v) {map_tide_valid_ = v;}
+  bool isMapTideValid() const {return map_tide_valid_;}
   void setMinimumDepth(double v) {minimum_depth_ = v;}
   void setMaximumCautionDepth(double v) {maximum_caution_depth_ = v;}
   void setMaxUncertainty(double v) {max_uncertainty_ = v;}
@@ -435,4 +442,104 @@ TEST(BathymetryLayer, WindowedResidencyStaysBounded)
     << "eviction must actually free the out-of-window tiles";
 
   fs::remove_all(dir);
+}
+
+// ---------------------------------------------------------------------------
+// Test case (#220): the water-surface height is read from map_frame, NOT the
+// costmap's global frame. bizzy's costmaps render in map_tide, so referencing
+// the global frame was a degenerate self-lookup (identity → z=0) that read the
+// whole survey LETHAL. These tests pin the frame the tide is measured against.
+// ---------------------------------------------------------------------------
+
+// Publish a map_frame -> map_tide transform with the sea surface at the given
+// ellipsoidal height (z of map_tide in map). map_frame's z=0 is the ellipsoid.
+static void publishMapTide(
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer,
+  const std::string & map_frame,
+  double surface_z)
+{
+  static int64_t stamp_ns = 1;
+  geometry_msgs::msg::TransformStamped mt;
+  mt.header.stamp = rclcpp::Time(stamp_ns++);
+  mt.header.frame_id = map_frame;
+  mt.child_frame_id = "map_tide";
+  mt.transform.translation.z = surface_z;
+  mt.transform.rotation.w = 1.0;
+  tf_buffer->setTransform(mt, "test_authority", false);
+}
+
+class TideFrameTest : public ::testing::Test
+{
+protected:
+  static void SetUpTestSuite()
+  {
+    // ExpandUserPathHandlesTilde overwrites HOME to a non-existent path; without
+    // a writable log directory rclcpp::init() throws while configuring logging.
+    // Pin ROS_LOG_DIR to a writable temp dir so init succeeds regardless of the
+    // HOME another test may have left behind (test-ordering isolation).
+    ::setenv("ROS_LOG_DIR", "/tmp/bathymetry_layer_test_log", 1);
+    if (!rclcpp::ok()) {
+      rclcpp::init(0, nullptr);
+    }
+  }
+  static void TearDownTestSuite()
+  {
+    if (rclcpp::ok()) {
+      rclcpp::shutdown();
+    }
+  }
+};
+
+// The costmap global frame is map_tide (as on bizzy), map_frame is the distinct
+// ellipsoid frame. updateBounds must read the surface height from map_frame ->
+// map_tide (≈ +48.88 m), not from a global-frame self-lookup (which would be 0).
+TEST_F(TideFrameTest, MapTideZReadFromMapFrameNotGlobalFrame)
+{
+  auto node = std::make_shared<nav2_util::LifecycleNode>("test_tide_frame");
+  node->declare_parameter("bathymetry_layer.map_frame", std::string("map"));
+  node->declare_parameter("bathymetry_layer.map_tide_frame", std::string("map_tide"));
+
+  auto tf_buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
+  publishMapTide(tf_buffer, "map", 48.88);
+
+  // Global frame is map_tide — the exact deployment that triggered #220.
+  nav2_costmap_2d::LayeredCostmap layered_costmap("map_tide", false, false);
+  layered_costmap.resizeMap(10, 10, 1.0, 0.0, 0.0);
+
+  BathymetryLayerForTest layer;
+  layer.initialize(&layered_costmap, "bathymetry_layer", tf_buffer.get(), node, nullptr);
+
+  double minx = 1e30, miny = 1e30, maxx = -1e30, maxy = -1e30;
+  layer.updateBounds(0.0, 0.0, 0.0, &minx, &miny, &maxx, &maxy);
+
+  EXPECT_TRUE(layer.isMapTideValid())
+    << "a valid map_frame -> map_tide transform must open the tide gate";
+  EXPECT_NEAR(layer.getMapTideZ(), 48.88, 1e-6)
+    << "map_tide_z_ must be the surface height in map_frame, not 0 from a "
+       "global-frame self-lookup";
+}
+
+// A degenerate config (map_frame == map_tide_frame) must NOT be accepted: the
+// lookup would be an identity (z=0). The tide gate stays closed so no bogus
+// LETHAL flood is written — fail loud, do not paper over it.
+TEST_F(TideFrameTest, DegenerateTideFrameConfigRejected)
+{
+  auto node = std::make_shared<nav2_util::LifecycleNode>("test_tide_frame_degenerate");
+  node->declare_parameter("bathymetry_layer.map_frame", std::string("map_tide"));
+  node->declare_parameter("bathymetry_layer.map_tide_frame", std::string("map_tide"));
+
+  auto tf_buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
+
+  nav2_costmap_2d::LayeredCostmap layered_costmap("map_tide", false, false);
+  layered_costmap.resizeMap(10, 10, 1.0, 0.0, 0.0);
+
+  BathymetryLayerForTest layer;
+  layer.initialize(&layered_costmap, "bathymetry_layer", tf_buffer.get(), node, nullptr);
+
+  double minx = 1e30, miny = 1e30, maxx = -1e30, maxy = -1e30;
+  layer.updateBounds(0.0, 0.0, 0.0, &minx, &miny, &maxx, &maxy);
+
+  EXPECT_FALSE(layer.isMapTideValid())
+    << "map_frame == map_tide_frame is a degenerate identity lookup and must be "
+       "rejected as an invalid tide";
 }
