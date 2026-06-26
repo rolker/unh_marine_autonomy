@@ -280,14 +280,15 @@ bool BathymetryLayer::generateTile(
         const auto geo = worldToLatLon(wx, wy, to_earth);
         cell = store_->cellIndex(geo.latitude, geo.longitude);
       } catch (const tf2::TransformException & e) {
-        // A projection failure here is a transform problem, not a per-cell one
-        // (the transform is fixed for the pass); abort the tile so it is retried
-        // next cycle rather than caching a half-rendered grid.
+        // Skip this cell (leave NO_INFORMATION) and keep rendering, matching the
+        // old per-cell path's continue-on-unprojectable-cell. Aborting the whole
+        // tile would leave it permanently ungenerated — pinning current_=false
+        // (a safety layer reading perpetually stale) on a single bad cell.
         RCLCPP_WARN_THROTTLE(
           logger_, *clock_, 10000,
           "bathymetry_layer '%s': cannot project tile cell to lat/lon: %s",
           name_.c_str(), e.what());
-        return false;
+        continue;
       }
 
       // Reuse the exact per-cell decision (MF1 tide gate, two-query no-data
@@ -464,9 +465,14 @@ void BathymetryLayer::updateBounds(
     const double buffer =
       std::max(world_max_x - world_min_x, world_max_y - world_min_y) * buffer_fraction_;
 
-    // Tide-change invalidation: re-render only when the surface moved materially.
-    // Cached costs keep being served until each tile is regenerated (no flicker;
-    // also resolves the stale-tide latch, #223).
+    const int64_t now_ns = clock_->now().nanoseconds();
+
+    // Tide-CHANGE invalidation: re-render when the surface MOVED materially.
+    // Cached costs keep being served until each tile regenerates (no flicker).
+    // NOTE: this handles a tide that *moves*, not a tide that *freezes/stops*
+    // (lookupTransform(TimePointZero) returns the latest regardless of age, and
+    // map_tide_valid_ is a latch) — detecting a stale/absent tide is the separate
+    // #223 work, NOT resolved here.
     if (!tide_rendered_ ||
       std::abs(map_tide_z_ - last_tide_z_) > tide_invalidate_threshold_)
     {
@@ -475,6 +481,22 @@ void BathymetryLayer::updateBounds(
       }
       last_tide_z_ = map_tide_z_;
       tide_rendered_ = true;
+    }
+
+    // Staleness vs caching: a tile is rendered once, so without this a cell that
+    // ages past max_age_ would keep its cached (possibly non-lethal) cost instead
+    // of flipping to stale-LETHAL like the old per-cycle evaluation did. When the
+    // staleness gate is on (max_age_ > 0), force a full re-render every
+    // ~max_age_/2 so a cell goes stale-LETHAL within ~max_age_ of when it should.
+    // max_age_ == 0 (default) disables the gate, keeping the full caching benefit.
+    if (max_age_ > 0.0) {
+      const int64_t interval_ns = static_cast<int64_t>(max_age_ * 5e8);
+      if (now_ns - last_full_render_ns_ >= interval_ns) {
+        for (auto & entry : tiles_) {
+          entry.second.needs_update = true;
+        }
+        last_full_render_ns_ = now_ns;
+      }
     }
 
     // Tiles overlapping the buffered window.
@@ -637,6 +659,9 @@ void BathymetryLayer::updateCosts(
   nav2_costmap_2d::Costmap2D & master_grid, int min_i, int min_j, int max_i, int max_j)
 {
   if (!enabled_ || !store_) {
+    // A disabled or store-less cycle contributes nothing; it must not leave a
+    // stale current_=true behind for Nav2's staleness monitor (MF2).
+    current_ = false;
     return;
   }
 
@@ -676,7 +701,15 @@ void BathymetryLayer::updateCosts(
     for (int tj = start_tile.second; tj <= end_tile.second; ++tj) {
       const auto entry = tiles_.find(std::make_pair(ti, tj));
       if (entry == tiles_.end() || !entry->second.costmap) {
-        continue;  // not generated yet (or fully unsurveyed) — leave master as-is
+        // Not generated yet (incremental fill / post-invalidation), or fully
+        // unsurveyed: leave the master untouched. COVERAGE-GAP CONTRACT: while the
+        // first pass fills in, an un-generated tile contributes nothing — under
+        // unsurveyed_is_lethal a land cell here is NOT yet lethal. current_ is
+        // held false (all_tiles_generated_ below) for exactly this window, so a
+        // consumer that respects costmap currentness will not plan on it. Nav2's
+        // controller/planner gate on costmap currentness, so the gap is not acted
+        // on; it self-closes within a few cycles for the (small) local costmap.
+        continue;
       }
       const int tile_offset_y =
         -tj * tile_size_ +

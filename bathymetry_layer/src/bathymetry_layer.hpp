@@ -209,6 +209,14 @@ private:
   bool tide_rendered_ = false;
   double tide_invalidate_threshold_ = 0.02;
 
+  // Staleness vs caching: a tile is rendered once, so a cell that ages past
+  // max_age_ would keep its cached (possibly non-lethal) cost rather than
+  // flipping to stale-LETHAL the way the old per-cycle evaluation did. When the
+  // staleness gate is enabled (max_age_ > 0) the cache is fully re-rendered on
+  // this interval so a cell goes stale-LETHAL within ~max_age_ of when it should.
+  // last_full_render_ns_ is the time of the last such forced re-render.
+  int64_t last_full_render_ns_ = 0;
+
   // Last buffered geographic window passed to loadWindow/evictOutside. Used to
   // skip redundant reloads when the costmap has not scrolled past the buffer.
   geographic_msgs::msg::GeoPoint window_min_;

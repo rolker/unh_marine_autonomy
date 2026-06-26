@@ -569,9 +569,11 @@ TEST(BathymetryLayer, TileBlitIsCheapOverLargeGrid)
   const auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
     std::chrono::steady_clock::now() - t0).count();
 
-  // A memory-copy blit of 250k cells is sub-ms to a few ms; the old per-cell path
-  // (~35 us/cell) would be ~8.75 s. A 1 s bound flags a regression to per-cell
-  // work without being flaky on a loaded CI host.
+  // A memory-copy blit of 250k cells is sub-ms to a few ms. This guards the blit
+  // staying O(cells) — no per-cell projection/tf creeping back into the copy. It
+  // does NOT exercise the store (none is loaded; generateTile owns the store
+  // query), so it cannot catch a per-cell *store-query* regression — that path is
+  // covered end to end in sim. The 1 s bound is generous against CI noise.
   std::cout << "[ PERF     ] tile blit over " << (n * n) << " cells: "
             << dt << " ms" << std::endl;
   EXPECT_LT(dt, 1000)

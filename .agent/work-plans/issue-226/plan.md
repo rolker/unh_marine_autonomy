@@ -25,8 +25,10 @@ per cell = 1 tf transform (`worldToLatLon`→`tf_->transform(...,"earth")`) + 2 
 4. **updateCosts = blit**: map master bounds→tiles, copy cached tile char-maps into master with
    the existing max-combine (raise-only; skip NO_INFORMATION).
 5. **Tide-change invalidation**: if `|map_tide_z_ - last_tide_z_| > tide_invalidate_threshold_`,
-   mark all tiles `needs_update` (regenerate) but keep serving cached costs (no flicker) — this
-   also resolves the stale-tide latch (#223).
+   mark all tiles `needs_update` (regenerate) but keep serving cached costs (no flicker). Handles
+   a tide that *moves*; a *frozen/stale* tide is NOT detected here (separate #223 work). When
+   `max_age_ > 0`, a periodic full re-render (~max_age_/2) keeps the per-cell staleness gate honest
+   despite caching.
 
 ## Files
 - `bathymetry_layer/src/bathymetry_layer.hpp` — cache members, worldToTile/generateTile decls.
