@@ -101,6 +101,13 @@ protected:
   // are returned unchanged. Exposed for unit testing.
   static std::string expandUserPath(const std::string & path);
 
+  // Test seam (test_bathymetry_layer.cpp): inject a pre-rendered cost tile at
+  // grid coordinate (ti, tj) and mark the cache complete, so the updateCosts
+  // blit can be unit-tested without the store/TF/projection pipeline. tileSize()
+  // exposes the tile edge (cells) so a test can size a matching tile.
+  void injectTile(int ti, int tj, std::shared_ptr<nav2_costmap_2d::Costmap2D> tile);
+  int tileSize() const {return tile_size_;}
+
   // Test seams: the store and the cached water-surface height, so a test fixture
   // can populate a synthetic store and drive cost evaluation without TF.
   std::unique_ptr<marine_bathymetry_store::BathymetryStore> store_;

@@ -5,11 +5,13 @@
 
 #include <unistd.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -61,11 +63,16 @@ public:
   void setMaxUncertainty(double v) {max_uncertainty_ = v;}
   void setMaxAge(double v) {max_age_ = v;}
   void setUnsurveyedIsLethal(bool v) {unsurveyed_is_lethal_ = v;}
+  // enabled_ is set from the "enabled" param in onInitialize(); the blit tests
+  // skip initialize(), so set it directly.
+  void setEnabled(bool v) {enabled_ = v;}
 
   using BathymetryLayer::computeCost;
   using BathymetryLayer::evaluateCell;
   using BathymetryLayer::isStale;
   using BathymetryLayer::expandUserPath;
+  using BathymetryLayer::injectTile;
+  using BathymetryLayer::tileSize;
 };
 
 // ---------------------------------------------------------------------------
@@ -461,6 +468,118 @@ TEST(BathymetryLayer, WindowedResidencyStaysBounded)
     << "eviction must actually free the out-of-window tiles";
 
   fs::remove_all(dir);
+}
+
+// ---------------------------------------------------------------------------
+// Cost-tile cache / blit (#226). updateCosts no longer queries the store per
+// cell every cycle; it blits pre-rendered, world-anchored tiles into the master
+// grid. These exercise the blit (mapping + max-combine + cheapness) directly via
+// the injectTile seam, without the store/TF/projection pipeline (generateTile's
+// projection reuses the already-tested worldToLatLon + evaluateCell).
+// ---------------------------------------------------------------------------
+
+TEST(BathymetryLayer, TileBlitMaxCombineAndOffsets)
+{
+  BathymetryLayerForTest layer;
+  layer.setStore(std::make_unique<BathymetryStore>(10));  // non-null for the guard
+  layer.setEnabled(true);
+
+  const int ts = layer.tileSize();
+  // Tile at grid (0,0): world origin (0,0), 1 m cells, NO_INFORMATION default.
+  auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
+    ts, ts, 1.0, 0.0, 0.0, nav2_costmap_2d::NO_INFORMATION);
+  tile->setCost(5, 5, 100);
+  tile->setCost(10, 20, 200);
+  tile->setCost(7, 7, 80);
+  tile->setCost(50, 50, nav2_costmap_2d::FREE_SPACE);
+  // (40, 40) left NO_INFORMATION.
+  layer.injectTile(0, 0, tile);
+
+  nav2_costmap_2d::Costmap2D master(60, 60, 1.0, 0.0, 0.0, nav2_costmap_2d::FREE_SPACE);
+  master.setCost(5, 5, 150);   // higher than the tile's 100 -> keep existing
+  master.setCost(10, 20, 50);  // lower than the tile's 200 -> tile wins
+  master.setCost(50, 50, nav2_costmap_2d::NO_INFORMATION);  // tile FREE fills it
+
+  layer.updateCosts(master, 0, 0, 60, 60);
+
+  EXPECT_EQ(static_cast<int>(master.getCost(5, 5)), 150)
+    << "max-combine must keep the higher existing master cost";
+  EXPECT_EQ(static_cast<int>(master.getCost(10, 20)), 200)
+    << "tile raises a lower master cost (and the (10,20) offset maps correctly)";
+  EXPECT_EQ(static_cast<int>(master.getCost(7, 7)), 80)
+    << "tile cost fills over FREE_SPACE";
+  EXPECT_EQ(
+    static_cast<int>(master.getCost(40, 40)),
+    static_cast<int>(nav2_costmap_2d::FREE_SPACE))
+    << "tile NO_INFORMATION is skipped -- master left unchanged";
+  EXPECT_EQ(
+    static_cast<int>(master.getCost(50, 50)),
+    static_cast<int>(nav2_costmap_2d::FREE_SPACE))
+    << "tile cost fills a NO_INFORMATION master cell";
+}
+
+TEST(BathymetryLayer, TileBlitTracksRollingMasterOrigin)
+{
+  BathymetryLayerForTest layer;
+  layer.setStore(std::make_unique<BathymetryStore>(10));
+  layer.setEnabled(true);
+
+  const int ts = layer.tileSize();
+  auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
+    ts, ts, 1.0, 0.0, 0.0, nav2_costmap_2d::NO_INFORMATION);
+  tile->setCost(35, 25, 170);
+  layer.injectTile(0, 0, tile);
+
+  // Master origin shifted to (30, 10): master cell (5, 15) is world ~(35.5,25.5),
+  // i.e. tile cell (35, 25). Exercises the tile_offset_* index math (#226).
+  nav2_costmap_2d::Costmap2D master(40, 40, 1.0, 30.0, 10.0, nav2_costmap_2d::FREE_SPACE);
+  layer.updateCosts(master, 0, 0, 40, 40);
+
+  EXPECT_EQ(static_cast<int>(master.getCost(5, 15)), 170)
+    << "tile cell (35,25) must blit to master cell (5,15) under a (30,10) origin";
+  EXPECT_EQ(
+    static_cast<int>(master.getCost(6, 15)),
+    static_cast<int>(nav2_costmap_2d::FREE_SPACE))
+    << "the neighbouring master cell maps to an un-set tile cell";
+}
+
+TEST(BathymetryLayer, TileBlitIsCheapOverLargeGrid)
+{
+  BathymetryLayerForTest layer;
+  layer.setStore(std::make_unique<BathymetryStore>(10));
+  layer.setEnabled(true);
+
+  const int ts = layer.tileSize();
+  const int n = 500;  // 500x500 = 250k master cells
+  const int tiles_per_side = (n + ts - 1) / ts;
+  for (int ti = 0; ti < tiles_per_side; ++ti) {
+    for (int tj = 0; tj < tiles_per_side; ++tj) {
+      auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
+        ts, ts, 1.0,
+        static_cast<double>(ti) * ts, static_cast<double>(tj) * ts,
+        nav2_costmap_2d::FREE_SPACE);
+      layer.injectTile(ti, tj, tile);
+    }
+  }
+
+  nav2_costmap_2d::Costmap2D master(n, n, 1.0, 0.0, 0.0, nav2_costmap_2d::NO_INFORMATION);
+
+  const auto t0 = std::chrono::steady_clock::now();
+  layer.updateCosts(master, 0, 0, n, n);
+  const auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::steady_clock::now() - t0).count();
+
+  // A memory-copy blit of 250k cells is sub-ms to a few ms; the old per-cell path
+  // (~35 us/cell) would be ~8.75 s. A 1 s bound flags a regression to per-cell
+  // work without being flaky on a loaded CI host.
+  std::cout << "[ PERF     ] tile blit over " << (n * n) << " cells: "
+            << dt << " ms" << std::endl;
+  EXPECT_LT(dt, 1000)
+    << "updateCosts must be an O(cells) blit, not a per-cell store query";
+  EXPECT_EQ(
+    static_cast<int>(master.getCost(250, 250)),
+    static_cast<int>(nav2_costmap_2d::FREE_SPACE))
+    << "interior master cell got the tile's cost";
 }
 
 // ---------------------------------------------------------------------------

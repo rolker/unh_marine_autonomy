@@ -234,6 +234,17 @@ geographic_msgs::msg::GeoPoint BathymetryLayer::worldToLatLon(
   return geodesy::toMsg(ecef_point);
 }
 
+void BathymetryLayer::injectTile(
+  int ti, int tj, std::shared_ptr<nav2_costmap_2d::Costmap2D> tile)
+{
+  TileInfo info;
+  info.costmap = std::move(tile);
+  info.generated = true;
+  info.needs_update = false;
+  tiles_[std::make_pair(ti, tj)] = std::move(info);
+  all_tiles_generated_ = true;
+}
+
 BathymetryLayer::TileID BathymetryLayer::worldToTile(double x, double y) const
 {
   const double tile_meters = resolution_ * tile_size_;
