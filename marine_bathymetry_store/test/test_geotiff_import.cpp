@@ -40,7 +40,6 @@
 using marine_bathymetry_store::BathymetryStore;
 using marine_bathymetry_store::GeoTiffImportOptions;
 using marine_bathymetry_store::importGeoTiff;
-using marine_bathymetry_store::Provenance;
 using marine_bathymetry_store::SourceLayer;
 using marine_bathymetry_store::SourceRecord;
 using marine_bathymetry_store::SourceRegistry;
@@ -49,8 +48,6 @@ namespace fs = std::filesystem;
 
 namespace
 {
-
-constexpr const char * kDay1 = "2026-06-09";
 
 /// Write a small north-up WGS84 GeoTIFF whose lattice starts at the north-west
 /// corner of the GGGS grid containing (43.0, -70.5) at @p level, with
@@ -150,18 +147,17 @@ TEST_F(GeoTiffImportTest, AlignedImportIsCellExact)
   GeoTiffImportOptions options;
   options.timestamp = 1.78e9;   // Unix seconds; the store stamps int64 ns.
   const auto imported = importGeoTiff(
-    store, registry_, SourceLayer::Draft, kDay1, tif, Provenance::Replayed, options);
-  ASSERT_TRUE(imported.has_value());
-  EXPECT_EQ(*imported, 8u);   // 9 pixels minus the no-data centre
+    store, registry_, SourceLayer::Draft, tif, options);
+  EXPECT_EQ(imported, 8u);   // 9 pixels minus the no-data centre
 
-  const auto nw = store.get(SourceLayer::Draft, kDay1, nwCell(store, store.level()));
+  const auto nw = store.get(SourceLayer::Draft, nwCell(store, store.level()));
   ASSERT_TRUE(nw.has_value());
   EXPECT_FLOAT_EQ(static_cast<float>(nw->depth), -30.0f);
   EXPECT_FLOAT_EQ(static_cast<float>(nw->uncertainty), 0.1f);
   EXPECT_EQ(nw->timestamp, static_cast<int64_t>(1.78e9 * 1e9));   // seconds -> ns
 
-  // The epoch carries the requested provenance.
-  EXPECT_EQ(store.epochs(SourceLayer::Draft).at(kDay1).provenance, Provenance::Replayed);
+  // The import landed in the layer's single fused surface (#221).
+  EXPECT_FALSE(store.tiles(SourceLayer::Draft).empty());
 }
 
 TEST_F(GeoTiffImportTest, RegistersSourceAndStampsIndex)
@@ -176,16 +172,14 @@ TEST_F(GeoTiffImportTest, RegistersSourceAndStampsIndex)
   GeoTiffImportOptions options;
   options.source = SourceRecord{"bizzy:m3:0", "bizzy", "m3", "multibeam",
     "massabesic-2026", "ellipsoid"};
-  const auto imported = importGeoTiff(
-    store, registry_, SourceLayer::Draft, kDay1, tif, Provenance::Replayed, options);
-  ASSERT_TRUE(imported.has_value());
+  EXPECT_EQ(importGeoTiff(store, registry_, SourceLayer::Draft, tif, options), 1u);
 
   // The source was registered (index 1) and stamped on the cell.
   EXPECT_EQ(registry_.size(), 1u);
   const auto rec = registry_.lookup(1);
   ASSERT_TRUE(rec.has_value());
   EXPECT_EQ(rec->platform, "bizzy");
-  const auto got = store.get(SourceLayer::Draft, kDay1, nwCell(store, store.level()));
+  const auto got = store.get(SourceLayer::Draft, nwCell(store, store.level()));
   ASSERT_TRUE(got.has_value());
   EXPECT_EQ(got->source_index, 1u);
 }
@@ -199,11 +193,9 @@ TEST_F(GeoTiffImportTest, NoSourceIdStampsUnsetIndex)
   const std::vector<float> unc{0.1f};
   const auto tif = writeTestTiff(dir_ / "nosrc.tif", store.level(), 1, 1, depth, unc);
 
-  const auto imported = importGeoTiff(
-    store, registry_, SourceLayer::Draft, kDay1, tif, Provenance::Replayed);
-  ASSERT_TRUE(imported.has_value());
+  EXPECT_EQ(importGeoTiff(store, registry_, SourceLayer::Draft, tif), 1u);
   EXPECT_EQ(registry_.size(), 0u);
-  const auto got = store.get(SourceLayer::Draft, kDay1, nwCell(store, store.level()));
+  const auto got = store.get(SourceLayer::Draft, nwCell(store, store.level()));
   ASSERT_TRUE(got.has_value());
   EXPECT_EQ(got->source_index, SourceRegistry::kUnset);
 }
@@ -220,9 +212,7 @@ TEST_F(GeoTiffImportTest, ImportsAtCallerSpecifiedLevel)
 
   GeoTiffImportOptions options;
   options.level = 8;   // import at level 8, not the store's default 11
-  const auto imported = importGeoTiff(
-    store, registry_, SourceLayer::Chart, kDay1, tif, Provenance::Replayed, options);
-  ASSERT_TRUE(imported.has_value());
+  EXPECT_EQ(importGeoTiff(store, registry_, SourceLayer::Chart, tif, options), 1u);
 
   // The imported tile is at level 8, queryable at that level. The fixture's
   // single pixel sits at the level-8 grid's NW corner, so query that cell.
@@ -231,11 +221,11 @@ TEST_F(GeoTiffImportTest, ImportsAtCallerSpecifiedLevel)
   const double cell_y = grid8.latitudinalSpan() / gggs::cell_rows_per_grid;
   const auto cell = coarse.cellIndex(gggs::geoPoint(
       grid8.northLatitude() - 0.5 * cell_y, grid8.westLongitude() + 0.5 * cell_x));
-  const auto got = store.get(SourceLayer::Chart, kDay1, cell);
+  const auto got = store.get(SourceLayer::Chart, cell);
   ASSERT_TRUE(got.has_value());
   EXPECT_FLOAT_EQ(static_cast<float>(got->depth), -30.0f);
   // And the stored grid carries the level-8 prefix.
-  const auto & tiles = store.epochs(SourceLayer::Chart).at(kDay1).tiles;
+  const auto & tiles = store.tiles(SourceLayer::Chart);
   ASSERT_FALSE(tiles.empty());
   EXPECT_EQ(tiles.begin()->first.level(), 8u);
 }
@@ -250,30 +240,34 @@ TEST_F(GeoTiffImportTest, FinerInputKeepsLowestUncertainty)
   const auto tif = writeTestTiff(dir_ / "fine.tif", store.level(), 2, 2, depth, unc, 2);
 
   const auto imported = importGeoTiff(
-    store, registry_, SourceLayer::Draft, kDay1, tif, Provenance::Replayed);
-  ASSERT_TRUE(imported.has_value());
-  EXPECT_EQ(*imported, 1u);   // four pixels, one cell
+    store, registry_, SourceLayer::Draft, tif);
+  EXPECT_EQ(imported, 1u);   // four pixels, one cell
 
-  const auto got = store.get(SourceLayer::Draft, kDay1, nwCell(store, store.level()));
+  const auto got = store.get(SourceLayer::Draft, nwCell(store, store.level()));
   ASSERT_TRUE(got.has_value());
   EXPECT_FLOAT_EQ(static_cast<float>(got->depth), -31.0f);       // unc 0.2 wins
   EXPECT_FLOAT_EQ(static_cast<float>(got->uncertainty), 0.2f);
 }
 
-TEST_F(GeoTiffImportTest, ProvenanceOrderingRefusesLiveOverReplayed)
+TEST_F(GeoTiffImportTest, ReimportMergesLastWriteWins)
 {
+  // #221: there is no per-day epoch or provenance ordering — a re-import simply
+  // merges into the layer's single fused surface (last-write-wins per cell).
   BathymetryStore store(11);
-  const std::vector<float> depth{-30.0f};
   const std::vector<float> unc{0.1f};
-  const auto tif = writeTestTiff(dir_ / "one.tif", store.level(), 1, 1, depth, unc);
+  const auto first =
+    writeTestTiff(dir_ / "first.tif", store.level(), 1, 1, {-30.0f}, unc);
+  const auto second =
+    writeTestTiff(dir_ / "second.tif", store.level(), 1, 1, {-28.0f}, unc);
 
-  ASSERT_TRUE(
-    importGeoTiff(
-      store, registry_, SourceLayer::Draft, kDay1, tif, Provenance::Replayed).has_value());
-  // A live-fused re-import of the compacted epoch must be refused.
-  EXPECT_FALSE(
-    importGeoTiff(
-      store, registry_, SourceLayer::Draft, kDay1, tif, Provenance::LiveFused).has_value());
+  EXPECT_EQ(importGeoTiff(store, registry_, SourceLayer::Draft, first), 1u);
+  EXPECT_DOUBLE_EQ(
+    store.get(SourceLayer::Draft, nwCell(store, store.level()))->depth, -30.0);
+
+  // A second import of the same cell overwrites the first.
+  EXPECT_EQ(importGeoTiff(store, registry_, SourceLayer::Draft, second), 1u);
+  EXPECT_DOUBLE_EQ(
+    store.get(SourceLayer::Draft, nwCell(store, store.level()))->depth, -28.0);
 }
 
 TEST_F(GeoTiffImportTest, MissingUncertaintyBandUsesDefault)
@@ -286,11 +280,9 @@ TEST_F(GeoTiffImportTest, MissingUncertaintyBandUsesDefault)
   GeoTiffImportOptions options;
   options.uncertainty_band = 0;
   options.default_uncertainty = 3.5;
-  const auto imported = importGeoTiff(
-    store, registry_, SourceLayer::Processed, kDay1, tif, Provenance::Replayed, options);
-  ASSERT_TRUE(imported.has_value());
+  EXPECT_EQ(importGeoTiff(store, registry_, SourceLayer::Processed, tif, options), 1u);
 
-  const auto got = store.get(SourceLayer::Processed, kDay1, nwCell(store, store.level()));
+  const auto got = store.get(SourceLayer::Processed, nwCell(store, store.level()));
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->uncertainty, 3.5);
 }
@@ -317,11 +309,10 @@ TEST_F(GeoTiffImportTest, DepthScaleOffsetAndFiniteNoData)
   options.depth_scale = -1.0;       // positive-down -> up-positive
   options.depth_offset = -20.0;     // lake surface ellipsoidal height
   const auto imported = importGeoTiff(
-    store, registry_, SourceLayer::Chart, kDay1, tif, Provenance::Replayed, options);
-  ASSERT_TRUE(imported.has_value());
-  EXPECT_EQ(*imported, 1u);         // the -9999 pixel was skipped
+    store, registry_, SourceLayer::Chart, tif, options);
+  EXPECT_EQ(imported, 1u);         // the -9999 pixel was skipped
 
-  const auto got = store.get(SourceLayer::Chart, kDay1, nwCell(store, store.level()));
+  const auto got = store.get(SourceLayer::Chart, nwCell(store, store.level()));
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, -24.0);          // -1 * 4 + (-20)
   EXPECT_DOUBLE_EQ(got->uncertainty, 3.0);
@@ -366,14 +357,13 @@ TEST_F(GeoTiffImportTest, CoarserInputFillsPixelFootprint)
   }
 
   const auto imported = importGeoTiff(
-    store, registry_, SourceLayer::Chart, kDay1, path, Provenance::Replayed);
-  ASSERT_TRUE(imported.has_value());
-  EXPECT_EQ(*imported, 25u);   // 5x5 store cells under the one pixel
+    store, registry_, SourceLayer::Chart, path);
+  EXPECT_EQ(imported, 25u);   // 5x5 store cells under the one pixel
 
   // Every cell of the footprint carries the value — spot-check a middle one.
   const auto mid = store.cellIndex(
     grid.northLatitude() - 2.5 * cell_y, grid.westLongitude() + 2.5 * cell_x);
-  const auto got = store.get(SourceLayer::Chart, kDay1, mid);
+  const auto got = store.get(SourceLayer::Chart, mid);
   ASSERT_TRUE(got.has_value());
   EXPECT_FLOAT_EQ(static_cast<float>(got->depth), -30.0f);
 }
@@ -388,9 +378,8 @@ TEST_F(GeoTiffImportTest, ZeroUncertaintyIsMissingNotPerfect)
   const auto tif = writeTestTiff(dir_ / "zerounc.tif", store.level(), 2, 1, depth, unc);
 
   const auto imported = importGeoTiff(
-    store, registry_, SourceLayer::Draft, kDay1, tif, Provenance::Replayed);
-  ASSERT_TRUE(imported.has_value());
-  EXPECT_EQ(*imported, 2u);   // both cells import (depth is real)
+    store, registry_, SourceLayer::Draft, tif);
+  EXPECT_EQ(imported, 2u);   // both cells import (depth is real)
 
   const gggs::GridIndex grid = store.level().gridIndex(43.0, -70.5);
   const double cell_x = grid.longitudinalSpan() / gggs::cell_rows_per_grid;
@@ -400,11 +389,11 @@ TEST_F(GeoTiffImportTest, ZeroUncertaintyIsMissingNotPerfect)
   const auto good_cell = store.cellIndex(
     grid.northLatitude() - 0.5 * cell_y, grid.westLongitude() + 1.5 * cell_x);
 
-  const auto zero = store.get(SourceLayer::Draft, kDay1, zero_cell);
+  const auto zero = store.get(SourceLayer::Draft, zero_cell);
   ASSERT_TRUE(zero.has_value());
   EXPECT_TRUE(std::isnan(zero->uncertainty));   // missing, not 0
 
-  const auto good = store.get(SourceLayer::Draft, kDay1, good_cell);
+  const auto good = store.get(SourceLayer::Draft, good_cell);
   ASSERT_TRUE(good.has_value());
   EXPECT_FLOAT_EQ(static_cast<float>(good->uncertainty), 0.4f);
 }
@@ -414,7 +403,6 @@ TEST_F(GeoTiffImportTest, MissingFileThrows)
   BathymetryStore store(11);
   EXPECT_THROW(
     importGeoTiff(
-      store, registry_, SourceLayer::Draft, kDay1, (dir_ / "absent.tif").string(),
-      Provenance::Replayed),
+      store, registry_, SourceLayer::Draft, (dir_ / "absent.tif").string()),
     std::runtime_error);
 }

@@ -47,12 +47,10 @@ struct DatasetCloser
 
 }  // namespace
 
-std::optional<std::size_t> importGeoTiff(
+std::size_t importGeoTiff(
   BathymetryStore & store, SourceRegistry & registry, SourceLayer layer,
-  const Epoch & epoch, const std::string & path, Provenance provenance,
-  const GeoTiffImportOptions & options)
+  const std::string & path, const GeoTiffImportOptions & options)
 {
-  validateEpochLabel(epoch);
   if (options.depth_band < 1) {
     throw std::invalid_argument("importGeoTiff: depth_band must be >= 1");
   }
@@ -211,9 +209,10 @@ std::optional<std::size_t> importGeoTiff(
     }
   }
 
-  if (!store.importEpoch(layer, epoch, std::move(tiles), provenance)) {
-    return std::nullopt;
-  }
+  // Bulk-insert into the layer's single fused surface (#221). The Chart
+  // read-only gate is enforced by importTiles (throws logic_error if the store
+  // is not chart_writable).
+  store.importTiles(layer, std::move(tiles));
   return imported;
 }
 

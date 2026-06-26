@@ -31,6 +31,16 @@ averaging it away. Composed against the already-merged D2 (heterogeneous levels)
 and D5/#178 (registry provenance); it does **not** replace D2 — epoch directories
 compose with mixed-level `<level>_<row>_<col>` tile filenames. See **A1** below.
 
+> **Amendment A1 SUPERSEDED (2026-06-24,
+> [#221](https://github.com/rolker/unh_marine_autonomy/issues/221)):** the per-day
+> epoch dimension is **dropped** — each `SourceLayer` collapses back to **one
+> fused tile map**, the on-disk layout flattens to `<layer>/<tile>` (no epoch
+> subdirectory, no `provenance` marker), `Provenance{LiveFused, Replayed}` and
+> `forEachChangedCell` are removed, and `shallowestReliable` loses its
+> cross-epoch fallback (a deliberate tradeoff — see the A1 supersession note at
+> the end of the A1 section). A1 stood for three days. The detail is recorded so
+> readers understand both the original reasoning and why it was reversed.
+
 The full design is in the issue body; this ADR records the load-bearing
 architecture decisions and their rationale so they survive the issue. It is a
 **cross-cutting** decision in the sense ADR-0001 establishes for this repo's
@@ -297,6 +307,12 @@ waits on it.
 
 ## Amendment A1 — Per-day epoch model (Phase 2, #147)
 
+> **SUPERSEDED 2026-06-24 by [#221](https://github.com/rolker/unh_marine_autonomy/issues/221).**
+> The per-day epoch model below is no longer in effect. It is retained verbatim
+> for the historical record; the reversal, its rationale, and the deliberate
+> tradeoffs are documented in the **A1 supersession** note immediately after
+> A1.5. Read that note before relying on anything in this section.
+
 Phase 2 introduces import. Imports raised a question the Phase-1 core did not
 answer: when the **same area is surveyed on multiple days**, what does the store
 hold? Fusing all observations into one surface (a single CUBE estimate over all
@@ -376,6 +392,71 @@ compaction, so only today's live-fused epoch is ever hot). No hash implementatio
 lands this phase (Phase 6). The store is **never seeded from CUBE state**: the
 bag-replay path produces one `Replayed` epoch per day from the raw bags, so the
 store is always re-derivable from the append-only bag record.
+
+### A1 supersession — drop the epoch dimension ([#221](https://github.com/rolker/unh_marine_autonomy/issues/221), 2026-06-24)
+
+A1 was adopted on 2026-06-21 and **superseded three days later**. The rapid
+reversal is intentional and recorded here per [ADR-0001](0001-shared-scalar-colormap.md):
+the per-day epoch model solved a problem the current deployment does not yet
+have, at a real cost in complexity.
+
+**Why reversed.** A "UTC calendar day" is a weak proxy for "a survey": the
+midnight-UTC boundary splits an evening session into two epochs, and the only
+near-term use case (the Lake Massabesic June survey) is **single-coverage** — one
+pass, no repeat-survey change detection. The epoch dimension added an
+`std::map<Epoch, EpochTiles>` per layer, a `Provenance{LiveFused, Replayed}`
+ordering axis, a per-epoch on-disk subdirectory + `provenance` marker, a
+newest-epoch-first walk in every query, and `forEachChangedCell` — all to support
+a workflow that does not exist yet. Per **Only what's needed**, it is removed.
+
+**What changes:**
+
+- **One fused surface per layer.** Each `SourceLayer` is again a single
+  `std::map<gggs::GridIndex, BathymetryTile>`. Within a layer the surface is
+  **last-write-wins** per cell (no provenance ordering). Layer priority
+  (`processed > draft > chart`, D3) is the **sole** provenance axis on the
+  quality/maturity dimension.
+- **`Provenance{LiveFused, Replayed}` is removed** — with no epochs there is no
+  compaction-maturity ordering to enforce. `BathymetryStore::importEpoch` is
+  replaced by `importTiles` (a plain bulk-insert/merge, no `supersedes_disk`
+  clear-before-write, honoring the same Chart read-only gate).
+- **Flat on-disk layout.** D5/A1.1's `<layer>/<epoch>/<level>_<row>_<col>{,_time,
+  _source}.tif` flattens to **`<layer>/<level>_<row>_<col>{,_time,_source}.tif`**.
+  The per-epoch `provenance` marker file is gone. No production store existed, so
+  there is **no migration shim**: `load`/`loadWindow` read the flat layout and
+  ignore any stray subdirectory (an old epoch dir is discarded, not flattened).
+- **`shallowestReliable` loses its cross-epoch fallback — a deliberate tradeoff.**
+  A1.3's safety walk let a fresh-but-noisy epoch fall through to a prior epoch's
+  confident value. With one fused surface there is no prior epoch: if the only
+  data over a navigation cell is over-uncertain, `shallowestReliable` returns
+  `std::nullopt` and the costmap caller must treat that as **obstacle / not safe**
+  (§D7). This is acceptable for the single-survey-single-session use case and does
+  **not** weaken the net safety posture (unknown is still conservatively lethal —
+  the cell is never silently treated as deep water). A revisit-and-compare
+  workflow that needs the fall-through (or change detection at all) is **explicitly
+  deferred** and must re-introduce a versioning axis when it lands.
+- **`forEachChangedCell` is removed, not stubbed.** Its only purpose was epoch
+  differencing (A1.1); with no epochs it has no meaningful semantics, and a
+  dead/misleading API would violate transparency. Change detection is deferred
+  with the revisit workflow above.
+- **D6 manifest key reverts** from A1.5's `layer/epoch/GridIndex → content-hash`
+  back to **`layer/GridIndex → content-hash`** (D6 as originally written). No hash
+  implementation exists yet, so this remains a forward constraint on the deferred
+  sync layer.
+
+**What is unchanged (ADR-0005 orthogonality).** The **platform/sensor** provenance
+axis — the per-cell `uint16` source index (`_source.tif`) and the store-wide
+`registry.json` (D5/#178, [ADR-0005](0005-multi-platform-provenance-registry.md)
+D2/D8) — is untouched. A1 carried **two** orthogonal provenance axes (A1.4); #221
+removes only the **compaction-maturity** axis (`Provenance`). The two axes that
+remain are layer-priority (quality/maturity, D3) and platform/sensor (ADR-0005);
+the **D5 safety carve-out** is unchanged — `shallowestReliable` still selects by
+depth + uncertainty only and ignores the source index.
+
+The companion `cube_bathymetry` change (dropping `currentUtcDateString()` from
+`cube_bathymetry_node.cpp`, which fed the epoch label) is tracked separately as
+[rolker/cube_bathymetry#69](https://github.com/rolker/cube_bathymetry/issues/69)
+and lands as a coordinated follow-on against the new epoch-free store API.
 
 ## Consequences
 

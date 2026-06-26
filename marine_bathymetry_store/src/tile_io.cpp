@@ -23,7 +23,7 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
+#include <iostream>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -32,7 +32,6 @@
 
 #include "geographic_msgs/msg/geo_point.hpp"
 
-#include "marine_bathymetry_store/epoch.hpp"
 #include "marine_tiled_raster_store/tile_io.hpp"
 
 /// @file
@@ -181,43 +180,6 @@ bool tileOverlapsBox(
   return true;
 }
 
-constexpr const char * kProvenanceMarker = "provenance";
-
-/// Write the epoch's `provenance` marker file (`live-fused` / `replayed`) into
-/// @p epoch_dir, plus a trailing newline.
-void writeProvenanceMarker(const std::filesystem::path & epoch_dir, Provenance provenance)
-{
-  std::ofstream out(epoch_dir / kProvenanceMarker, std::ios::trunc);
-  out << provenanceToken(provenance) << "\n";
-}
-
-/// Read the epoch's `provenance` marker, or `LiveFused` if the file is absent.
-///
-/// CRLF-safe: trailing whitespace (including a `\r` from a Windows / mixed
-/// checkout) is trimmed before parsing, so a sidecar that round-tripped through
-/// a CRLF filesystem is not mis-read as a parse failure that silently downgrades
-/// a Replayed epoch to LiveFused (harvested #148 Copilot round-1 fix). A present
-/// but unparseable marker throws — a corrupt provenance is a hard error, not a
-/// silent downgrade.
-Provenance readProvenanceMarker(const std::filesystem::path & epoch_dir)
-{
-  namespace fs = std::filesystem;
-  const fs::path marker = epoch_dir / kProvenanceMarker;
-  if (!fs::is_regular_file(marker)) {
-    return Provenance::LiveFused;
-  }
-  std::ifstream in(marker);
-  std::string token;
-  std::getline(in, token);
-  // Trim trailing whitespace / CR so a CRLF sidecar parses correctly.
-  while (!token.empty() &&
-    (token.back() == '\r' || token.back() == '\n' || token.back() == ' ' ||
-    token.back() == '\t'))
-  {
-    token.pop_back();
-  }
-  return provenanceFromToken(token);   // throws std::invalid_argument on garbage
-}
 }  // namespace
 
 uint8_t levelFromTileFilename(const std::string & filename)
@@ -358,67 +320,28 @@ std::size_t save(
   std::size_t written = 0;
   for (const SourceLayer layer : source_layers_by_priority) {
     const fs::path layer_dir = fs::path(dir) / layerDirName(layer);
-    for (const auto & [epoch, epoch_tiles] : store.epochs(layer)) {
-      const fs::path epoch_dir = layer_dir / epoch;
-      bool created_dir = false;
-      const auto ensure_dir = [&]() {
-          if (!created_dir) {
-            fs::create_directories(epoch_dir);
-            created_dir = true;
-          }
-        };
-
-      // A wholesale import (importEpoch) flags supersedes_disk: clear any stale
-      // tile files for this epoch first, so a compacted epoch covering fewer
-      // grids never resurrects a removed tile on the next load. The provenance
-      // marker is rewritten below regardless.
-      if (epoch_tiles.supersedes_disk && fs::is_directory(epoch_dir)) {
-        for (const auto & e : fs::directory_iterator(epoch_dir)) {
-          if (e.is_regular_file() && e.path().extension() == ".tif") {
-            fs::remove(e.path());
-          }
+    bool created_dir = false;
+    const auto ensure_dir = [&]() {
+        if (!created_dir) {
+          fs::create_directories(layer_dir);
+          created_dir = true;
         }
-      }
+      };
 
-      // Persist the provenance marker whenever the epoch has anything to write
-      // (a dirty tile or a supersession that just cleared the dir). The marker
-      // is cheap and idempotent, so write it whenever we touch the epoch dir.
-      bool any_dirty = epoch_tiles.supersedes_disk;
-      for (const auto & [grid, tile] : epoch_tiles.tiles) {
-        (void)grid;
-        if (tile.dirty()) {
-          any_dirty = true;
-          break;
-        }
+    // Iterate the layer's tiles (a const view) and write each dirty one. The
+    // dirty flag is cleared via getOrCreateTile() on the same (existing) grid:
+    // a lookup, not an insert, and clearDirty() only flips a bool on the tile
+    // value — neither mutates the map, so the iterator stays valid. (Since #221
+    // there is no epoch subdirectory and no supersedes_disk / provenance
+    // marker; the layer is one fused surface saved incrementally.)
+    for (const auto & [grid, tile] : store.tiles(layer)) {
+      if (!tile.dirty()) {
+        continue;
       }
-      if (any_dirty) {
-        ensure_dir();
-        writeProvenanceMarker(epoch_dir, epoch_tiles.provenance);
-      }
-
-      // Iterate the epoch's tiles (a const view) and write each dirty one. The
-      // dirty flag is cleared via getOrCreateTile() on the same (existing)
-      // (epoch, grid): a lookup, not an insert, and clearDirty() only flips a
-      // bool on the tile value — neither mutates the map, so the iterator stays
-      // valid.
-      for (const auto & [grid, tile] : epoch_tiles.tiles) {
-        if (!tile.dirty()) {
-          continue;
-        }
-        ensure_dir();
-        saveTile(tile, (epoch_dir / tileFilename(grid)).string());
-        store.getOrCreateTile(layer, epoch, grid).clearDirty();
-        ++written;
-      }
-
-      // The supersedes_disk flag has done its job once the epoch is written;
-      // reset it so a subsequent incremental save does NOT re-clear the (now
-      // clean) tile dir and silently delete the just-written tiles. The flag is
-      // an in-memory hint only (never persisted). getOrCreateEpoch returns the
-      // existing epoch (provenance unchanged) for the mutable handle.
-      if (epoch_tiles.supersedes_disk) {
-        store.getOrCreateEpoch(layer, epoch, epoch_tiles.provenance).supersedes_disk = false;
-      }
+      ensure_dir();
+      saveTile(tile, (layer_dir / tileFilename(grid)).string());
+      store.getOrCreateTile(layer, grid).clearDirty();
+      ++written;
     }
   }
   // The registry is a store-wide sidecar (not per-layer): persist it once at the
@@ -440,42 +363,39 @@ std::size_t load(
     if (!fs::is_directory(layer_dir)) {
       continue;
     }
-    // Each subdirectory of the layer dir is an epoch.
-    for (const auto & epoch_entry : fs::directory_iterator(layer_dir)) {
-      if (!epoch_entry.is_directory()) {
+    // Flat layout (#221): value tiles live directly under <dir>/<layer>/. A
+    // subdirectory entry (e.g. a stale old-style epoch dir) is ignored — there
+    // is no production data to migrate, so old epoch-subdir stores are simply
+    // discarded. Warn so the dropped tiles are not a silent surprise.
+    for (const auto & entry : fs::directory_iterator(layer_dir)) {
+      if (entry.is_directory()) {
+        std::cerr << "[marine_bathymetry_store] WARNING: ignoring unexpected "
+                  << "subdirectory in flat-layout store: " << entry.path()
+                  << " — old epoch-layout tiles are not migrated (#221); its "
+                  << "tiles will NOT be loaded.\n";
         continue;
       }
-      const std::string epoch = epoch_entry.path().filename().string();
-      validateEpochLabel(epoch);   // reject a stray non-epoch dir name
-      const fs::path epoch_dir = epoch_entry.path();
-      const Provenance provenance = readProvenanceMarker(epoch_dir);
-
-      for (const auto & entry : fs::directory_iterator(epoch_dir)) {
-        if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
-          continue;
-        }
-        // Skip the companion tiles — they are loaded alongside their value tile,
-        // not as standalone value tiles (a bare *.tif glob would otherwise
-        // mis-load _time / _source as value tiles).
-        const std::string stem = entry.path().stem().string();
-        const auto ends_with = [&stem](const char * suffix) {
-            const std::string s(suffix);
-            return stem.size() >= s.size() &&
-                   stem.compare(stem.size() - s.size(), s.size(), s) == 0;
-          };
-        if (ends_with(kTimeSuffix) || ends_with(kSourceSuffix)) {
-          continue;
-        }
-        // Multi-level: recover each tile's level from its filename and load at
-        // that level (the store is not pinned to one level, ADR-0002 §D2).
-        const uint8_t lvl = levelFromTileFilename(entry.path().filename().string());
-        BathymetryTile tile = loadTile(entry.path().string(), gggs::Level(lvl));
-        // getOrCreateTile creates the epoch as LiveFused; restore the recorded
-        // provenance via getOrCreateEpoch (creation-time only, idempotent).
-        store.getOrCreateEpoch(layer, epoch, provenance);
-        store.getOrCreateTile(layer, epoch, tile.index()) = std::move(tile);
-        ++loaded;
+      if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
+        continue;
       }
+      // Skip the companion tiles — they are loaded alongside their value tile,
+      // not as standalone value tiles (a bare *.tif glob would otherwise
+      // mis-load _time / _source as value tiles).
+      const std::string stem = entry.path().stem().string();
+      const auto ends_with = [&stem](const char * suffix) {
+          const std::string s(suffix);
+          return stem.size() >= s.size() &&
+                 stem.compare(stem.size() - s.size(), s.size(), s) == 0;
+        };
+      if (ends_with(kTimeSuffix) || ends_with(kSourceSuffix)) {
+        continue;
+      }
+      // Multi-level: recover each tile's level from its filename and load at
+      // that level (the store is not pinned to one level, ADR-0002 §D2).
+      const uint8_t lvl = levelFromTileFilename(entry.path().filename().string());
+      BathymetryTile tile = loadTile(entry.path().string(), gggs::Level(lvl));
+      store.getOrCreateTile(layer, tile.index()) = std::move(tile);
+      ++loaded;
     }
   }
   if (registry != nullptr) {
@@ -497,53 +417,46 @@ std::size_t loadWindow(
     if (!fs::is_directory(layer_dir)) {
       continue;
     }
-    for (const auto & epoch_entry : fs::directory_iterator(layer_dir)) {
-      if (!epoch_entry.is_directory()) {
+    // Flat layout (#221): value tiles live directly under <dir>/<layer>/.
+    for (const auto & entry : fs::directory_iterator(layer_dir)) {
+      if (entry.is_directory()) {
+        std::cerr << "[marine_bathymetry_store] WARNING: ignoring unexpected "
+                  << "subdirectory in flat-layout store: " << entry.path()
+                  << " — old epoch-layout tiles are not migrated (#221); its "
+                  << "tiles will NOT be loaded.\n";
         continue;
       }
-      const std::string epoch = epoch_entry.path().filename().string();
-      validateEpochLabel(epoch);
-      const fs::path epoch_dir = epoch_entry.path();
-      const Provenance provenance = readProvenanceMarker(epoch_dir);
-
-      for (const auto & entry : fs::directory_iterator(epoch_dir)) {
-        if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
-          continue;
-        }
-        // Skip companion tiles (_time / _source) — loaded alongside value tile.
-        const std::string stem = entry.path().stem().string();
-        const auto ends_with = [&stem](const char * suffix) {
-            const std::string s(suffix);
-            return stem.size() >= s.size() &&
-                   stem.compare(stem.size() - s.size(), s.size(), s) == 0;
-          };
-        if (ends_with(kTimeSuffix) || ends_with(kSourceSuffix)) {
-          continue;
-        }
-
-        // Gate on geographic overlap BEFORE paying the GDAL I/O cost.
-        const gggs::GridIndex candidate_grid =
-          gridIndexFromTileFilename(entry.path().filename().string());
-        if (!tileOverlapsBox(candidate_grid, min_pt, max_pt)) {
-          continue;
-        }
-
-        // Idempotency: skip tiles already resident in this epoch.
-        const auto & epoch_map = store.epochs(layer);
-        const auto epoch_it = epoch_map.find(epoch);
-        if (epoch_it != epoch_map.end()) {
-          if (epoch_it->second.tiles.count(candidate_grid) != 0) {
-            continue;
-          }
-        }
-
-        // Load the tile (GDAL I/O path — only for overlapping, non-resident tiles).
-        const uint8_t lvl = levelFromTileFilename(entry.path().filename().string());
-        BathymetryTile tile = loadTile(entry.path().string(), gggs::Level(lvl));
-        store.getOrCreateEpoch(layer, epoch, provenance);
-        store.getOrCreateTile(layer, epoch, tile.index()) = std::move(tile);
-        ++loaded;
+      if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
+        continue;
       }
+      // Skip companion tiles (_time / _source) — loaded alongside value tile.
+      const std::string stem = entry.path().stem().string();
+      const auto ends_with = [&stem](const char * suffix) {
+          const std::string s(suffix);
+          return stem.size() >= s.size() &&
+                 stem.compare(stem.size() - s.size(), s.size(), s) == 0;
+        };
+      if (ends_with(kTimeSuffix) || ends_with(kSourceSuffix)) {
+        continue;
+      }
+
+      // Gate on geographic overlap BEFORE paying the GDAL I/O cost.
+      const gggs::GridIndex candidate_grid =
+        gridIndexFromTileFilename(entry.path().filename().string());
+      if (!tileOverlapsBox(candidate_grid, min_pt, max_pt)) {
+        continue;
+      }
+
+      // Idempotency: skip tiles already resident in this layer.
+      if (store.tiles(layer).count(candidate_grid) != 0) {
+        continue;
+      }
+
+      // Load the tile (GDAL I/O path — only for overlapping, non-resident tiles).
+      const uint8_t lvl = levelFromTileFilename(entry.path().filename().string());
+      BathymetryTile tile = loadTile(entry.path().string(), gggs::Level(lvl));
+      store.getOrCreateTile(layer, tile.index()) = std::move(tile);
+      ++loaded;
     }
   }
   if (registry != nullptr) {
@@ -560,28 +473,27 @@ std::size_t evictOutside(
   std::size_t evicted = 0;
   for (const SourceLayer layer : source_layers_by_priority) {
     // Use the non-const layerMap() (private, accessible here via friendship) to
-    // obtain a mutable reference — do NOT const_cast store.epochs(layer).
-    for (auto & [epoch, epoch_tiles] : store.layerMap(layer)) {
-      auto it = epoch_tiles.tiles.begin();
-      while (it != epoch_tiles.tiles.end()) {
-        const gggs::GridIndex & grid = it->first;
-        const BathymetryTile & tile = it->second;
-        if (!tileOverlapsBox(grid, min_pt, max_pt)) {
-          // Dirty-tile guard: a dirty (unsaved) Draft or Processed tile is live
-          // sensor data that has not yet reached disk; evicting it would lose that
-          // data with no reload path.  Chart tiles are always clean (never mutated
-          // at runtime) and are always safely evictable.  Skip dirty tiles here
-          // and let them survive until they are either saved (clearing the flag)
-          // or explicitly discarded by the caller.
-          if (tile.dirty()) {
-            ++it;
-            continue;
-          }
-          it = epoch_tiles.tiles.erase(it);
-          ++evicted;
-        } else {
+    // obtain a mutable reference — do NOT const_cast store.tiles(layer).
+    auto & tiles = store.layerMap(layer);
+    auto it = tiles.begin();
+    while (it != tiles.end()) {
+      const gggs::GridIndex & grid = it->first;
+      const BathymetryTile & tile = it->second;
+      if (!tileOverlapsBox(grid, min_pt, max_pt)) {
+        // Dirty-tile guard: a dirty (unsaved) Draft or Processed tile is live
+        // sensor data that has not yet reached disk; evicting it would lose that
+        // data with no reload path.  Chart tiles are always clean (never mutated
+        // at runtime) and are always safely evictable.  Skip dirty tiles here
+        // and let them survive until they are either saved (clearing the flag)
+        // or explicitly discarded by the caller.
+        if (tile.dirty()) {
           ++it;
+          continue;
         }
+        it = tiles.erase(it);
+        ++evicted;
+      } else {
+        ++it;
       }
     }
   }

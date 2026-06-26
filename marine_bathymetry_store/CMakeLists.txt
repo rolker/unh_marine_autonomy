@@ -74,7 +74,7 @@ install(TARGETS ${PROJECT_NAME}
   RUNTIME DESTINATION bin
 )
 
-# The `import_geotiff` CLI: import a GeoTIFF as one epoch of a store.
+# The `import_geotiff` CLI: import a GeoTIFF into a store layer's fused surface.
 add_executable(import_geotiff src/import_geotiff_main.cpp)
 target_link_libraries(import_geotiff ${PROJECT_NAME})
 

@@ -35,9 +35,6 @@ using marine_bathymetry_store::SourceLayer;
 
 namespace
 {
-// A single ISO-date epoch label (ADR-0002 A1).
-const char * const kEpoch = "2026-06-10";
-
 // Survey position used across the per-cell tests.
 constexpr double kLat = 43.0;
 constexpr double kLon = -70.5;
@@ -194,7 +191,7 @@ TEST(BathymetryLayer, SurveyedCellMapsClearanceToCost)
   const auto cell = store->cellIndex(kLat, kLon);
 
   // Shoal: seafloor 0.5 m below the water surface → clearance 0.5 m < 1.0 → LETHAL.
-  store->set(SourceLayer::Processed, kEpoch, cell, BathyCell{-0.5, 0.1, 1LL});
+  store->set(SourceLayer::Processed, cell, BathyCell{-0.5, 0.1, 1LL});
   layer.setStore(std::move(store));
   layer.setMapTideValid(true);
   auto shoal = layer.evaluateCell(cell, /*now_ns=*/0);
@@ -204,7 +201,7 @@ TEST(BathymetryLayer, SurveyedCellMapsClearanceToCost)
   // Deep: seafloor 5 m down → clearance 5 m >= 3.0 → FREE_SPACE.
   auto deep_store = std::make_unique<BathymetryStore>(5);
   const auto deep_cell = deep_store->cellIndex(kLat, kLon);
-  deep_store->set(SourceLayer::Processed, kEpoch, deep_cell, BathyCell{-5.0, 0.1, 1LL});
+  deep_store->set(SourceLayer::Processed, deep_cell, BathyCell{-5.0, 0.1, 1LL});
   layer.setStore(std::move(deep_store));
   layer.setMapTideValid(true);
   auto deep = layer.evaluateCell(deep_cell, /*now_ns=*/0);
@@ -227,7 +224,7 @@ TEST(BathymetryLayer, OverUncertainSurveyedCellIsLethal)
   // Data present, but uncertainty 5.0 m exceeds max_uncertainty 0.5 m: the cell
   // HAS data (bestSource non-null) but fails the reliability gate
   // (shallowestReliable nullopt).
-  store->set(SourceLayer::Processed, kEpoch, cell, BathyCell{-10.0, 5.0, 1LL});
+  store->set(SourceLayer::Processed, cell, BathyCell{-10.0, 5.0, 1LL});
   layer.setStore(std::move(store));
   layer.setMapTideValid(true);
 
@@ -253,7 +250,7 @@ TEST(BathymetryLayer, StaleCellIsLethal)
   auto store = std::make_unique<BathymetryStore>(5);
   const auto cell = store->cellIndex(kLat, kLon);
   // Deep + reliable (clearance would be FREE), but timestamp is 1 ns — ancient.
-  store->set(SourceLayer::Processed, kEpoch, cell, BathyCell{-5.0, 0.1, 1LL});
+  store->set(SourceLayer::Processed, cell, BathyCell{-5.0, 0.1, 1LL});
   layer.setStore(std::move(store));
   layer.setMapTideValid(true);
 
@@ -287,7 +284,7 @@ TEST(BathymetryLayer, InvalidTideYieldsNoInformation)
   auto store = std::make_unique<BathymetryStore>(5);
   const auto cell = store->cellIndex(kLat, kLon);
   // A perfectly good surveyed cell (deep, reliable, fresh) must still be skipped.
-  store->set(SourceLayer::Processed, kEpoch, cell, BathyCell{47.0, 0.1, 1LL});
+  store->set(SourceLayer::Processed, cell, BathyCell{47.0, 0.1, 1LL});
   layer.setStore(std::move(store));
 
   const auto result = layer.evaluateCell(cell, /*now_ns=*/0);
@@ -296,16 +293,16 @@ TEST(BathymetryLayer, InvalidTideYieldsNoInformation)
 }
 
 // ---------------------------------------------------------------------------
-// Test case 7 (S1/MF3): two-epoch StaleCell — pins the MF3 timestamp-source
-// contract. Set up a cell with TWO epochs:
-//   newest epoch: over-uncertain (shallowestReliable skips it), fresh timestamp.
-//   older epoch:  reliable (shallowestReliable uses it), ancient timestamp.
-// evaluateCell must use the RELIABLE sample's (old) timestamp for the staleness
-// check and return LETHAL. Before MF3, the code used any->timestamp (the
-// over-uncertain fresh epoch), which would have incorrectly passed the age gate
-// and produced a clearance-based cost instead of LETHAL.
+// Test case 7 (S1/MF3, rewritten for #221): single fused surface — no prior
+// epoch to fall back to. With the per-day epoch dimension dropped, a cell whose
+// (only) record is over-uncertain has no older confident epoch to fall through
+// to: shallowestReliable returns nullopt and the cell is LETHAL (the deliberate
+// fallback-loss tradeoff recorded in ADR-0002 A1's supersession). This pins
+// that an over-uncertain cell is LETHAL even when bestSource finds fresh data,
+// that a confident-but-ancient record is stale (MF3 age-checks the reliable
+// record), and that the same confident record when fresh is FREE.
 // ---------------------------------------------------------------------------
-TEST(BathymetryLayer, StaleReliableSampleIsLethalWhenNewerEpochOverUncertain)
+TEST(BathymetryLayer, OverUncertainCellIsLethalWithNoPriorFallback)
 {
   BathymetryLayerForTest layer;
   layer.setMinimumDepth(1.0);
@@ -315,31 +312,54 @@ TEST(BathymetryLayer, StaleReliableSampleIsLethalWhenNewerEpochOverUncertain)
   layer.setMapTideZ(0.0);
   layer.setMapTideValid(true);
 
-  auto store = std::make_unique<BathymetryStore>(5);
-  const auto cell = store->cellIndex(kLat, kLon);
-
   const int64_t now_ns = 10 * kNsPerSec;  // "now" = 10 s.
 
-  // Newer epoch (e.g. "2026-06-11"): deep, but OVER-UNCERTAIN + FRESH timestamp.
-  // bestSource will find this epoch first (it is newest), but shallowestReliable
-  // cannot use it. Before MF3 this fresh timestamp would have been used for the
-  // age check → the age gate passes → clearance computed → FREE_SPACE (wrong).
-  const int64_t fresh_ns = 9 * kNsPerSec;  // 1 s ago — within max_age of 1 s.
-  store->set(SourceLayer::Processed, "2026-06-11", cell, BathyCell{-5.0, 5.0, fresh_ns});
+  // Single fused surface: one record per cell. A deep but OVER-UNCERTAIN + FRESH
+  // record. bestSource finds it (it has data) but shallowestReliable returns
+  // nullopt — and there is no prior epoch to fall through to, so the cell is
+  // LETHAL despite the fresh timestamp.
+  {
+    auto store = std::make_unique<BathymetryStore>(5);
+    const auto cell = store->cellIndex(kLat, kLon);
+    const int64_t fresh_ns = 9 * kNsPerSec;  // 1 s ago — within max_age.
+    store->set(SourceLayer::Processed, cell, BathyCell{-5.0, 5.0, fresh_ns});
+    layer.setStore(std::move(store));
 
-  // Older epoch ("2026-06-10"): deep, RELIABLE, but ANCIENT timestamp.
-  // shallowestReliable will select this record. Its timestamp is ancient → LETHAL.
-  const int64_t ancient_ns = 1LL;  // nanosecond 1 — effectively epoch 0, very old.
-  store->set(SourceLayer::Processed, kEpoch, cell, BathyCell{-5.0, 0.1, ancient_ns});
+    const auto result = layer.evaluateCell(cell, now_ns);
+    ASSERT_TRUE(result.has_value())
+      << "Cell has data → must write something (not skip as unsurveyed).";
+    EXPECT_EQ(*result, nav2_costmap_2d::LETHAL_OBSTACLE)
+      << "Over-uncertain with no prior fallback → LETHAL (#221 tradeoff).";
+  }
 
-  layer.setStore(std::move(store));
+  // A confident but ANCIENT record is also LETHAL — MF3 age-checks the reliable
+  // record shallowestReliable returns.
+  {
+    auto store = std::make_unique<BathymetryStore>(5);
+    const auto cell = store->cellIndex(kLat, kLon);
+    const int64_t ancient_ns = 1LL;  // nanosecond 1 — very old.
+    store->set(SourceLayer::Processed, cell, BathyCell{-5.0, 0.1, ancient_ns});
+    layer.setStore(std::move(store));
 
-  const auto result = layer.evaluateCell(cell, now_ns);
-  ASSERT_TRUE(result.has_value())
-    << "Cell has data → must write something (not skip as unsurveyed).";
-  EXPECT_EQ(*result, nav2_costmap_2d::LETHAL_OBSTACLE)
-    << "Reliable sample is ancient → LETHAL (MF3: must use sample->timestamp, "
-       "not any->timestamp).";
+    const auto result = layer.evaluateCell(cell, now_ns);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, nav2_costmap_2d::LETHAL_OBSTACLE)
+      << "Reliable but ancient record is stale → LETHAL (MF3).";
+  }
+
+  // The same confident record, fresh, is FREE — confirming the LETHAL verdicts
+  // above came from the reliability/age gates, not from the data being absent.
+  {
+    auto store = std::make_unique<BathymetryStore>(5);
+    const auto cell = store->cellIndex(kLat, kLon);
+    store->set(SourceLayer::Processed, cell, BathyCell{-5.0, 0.1, now_ns});
+    layer.setStore(std::move(store));
+
+    const auto result = layer.evaluateCell(cell, now_ns);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, nav2_costmap_2d::FREE_SPACE)
+      << "Deep, reliable, fresh record → FREE.";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -380,14 +400,13 @@ TEST(BathymetryLayer, ComputeCostDegenerateRampAndBoundary)
 // ---------------------------------------------------------------------------
 namespace
 {
-// Sum the resident tiles across all layers and epochs of a store.
+// Sum the resident tiles across all layers of a store (one fused surface per
+// layer since #221).
 std::size_t residentTileCount(const BathymetryStore & store)
 {
   std::size_t total = 0;
   for (const auto layer : marine_bathymetry_store::source_layers_by_priority) {
-    for (const auto & epoch_pair : store.epochs(layer)) {
-      total += epoch_pair.second.tiles.size();
-    }
+    total += store.tiles(layer).size();
   }
   return total;
 }
@@ -410,7 +429,7 @@ TEST(BathymetryLayer, WindowedResidencyStaysBounded)
     for (int k = 0; k < 8; ++k) {
       const double lon = -70.5 + 0.05 * static_cast<double>(k);
       const auto cell = store.cellIndex(43.0, lon);
-      store.set(SourceLayer::Chart, kEpoch, cell, BathyCell{-10.0, 0.2, 1LL});
+      store.set(SourceLayer::Chart, cell, BathyCell{-10.0, 0.2, 1LL});
     }
     const std::size_t written = marine_bathymetry_store::save(store, dir.string(), nullptr);
     ASSERT_GT(written, 0u);

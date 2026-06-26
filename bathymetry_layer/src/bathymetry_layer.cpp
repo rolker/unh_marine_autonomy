@@ -433,10 +433,10 @@ std::optional<unsigned char> BathymetryLayer::evaluateCell(
   const std::optional<DepthSample> sample = shallowestReliable(*store_, cell, max_uncertainty_);
 
   // MF3: use sample->timestamp (the reliable record's age) for the staleness
-  // check, not any->timestamp (the quality-blind record). When the newest
-  // epoch's samples are all over-uncertain and the fallback lands on an older
-  // confident epoch, we want to age-check the epoch we are actually using for
-  // clearance — not the newer-but-unreliable one that bestSource found.
+  // check, not any->timestamp (the quality-blind record). bestSource may return
+  // an over-uncertain record at this cell while shallowestReliable returns a
+  // different, confident one; we age-check the record we actually use for
+  // clearance (the reliable one), not the quality-blind bestSource record.
   if (!sample || isStale(sample->timestamp, now_ns)) {
     // Data exists but every sample is over-uncertain (sample==nullopt), or the
     // reliable sample is stale → conservative LETHAL. A surveyed-but-unusable
