@@ -205,9 +205,13 @@ private:
 
   // Tide-change invalidation: re-render tiles only when the water surface moves
   // more than this (metres) from the value the cache was rendered against.
+  // Default 0.1 m: above realistic sea-surface estimate jitter (~+/-0.01-0.02 m
+  // in sim, from averaging odom z) so normal noise does not constantly re-render
+  // and defeat the cache, while still re-rendering when the tide moves enough to
+  // shift cost (the clearance ramp spans ~1.5 m). Parameterized (tunable).
   double last_tide_z_ = 0.0;
   bool tide_rendered_ = false;
-  double tide_invalidate_threshold_ = 0.02;
+  double tide_invalidate_threshold_ = 0.1;
 
   // Staleness vs caching: a tile is rendered once, so a cell that ages past
   // max_age_ would keep its cached (possibly non-lethal) cost rather than

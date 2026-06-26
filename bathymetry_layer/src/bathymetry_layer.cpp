@@ -118,6 +118,28 @@ void BathymetryLayer::onInitialize()
     buffer_fraction_ = default_buffer_fraction;
   }
 
+  // Re-render the cost-tile cache only when the tide moves more than this (m).
+  // Default 0.1 m clears realistic sea-surface-estimate jitter (~+/-0.02 m) so
+  // noise doesn't constantly re-render and defeat the cache (#226 review).
+  declareParameter("tide_invalidate_threshold", rclcpp::ParameterValue(tide_invalidate_threshold_));
+  node->get_parameter(name_ + ".tide_invalidate_threshold", tide_invalidate_threshold_);
+  if (!std::isfinite(tide_invalidate_threshold_) || tide_invalidate_threshold_ < 0.0) {
+    RCLCPP_WARN_STREAM(
+      logger_, "Invalid tide_invalidate_threshold " << tide_invalidate_threshold_ <<
+        "; using 0.1 instead.");
+    tide_invalidate_threshold_ = 0.1;
+  }
+
+  // How many cost tiles to (re)render per costmap cycle. Bounds first-pass work
+  // so a large global costmap fills incrementally instead of blocking.
+  declareParameter("max_tiles_per_cycle", rclcpp::ParameterValue(max_tiles_per_cycle_));
+  node->get_parameter(name_ + ".max_tiles_per_cycle", max_tiles_per_cycle_);
+  if (max_tiles_per_cycle_ < 1) {
+    RCLCPP_WARN_STREAM(
+      logger_, "Invalid max_tiles_per_cycle " << max_tiles_per_cycle_ << "; using 8 instead.");
+    max_tiles_per_cycle_ = 8;
+  }
+
   global_frame_id_ = layered_costmap_->getGlobalFrameID();
 
   if (store_path_.empty()) {
