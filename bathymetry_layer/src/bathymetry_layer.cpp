@@ -162,6 +162,10 @@ void BathymetryLayer::reset()
   current_ = false;
   window_valid_ = false;
   map_tide_valid_ = false;
+  // Drop the rendered-cost cache so it is rebuilt against the next tide/window.
+  tiles_.clear();
+  tide_rendered_ = false;
+  all_tiles_generated_ = false;
 }
 
 void BathymetryLayer::openStore()
@@ -192,10 +196,14 @@ void BathymetryLayer::matchSize()
   resolution_ = parent->getResolution();
 
   // Resolution may have changed; rebuild the store at the new default level and
-  // force a fresh window load on the next updateBounds.
+  // force a fresh window load on the next updateBounds. The cost tiles are sized
+  // to the old resolution, so drop them too — they are rebuilt on the next pass.
   openStore();
   window_valid_ = false;
   current_ = false;
+  tiles_.clear();
+  tide_rendered_ = false;
+  all_tiles_generated_ = false;
 }
 
 geographic_msgs::msg::GeoPoint BathymetryLayer::worldToLatLon(double x, double y)
@@ -208,6 +216,87 @@ geographic_msgs::msg::GeoPoint BathymetryLayer::worldToLatLon(double x, double y
   tf_->transform(world, ecef, "earth");
   geodesy::ECEFPoint ecef_point(ecef.point);
   return geodesy::toMsg(ecef_point);
+}
+
+geographic_msgs::msg::GeoPoint BathymetryLayer::worldToLatLon(
+  double x, double y, const geometry_msgs::msg::TransformStamped & to_earth) const
+{
+  // Hoisted-transform path: apply a pre-looked-up global_frame->earth transform
+  // instead of a per-cell tf buffer query. Used by generateTile so a tile's cells
+  // share one transform lookup rather than tile_size_^2 of them (#226).
+  geometry_msgs::msg::PointStamped world;
+  world.point.x = x;
+  world.point.y = y;
+  world.header.frame_id = global_frame_id_;
+  geometry_msgs::msg::PointStamped ecef;
+  tf2::doTransform(world, ecef, to_earth);
+  geodesy::ECEFPoint ecef_point(ecef.point);
+  return geodesy::toMsg(ecef_point);
+}
+
+BathymetryLayer::TileID BathymetryLayer::worldToTile(double x, double y) const
+{
+  const double tile_meters = resolution_ * tile_size_;
+  return std::make_pair(
+    static_cast<int>(std::floor((x - x_origin_) / tile_meters)),
+    static_cast<int>(std::floor((y - y_origin_) / tile_meters)));
+}
+
+bool BathymetryLayer::generateTile(
+  const TileID & id, const geometry_msgs::msg::TransformStamped & to_earth)
+{
+  const double tile_meters = resolution_ * tile_size_;
+  const double world_min_x = x_origin_ + id.first * tile_meters;
+  const double world_min_y = y_origin_ + id.second * tile_meters;
+
+  // World-anchored tile in the costmap global frame, NO_INFORMATION until a cell
+  // resolves. Same shape as s57_layer::generateTile.
+  auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
+    tile_size_, tile_size_, resolution_, world_min_x, world_min_y,
+    nav2_costmap_2d::NO_INFORMATION);
+
+  const int64_t now_ns = clock_->now().nanoseconds();
+
+  for (int ty = 0; ty < tile_size_; ++ty) {
+    for (int tx = 0; tx < tile_size_; ++tx) {
+      double wx;
+      double wy;
+      tile->mapToWorld(
+        static_cast<unsigned int>(tx), static_cast<unsigned int>(ty), wx, wy);
+
+      gggs::CellIndex cell;
+      try {
+        const auto geo = worldToLatLon(wx, wy, to_earth);
+        cell = store_->cellIndex(geo.latitude, geo.longitude);
+      } catch (const tf2::TransformException & e) {
+        // A projection failure here is a transform problem, not a per-cell one
+        // (the transform is fixed for the pass); abort the tile so it is retried
+        // next cycle rather than caching a half-rendered grid.
+        RCLCPP_WARN_THROTTLE(
+          logger_, *clock_, 10000,
+          "bathymetry_layer '%s': cannot project tile cell to lat/lon: %s",
+          name_.c_str(), e.what());
+        return false;
+      }
+
+      // Reuse the exact per-cell decision (MF1 tide gate, two-query no-data
+      // policy, unsurveyed_is_lethal, staleness) — only WHEN it runs changes
+      // (once per tile generation, not every costmap cycle).
+      const std::optional<unsigned char> evaluated = evaluateCell(cell, now_ns);
+      if (evaluated) {
+        tile->setCost(
+          static_cast<unsigned int>(tx), static_cast<unsigned int>(ty), *evaluated);
+      }
+      // else: truly unsurveyed / left untouched — keep NO_INFORMATION so the blit
+      // skips it and another prior (e.g. s57_layer) can contribute.
+    }
+  }
+
+  auto & info = tiles_[id];
+  info.costmap = tile;
+  info.generated = true;
+  info.needs_update = false;
+  return true;
 }
 
 void BathymetryLayer::refreshWindow()
@@ -350,13 +439,94 @@ void BathymetryLayer::updateBounds(
 
   refreshWindow();
 
-  // This layer contributes data over the whole parent window; expand the update
-  // bounds to the parent costmap extent so updateCosts is invoked across it.
   auto parent = layered_costmap_->getCostmap();
   const double world_min_x = parent->getOriginX();
   const double world_min_y = parent->getOriginY();
   const double world_max_x = world_min_x + parent->getSizeInMetersX();
   const double world_max_y = world_min_y + parent->getSizeInMetersY();
+
+  // --- Cost-tile cache management (#226) ---
+  // Render the static prior into world-anchored tiles HERE (once per tile), so
+  // updateCosts is a cheap blit instead of a per-cell store query every cycle.
+  all_tiles_generated_ = false;
+  if (store_ && window_valid_ && map_tide_valid_) {
+    const double buffer =
+      std::max(world_max_x - world_min_x, world_max_y - world_min_y) * buffer_fraction_;
+
+    // Tide-change invalidation: re-render only when the surface moved materially.
+    // Cached costs keep being served until each tile is regenerated (no flicker;
+    // also resolves the stale-tide latch, #223).
+    if (!tide_rendered_ ||
+      std::abs(map_tide_z_ - last_tide_z_) > tide_invalidate_threshold_)
+    {
+      for (auto & entry : tiles_) {
+        entry.second.needs_update = true;
+      }
+      last_tide_z_ = map_tide_z_;
+      tide_rendered_ = true;
+    }
+
+    // Tiles overlapping the buffered window.
+    const TileID lo = worldToTile(world_min_x - buffer, world_min_y - buffer);
+    const TileID hi = worldToTile(world_max_x + buffer, world_max_y + buffer);
+
+    // Evict cached tiles fully outside the window (bound memory on long surveys).
+    for (auto it = tiles_.begin(); it != tiles_.end(); ) {
+      const TileID & t = it->first;
+      if (t.first < lo.first || t.first > hi.first ||
+        t.second < lo.second || t.second > hi.second)
+      {
+        it = tiles_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+
+    // Hoist the global_frame->earth transform: one lookup for the whole pass,
+    // not one per cell (the costly part of the old per-cell path).
+    geometry_msgs::msg::TransformStamped to_earth;
+    bool have_xf = false;
+    try {
+      to_earth = tf_->lookupTransform("earth", global_frame_id_, tf2::TimePointZero);
+      have_xf = true;
+    } catch (const tf2::TransformException & e) {
+      RCLCPP_WARN_THROTTLE(
+        logger_, *clock_, 10000,
+        "bathymetry_layer '%s': cannot look up earth<-%s: %s",
+        name_.c_str(), global_frame_id_.c_str(), e.what());
+    }
+
+    // Render pending tiles, bounded per cycle so the first pass over a large
+    // (e.g. 4000x4000) global costmap is spread across cycles instead of blocking
+    // activation. all_tiles_generated_ gates current_ (MF2) below.
+    bool all_done = have_xf;
+    if (have_xf) {
+      int budget = max_tiles_per_cycle_;
+      for (int ti = lo.first; ti <= hi.first; ++ti) {
+        for (int tj = lo.second; tj <= hi.second; ++tj) {
+          const TileID id(ti, tj);
+          auto it = tiles_.find(id);
+          const bool needs =
+            (it == tiles_.end()) || !it->second.generated || it->second.needs_update;
+          if (!needs) {
+            continue;
+          }
+          if (budget > 0) {
+            generateTile(id, to_earth);
+            --budget;
+            it = tiles_.find(id);
+          }
+          if (it == tiles_.end() || !it->second.generated || it->second.needs_update) {
+            all_done = false;
+          }
+        }
+      }
+    }
+    all_tiles_generated_ = all_done;
+  }
+
+  // This layer contributes data over the whole parent window; expand the update
+  // bounds to the parent costmap extent so updateCosts is invoked across it.
   *min_x = std::min(*min_x, world_min_x);
   *min_y = std::min(*min_y, world_min_y);
   *max_x = std::max(*max_x, world_max_x);
@@ -459,49 +629,74 @@ void BathymetryLayer::updateCosts(
     return;
   }
 
-  const int64_t now_ns = clock_->now().nanoseconds();
+  // Blit the pre-rendered cost tiles into the master grid (#226). The expensive
+  // store query + projection already happened once per tile in
+  // updateBounds::generateTile; here it is a bounded memory copy with this
+  // layer's max-combine semantics (raise-only; skip NO_INFORMATION). Mirrors
+  // s57_layer::updateCosts (tile_offset_* index convention).
+  double world_min_x;
+  double world_min_y;
+  double world_max_x;
+  double world_max_y;
+  master_grid.mapToWorld(
+    static_cast<unsigned int>(min_i), static_cast<unsigned int>(min_j),
+    world_min_x, world_min_y);
+  master_grid.mapToWorld(
+    static_cast<unsigned int>(max_i), static_cast<unsigned int>(max_j),
+    world_max_x, world_max_y);
 
-  for (int j = min_j; j < max_j; ++j) {
-    for (int i = min_i; i < max_i; ++i) {
-      double wx;
-      double wy;
-      master_grid.mapToWorld(static_cast<unsigned int>(i), static_cast<unsigned int>(j), wx, wy);
+  const TileID start_tile = worldToTile(world_min_x, world_min_y);
+  const TileID end_tile = worldToTile(world_max_x, world_max_y);
 
-      gggs::CellIndex cell;
-      try {
-        const auto geo = worldToLatLon(wx, wy);
-        cell = store_->cellIndex(geo.latitude, geo.longitude);
-      } catch (const tf2::TransformException & e) {
-        RCLCPP_WARN_THROTTLE(
-          logger_, *clock_, 10000,
-          "bathymetry_layer '%s': cannot project cell to lat/lon: %s", name_.c_str(), e.what());
-        continue;
+  unsigned char * const master = master_grid.getCharMap();
+  const double inv_res = 1.0 / resolution_;
+
+  for (int ti = start_tile.first; ti <= end_tile.first; ++ti) {
+    // Offset from tile-local x to master-local x (costmap origins are
+    // resolution-aligned; lround absorbs sub-cell TF round-trip jitter).
+    const int tile_offset_x =
+      -ti * tile_size_ +
+      static_cast<int>(std::lround((master_grid.getOriginX() - x_origin_) * inv_res));
+    const int start_i = std::max(min_i, -tile_offset_x);
+    const int stop_i = std::min(max_i, tile_size_ - tile_offset_x);
+    if (start_i >= stop_i) {
+      continue;
+    }
+    for (int tj = start_tile.second; tj <= end_tile.second; ++tj) {
+      const auto entry = tiles_.find(std::make_pair(ti, tj));
+      if (entry == tiles_.end() || !entry->second.costmap) {
+        continue;  // not generated yet (or fully unsurveyed) — leave master as-is
       }
+      const int tile_offset_y =
+        -tj * tile_size_ +
+        static_cast<int>(std::lround((master_grid.getOriginY() - y_origin_) * inv_res));
+      const unsigned char * const src = entry->second.costmap->getCharMap();
 
-      const std::optional<unsigned char> evaluated = evaluateCell(cell, now_ns);
-      if (!evaluated) {
-        // Truly unsurveyed: leave the master cost untouched (NO_INFORMATION) so
-        // another prior (e.g. s57_layer) can contribute. Never WRITE NO_INFORMATION.
-        continue;
-      }
-      const unsigned char cost = *evaluated;
-
-      // Max-cost combine: only raise the master cost (or fill NO_INFORMATION).
-      const unsigned char existing =
-        master_grid.getCost(static_cast<unsigned int>(i), static_cast<unsigned int>(j));
-      if (existing == nav2_costmap_2d::NO_INFORMATION || cost > existing) {
-        master_grid.setCost(
-          static_cast<unsigned int>(i), static_cast<unsigned int>(j), cost);
+      for (int j = std::max(min_j, -tile_offset_y);
+        j < max_j && j + tile_offset_y < tile_size_; ++j)
+      {
+        const unsigned int target_row = master_grid.getIndex(0, static_cast<unsigned int>(j));
+        const unsigned int source_row =
+          entry->second.costmap->getIndex(0, static_cast<unsigned int>(j + tile_offset_y));
+        for (int i = start_i; i < stop_i; ++i) {
+          const unsigned char cost = src[source_row + i + tile_offset_x];
+          if (cost == nav2_costmap_2d::NO_INFORMATION) {
+            continue;
+          }
+          unsigned char & dst = master[target_row + i];
+          if (dst == nav2_costmap_2d::NO_INFORMATION || cost > dst) {
+            dst = cost;
+          }
+        }
       }
     }
   }
 
-  // MF2: only report this cycle as "current" when all prerequisites held:
-  // - a valid tide was received (map_tide_valid_) — MF1 safety gate
-  // - the store window was successfully loaded (window_valid_) — S2 gate
-  // A degraded cycle (no tide yet, or loadWindow failed) must not appear fresh
-  // to Nav2's staleness monitor; leave current_=false so Nav2 can detect it.
-  current_ = map_tide_valid_ && window_valid_;
+  // MF2: only report this cycle "current" when the MF1 tide gate and the store
+  // window gate held AND every tile in the window has been rendered against the
+  // current tide. While the first pass is still filling tiles in, current_=false
+  // so Nav2's staleness monitor sees a not-yet-complete costmap.
+  current_ = map_tide_valid_ && window_valid_ && all_tiles_generated_;
 }
 
 }  // namespace bathymetry_layer

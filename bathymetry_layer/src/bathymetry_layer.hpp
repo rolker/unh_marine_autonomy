@@ -4,14 +4,18 @@
 #ifndef BATHYMETRY_LAYER_HPP_
 #define BATHYMETRY_LAYER_HPP_
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "geographic_msgs/msg/geo_point.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
 #include "marine_autonomy/gggs.h"
 #include "marine_bathymetry_store/bathymetry_store.hpp"
+#include "nav2_costmap_2d/costmap_2d.hpp"
 #include "nav2_costmap_2d/layer.hpp"
 #include "nav2_costmap_2d/layered_costmap.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -120,8 +124,16 @@ protected:
 
 private:
   // Convert a costmap world coordinate to WGS84 lat/lon via the `earth` TF frame
-  // (mirrors s57_layer::worldToLatLon).
+  // (mirrors s57_layer::worldToLatLon). Per-cell tf buffer lookup — used only for
+  // the buffered-window AABB; tile rendering uses the hoisted transform below.
   geographic_msgs::msg::GeoPoint worldToLatLon(double x, double y);
+
+  // Apply a cached global_frame->earth transform to a world point and convert to
+  // lat/lon — the hoisted-transform inner loop of generateTile(). No per-cell tf
+  // buffer lookup (the costly part of worldToLatLon); the transform is looked up
+  // once per generation pass and reused for every cell.
+  geographic_msgs::msg::GeoPoint worldToLatLon(
+    double x, double y, const geometry_msgs::msg::TransformStamped & to_earth) const;
 
   // Recompute the buffered geographic window from the parent costmap bounds and
   // (re)load / evict store tiles to keep memory bounded. Returns false if the
@@ -130,6 +142,31 @@ private:
 
   // Open the on-disk store at store_path_ with the parent costmap's resolution.
   void openStore();
+
+  // World-anchored cost-tile cache (mirrors s57_layer). The prior is static in
+  // world space, so a tile is rendered once and reused as the rolling window
+  // scrolls — turning per-cycle O(cells x (tf + store query)) into an O(cells)
+  // blit in updateCosts. TileID is the integer tile grid coordinate; a tile
+  // covers tile_size_ x tile_size_ cells of resolution_ metres, anchored at
+  // (x_origin_, y_origin_) in the costmap global frame.
+  typedef std::pair<int, int> TileID;
+  struct TileInfo
+  {
+    // Pre-rendered costs for this tile (nullptr until generated). NO_INFORMATION
+    // where the cell is unsurveyed/untouched; otherwise the bathymetry cost.
+    std::shared_ptr<nav2_costmap_2d::Costmap2D> costmap;
+    // True once the tile has been rendered against the current tide.
+    bool generated = false;
+    // Marked when the tide moved past the threshold; the tile keeps serving its
+    // cached costs until it is regenerated, so the costmap never flickers.
+    bool needs_update = false;
+  };
+
+  TileID worldToTile(double x, double y) const;
+  // Render (or re-render) a tile's costs from the store using @p to_earth (the
+  // hoisted global_frame->earth transform). Returns false if rendering failed
+  // (e.g. a per-cell projection threw); the tile is left ungenerated.
+  bool generateTile(const TileID & id, const geometry_msgs::msg::TransformStamped & to_earth);
 
   std::string store_path_;
   std::string map_tide_frame_ = "map_tide";
@@ -141,6 +178,29 @@ private:
 
   std::string global_frame_id_;
   double resolution_ = 1.0;
+
+  // Cost-tile cache + its fixed world anchor (cells, metres). x_origin_/y_origin_
+  // stay 0 so tile boundaries are stable in the global frame across cycles (a
+  // rolling window then reuses the same tiles). tile_size_ is the tile edge in
+  // cells. max_tiles_per_cycle_ bounds how many tiles are rendered per
+  // updateBounds call so the first full pass over a large (e.g. 4000x4000) global
+  // costmap is spread across cycles instead of blocking activation for minutes.
+  std::map<TileID, TileInfo> tiles_;
+  double x_origin_ = 0.0;
+  double y_origin_ = 0.0;
+  int tile_size_ = 100;
+  int max_tiles_per_cycle_ = 8;
+  // True when every tile overlapping the current window is generated and
+  // up to date (no pending render work). Gates current_ (MF2) alongside the
+  // tide/window flags so Nav2 sees a "not yet current" costmap while the first
+  // pass is still filling tiles in, then "current" once complete.
+  bool all_tiles_generated_ = false;
+
+  // Tide-change invalidation: re-render tiles only when the water surface moves
+  // more than this (metres) from the value the cache was rendered against.
+  double last_tide_z_ = 0.0;
+  bool tide_rendered_ = false;
+  double tide_invalidate_threshold_ = 0.02;
 
   // Last buffered geographic window passed to loadWindow/evictOutside. Used to
   // skip redundant reloads when the costmap has not scrolled past the buffer.
