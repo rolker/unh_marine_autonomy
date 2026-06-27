@@ -79,3 +79,16 @@ Both fixes are correctly described in the issue. The `cube_bathymetry` repo curr
 
 ### Open questions
 - [ ] No open questions — plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-06-27 14:00 +00:00
+**By**: Claude Sonnet (in-context — author self-review)
+
+**Plan**: `.agent/work-plans/issue-228/plan.md` at `34854ef`
+**PR**: PR-less (--issue mode)
+**Verdict**: approve-with-suggestions
+
+### Findings
+- [ ] (suggestion) Consequences table describes the cube_bathymetry follow-up as "drops `COLCON_IGNORE` on `mission_manager*`" — but depending on how cube_bathymetry's current `UPSTREAM_WORKSPACE` is wired, the follow-up may also need to add/update an `UPSTREAM_WORKSPACE` reference to `unh_marine_autonomy`'s new `dependencies.repos` (so `unh_marine_navigation` is pulled automatically rather than ignored). Consider noting this nuance in the PR description so the cube_bathymetry follow-up scope is accurately understood. — `plan.md:63`
+- [ ] (suggestion) `dependencies.repos` content is not specified in the plan. The implementer should follow the vcstools YAML format used in `config/repos/core.repos` and include `version: jazzy` on the `unh_marine_navigation` entry. This is a minor implementation detail but worth making explicit to avoid a stale-branch mistake. — `plan.md:41`
