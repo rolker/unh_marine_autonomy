@@ -68,3 +68,22 @@ Notes:
 ### Next
 - [ ] `/review-code` (pre-push) on the PR1 diff before pushing.
 - [ ] PR2: payload-agnostic reconciler in `marine_tiled_raster_store` + GTest + `tile_io.hpp` comment fix.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-27 20:42 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-230 at `8f5745e`
+**Mode**: pre-push
+**Depth**: Standard (reason: project-level `plan.md` override-trigger + shared cross-repo message wire contract; 11-file count inflated by plan/progress workflow docs — substantive surface is 9 files)
+**Must-fix**: 0 | **Suggestions**: 5
+**Round**: 1 | **Ship**: recommended — no Must-fix; ADR-0008-faithful additive messages, build + both adversarial passes confirm a sound, implementable wire contract
+
+### Findings
+- [ ] (suggestion) Patch-application ordering under reorder underspecified: per-tile `header.stamp` (D3) + incremental disjoint sub-windows (D1) gives no rule for a reordered older patch; per-tile catalog can't detect a missing sub-window — document in ADR-0008 D3 / camp #121 — `marine_interfaces/msg/SonarVisualizationTile.msg:12`
+- [ ] (suggestion) State the window extent bound (`window_col+window_width ≤ width`, `window_row+window_height ≤ height`); current comment bounds only the origin — `marine_interfaces/msg/SonarVisualizationTile.msg:21`
+- [ ] (suggestion) Comment "only the types v1 quantizes to are listed" contradicts the defined `UINT16=4` (no v1 band uses it) — reconcile prose with constant set — `marine_interfaces/msg/VisualizationBand.msg:12`
+- [ ] (suggestion) Tie `width`/`height` to `index.level` (GGGS grid edge, derivable/checkable) or note they are advisory — `marine_interfaces/msg/SonarVisualizationTile.msg:16`
+- [ ] (suggestion) Optionally document each dtype's byte width so `data` length is derivable without the PointField size table — `marine_interfaces/msg/VisualizationBand.msg:11`
