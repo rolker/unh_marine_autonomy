@@ -9,25 +9,36 @@ current; when an umbrella closes or a frontier shifts, update the relevant row.
 
 _Last verified: 2026-06-27._
 
-## The pipeline spine
+## The two arcs
+
+Sonar data drives **two peer arcs** that share the GGGS store and the operator's
+map:
 
 ```
-ACQUIRE ─→ ESTIMATE ─→ STORE ─→ ┬─→ LIVE TRANSPORT → CAMP / web viewer
-(sensor)   (live        (durable │
-           product)      tiled)  ├─→ COSTMAP → Nav2
-                                 ├─→ RENDER (display)
-                                 └─→ REPROCESS → processed layer
+ARC 1 — COVERAGE  ("where did we survey / what's the depth & backscatter")
+  ACQUIRE ─→ ESTIMATE ─→ STORE ─→ ┬─→ LIVE TRANSPORT → CAMP / web viewer
+  (sensor)   (live grid)  (tiled) │
+                                  ├─→ COSTMAP → Nav2
+                                  ├─→ RENDER (display)
+                                  └─→ REPROCESS → processed layer
+
+ARC 2 — TARGETS   ("what did we find")
+  EXPLORE ─→ MARK ─→ CONTACT ─→ DISTRIBUTE ─→ DISPLAY (CAMP / web)
+  (rqt views over   (draw-box   (contact_manager
+   sidescan & MBES)  → TargetAnnotation)  CRUD / curate / confirm)
 ```
 
 Everything is GGGS-tiled (Colin Ware's Global Geographic Grid System); the
-**store is the hub**, and the three consumers (live transport, costmap, render)
-plus the reprocessing producer all read/write the same tiling.
+**store is the hub** for Arc 1, and both arcs converge on the operator's map.
+Arc 2 is the **search mission's payload** — for Lake Massabesic (submerged-object
+search), finding and marking targets *is* the point; Arc 1 tells you where you've
+looked.
 
-## Stage map
+## Arc 1 — Coverage
 
 | Stage | What | Owning umbrella(s) | ADR | Status |
 |-------|------|--------------------|-----|--------|
-| **Acquire — MBES** | M3 multibeam driver (`kongsberg_em_bridge`) | — | — | ✅ functional, ⚠️ data-quality bugs: timing [echoboats#338], gyro/roll [echoboats#337/#339] |
+| **Acquire — MBES** | M3 multibeam driver (`kongsberg_em_bridge`) | — | — | ✅ functional, ⚠️ data-quality bugs: timing [echoboats#338], gyro/roll [echoboats#337]/[echoboats#339] |
 | **Acquire — sidescan** | Garmin GCV driver + platform integration | [#185](https://github.com/rolker/unh_marine_autonomy/issues/185) | — | 🔨 protocol cracked; driver/platform in flight |
 | **Acquire — other** | DeltaT sonar driver | [#111](https://github.com/rolker/unh_marine_autonomy/issues/111) | — | 📋 |
 | **Estimate — bathy** | CUBE draft tiles (live), backscatter co-estimation, slope correction | — | 0007 | ✅ mature ([cube#54], [cube#70] closed); slope-correction merged but dormant (needs [cube#59]) |
@@ -63,14 +74,37 @@ plus the reprocessing producer all read/write the same tiling.
 [#188]: https://github.com/rolker/unh_marine_autonomy/issues/188
 [#189]: https://github.com/rolker/unh_marine_autonomy/issues/189
 
-## Parallel track: Contacts (not raster sonar, shares the map)
+## Arc 2 — Targets (find, mark, curate)
 
-Perception contacts (detections → curated contacts) ride a **separate** transport
-(SQLite + `marine_control` state topic), intentionally not the raster tile-sync.
-Owned by [#157](https://github.com/rolker/unh_marine_autonomy/issues/157) /
-[#167](https://github.com/rolker/unh_marine_autonomy/issues/167) (ADR-0004), with
-operator CA-tuning under [#168](https://github.com/rolker/unh_marine_autonomy/issues/168)
-(ADR-0003).
+The human-in-the-loop search arc: an operator explores sonar data in live `rqt`
+views, marks a target, and that mark becomes a curated **Contact** distributed to
+the map. Contacts ride a **separate** transport (SQLite + `marine_control` state
+topic), intentionally *not* the Arc-1 raster tile-sync.
+
+| Stage | What | Owning issue(s) | ADR | Status |
+|-------|------|-----------------|-----|--------|
+| **Explore** | `rqt` sonar review tools: waterfall over sidescan **and now MBES**, echogram, target views | [rqt#53] (echogram), [rqt#40] (MBES backscatter extractor), [rqt#50]/[rqt#69]/[rqt#73]/[rqt#82] (waterfall) | — | 🔨 waterfall + echogram active; MBES extractor 📋 |
+| **Mark** | draw-a-box target marking in the live view → `TargetAnnotation` | [rqt#59] | — | 📋 |
+| **Mark → Contact** | live-view marking publishes into `contact_manager` | [rqt#81] | 0004 | 📋 — the load-bearing link between the arcs |
+| **Contact** | unified `Contact` CRUD store + curate/confirm + distribution | [#157](https://github.com/rolker/unh_marine_autonomy/issues/157) / [#167](https://github.com/rolker/unh_marine_autonomy/issues/167) (+#156) | 0004 | 🔨 v1 core in flight |
+| **Device control** | bridgeable settings for the review tools / CA tuning | [#168](https://github.com/rolker/unh_marine_autonomy/issues/168) | 0003 | 🔨 |
+| **Display** | contacts on the CAMP + web map (shared with Arc 1 render) | [#166](https://github.com/rolker/unh_marine_autonomy/issues/166) | — | 📋 |
+
+[rqt#40]: https://github.com/rolker/rqt_operator_tools/issues/40
+[rqt#50]: https://github.com/rolker/rqt_operator_tools/issues/50
+[rqt#53]: https://github.com/rolker/rqt_operator_tools/issues/53
+[rqt#59]: https://github.com/rolker/rqt_operator_tools/issues/59
+[rqt#69]: https://github.com/rolker/rqt_operator_tools/issues/69
+[rqt#73]: https://github.com/rolker/rqt_operator_tools/issues/73
+[rqt#81]: https://github.com/rolker/rqt_operator_tools/issues/81
+[rqt#82]: https://github.com/rolker/rqt_operator_tools/issues/82
+
+> **Tracking gap (follow-up):** unlike Arc 1 (which has #86 / #171 / ADR-0008),
+> the explore→mark→contact→display arc has **no unifying umbrella** tying the
+> `rqt` marking tools ([rqt#59]/[rqt#81]) to the `contact_manager` backend
+> (#157/#167) to display (#166). **Candidate follow-up: file a "target detection
+> arc" umbrella** so this arc is as legible as the coverage arc. Not yet filed —
+> noted here pending a decision (see #232).
 
 ## ADR spine
 
@@ -78,8 +112,8 @@ operator CA-tuning under [#168](https://github.com/rolker/unh_marine_autonomy/is
 |-----|-------|-------|
 | [0001](decisions/0001-shared-scalar-colormap.md) | Shared scalar colormap | Render |
 | [0002](decisions/0002-bathymetric-data-store.md) | Bathymetric data store (GGGS) | Store |
-| [0003](decisions/0003-bridgeable-device-control.md) | Bridgeable device control | (Contacts/tuning) |
-| [0004](decisions/0004-unified-perception-contact.md) | Unified perception contact | (Contacts) |
+| [0003](decisions/0003-bridgeable-device-control.md) | Bridgeable device control | Arc 2 (tools/tuning) |
+| [0004](decisions/0004-unified-perception-contact.md) | Unified perception contact | Arc 2 (Targets) |
 | [0005](decisions/0005-multi-platform-provenance-registry.md) | Multi-platform provenance/registry | Store |
 | [0006](decisions/0006-multi-platform-backscatter-store.md) | Multi-platform backscatter store | Store |
 | [0007](decisions/0007-mbes-backscatter-store.md) | MBES backscatter store | Estimate/Store |
@@ -89,9 +123,10 @@ operator CA-tuning under [#168](https://github.com/rolker/unh_marine_autonomy/is
 
 Highest-leverage moves, given the map above:
 
-1. **Finish the live-view chain** ([#230](https://github.com/rolker/unh_marine_autonomy/issues/230) → [cube#78] → [camp#121]) — newest capability; directly serves live submerged-object search.
-2. **Make the costmap usable** ([uma#220] tide-frame fix + cost-model rework) — built but 100% lethal today; best ratio of "unlocks autonomy" to work remaining.
-3. **Land acquisition data-quality bugs** ([echoboats#337]/[echoboats#338]/[echoboats#339]) — corrupt every downstream product; cheap, foundational.
+1. **Finish the live-view chain** ([#230](https://github.com/rolker/unh_marine_autonomy/issues/230) → [cube#78] → [camp#121]) — newest Arc-1 capability; gives the operator live coverage to explore.
+2. **Advance the Arc-2 mark→contact link** ([rqt#59]/[rqt#81] → #157/#167) — this is the **Massabesic mission payload** (mark a found object from a live view). Currently the least-tracked arc; consider the umbrella follow-up above.
+3. **Make the costmap usable** ([uma#220] tide-frame fix + cost-model rework) — built but 100% lethal today; best ratio of "unlocks autonomy" to work remaining.
+4. **Land acquisition data-quality bugs** ([echoboats#337]/[echoboats#338]/[echoboats#339]) — corrupt every downstream product in *both* arcs; cheap, foundational.
 
 Bigger, longer bets to sequence after: the **sidescan track** ([#171]/[#185]) and
 the **processed-layer production + coverage-QC loop** (the gap between "collected
