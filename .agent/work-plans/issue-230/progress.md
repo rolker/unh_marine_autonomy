@@ -14,6 +14,6 @@ issue: 230
 **Phases**: two stacked PRs (messages; then ROS-free reconciler lib) — collapses to one if reconciler deferred
 
 ### Open questions
-- [ ] Reconciler scope: messages-only here vs. messages + ROS-free `marine_tile_sync` reconciler lib (PR2) that satisfies acceptance #2 — recommend the latter.
-- [ ] New package name/home if lib is in scope: `marine_tile_sync` inside `unh_marine_autonomy` (recommended) vs. standalone repo.
-- [ ] `GridIndex` message naming: reuse the gggs type name (intentional ROS mirror) vs. a distinct name to avoid `grid_map` confusion.
+- [x] Reconciler scope — **resolved**: messages (PR1) + ROS-free `marine_tile_sync` reconciler lib (PR2). Satisfies acceptance #2.
+- [x] Package home — **resolved**: `marine_tile_sync` as a new package inside `unh_marine_autonomy` (no `.repos` change).
+- [x] Index message naming — **resolved**: `TileIndex` (not `GridIndex`); mirrors `gggs::GridIndex` in fields, avoids `grid_map` cell-index confusion.
