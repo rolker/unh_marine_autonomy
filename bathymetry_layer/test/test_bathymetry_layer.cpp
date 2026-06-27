@@ -5,11 +5,13 @@
 
 #include <unistd.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -61,11 +63,22 @@ public:
   void setMaxUncertainty(double v) {max_uncertainty_ = v;}
   void setMaxAge(double v) {max_age_ = v;}
   void setUnsurveyedIsLethal(bool v) {unsurveyed_is_lethal_ = v;}
+  void setWindowValid(bool v) {setWindowValidForTest(v);}
+  void setCoverageEmptyLethal(bool v) {coverage_empty_lethal_ = v;}
+  // enabled_ is set from the "enabled" param in onInitialize(); the blit tests
+  // skip initialize(), so set it directly.
+  void setEnabled(bool v) {enabled_ = v;}
 
   using BathymetryLayer::computeCost;
   using BathymetryLayer::evaluateCell;
   using BathymetryLayer::isStale;
   using BathymetryLayer::expandUserPath;
+  using BathymetryLayer::injectTile;
+  using BathymetryLayer::tileSize;
+  using BathymetryLayer::CoverageBox;
+  using BathymetryLayer::tileHasCoverage;
+  using BathymetryLayer::windowFullyRendered;
+  using BathymetryLayer::markTileNeedsUpdate;
 };
 
 // ---------------------------------------------------------------------------
@@ -464,6 +477,120 @@ TEST(BathymetryLayer, WindowedResidencyStaysBounded)
 }
 
 // ---------------------------------------------------------------------------
+// Cost-tile cache / blit (#226). updateCosts no longer queries the store per
+// cell every cycle; it blits pre-rendered, world-anchored tiles into the master
+// grid. These exercise the blit (mapping + max-combine + cheapness) directly via
+// the injectTile seam, without the store/TF/projection pipeline (generateTile's
+// projection reuses the already-tested worldToLatLon + evaluateCell).
+// ---------------------------------------------------------------------------
+
+TEST(BathymetryLayer, TileBlitMaxCombineAndOffsets)
+{
+  BathymetryLayerForTest layer;
+  layer.setStore(std::make_unique<BathymetryStore>(10));  // non-null for the guard
+  layer.setEnabled(true);
+
+  const int ts = layer.tileSize();
+  // Tile at grid (0,0): world origin (0,0), 1 m cells, NO_INFORMATION default.
+  auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
+    ts, ts, 1.0, 0.0, 0.0, nav2_costmap_2d::NO_INFORMATION);
+  tile->setCost(5, 5, 100);
+  tile->setCost(10, 20, 200);
+  tile->setCost(7, 7, 80);
+  tile->setCost(50, 50, nav2_costmap_2d::FREE_SPACE);
+  // (40, 40) left NO_INFORMATION.
+  layer.injectTile(0, 0, tile);
+
+  nav2_costmap_2d::Costmap2D master(60, 60, 1.0, 0.0, 0.0, nav2_costmap_2d::FREE_SPACE);
+  master.setCost(5, 5, 150);   // higher than the tile's 100 -> keep existing
+  master.setCost(10, 20, 50);  // lower than the tile's 200 -> tile wins
+  master.setCost(50, 50, nav2_costmap_2d::NO_INFORMATION);  // tile FREE fills it
+
+  layer.updateCosts(master, 0, 0, 60, 60);
+
+  EXPECT_EQ(static_cast<int>(master.getCost(5, 5)), 150)
+    << "max-combine must keep the higher existing master cost";
+  EXPECT_EQ(static_cast<int>(master.getCost(10, 20)), 200)
+    << "tile raises a lower master cost (and the (10,20) offset maps correctly)";
+  EXPECT_EQ(static_cast<int>(master.getCost(7, 7)), 80)
+    << "tile cost fills over FREE_SPACE";
+  EXPECT_EQ(
+    static_cast<int>(master.getCost(40, 40)),
+    static_cast<int>(nav2_costmap_2d::FREE_SPACE))
+    << "tile NO_INFORMATION is skipped -- master left unchanged";
+  EXPECT_EQ(
+    static_cast<int>(master.getCost(50, 50)),
+    static_cast<int>(nav2_costmap_2d::FREE_SPACE))
+    << "tile cost fills a NO_INFORMATION master cell";
+}
+
+TEST(BathymetryLayer, TileBlitTracksRollingMasterOrigin)
+{
+  BathymetryLayerForTest layer;
+  layer.setStore(std::make_unique<BathymetryStore>(10));
+  layer.setEnabled(true);
+
+  const int ts = layer.tileSize();
+  auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
+    ts, ts, 1.0, 0.0, 0.0, nav2_costmap_2d::NO_INFORMATION);
+  tile->setCost(35, 25, 170);
+  layer.injectTile(0, 0, tile);
+
+  // Master origin shifted to (30, 10): master cell (5, 15) is world ~(35.5,25.5),
+  // i.e. tile cell (35, 25). Exercises the tile_offset_* index math (#226).
+  nav2_costmap_2d::Costmap2D master(40, 40, 1.0, 30.0, 10.0, nav2_costmap_2d::FREE_SPACE);
+  layer.updateCosts(master, 0, 0, 40, 40);
+
+  EXPECT_EQ(static_cast<int>(master.getCost(5, 15)), 170)
+    << "tile cell (35,25) must blit to master cell (5,15) under a (30,10) origin";
+  EXPECT_EQ(
+    static_cast<int>(master.getCost(6, 15)),
+    static_cast<int>(nav2_costmap_2d::FREE_SPACE))
+    << "the neighbouring master cell maps to an un-set tile cell";
+}
+
+TEST(BathymetryLayer, TileBlitIsCheapOverLargeGrid)
+{
+  BathymetryLayerForTest layer;
+  layer.setStore(std::make_unique<BathymetryStore>(10));
+  layer.setEnabled(true);
+
+  const int ts = layer.tileSize();
+  const int n = 500;  // 500x500 = 250k master cells
+  const int tiles_per_side = (n + ts - 1) / ts;
+  for (int ti = 0; ti < tiles_per_side; ++ti) {
+    for (int tj = 0; tj < tiles_per_side; ++tj) {
+      auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
+        ts, ts, 1.0,
+        static_cast<double>(ti) * ts, static_cast<double>(tj) * ts,
+        nav2_costmap_2d::FREE_SPACE);
+      layer.injectTile(ti, tj, tile);
+    }
+  }
+
+  nav2_costmap_2d::Costmap2D master(n, n, 1.0, 0.0, 0.0, nav2_costmap_2d::NO_INFORMATION);
+
+  const auto t0 = std::chrono::steady_clock::now();
+  layer.updateCosts(master, 0, 0, n, n);
+  const auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::steady_clock::now() - t0).count();
+
+  // A memory-copy blit of 250k cells is sub-ms to a few ms. This guards the blit
+  // staying O(cells) — no per-cell projection/tf creeping back into the copy. It
+  // does NOT exercise the store (none is loaded; generateTile owns the store
+  // query), so it cannot catch a per-cell *store-query* regression — that path is
+  // covered end to end in sim. The 1 s bound is generous against CI noise.
+  std::cout << "[ PERF     ] tile blit over " << (n * n) << " cells: "
+            << dt << " ms" << std::endl;
+  EXPECT_LT(dt, 1000)
+    << "updateCosts must be an O(cells) blit, not a per-cell store query";
+  EXPECT_EQ(
+    static_cast<int>(master.getCost(250, 250)),
+    static_cast<int>(nav2_costmap_2d::FREE_SPACE))
+    << "interior master cell got the tile's cost";
+}
+
+// ---------------------------------------------------------------------------
 // Test case (#220): the water-surface height is read from map_frame, NOT the
 // costmap's global frame. bizzy's costmaps render in map_tide, so referencing
 // the global frame was a degenerate self-lookup (identity → z=0) that read the
@@ -561,4 +688,105 @@ TEST_F(TideFrameTest, DegenerateTideFrameConfigRejected)
   EXPECT_FALSE(layer.isMapTideValid())
     << "map_frame == map_tide_frame is a degenerate identity lookup and must be "
        "rejected as an invalid tide";
+}
+
+// ---------------------------------------------------------------------------
+// generateTile's whole-tile coverage short-circuit (#226 perf fix part 2):
+// a tile whose projected lat/lon AABB overlaps no resident store tile is filled
+// uniformly without the per-cell projection+query. The safety-critical property
+// is that a tile is NEVER wrongly classified no-coverage (which would drop real
+// bathymetry when unsurveyed_is_lethal is false), so the test pins the margin
+// behaviour: straddling/within-margin tiles count as covered; only clearly
+// disjoint tiles are skipped.
+TEST(BathymetryLayer, TileCoverageOverlapDecision)
+{
+  BathymetryLayerForTest layer;
+  using Box = BathymetryLayerForTest::CoverageBox;
+  // One resident store tile, roughly a Lake Massabesic patch.
+  const std::vector<BathymetryLayerForTest::CoverageBox> coverage{
+    Box{42.98, -71.40, 43.00, -71.38}};
+
+  // Fully inside coverage → covered (full per-cell render).
+  EXPECT_TRUE(layer.tileHasCoverage(42.985, -71.395, 42.990, -71.390, coverage));
+  // Straddling the coverage edge → covered (conservative).
+  EXPECT_TRUE(layer.tileHasCoverage(42.995, -71.385, 43.005, -71.375, coverage));
+  // Just outside the top edge but within the ~11 m (1e-4 deg) margin → still
+  // covered: a covered cell must never be dropped.
+  EXPECT_TRUE(layer.tileHasCoverage(43.00005, -71.390, 43.00010, -71.385, coverage));
+  // Clearly beyond the margin (~22 m above) → no coverage (eligible for the
+  // uniform-fill short-circuit).
+  EXPECT_FALSE(layer.tileHasCoverage(43.00030, -71.390, 43.00040, -71.385, coverage));
+  // Far away → no coverage.
+  EXPECT_FALSE(layer.tileHasCoverage(42.000, -72.000, 42.001, -71.999, coverage));
+  // Empty store (no data loaded) → nothing is covered, so every tile takes the
+  // short-circuit (uniform lethal land / NO_INFORMATION).
+  EXPECT_FALSE(layer.tileHasCoverage(42.985, -71.395, 42.990, -71.390, {}));
+}
+
+// #2 safety gate: when the store window has NO coverage and unsurveyed_is_lethal
+// is set, the whole costmap would read LETHAL (incl. the boat's own cell). The
+// layer must report NOT current in that case rather than asserting the fabricated
+// all-lethal grid as a usable costmap. Drives the gate through updateCosts (which
+// sets current_) + isCurrent().
+TEST(BathymetryLayer, EmptyCoverageWithUnsurveyedLethalHoldsNotCurrent)
+{
+  BathymetryLayerForTest layer;
+  layer.setStore(std::make_unique<BathymetryStore>(10));  // non-null for the guard
+  layer.setEnabled(true);
+  layer.setUnsurveyedIsLethal(true);
+
+  const int ts = layer.tileSize();
+  auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
+    ts, ts, 1.0, 0.0, 0.0, nav2_costmap_2d::NO_INFORMATION);
+  layer.injectTile(0, 0, tile);   // marks core_ready_ true
+  layer.setMapTideValid(true);
+  layer.setWindowValid(true);
+
+  nav2_costmap_2d::Costmap2D master(ts, ts, 1.0, 0.0, 0.0, nav2_costmap_2d::FREE_SPACE);
+
+  // Coverage present (flag false): all gates satisfied → current.
+  layer.setCoverageEmptyLethal(false);
+  layer.updateCosts(master, 0, 0, ts, ts);
+  EXPECT_TRUE(layer.isCurrent())
+    << "tide + window valid and tiles rendered → costmap is current";
+
+  // Empty-coverage-lethal: must drop to not-current even though every other gate
+  // still holds, so the planner does not act on an all-lethal grid.
+  layer.setCoverageEmptyLethal(true);
+  layer.updateCosts(master, 0, 0, ts, ts);
+  EXPECT_FALSE(layer.isCurrent())
+    << "empty store window + unsurveyed_is_lethal must report NOT current";
+}
+
+// #3: a tide drift past the invalidation threshold marks every tile needs_update;
+// gating current_ on that would drop the costmap to not-current for a full-window
+// re-render (and re-trip the planner timeout) even though the cached costs are
+// only sub-threshold stale. windowFullyRendered must therefore treat a
+// generated-but-needs_update tile as STILL rendered (ready), and only a
+// never-rendered (absent) tile as not-ready.
+TEST(BathymetryLayer, WindowReadyTreatsStaleTileAsRendered)
+{
+  BathymetryLayerForTest layer;
+  layer.setStore(std::make_unique<BathymetryStore>(10));
+  const int ts = layer.tileSize();
+  auto make_tile = [ts]() {
+      return std::make_shared<nav2_costmap_2d::Costmap2D>(
+        ts, ts, 1.0, 0.0, 0.0, nav2_costmap_2d::NO_INFORMATION);
+    };
+  layer.injectTile(0, 0, make_tile());
+  layer.injectTile(0, 1, make_tile());
+  layer.injectTile(1, 0, make_tile());
+  layer.injectTile(1, 1, make_tile());
+
+  EXPECT_TRUE(layer.windowFullyRendered(0, 0, 1, 1))
+    << "every window tile generated → ready";
+
+  // Mark one tile stale (as a tide move would): still rendered, still ready.
+  layer.markTileNeedsUpdate(1, 1);
+  EXPECT_TRUE(layer.windowFullyRendered(0, 0, 1, 1))
+    << "a generated-but-stale (needs_update) tile must NOT hold current_ false (#3)";
+
+  // A window region with a never-rendered (absent) tile is not ready.
+  EXPECT_FALSE(layer.windowFullyRendered(0, 0, 2, 2))
+    << "an absent (never-rendered) tile → not ready";
 }

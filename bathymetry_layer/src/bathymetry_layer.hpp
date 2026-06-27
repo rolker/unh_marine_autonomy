@@ -4,14 +4,19 @@
 #ifndef BATHYMETRY_LAYER_HPP_
 #define BATHYMETRY_LAYER_HPP_
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "geographic_msgs/msg/geo_point.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
 #include "marine_autonomy/gggs.h"
 #include "marine_bathymetry_store/bathymetry_store.hpp"
+#include "nav2_costmap_2d/costmap_2d.hpp"
 #include "nav2_costmap_2d/layer.hpp"
 #include "nav2_costmap_2d/layered_costmap.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -97,6 +102,52 @@ protected:
   // are returned unchanged. Exposed for unit testing.
   static std::string expandUserPath(const std::string & path);
 
+  // Test seam (test_bathymetry_layer.cpp): inject a pre-rendered cost tile at
+  // grid coordinate (ti, tj) and mark the cache complete, so the updateCosts
+  // blit can be unit-tested without the store/TF/projection pipeline. tileSize()
+  // exposes the tile edge (cells) so a test can size a matching tile.
+  void injectTile(int ti, int tj, std::shared_ptr<nav2_costmap_2d::Costmap2D> tile);
+  int tileSize() const {return tile_size_;}
+
+  // Test seam: force window_valid_ (normally set by refreshWindow on a
+  // successful loadWindow) so the current_ gate can be unit-tested without TF.
+  void setWindowValidForTest(bool v) {window_valid_ = v;}
+
+  // Test seam: mark an already-injected tile stale (needs_update) without a tide
+  // move, so windowFullyRendered's "stale-but-rendered still counts as ready"
+  // property (#3) can be unit-tested. No-op if the tile is not resident.
+  void markTileNeedsUpdate(int ti, int tj);
+
+  // A lat/lon axis-aligned bounding box of one store tile, used as a cheap
+  // whole-tile coverage test in generateTile (mirrors s57_layer testing a tile
+  // against its loaded chart grids before sampling). Built once per generation
+  // pass by buildCoverage() from the store's resident tiles across all layers.
+  struct CoverageBox
+  {
+    double min_lat;
+    double min_lon;
+    double max_lat;
+    double max_lon;
+  };
+
+  // Whether a tile's projected lat/lon AABB (@p min_lat..@p max_lat,
+  // @p min_lon..@p max_lon) overlaps any store coverage box, after padding by a
+  // safety margin so a tile straddling the coverage edge counts as covered
+  // (full render) — never the reverse, so a covered cell is never classified
+  // no-coverage and dropped. Exposed for unit testing the generateTile
+  // no-coverage short-circuit decision.
+  bool tileHasCoverage(
+    double min_lat, double min_lon, double max_lat, double max_lon,
+    const std::vector<CoverageBox> & coverage) const;
+
+  // Whether every tile in the inclusive grid range [ (ti_lo,tj_lo) .. (ti_hi,tj_hi) ]
+  // has been rendered at least once (resident and `generated`). This is the
+  // current_ readiness signal: a tile that is generated but `needs_update`
+  // (stale-but-serving after a tide move) still counts as rendered, so a tide
+  // drift does not drop the costmap to not-current (#3). A never-rendered tile
+  // (first fill / freshly scrolled-in region) returns false. Exposed for testing.
+  bool windowFullyRendered(int ti_lo, int tj_lo, int ti_hi, int tj_hi) const;
+
   // Test seams: the store and the cached water-surface height, so a test fixture
   // can populate a synthetic store and drive cost evaluation without TF.
   std::unique_ptr<marine_bathymetry_store::BathymetryStore> store_;
@@ -106,6 +157,14 @@ protected:
   // is not a valid water-surface datum and would produce arbitrary clearance
   // values. updateCosts() also gates current_=true on this flag (MF1/MF2).
   bool map_tide_valid_ = false;
+
+  // #2 safety latch (set each updateBounds pass): the current window has NO store
+  // coverage AND unsurveyed_is_lethal_ is set, so every tile would short-circuit
+  // to LETHAL — an all-obstacle grid including the vehicle's own cell. updateCosts
+  // gates current_=false on this so that fabricated all-lethal grid is never
+  // asserted as a usable costmap (the layer warns instead). Protected so the test
+  // fixture can drive the gate directly.
+  bool coverage_empty_lethal_ = false;
 
   // Parameters (protected so the test fixture can configure them directly).
   double minimum_depth_ = 1.0;
@@ -120,8 +179,16 @@ protected:
 
 private:
   // Convert a costmap world coordinate to WGS84 lat/lon via the `earth` TF frame
-  // (mirrors s57_layer::worldToLatLon).
+  // (mirrors s57_layer::worldToLatLon). Per-cell tf buffer lookup — used only for
+  // the buffered-window AABB; tile rendering uses the hoisted transform below.
   geographic_msgs::msg::GeoPoint worldToLatLon(double x, double y);
+
+  // Apply a cached global_frame->earth transform to a world point and convert to
+  // lat/lon — the hoisted-transform inner loop of generateTile(). No per-cell tf
+  // buffer lookup (the costly part of worldToLatLon); the transform is looked up
+  // once per generation pass and reused for every cell.
+  geographic_msgs::msg::GeoPoint worldToLatLon(
+    double x, double y, const geometry_msgs::msg::TransformStamped & to_earth) const;
 
   // Recompute the buffered geographic window from the parent costmap bounds and
   // (re)load / evict store tiles to keep memory bounded. Returns false if the
@@ -130,6 +197,45 @@ private:
 
   // Open the on-disk store at store_path_ with the parent costmap's resolution.
   void openStore();
+
+  // World-anchored cost-tile cache (mirrors s57_layer). The prior is static in
+  // world space, so a tile is rendered once and reused as the rolling window
+  // scrolls — turning per-cycle O(cells x (tf + store query)) into an O(cells)
+  // blit in updateCosts. TileID is the integer tile grid coordinate; a tile
+  // covers tile_size_ x tile_size_ cells of resolution_ metres, anchored at
+  // (x_origin_, y_origin_) in the costmap global frame.
+  typedef std::pair<int, int> TileID;
+  struct TileInfo
+  {
+    // Pre-rendered costs for this tile (nullptr until generated). NO_INFORMATION
+    // where the cell is unsurveyed/untouched; otherwise the bathymetry cost.
+    std::shared_ptr<nav2_costmap_2d::Costmap2D> costmap;
+    // True once the tile has been rendered against the current tide.
+    bool generated = false;
+    // Marked when the tide moved past the threshold; the tile keeps serving its
+    // cached costs until it is regenerated, so the costmap never flickers.
+    bool needs_update = false;
+  };
+
+  TileID worldToTile(double x, double y) const;
+
+  // Collect the lat/lon AABBs of every tile currently resident in the store
+  // (all source layers). Cheap: the store holds only the windowed coverage (a
+  // handful of GGGS tiles for a lake). Empty when the store has no data.
+  std::vector<CoverageBox> buildCoverage() const;
+
+  // Render (or re-render) a tile's costs from the store using @p to_earth (the
+  // hoisted global_frame->earth transform). @p coverage is the store's resident
+  // tile AABBs (buildCoverage()): a tile whose projected lat/lon extent overlaps
+  // none of them has no store data, so it is filled uniformly without the
+  // per-cell projection+query (LETHAL_OBSTACLE when unsurveyed_is_lethal_, else
+  // left fully NO_INFORMATION) — the bulk of tiles on a large global costmap.
+  // Always marks the tile generated: a cell whose projection throws is skipped
+  // (left NO_INFORMATION) rather than failing the tile, so a single bad cell
+  // cannot pin the tile ungenerated and hold current_ false forever.
+  void generateTile(
+    const TileID & id, const geometry_msgs::msg::TransformStamped & to_earth,
+    const std::vector<CoverageBox> & coverage);
 
   std::string store_path_;
   std::string map_tide_frame_ = "map_tide";
@@ -141,6 +247,52 @@ private:
 
   std::string global_frame_id_;
   double resolution_ = 1.0;
+
+  // Cost-tile cache + its fixed world anchor (cells, metres). x_origin_/y_origin_
+  // stay 0 so tile boundaries are stable in the global frame across cycles (a
+  // rolling window then reuses the same tiles). tile_size_ is the tile edge in
+  // cells. update_timeout_ time-boxes tile generation per updateBounds call
+  // (mirrors s57_layer): as many pending tiles as fit in this wall-clock budget
+  // (seconds) are rendered each cycle, so the first full pass over a large
+  // (e.g. 4000x4000) global costmap is spread across cycles instead of blocking
+  // the costmap thread. With the no-coverage short-circuit (most tiles cheap),
+  // the whole window drains in ~1-2 cycles so current_ goes true promptly.
+  std::map<TileID, TileInfo> tiles_;
+  double x_origin_ = 0.0;
+  double y_origin_ = 0.0;
+  int tile_size_ = 100;
+  double update_timeout_ = 0.5;
+  // Readiness radius (metres) around the vehicle for the current_ gate (review A).
+  // current_ is reported once the tiles within this radius of the vehicle are
+  // rendered — NOT the whole window — so a large global (which takes far longer
+  // than the planner's costmap_update_timeout to render fully) does not stall the
+  // planner. Robot-first rendering fills the core first; the rest fills outward in
+  // the background. Scale-independent: a bigger global does not change time-to-ready.
+  double ready_radius_ = 200.0;
+  // True when the robot-centred CORE region (within ready_radius_) has been
+  // rendered at least once. Gates current_ (MF2) alongside the tide/window flags
+  // and coverage_empty_lethal_ (#2), so Nav2 sees "not yet current" only until the
+  // vehicle's neighbourhood is ready — seconds, regardless of total global size —
+  // rather than until the entire window is rendered (minutes on a 4 km global).
+  bool core_ready_ = false;
+
+  // Tide-change invalidation: re-render tiles only when the water surface moves
+  // more than this (metres) from the value the cache was rendered against.
+  // Default 0.1 m: above realistic sea-surface estimate jitter (~+/-0.01-0.02 m
+  // in sim, from averaging odom z) so normal noise does not constantly re-render
+  // and defeat the cache, while still re-rendering when the tide moves enough to
+  // shift cost (the clearance ramp spans ~1.5 m). Parameterized (tunable).
+  double last_tide_z_ = 0.0;
+  bool tide_rendered_ = false;
+  double tide_invalidate_threshold_ = 0.1;
+
+  // Staleness vs caching: a tile is rendered once, so a cell that ages past
+  // max_age_ would keep its cached (possibly non-lethal) cost rather than
+  // flipping to stale-LETHAL the way the old per-cycle evaluation did. When the
+  // staleness gate is enabled (max_age_ > 0) the cache is fully re-rendered on
+  // this interval so a cell goes stale-LETHAL within ~max_age_ of when it should.
+  // last_full_render_ns_ is the time of the last such forced re-render.
+  int64_t last_full_render_ns_ = 0;
 
   // Last buffered geographic window passed to loadWindow/evictOutside. Used to
   // skip redundant reloads when the costmap has not scrolled past the buffer.
