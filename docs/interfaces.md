@@ -205,6 +205,41 @@ This document describes all ROS communication interfaces (topics, services, acti
 - `TaskInformation current_navigation_task`: Active task
 - `TaskInformation[] tasks`: Full task list with status
 
+### Live sonar coverage transport (ADR-0008)
+
+Boat→operator transport of GGGS-tiled sonar coverage for live display in CAMP
+and the web viewer. The tile message is a lossy, quantized **display
+projection** of the durable stores (bathy ADR-0002, backscatter ADR-0006/0007),
+never a storage schema. A catalog/request pair drives anti-entropy
+reconciliation (push + periodic complete catalog → request-missing/stale +
+prune-on-absence). See [ADR-0008](decisions/0008-live-sonar-coverage-transport-and-render.md).
+
+#### `marine_interfaces/TileIndex`
+- `uint8 level`, `uint32 row`, `uint32 col`: GGGS tile address (mirrors `gggs::GridIndex`)
+
+#### `marine_interfaces/VisualizationBand`
+- `string name`: band identity (`depth` / `uncertainty` / `backscatter` / `intensity`)
+- `uint8 dtype`: element type (`UINT8`/`INT16`/`UINT16`; values mirror `sensor_msgs/PointField`)
+- `float64 scale`, `float64 offset`, `float64 nodata`: generic dequantization (`value = raw·scale + offset`); `nodata` in raw units
+- `uint8[] data`: row-major raw cells of the dirty window, little-endian
+
+#### `marine_interfaces/SonarVisualizationTile`
+- `std_msgs/Header header`: `stamp` = tile version time (newest-wins); `frame_id` = display CRS tag
+- `TileIndex index`, `uint16 width`/`height`: which tile, and its full cell size
+- `uint16 window_col`/`window_row`/`window_width`/`window_height`: dirty sub-window the bands cover
+- `VisualizationBand[] bands`: one entry per present band
+
+#### `marine_interfaces/TileCatalogEntry`
+- `TileIndex index`, `builtin_interfaces/Time version`: a tile's identity + version
+
+#### `marine_interfaces/TileCatalog`
+- `std_msgs/Header header`: `stamp` = catalog generation-time (the prune gate)
+- `TileCatalogEntry[] entries`: **complete** snapshot of the source's tiles
+
+#### `marine_interfaces/TileRequest`
+- `std_msgs/Header header`
+- `TileIndex[] tiles`: consumer's missing/stale "need" list
+
 ## Related Documentation
 - [Data Flows](data_flows.md) - System-level data flow diagrams
 - [Autonomy Modes](autonomy_modes.md) - State machine documentation
