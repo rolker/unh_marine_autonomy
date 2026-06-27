@@ -101,6 +101,7 @@ ADR-0008 D3 supersedes it with timestamp/version.
 | `marine_interfaces/msg/TileRequest.msg` | New |
 | `marine_interfaces/CMakeLists.txt` | Append 6 entries to `set(MSG_FILES …)`; `builtin_interfaces` already in rosidl DEPENDENCIES |
 | `marine_interfaces/package.xml` | **Add `<depend>builtin_interfaces</depend>`** — new msgs use `builtin_interfaces/Time`; it is in CMakeLists DEPENDENCIES but **not** the manifest |
+| `docs/interfaces.md` | Add a "Live sonar coverage transport" message-reference note for the new family (PR1) |
 | `marine_tiled_raster_store/include|src/.../tile_catalog*.{hpp,cpp}` | New: payload-agnostic `TileCatalogBuilder` / `TileCatalogReconciler` (PR2) |
 | `marine_tiled_raster_store/test/test_tile_catalog.cpp` | New GTest: loss/reorder/cold-start/reset convergence (PR2) |
 | `marine_tiled_raster_store/CMakeLists.txt` | Register the new lib sources + GTest |

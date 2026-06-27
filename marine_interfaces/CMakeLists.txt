@@ -56,6 +56,13 @@ set(MSG_FILES
   msg/OccupancyPolygon.msg
   msg/OccupancyVectorMap.msg
   msg/RobotState.msg
+  # Live sonar coverage transport + anti-entropy tile-sync (ADR-0008, #230)
+  msg/TileIndex.msg
+  msg/VisualizationBand.msg
+  msg/SonarVisualizationTile.msg
+  msg/TileCatalogEntry.msg
+  msg/TileCatalog.msg
+  msg/TileRequest.msg
 )
 
 rosidl_generate_interfaces(
