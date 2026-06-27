@@ -33,3 +33,17 @@ issue: 230
 - [ ] (suggestion) Make acceptance-#2 reinterpretation explicit: pure-logic reconciler + deterministic loss/reorder tests (real ROS publisher/subscriber nodes deferred to cube#78 / camp#121) — `plan.md:116`
 - [ ] (suggestion) `package.xml` does **not** declare `builtin_interfaces` (only in CMakeLists DEPENDENCIES); new msgs use `builtin_interfaces/Time` — add `<depend>builtin_interfaces</depend>`, correct the "already present" claim — `plan.md:84`
 - [ ] (suggestion) Confirm PointField dtype constants are copied as local `uint8` constants (no `sensor_msgs` build dep), consistent with "No new deps" — `plan.md:38`
+
+## Plan Revised
+**Status**: complete
+**When**: 2026-06-27 16:10 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8)
+
+All five plan-review findings folded into the plan (commit below):
+- [x] (must-fix) Reconciler home → **`marine_tiled_raster_store`** (the #172 sync home), not a new `marine_tile_sync`. Payload-agnostic (`gggs::GridIndex` + version + structs), reused by both light display-tile sync and a future full-tile sync. Confirmed with Roland: store = full tiles, messages = light tiles, share generic code.
+- [x] (must-fix) `tile_io.hpp` stale "content-hash sync" comment → fix to timestamp/version (ADR-0008 D3); now in Files table + Consequences.
+- [x] (suggestion) Acceptance-#2 reinterpretation made explicit (pure-logic + deterministic sim; real ROS nodes deferred to cube#78/camp#121).
+- [x] (suggestion) `package.xml` → add `<depend>builtin_interfaces</depend>`; corrected the "already present" claim.
+- [x] (suggestion) PointField dtype constants → **local `uint8` constants**, no `sensor_msgs` dep; made explicit.
+
+Plan now review-plan-ready; no open questions.

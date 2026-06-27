@@ -34,8 +34,10 @@ touches.
    (row-major raw bytes for the **dirty window**, length `=
    window_w·window_h·sizeof(dtype)`). Consumer dequantizes generically
    (`value = raw·scale + offset`). `dtype` constants **mirror
-   `sensor_msgs/PointField`** (INT16=3, UINT8=2, …) rather than inventing a new
-   enum (precedent-reuse — [[feedback_sensor_msg_conventions_tf_trademarks]]).
+   `sensor_msgs/PointField` numeric values** (INT16=3, UINT8=2, …) as **local
+   `uint8` constants in this `.msg`** — no `sensor_msgs` build dep (keeps the
+   "no new deps" property); precedent-reuse without coupling
+   ([[feedback_sensor_msg_conventions_tf_trademarks]]).
 3. **`SonarVisualizationTile.msg`** — `std_msgs/Header header` (`stamp` = tile
    version time on the boat clock; `frame_id` = display-CRS tag), `TileIndex
    index`, `uint16 width/height` (cells per side), dirty sub-window `uint16
@@ -51,24 +53,41 @@ touches.
 6. **`TileRequest.msg`** — `std_msgs/Header header`, `TileIndex[] tiles` (the
    operator's "need" list).
 
-**Anti-entropy reconciler** (the testable heart of acceptance #2): a **ROS-free**
-pure-logic library in a **new in-repo package `marine_tile_sync`** (inside
-`unh_marine_autonomy`, so no `.repos` change — decided 2026-06-27) so the
-protocol is proven deterministically without a GUI and is reusable by both
-`camp` (#121) and the web viewer (#166):
+Message split by concern: `SonarVisualizationTile` + `VisualizationBand` are the
+**light/quantized display payload**; `TileIndex` / `TileCatalogEntry` /
+`TileCatalog` / `TileRequest` are **payload-agnostic sync-protocol** messages
+(indices + versions, no pixels) — so a future full-tile store-to-store sync can
+reuse the same catalog/request shape.
+
+**Anti-entropy reconciler** (the testable heart of acceptance #2): a **ROS-free,
+payload-agnostic** pure-logic library added to the existing **`marine_tiled_raster_store`**
+package — the #172 shared GGGS tiling/persistence core whose own header
+(`tile_io.hpp`) designates it the home where "the #86-Phase-6 … sync will build."
+The reconciler operates on `gggs::GridIndex` + a version + plain catalog structs
+and knows **nothing about full vs light tiles**, so it is reused by *both* the
+light-tile display sync (now, #230) and a future full-tile store-to-store sync —
+the reuse Roland asked for (2026-06-27), written once. No new package
+(`marine_tile_sync` rejected — it would fork the contract #172 was built to
+share), and **no `marine_interfaces` dependency** in the store core (it stays
+ROS-message-free; cube#78/camp#121 adapt msgs↔structs at the node boundary):
 
 7. **`TileCatalogBuilder`** (boat side) — snapshot a dirty/known set → catalog.
 8. **`TileCatalogReconciler`** (operator side) — given local cache `{index →
    version}` + a received catalog, compute `{request-list, prune-list}`:
    request missing/stale; **prune-on-absence** but **timestamp-gated** (prune an
    absent tile only if older than the catalog's generation-time, D4 condition b).
-9. **Unit tests** simulating loss / reorder / cold-start / **boat reset** (fresh
-   boat → small catalog → operator prunes the rest), asserting convergence to
-   exactly the catalog set and that a late/reordered catalog cannot delete a
-   just-pushed fresh tile.
+9. **Unit tests** (extend `marine_tiled_raster_store`'s GTest suite) simulating
+   loss / reorder / cold-start / **boat reset** (fresh boat → small catalog →
+   operator prunes the rest), asserting convergence to exactly the catalog set
+   and that a late/reordered catalog cannot delete a just-pushed fresh tile. This
+   is a **pure-logic + deterministic-sim** realization of acceptance #2; the real
+   ROS publisher/subscriber wiring is deferred to cube#78 (producer) / camp#121
+   (consumer).
 
-**Docs**: a `marine_interfaces` message-reference note for the new family, and
-update the package's message inventory.
+**Docs**: a `marine_interfaces` message-reference note for the new family; update
+`marine_tiled_raster_store/README.md` (sync section); and **fix the stale
+`tile_io.hpp` comment** that still says "manifest/**content-hash** sync" —
+ADR-0008 D3 supersedes it with timestamp/version.
 
 ## Files to Change
 
@@ -80,9 +99,13 @@ update the package's message inventory.
 | `marine_interfaces/msg/TileCatalogEntry.msg` | New |
 | `marine_interfaces/msg/TileCatalog.msg` | New |
 | `marine_interfaces/msg/TileRequest.msg` | New |
-| `marine_interfaces/CMakeLists.txt` | Append 6 entries to `set(MSG_FILES …)`; `builtin_interfaces` already in DEPENDENCIES |
-| `marine_interfaces/package.xml` | No new deps (std_msgs/builtin_interfaces already present) — verify |
-| `marine_tile_sync/` (new pkg) | Reconciler + builder lib + GTest (PR2) |
+| `marine_interfaces/CMakeLists.txt` | Append 6 entries to `set(MSG_FILES …)`; `builtin_interfaces` already in rosidl DEPENDENCIES |
+| `marine_interfaces/package.xml` | **Add `<depend>builtin_interfaces</depend>`** — new msgs use `builtin_interfaces/Time`; it is in CMakeLists DEPENDENCIES but **not** the manifest |
+| `marine_tiled_raster_store/include|src/.../tile_catalog*.{hpp,cpp}` | New: payload-agnostic `TileCatalogBuilder` / `TileCatalogReconciler` (PR2) |
+| `marine_tiled_raster_store/test/test_tile_catalog.cpp` | New GTest: loss/reorder/cold-start/reset convergence (PR2) |
+| `marine_tiled_raster_store/CMakeLists.txt` | Register the new lib sources + GTest |
+| `marine_tiled_raster_store/include/.../tile_io.hpp` | Fix stale "manifest/content-hash sync" comment → timestamp/version (ADR-0008 D3) |
+| `marine_tiled_raster_store/README.md` | Document the sync/reconciler addition |
 
 ## Principles Self-Check
 
@@ -108,17 +131,25 @@ update the package's message inventory.
 |---|---|---|
 | `set(MSG_FILES …)` in CMakeLists | Rebase against #167/PR#169 if it lands first (same list) | Yes — sequence/rebase noted |
 | New message family | Producer cube#78, consumer camp#121 build against these | No — downstream issues |
-| New `marine_tile_sync` package | Workspace build order / `.repos` if standalone | Decided in Open Q (in-repo pkg = no `.repos` change) |
-| Package gains messages | `marine_interfaces` has **no `.agents/README.md`** — gap, not created here | No — separate doc task |
+| Add reconciler to `marine_tiled_raster_store` | `tile_io.hpp` stale "content-hash sync" comment (D3 supersedes) + README sync section | Yes — both in Files table |
+| `marine_interfaces` msgs use `builtin_interfaces/Time` | `package.xml` must declare `<depend>builtin_interfaces</depend>` | Yes — in Files table |
+| Package gains messages | `marine_interfaces` + `marine_tiled_raster_store` have **no `.agents/README.md`** — gap, not created here | No — separate doc task |
 
 ## Resolved Decisions (2026-06-27)
 
-- **Reconciler in scope.** #230 = messages (PR1) **+** the ROS-free
-  `marine_tile_sync` reconciler/builder lib with simulated-loss tests (PR2,
-  stacked) — satisfies acceptance #2 and gives cube#78/camp#121 a tested
-  protocol to depend on.
-- **Package home.** `marine_tile_sync` is a new package **inside
-  `unh_marine_autonomy`** — no `.repos` change.
+- **Reconciler in scope.** #230 = messages (PR1) **+** a ROS-free reconciler/builder
+  lib with simulated-loss tests (PR2, stacked) — satisfies acceptance #2 (as a
+  pure-logic + deterministic-sim realization; real ROS nodes deferred to
+  cube#78/camp#121).
+- **Reconciler home (revised after plan review).** Added to the existing
+  **`marine_tiled_raster_store`** package, **not** a new `marine_tile_sync`. That
+  package is the #172 shared GGGS tiling/persistence core explicitly built to be
+  the sync home (`tile_io.hpp`); a new package would fork the contract it was
+  built to share. The reconciler is **payload-agnostic** (`gggs::GridIndex` +
+  version + plain structs, no `marine_interfaces` dep), so it is reused by both
+  the light display-tile sync and a future full-tile store-to-store sync — the
+  reuse Roland asked for. The light/quantized `SonarVisualizationTile` payload
+  stays distinct in `marine_interfaces`.
 - **Index naming.** `TileIndex` (not `GridIndex`) — consistent with the `Tile*`
   family and avoids the `grid_map` cell-index reading; mirrors
   `gggs::GridIndex` in fields, noted in the message comment.
@@ -129,5 +160,6 @@ update the package's message inventory.
 
 ## Estimated Scope
 
-**Two stacked PRs**: PR1 = six messages + CMakeLists + docs (small, low-risk);
-PR2 = `marine_tile_sync` lib + GTest (medium), stacked on PR1.
+**Two stacked PRs**: PR1 = six messages + CMakeLists + `package.xml` dep + docs
+(small, low-risk); PR2 = `marine_tiled_raster_store` reconciler lib + GTest +
+`tile_io.hpp` comment fix (medium), stacked on PR1.
