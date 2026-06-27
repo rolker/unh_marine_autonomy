@@ -23,3 +23,28 @@ index math correct (equivalent to s57; std::floor worldToTile improves on s57's 
 - [x] (suggestion) documented incremental-fill coverage-gap contract (current_=false gates consumers) — `bathymetry_layer.cpp`
 - [ ] (suggestion, follow-up) tile_size_/max_tiles_per_cycle_/tide_invalidate_threshold_ hardcoded — s57 exposes tile_size as a param; consider parameterizing
 - [ ] (suggestion, follow-up) integration tests for generateTile + tide-invalidation + incremental gen need an earth-frame + disk-store fixture — owed; blit is covered, sim validates the rest
+
+## Local Review
+**Status**: complete
+**When**: 2026-06-26 20:53 -0400
+**By**: Claude Code Agent (claude-opus-4-8)
+**Verdict**: approved
+
+**PR**: #227 at `832567c`
+**Mode**: post-PR
+**Depth**: Deep (reason: costmap current_ lifecycle + cross-layer nav consumers, >500 LOC C++)
+**Must-fix**: 0 | **Suggestions**: 5
+
+Covers the latest commit (832567c): time-budget generation (update_timeout, replacing
+max_tiles_per_cycle) + whole-tile no-coverage short-circuit (buildCoverage/tileHasCoverage),
+fixing planner_server "Costmap timed out" (current_ stuck false ~240s on the 4km global).
+Lens A (logic) + Lens B (systemic) both cleared blit index math, time-budget/all_tiles_generated_
+gating, the "never drop a covered tile" margin property, eviction, and the MF1 tide gate. No
+regression. Static analysis clean via colcon test (41 tests).
+
+### Findings
+- [ ] (suggestion) README param table omits update_timeout + tide_invalidate_threshold — `bathymetry_layer/README.md:59`
+- [ ] (suggestion) empty store window + unsurveyed_is_lethal_ → whole costmap LETHAL reported current_; add throttled WARN / hold current_ false — `bathymetry_layer.cpp` generateTile/updateCosts
+- [ ] (suggestion, generalization) tide-change invalidation drops current_ for full-window re-render → can re-trip planner 5s timeout on large OPEN-WATER surveys (not the lake) — `bathymetry_layer.cpp:603`
+- [ ] (suggestion) budget loop + uniform-fill (LETHAL vs nullptr) decision not directly unit-tested (seam test deferred to sim) — `test_bathymetry_layer.cpp`
+- [ ] (suggestion) generateTile always returns true though header doc says false-on-failure; return is vestigial — `bathymetry_layer.cpp:384`, `.hpp:208`
