@@ -87,3 +87,20 @@ Notes:
 - [ ] (suggestion) Comment "only the types v1 quantizes to are listed" contradicts the defined `UINT16=4` (no v1 band uses it) — reconcile prose with constant set — `marine_interfaces/msg/VisualizationBand.msg:12`
 - [ ] (suggestion) Tie `width`/`height` to `index.level` (GGGS grid edge, derivable/checkable) or note they are advisory — `marine_interfaces/msg/SonarVisualizationTile.msg:16`
 - [ ] (suggestion) Optionally document each dtype's byte width so `data` length is derivable without the PointField size table — `marine_interfaces/msg/VisualizationBand.msg:11`
+
+## Review Triage (Pre-Push)
+**Status**: complete
+**When**: 2026-06-27 16:50 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8)
+
+Verdict **approved**, 0 must-fix. All 5 suggestions applied as `.msg` comment
+clarifications (no wire-layout change — generated code unchanged, no rebuild):
+- [x] Patch-ordering under reorder → added best-effort/heal-via-full-resend note + pointer to camp #121; deeper patch-application semantics owned by the consumer.
+- [x] Window extent bound (`window_col+window_width ≤ width`, etc.) stated.
+- [x] dtype prose reconciled with `UINT16` (reserved for sidescan source rasters, not a v1 bathy band).
+- [x] `width`/`height` tied to `index.level` GGGS grid edge (convenience + consistency check).
+- [x] Per-dtype byte widths documented so `data` length is derivable.
+
+Follow-up (not PR1): consumer patch-application ordering rule is camp #121's to specify; optional ADR-0008 D3 clarification can ride that work.
+
+PR1 clear to push.

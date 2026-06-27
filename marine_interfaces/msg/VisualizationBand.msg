@@ -8,8 +8,11 @@ string name    # band identity: "depth" | "uncertainty" | "backscatter" | "inten
 
 # Element type of the packed `data` bytes, little-endian. Values mirror
 # sensor_msgs/PointField numeric datatypes, kept as local constants so this
-# package takes no sensor_msgs dependency. Only the types v1 quantizes to are
-# listed (depth -> INT16; uncertainty/backscatter/intensity -> UINT8).
+# package takes no sensor_msgs dependency. The byte width sizes `data`
+# (= window_width * window_height * width_bytes):
+#   UINT8  (2) -> 1 byte   : uncertainty / backscatter / intensity bands
+#   INT16  (3) -> 2 bytes  : depth band
+#   UINT16 (4) -> 2 bytes  : reserved for sidescan source rasters (no v1 bathy band)
 uint8 UINT8  = 2
 uint8 INT16  = 3
 uint8 UINT16 = 4
