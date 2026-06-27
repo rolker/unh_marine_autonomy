@@ -19,9 +19,19 @@ per cell = 1 tf transform (`worldToLatLon`→`tf_->transform(...,"earth")`) + 2 
    `tf2::doTransform` (no per-cell tf buffer lookup) → ECEF→lat/lon → `store_->cellIndex` →
    `evaluateCell` → `setCost`. Preserve the MF1 tide gate + two-query + `unsurveyed_is_lethal`
    semantics exactly (reuse `evaluateCell`).
-3. **Incremental generation**: `updateBounds` generates ≤ `max_tiles_per_cycle_` pending tiles
-   per cycle so the first global pass doesn't block activation; `current_` = all visible tiles
-   generated && tide valid && window valid. Serves cached (partial) tiles meanwhile.
+3. **Incremental generation**: `updateBounds` time-boxes tile rendering to `update_timeout_`
+   (default 0.5 s, = s57_layer) per cycle so the first global pass doesn't block the costmap
+   thread; `current_` = all visible tiles generated && tide valid && window valid. Serves cached
+   (partial) tiles meanwhile.
+   - **Whole-tile coverage short-circuit** (s57-faithful, post-sim fix): a tile whose projected
+     lat/lon AABB overlaps NO resident store tile (`buildCoverage()` collects the few GGGS tiles'
+     AABBs) is filled uniformly — LETHAL when `unsurveyed_is_lethal_`, else `nullptr`/NO_INFORMATION
+     — with ZERO per-cell projection. Mirrors s57's `current_charts_.empty()` uncharted path. This
+     is what makes the time budget drain a 4 km global in ~1–2 cycles: the ~1600 out-of-lake tiles
+     become near-free, so `current_` flips true in seconds instead of ~240 s (the fixed
+     8-tiles/cycle throttle that caused `planner_server` "Costmap timed out waiting for update").
+     `tileHasCoverage()` pads the AABB by ~1e-4 deg (~11 m) so an edge-straddling tile is treated as
+     covered (full render) — never the reverse, so a covered cell is never dropped.
 4. **updateCosts = blit**: map master bounds→tiles, copy cached tile char-maps into master with
    the existing max-combine (raise-only; skip NO_INFORMATION).
 5. **Tide-change invalidation**: if `|map_tide_z_ - last_tide_z_| > tide_invalidate_threshold_`,

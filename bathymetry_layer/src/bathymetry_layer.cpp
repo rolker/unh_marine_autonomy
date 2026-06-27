@@ -14,6 +14,7 @@
 #include "geodesy/wgs84.h"
 #include "geometry_msgs/msg/point_stamped.hpp"
 #include "marine_autonomy/gggs.h"
+#include "marine_bathymetry_store/bathy_cell.hpp"
 #include "marine_bathymetry_store/query.hpp"
 #include "marine_bathymetry_store/tile_io.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
@@ -130,14 +131,17 @@ void BathymetryLayer::onInitialize()
     tide_invalidate_threshold_ = 0.1;
   }
 
-  // How many cost tiles to (re)render per costmap cycle. Bounds first-pass work
-  // so a large global costmap fills incrementally instead of blocking.
-  declareParameter("max_tiles_per_cycle", rclcpp::ParameterValue(max_tiles_per_cycle_));
-  node->get_parameter(name_ + ".max_tiles_per_cycle", max_tiles_per_cycle_);
-  if (max_tiles_per_cycle_ < 1) {
+  // Per-cycle wall-clock budget for tile (re)rendering (seconds), mirroring
+  // s57_layer's update_timeout. updateBounds renders as many pending tiles as fit
+  // in this budget each cycle, so a large global costmap fills over a few cycles
+  // instead of blocking the costmap thread, yet drains fast because the
+  // no-coverage short-circuit makes most tiles cheap. Default 0.5 s (= s57_layer).
+  declareParameter("update_timeout", rclcpp::ParameterValue(update_timeout_));
+  node->get_parameter(name_ + ".update_timeout", update_timeout_);
+  if (!std::isfinite(update_timeout_) || update_timeout_ <= 0.0) {
     RCLCPP_WARN_STREAM(
-      logger_, "Invalid max_tiles_per_cycle " << max_tiles_per_cycle_ << "; using 8 instead.");
-    max_tiles_per_cycle_ = 8;
+      logger_, "Invalid update_timeout " << update_timeout_ << "; using 0.5 instead.");
+    update_timeout_ = 0.5;
   }
 
   global_frame_id_ = layered_costmap_->getGlobalFrameID();
@@ -275,12 +279,113 @@ BathymetryLayer::TileID BathymetryLayer::worldToTile(double x, double y) const
     static_cast<int>(std::floor((y - y_origin_) / tile_meters)));
 }
 
+bool BathymetryLayer::tileHasCoverage(
+  double min_lat, double min_lon, double max_lat, double max_lon,
+  const std::vector<CoverageBox> & coverage) const
+{
+  // ~1e-4 deg (~11 m) margin: a generous superset so a tile straddling the
+  // coverage edge is treated as covered (full render) rather than skipped —
+  // never the reverse, so no covered cell is ever dropped.
+  constexpr double kMargin = 1e-4;
+  const double lo_lat = min_lat - kMargin;
+  const double lo_lon = min_lon - kMargin;
+  const double hi_lat = max_lat + kMargin;
+  const double hi_lon = max_lon + kMargin;
+  for (const auto & box : coverage) {
+    const bool lat_overlap = (hi_lat >= box.min_lat) && (lo_lat <= box.max_lat);
+    const bool lon_overlap = (hi_lon >= box.min_lon) && (lo_lon <= box.max_lon);
+    if (lat_overlap && lon_overlap) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::vector<BathymetryLayer::CoverageBox> BathymetryLayer::buildCoverage() const
+{
+  std::vector<CoverageBox> coverage;
+  if (!store_) {
+    return coverage;
+  }
+  // The store holds only the windowed coverage (a handful of GGGS tiles for a
+  // lake), so this is cheap. One AABB per resident tile across all source layers.
+  for (const auto layer : marine_bathymetry_store::source_layers_by_priority) {
+    for (const auto & entry : store_->tiles(layer)) {
+      const gggs::GridIndex & grid = entry.first;
+      coverage.push_back(
+        CoverageBox{
+          grid.southLatitude(), grid.westLongitude(),
+          grid.northLatitude(), grid.eastLongitude()});
+    }
+  }
+  return coverage;
+}
+
 bool BathymetryLayer::generateTile(
-  const TileID & id, const geometry_msgs::msg::TransformStamped & to_earth)
+  const TileID & id, const geometry_msgs::msg::TransformStamped & to_earth,
+  const std::vector<CoverageBox> & coverage)
 {
   const double tile_meters = resolution_ * tile_size_;
   const double world_min_x = x_origin_ + id.first * tile_meters;
   const double world_min_y = y_origin_ + id.second * tile_meters;
+  const double world_max_x = world_min_x + tile_meters;
+  const double world_max_y = world_min_y + tile_meters;
+
+  // Whole-tile coverage short-circuit (mirrors s57_layer testing a tile against
+  // its loaded chart grids before sampling). Project the four corners to lat/lon:
+  // a convex rectangle's lat/lon extent is bounded by the min/max of its corner
+  // images (Earth curvature over a ~100 m tile edge is sub-mm), so this AABB is a
+  // superset of the tile's true extent. If it overlaps NONE of the store's
+  // resident-tile AABBs, the tile has no store data and is filled uniformly —
+  // skipping the 10,000-cell projection+query that dominates a large global
+  // costmap's first pass (the bulk of tiles on a 4 km global over a small lake).
+  bool corners_ok = true;
+  double min_lat = 0.0;
+  double min_lon = 0.0;
+  double max_lat = 0.0;
+  double max_lon = 0.0;
+  const double corners_x[4] = {world_min_x, world_max_x, world_min_x, world_max_x};
+  const double corners_y[4] = {world_min_y, world_min_y, world_max_y, world_max_y};
+  for (int c = 0; c < 4; ++c) {
+    try {
+      const auto geo = worldToLatLon(corners_x[c], corners_y[c], to_earth);
+      if (c == 0) {
+        min_lat = max_lat = geo.latitude;
+        min_lon = max_lon = geo.longitude;
+      } else {
+        min_lat = std::min(min_lat, geo.latitude);
+        max_lat = std::max(max_lat, geo.latitude);
+        min_lon = std::min(min_lon, geo.longitude);
+        max_lon = std::max(max_lon, geo.longitude);
+      }
+    } catch (const tf2::TransformException &) {
+      corners_ok = false;
+      break;
+    }
+  }
+
+  if (corners_ok) {
+    if (!tileHasCoverage(min_lat, min_lon, max_lat, max_lon, coverage)) {
+      // No store data anywhere in this tile. generateTile only runs once
+      // map_tide_valid_ (MF1), so for a closed basin whose prior fills the
+      // interior a no-data cell is land: LETHAL when unsurveyed_is_lethal_, else
+      // left fully NO_INFORMATION (nullptr, which updateCosts fast-skips so
+      // another prior can fill it). Either path does zero per-cell projection.
+      auto & info = tiles_[id];
+      if (unsurveyed_is_lethal_) {
+        info.costmap = std::make_shared<nav2_costmap_2d::Costmap2D>(
+          tile_size_, tile_size_, resolution_, world_min_x, world_min_y,
+          nav2_costmap_2d::LETHAL_OBSTACLE);
+      } else {
+        info.costmap = nullptr;
+      }
+      info.generated = true;
+      info.needs_update = false;
+      return true;
+    }
+  }
+  // corners_ok == false falls through to the per-cell path, which itself skips
+  // unprojectable cells (continue) rather than failing the whole tile.
 
   // World-anchored tile in the costmap global frame, NO_INFORMATION until a cell
   // resolves. Same shape as s57_layer::generateTile.
@@ -551,12 +656,21 @@ void BathymetryLayer::updateBounds(
         name_.c_str(), global_frame_id_.c_str(), e.what());
     }
 
-    // Render pending tiles, bounded per cycle so the first pass over a large
-    // (e.g. 4000x4000) global costmap is spread across cycles instead of blocking
-    // activation. all_tiles_generated_ gates current_ (MF2) below.
+    // The store holds only the windowed coverage (a handful of GGGS tiles for a
+    // lake); collect their lat/lon AABBs once so generateTile can cheaply skip the
+    // per-cell projection on tiles that fall entirely outside coverage.
+    const std::vector<CoverageBox> coverage = buildCoverage();
+
+    // Render pending tiles, time-boxed per cycle (mirrors s57_layer) so the first
+    // pass over a large (e.g. 4000x4000) global costmap is spread across cycles
+    // instead of blocking the costmap thread. all_tiles_generated_ gates current_
+    // (MF2) below. With the no-coverage short-circuit, the whole window typically
+    // drains in ~1-2 cycles, so current_ goes true promptly.
     bool all_done = have_xf;
     if (have_xf) {
-      int budget = max_tiles_per_cycle_;
+      const rclcpp::Time gen_start = clock_->now();
+      const rclcpp::Duration budget = rclcpp::Duration::from_seconds(update_timeout_);
+      bool time_up = false;
       for (int ti = lo.first; ti <= hi.first; ++ti) {
         for (int tj = lo.second; tj <= hi.second; ++tj) {
           const TileID id(ti, tj);
@@ -566,10 +680,12 @@ void BathymetryLayer::updateBounds(
           if (!needs) {
             continue;
           }
-          if (budget > 0) {
-            generateTile(id, to_earth);
-            --budget;
+          if (!time_up) {
+            generateTile(id, to_earth, coverage);
             it = tiles_.find(id);
+            if (clock_->now() - gen_start > budget) {
+              time_up = true;
+            }
           }
           if (it == tiles_.end() || !it->second.generated || it->second.needs_update) {
             all_done = false;

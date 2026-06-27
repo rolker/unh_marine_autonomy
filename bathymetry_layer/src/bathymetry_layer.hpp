@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "geographic_msgs/msg/geo_point.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
@@ -108,6 +109,28 @@ protected:
   void injectTile(int ti, int tj, std::shared_ptr<nav2_costmap_2d::Costmap2D> tile);
   int tileSize() const {return tile_size_;}
 
+  // A lat/lon axis-aligned bounding box of one store tile, used as a cheap
+  // whole-tile coverage test in generateTile (mirrors s57_layer testing a tile
+  // against its loaded chart grids before sampling). Built once per generation
+  // pass by buildCoverage() from the store's resident tiles across all layers.
+  struct CoverageBox
+  {
+    double min_lat;
+    double min_lon;
+    double max_lat;
+    double max_lon;
+  };
+
+  // Whether a tile's projected lat/lon AABB (@p min_lat..@p max_lat,
+  // @p min_lon..@p max_lon) overlaps any store coverage box, after padding by a
+  // safety margin so a tile straddling the coverage edge counts as covered
+  // (full render) — never the reverse, so a covered cell is never classified
+  // no-coverage and dropped. Exposed for unit testing the generateTile
+  // no-coverage short-circuit decision.
+  bool tileHasCoverage(
+    double min_lat, double min_lon, double max_lat, double max_lon,
+    const std::vector<CoverageBox> & coverage) const;
+
   // Test seams: the store and the cached water-surface height, so a test fixture
   // can populate a synthetic store and drive cost evaluation without TF.
   std::unique_ptr<marine_bathymetry_store::BathymetryStore> store_;
@@ -170,10 +193,23 @@ private:
   };
 
   TileID worldToTile(double x, double y) const;
+
+  // Collect the lat/lon AABBs of every tile currently resident in the store
+  // (all source layers). Cheap: the store holds only the windowed coverage (a
+  // handful of GGGS tiles for a lake). Empty when the store has no data.
+  std::vector<CoverageBox> buildCoverage() const;
+
   // Render (or re-render) a tile's costs from the store using @p to_earth (the
-  // hoisted global_frame->earth transform). Returns false if rendering failed
-  // (e.g. a per-cell projection threw); the tile is left ungenerated.
-  bool generateTile(const TileID & id, const geometry_msgs::msg::TransformStamped & to_earth);
+  // hoisted global_frame->earth transform). @p coverage is the store's resident
+  // tile AABBs (buildCoverage()): a tile whose projected lat/lon extent overlaps
+  // none of them has no store data, so it is filled uniformly without the
+  // per-cell projection+query (LETHAL_OBSTACLE when unsurveyed_is_lethal_, else
+  // left fully NO_INFORMATION) — the bulk of tiles on a large global costmap.
+  // Returns false if rendering failed (e.g. a per-cell projection threw); the
+  // tile is left ungenerated.
+  bool generateTile(
+    const TileID & id, const geometry_msgs::msg::TransformStamped & to_earth,
+    const std::vector<CoverageBox> & coverage);
 
   std::string store_path_;
   std::string map_tide_frame_ = "map_tide";
@@ -189,14 +225,17 @@ private:
   // Cost-tile cache + its fixed world anchor (cells, metres). x_origin_/y_origin_
   // stay 0 so tile boundaries are stable in the global frame across cycles (a
   // rolling window then reuses the same tiles). tile_size_ is the tile edge in
-  // cells. max_tiles_per_cycle_ bounds how many tiles are rendered per
-  // updateBounds call so the first full pass over a large (e.g. 4000x4000) global
-  // costmap is spread across cycles instead of blocking activation for minutes.
+  // cells. update_timeout_ time-boxes tile generation per updateBounds call
+  // (mirrors s57_layer): as many pending tiles as fit in this wall-clock budget
+  // (seconds) are rendered each cycle, so the first full pass over a large
+  // (e.g. 4000x4000) global costmap is spread across cycles instead of blocking
+  // the costmap thread. With the no-coverage short-circuit (most tiles cheap),
+  // the whole window drains in ~1-2 cycles so current_ goes true promptly.
   std::map<TileID, TileInfo> tiles_;
   double x_origin_ = 0.0;
   double y_origin_ = 0.0;
   int tile_size_ = 100;
-  int max_tiles_per_cycle_ = 8;
+  double update_timeout_ = 0.5;
   // True when every tile overlapping the current window is generated and
   // up to date (no pending render work). Gates current_ (MF2) alongside the
   // tide/window flags so Nav2 sees a "not yet current" costmap while the first

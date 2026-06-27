@@ -73,6 +73,8 @@ public:
   using BathymetryLayer::expandUserPath;
   using BathymetryLayer::injectTile;
   using BathymetryLayer::tileSize;
+  using BathymetryLayer::CoverageBox;
+  using BathymetryLayer::tileHasCoverage;
 };
 
 // ---------------------------------------------------------------------------
@@ -682,4 +684,37 @@ TEST_F(TideFrameTest, DegenerateTideFrameConfigRejected)
   EXPECT_FALSE(layer.isMapTideValid())
     << "map_frame == map_tide_frame is a degenerate identity lookup and must be "
        "rejected as an invalid tide";
+}
+
+// ---------------------------------------------------------------------------
+// generateTile's whole-tile coverage short-circuit (#226 perf fix part 2):
+// a tile whose projected lat/lon AABB overlaps no resident store tile is filled
+// uniformly without the per-cell projection+query. The safety-critical property
+// is that a tile is NEVER wrongly classified no-coverage (which would drop real
+// bathymetry when unsurveyed_is_lethal is false), so the test pins the margin
+// behaviour: straddling/within-margin tiles count as covered; only clearly
+// disjoint tiles are skipped.
+TEST(BathymetryLayer, TileCoverageOverlapDecision)
+{
+  BathymetryLayerForTest layer;
+  using Box = BathymetryLayerForTest::CoverageBox;
+  // One resident store tile, roughly a Lake Massabesic patch.
+  const std::vector<BathymetryLayerForTest::CoverageBox> coverage{
+    Box{42.98, -71.40, 43.00, -71.38}};
+
+  // Fully inside coverage → covered (full per-cell render).
+  EXPECT_TRUE(layer.tileHasCoverage(42.985, -71.395, 42.990, -71.390, coverage));
+  // Straddling the coverage edge → covered (conservative).
+  EXPECT_TRUE(layer.tileHasCoverage(42.995, -71.385, 43.005, -71.375, coverage));
+  // Just outside the top edge but within the ~11 m (1e-4 deg) margin → still
+  // covered: a covered cell must never be dropped.
+  EXPECT_TRUE(layer.tileHasCoverage(43.00005, -71.390, 43.00010, -71.385, coverage));
+  // Clearly beyond the margin (~22 m above) → no coverage (eligible for the
+  // uniform-fill short-circuit).
+  EXPECT_FALSE(layer.tileHasCoverage(43.00030, -71.390, 43.00040, -71.385, coverage));
+  // Far away → no coverage.
+  EXPECT_FALSE(layer.tileHasCoverage(42.000, -72.000, 42.001, -71.999, coverage));
+  // Empty store (no data loaded) → nothing is covered, so every tile takes the
+  // short-circuit (uniform lethal land / NO_INFORMATION).
+  EXPECT_FALSE(layer.tileHasCoverage(42.985, -71.395, 42.990, -71.390, {}));
 }
