@@ -104,3 +104,68 @@ clarifications (no wire-layout change — generated code unchanged, no rebuild):
 Follow-up (not PR1): consumer patch-application ordering rule is camp #121's to specify; optional ADR-0008 D3 clarification can ride that work.
 
 PR1 clear to push.
+
+## Implementation (PR2)
+**Status**: complete (local) — reconciler lib + tests
+**When**: 2026-06-27 17:25 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8)
+
+**Branch**: feature/issue-230 (off merged jazzy `e372718`)
+
+PR2 delivered — payload-agnostic anti-entropy tile-sync in `marine_tiled_raster_store`:
+- `include/marine_tiled_raster_store/tile_catalog.hpp` + `src/tile_catalog.cpp`:
+  `TileVersion`/`TileCatalogEntry`/`TileCatalog`/`ReconcileResult` types,
+  `TileCatalogBuilder` (source registry → complete snapshot), `TileCatalogReconciler`
+  (pure `reconcile()` → request missing/stale + timestamp-gated prune-on-absence;
+  `markHave`/`drop` for async state). ROS-free, no `marine_interfaces` dep — over
+  `gggs::GridIndex` + `TileVersion` only, so reusable by full- and light-tile sync.
+- `test/test_tile_catalog.cpp`: 13 GTests — builder snapshot/newest-wins/remove;
+  reconciler cold-start/up-to-date/stale/missing/prune/**timestamp-gated prune
+  (fresh tile survives stale catalog)**/reordered-stale-ignored/**boat-reset
+  convergence**/**convergence under loss+reorder**.
+- `tile_io.hpp`: stale "content-hash sync" comment → timestamp/version (ADR-0008 D3) — review finding #2.
+- `CMakeLists.txt`: source added to lib + `test_tile_catalog` gtest registered.
+- `README.md`: documented the sync facility + the new test.
+
+**Verified**: `colcon build` clean (-Wall -Wextra -Wpedantic, no warnings);
+`colcon test` → test_tile_catalog 13/13 pass; `ament_cpplint` clean; no long
+lines / trailing whitespace.
+
+### Next
+- [ ] `/review-code` (container) on the PR2 diff, then push + PR (Part of #230 — closes it).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-27 21:36 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-230 at `d03bb94`
+**Mode**: pre-push
+**Depth**: Standard (reason: ~640 LOC new correctness-critical reconciliation logic, single package)
+**Must-fix**: 0 | **Suggestions**: 5
+**Round**: 2 | **Ship**: recommended — first review of the PR2 diff (round-1 entry was the merged PR1); 0 must-fix, core newest-wins/timestamp-gated-prune/convergence logic independently confirmed correct by two adversarial passes, cpplint + independent compile clean, matches plan & ADR-0008 D3/D4
+
+Static analysis: ament_cpplint clean; independent `g++ -fsyntax-only -Wall -Wextra -Wpedantic` clean for the new TU (only pre-existing `gz4d_geo.h` dep warnings). All findings are docs/API-hardening suggestions for the future ROS node boundary (deferred to cube#78/camp#121), not defects in the delivered pure-logic library.
+
+### Findings
+- [ ] (suggestion) Single-monotonic-clock invariant for `generation_time` is unenforced; sim-time-0 → `buildCatalog(0)` silently disables pruning, cross-clock skew could over-prune — document prominently / debug-assert — `tile_catalog.cpp:125`, `tile_catalog.hpp:99-101`
+- [ ] (suggestion) Document thread-safety contract ("not thread-safe; external sync required") — reader+writer node usage — `tile_catalog.hpp` class decls
+- [ ] (suggestion) `reconcile()` `to_request` carries bare `GridIndex`; returning `TileCatalogEntry` (index+version) resists markHave-on-ack desync — `tile_catalog.hpp:76-77`
+- [ ] (suggestion) Validate `index.valid()` at ingestion (invalid GridIndices collapse to one map key; untested path) — `tile_catalog.cpp:28,67,103`
+- [ ] (suggestion) Note `markHave`-after-`drop` resurrection + cache-growth bound for the node author; minor: `reserve` reconcile result vectors — `tile_catalog.cpp:66-79`
+
+## Review Triage (PR2)
+**Status**: complete
+**When**: 2026-06-27 17:50 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8)
+
+Container review-code verdict **approved**, 0 must-fix, 5 suggestions (all
+docs/API-hardening, no defects). All 5 folded in pre-push:
+- [x] Single-monotonic-clock / `generation_time`=0-disables-prune invariant documented prominently (file note + struct doc).
+- [x] Thread-safety contract documented ("not thread-safe; serialize externally").
+- [x] `to_request` bare-index rationale documented (mirrors `TileRequest.msg`; delivered tile self-describes version) — kept as-is, intentional.
+- [x] **Invalid-index guard** added at ingestion (`update`/`markHave` ignore invalid; `reconcile` skips invalid catalog entries) + new test `InvalidIndexIgnored`.
+- [x] `markHave`-after-`drop` resurrection noted as intentional + cache-bound note for node author; `reserve()` on reconcile result vectors.
+
+**Verified**: rebuild clean; `colcon test` → 14/14 catalog tests pass; cpplint clean.

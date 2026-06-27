@@ -36,7 +36,9 @@
 ///
 /// The format-agnostic generalization of `marine_bathymetry_store/tile_io`
 /// (ADR-0002 §D5/§D6 in `unh_marine_autonomy` is the origin and the contract
-/// the #86-Phase-6 manifest/content-hash sync will build on here). Each tile is
+/// the #86-Phase-6 timestamp/version anti-entropy sync builds on here — see
+/// `tile_catalog.hpp` and ADR-0008 D3/D4, which supersede the earlier
+/// content-hash manifest idea). Each tile is
 /// one GeoTIFF with @c bandCount() bands of `T`, WGS84-georeferenced from its
 /// GGGS grid corners and written **north-up** (raster row 0 = north), so a row
 /// flip separates on-disk order from the in-memory GGGS cell order
