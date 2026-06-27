@@ -144,6 +144,18 @@ void BathymetryLayer::onInitialize()
     update_timeout_ = 0.5;
   }
 
+  // Radius (m) around the vehicle whose tiles must be rendered before the layer
+  // reports current_ (review A). Decouples readiness from the full window so a
+  // large global doesn't stall the planner. Default 200 m (~the local-planning
+  // neighbourhood); the rest of the global fills outward in the background.
+  declareParameter("ready_radius", rclcpp::ParameterValue(ready_radius_));
+  node->get_parameter(name_ + ".ready_radius", ready_radius_);
+  if (!std::isfinite(ready_radius_) || ready_radius_ < 0.0) {
+    RCLCPP_WARN_STREAM(
+      logger_, "Invalid ready_radius " << ready_radius_ << "; using 200.0 instead.");
+    ready_radius_ = 200.0;
+  }
+
   global_frame_id_ = layered_costmap_->getGlobalFrameID();
 
   if (store_path_.empty()) {
@@ -191,7 +203,7 @@ void BathymetryLayer::reset()
   // Drop the rendered-cost cache so it is rebuilt against the next tide/window.
   tiles_.clear();
   tide_rendered_ = false;
-  all_tiles_generated_ = false;
+  core_ready_ = false;
 }
 
 void BathymetryLayer::openStore()
@@ -229,7 +241,7 @@ void BathymetryLayer::matchSize()
   current_ = false;
   tiles_.clear();
   tide_rendered_ = false;
-  all_tiles_generated_ = false;
+  core_ready_ = false;
 }
 
 geographic_msgs::msg::GeoPoint BathymetryLayer::worldToLatLon(double x, double y)
@@ -268,7 +280,7 @@ void BathymetryLayer::injectTile(
   info.generated = true;
   info.needs_update = false;
   tiles_[std::make_pair(ti, tj)] = std::move(info);
-  all_tiles_generated_ = true;
+  core_ready_ = true;
 }
 
 void BathymetryLayer::markTileNeedsUpdate(int ti, int tj)
@@ -365,24 +377,15 @@ void BathymetryLayer::generateTile(
   // skipping the 10,000-cell projection+query that dominates a large global
   // costmap's first pass (the bulk of tiles on a 4 km global over a small lake).
   bool corners_ok = true;
-  double min_lat = 0.0;
-  double min_lon = 0.0;
-  double max_lat = 0.0;
-  double max_lon = 0.0;
+  double clat[4];
+  double clon[4];
   const double corners_x[4] = {world_min_x, world_max_x, world_min_x, world_max_x};
   const double corners_y[4] = {world_min_y, world_min_y, world_max_y, world_max_y};
   for (int c = 0; c < 4; ++c) {
     try {
       const auto geo = worldToLatLon(corners_x[c], corners_y[c], to_earth);
-      if (c == 0) {
-        min_lat = max_lat = geo.latitude;
-        min_lon = max_lon = geo.longitude;
-      } else {
-        min_lat = std::min(min_lat, geo.latitude);
-        max_lat = std::max(max_lat, geo.latitude);
-        min_lon = std::min(min_lon, geo.longitude);
-        max_lon = std::max(max_lon, geo.longitude);
-      }
+      clat[c] = geo.latitude;
+      clon[c] = geo.longitude;
     } catch (const tf2::TransformException &) {
       corners_ok = false;
       break;
@@ -390,6 +393,11 @@ void BathymetryLayer::generateTile(
   }
 
   if (corners_ok) {
+    const double min_lat = std::min(std::min(clat[0], clat[1]), std::min(clat[2], clat[3]));
+    const double max_lat = std::max(std::max(clat[0], clat[1]), std::max(clat[2], clat[3]));
+    const double min_lon = std::min(std::min(clon[0], clon[1]), std::min(clon[2], clon[3]));
+    const double max_lon = std::max(std::max(clon[0], clon[1]), std::max(clon[2], clon[3]));
+
     if (!tileHasCoverage(min_lat, min_lon, max_lat, max_lon, coverage)) {
       // No store data anywhere in this tile. generateTile only runs once
       // map_tide_valid_ (MF1), so for a closed basin whose prior fills the
@@ -408,54 +416,75 @@ void BathymetryLayer::generateTile(
       info.needs_update = false;
       return;
     }
-  }
-  // corners_ok == false falls through to the per-cell path, which itself skips
-  // unprojectable cells (continue) rather than failing the whole tile.
 
-  // World-anchored tile in the costmap global frame, NO_INFORMATION until a cell
-  // resolves. Same shape as s57_layer::generateTile.
+    // Covered: full render with per-cell lat/lon BILINEARLY interpolated from the
+    // four corner geos (review B). The world->lat/lon map is near-affine over a
+    // ~100 m tile (sub-mm curvature, <<1 store cell), so this drops the dominant
+    // per-cell cost — an ECEF/tf round-trip per cell — that made a large global's
+    // first pass take minutes. cellIndex + the two-query evaluateCell decision
+    // still run per cell (the actual store lookup). All four corners projected,
+    // so no per-cell tf throw is possible here.
+    auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
+      tile_size_, tile_size_, resolution_, world_min_x, world_min_y,
+      nav2_costmap_2d::NO_INFORMATION);
+    const int64_t now_ns = clock_->now().nanoseconds();
+    const double inv = 1.0 / static_cast<double>(tile_size_);
+    for (int ty = 0; ty < tile_size_; ++ty) {
+      const double fy = (static_cast<double>(ty) + 0.5) * inv;
+      for (int tx = 0; tx < tile_size_; ++tx) {
+        const double fx = (static_cast<double>(tx) + 0.5) * inv;
+        const double w00 = (1.0 - fx) * (1.0 - fy);
+        const double w10 = fx * (1.0 - fy);
+        const double w01 = (1.0 - fx) * fy;
+        const double w11 = fx * fy;
+        const double lat = w00 * clat[0] + w10 * clat[1] + w01 * clat[2] + w11 * clat[3];
+        const double lon = w00 * clon[0] + w10 * clon[1] + w01 * clon[2] + w11 * clon[3];
+        const gggs::CellIndex cell = store_->cellIndex(lat, lon);
+        const std::optional<unsigned char> evaluated = evaluateCell(cell, now_ns);
+        if (evaluated) {
+          tile->setCost(
+            static_cast<unsigned int>(tx), static_cast<unsigned int>(ty), *evaluated);
+        }
+      }
+    }
+    auto & info = tiles_[id];
+    info.costmap = tile;
+    info.generated = true;
+    info.needs_update = false;
+    return;
+  }
+
+  // corners_ok == false (a corner is unprojectable): fall back to the per-cell
+  // worldToLatLon path, which skips individual unprojectable cells (continue)
+  // rather than failing the whole tile. Rare (a TF gap at a tile corner).
   auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
     tile_size_, tile_size_, resolution_, world_min_x, world_min_y,
     nav2_costmap_2d::NO_INFORMATION);
-
   const int64_t now_ns = clock_->now().nanoseconds();
-
   for (int ty = 0; ty < tile_size_; ++ty) {
     for (int tx = 0; tx < tile_size_; ++tx) {
       double wx;
       double wy;
       tile->mapToWorld(
         static_cast<unsigned int>(tx), static_cast<unsigned int>(ty), wx, wy);
-
       gggs::CellIndex cell;
       try {
         const auto geo = worldToLatLon(wx, wy, to_earth);
         cell = store_->cellIndex(geo.latitude, geo.longitude);
       } catch (const tf2::TransformException & e) {
-        // Skip this cell (leave NO_INFORMATION) and keep rendering, matching the
-        // old per-cell path's continue-on-unprojectable-cell. Aborting the whole
-        // tile would leave it permanently ungenerated — pinning current_=false
-        // (a safety layer reading perpetually stale) on a single bad cell.
         RCLCPP_WARN_THROTTLE(
           logger_, *clock_, 10000,
           "bathymetry_layer '%s': cannot project tile cell to lat/lon: %s",
           name_.c_str(), e.what());
         continue;
       }
-
-      // Reuse the exact per-cell decision (MF1 tide gate, two-query no-data
-      // policy, unsurveyed_is_lethal, staleness) — only WHEN it runs changes
-      // (once per tile generation, not every costmap cycle).
       const std::optional<unsigned char> evaluated = evaluateCell(cell, now_ns);
       if (evaluated) {
         tile->setCost(
           static_cast<unsigned int>(tx), static_cast<unsigned int>(ty), *evaluated);
       }
-      // else: truly unsurveyed / left untouched — keep NO_INFORMATION so the blit
-      // skips it and another prior (e.g. s57_layer) can contribute.
     }
   }
-
   auto & info = tiles_[id];
   info.costmap = tile;
   info.generated = true;
@@ -554,7 +583,8 @@ void BathymetryLayer::refreshWindow()
 }
 
 void BathymetryLayer::updateBounds(
-  double, double, double, double * min_x, double * min_y, double * max_x, double * max_y)
+  double robot_x, double robot_y, double, double * min_x, double * min_y,
+  double * max_x, double * max_y)
 {
   if (!enabled_) {
     return;
@@ -611,7 +641,7 @@ void BathymetryLayer::updateBounds(
   // --- Cost-tile cache management (#226) ---
   // Render the static prior into world-anchored tiles HERE (once per tile), so
   // updateCosts is a cheap blit instead of a per-cell store query every cycle.
-  all_tiles_generated_ = false;
+  core_ready_ = false;
   coverage_empty_lethal_ = false;
   if (store_ && window_valid_ && map_tide_valid_) {
     const double buffer =
@@ -706,46 +736,66 @@ void BathymetryLayer::updateBounds(
         name_.c_str());
     }
 
-    // Render pending tiles, time-boxed per cycle (mirrors s57_layer) so the first
-    // pass over a large (e.g. 4000x4000) global costmap is spread across cycles
-    // instead of blocking the costmap thread. Skipped when empty-lethal (#2):
-    // no point allocating ~1600 uniform-LETHAL tiles for a grid we will report
-    // not-current. A tile is (re)rendered when never generated OR stale
-    // (needs_update after a tide move); a stale-but-generated tile keeps serving
-    // its cached costs until it regenerates (no flicker).
+    // The vehicle sits at the centre of the rolling window; render ROBOT-FIRST.
+    const TileID robot_tile = worldToTile(robot_x, robot_y);
+
+    // Render pending tiles nearest-the-vehicle first, time-boxed per cycle
+    // (#226 review A+B). Robot-first ordering means the planning-relevant
+    // neighbourhood is correct within a cycle or two; the rest of a large global
+    // fills outward in the background. Skipped when empty-lethal (#2). A tile is
+    // (re)rendered when never generated OR stale (needs_update after a tide move);
+    // a stale-but-generated tile keeps serving its cached costs until it
+    // regenerates (no flicker).
     if (have_xf && !coverage_empty_lethal_) {
-      const rclcpp::Time gen_start = clock_->now();
-      const rclcpp::Duration budget = rclcpp::Duration::from_seconds(update_timeout_);
-      bool time_up = false;
+      std::vector<TileID> pending;
       for (int ti = lo.first; ti <= hi.first; ++ti) {
         for (int tj = lo.second; tj <= hi.second; ++tj) {
-          const TileID id(ti, tj);
-          auto it = tiles_.find(id);
-          const bool needs =
-            (it == tiles_.end()) || !it->second.generated || it->second.needs_update;
-          if (needs && !time_up) {
-            generateTile(id, to_earth, coverage);
-            if (clock_->now() - gen_start > budget) {
-              time_up = true;
-            }
+          const auto it = tiles_.find(std::make_pair(ti, tj));
+          if (it == tiles_.end() || !it->second.generated || it->second.needs_update) {
+            pending.emplace_back(ti, tj);
           }
+        }
+      }
+      std::sort(
+        pending.begin(), pending.end(),
+        [robot_tile](const TileID & a, const TileID & b) {
+          const int64_t ax = a.first - robot_tile.first;
+          const int64_t ay = a.second - robot_tile.second;
+          const int64_t bx = b.first - robot_tile.first;
+          const int64_t by = b.second - robot_tile.second;
+          return (ax * ax + ay * ay) < (bx * bx + by * by);
+        });
+      const rclcpp::Time gen_start = clock_->now();
+      const rclcpp::Duration budget = rclcpp::Duration::from_seconds(update_timeout_);
+      for (const TileID & id : pending) {
+        generateTile(id, to_earth, coverage);
+        if (clock_->now() - gen_start > budget) {
+          break;
         }
       }
     }
 
-    // #3: current_ readiness is "every window tile has been rendered at least
-    // once" — NOT "no tile needs re-rendering". A tide that drifts past
-    // tide_invalidate_threshold_ (e.g. a reservoir level changing gradually over
-    // a long survey) marks every tile needs_update; gating current_ on that would
-    // drop the whole costmap to not-current for a full-window re-render (seconds
-    // on a 4 km global) and re-trip the planner's costmap_update_timeout — even
-    // though the cached costs are only sub-threshold (<0.1 m, well inside the
-    // ~1.5 m clearance ramp) stale. So serve the cached costs as current while the
-    // re-render proceeds in the background; only a genuinely never-rendered tile
-    // (first fill, or a freshly scrolled-in window region) holds current_ false.
-    all_tiles_generated_ =
-      have_xf && !coverage_empty_lethal_ &&
-      windowFullyRendered(lo.first, lo.second, hi.first, hi.second);
+    // current_ readiness (#226 review A): gate on a robot-CENTRED CORE region
+    // being rendered, NOT the whole window. Rendering an entire large global
+    // (e.g. 4 km ~= 1900 tiles) takes far longer than the planner's
+    // costmap_update_timeout, so gating readiness on the full window stalls the
+    // planner. With robot-first rendering the core (within ready_radius_ of the
+    // vehicle) is ready within a cycle or two: the planner can plan, the rest
+    // fills outward before the vehicle reaches it, and the (small, fast) local
+    // costmap covers the immediate surroundings meanwhile. Scale-independent — a
+    // bigger global for longer transits does not change time-to-ready.
+    // Also #3: a generated-but-stale (needs_update) tile still counts as rendered,
+    // so a tide drift does not drop current_ for a full re-render.
+    const int core_r = std::max(
+      0, static_cast<int>(std::ceil(ready_radius_ / (resolution_ * tile_size_))));
+    const int core_lo_i = std::max(lo.first, robot_tile.first - core_r);
+    const int core_hi_i = std::min(hi.first, robot_tile.first + core_r);
+    const int core_lo_j = std::max(lo.second, robot_tile.second - core_r);
+    const int core_hi_j = std::min(hi.second, robot_tile.second + core_r);
+    const bool core_in_window = (core_lo_i <= core_hi_i) && (core_lo_j <= core_hi_j);
+    core_ready_ =
+      have_xf && !coverage_empty_lethal_ && core_in_window &&
+      windowFullyRendered(core_lo_i, core_lo_j, core_hi_i, core_hi_j);
   }
 
   // This layer contributes data over the whole parent window; expand the update
@@ -895,7 +945,7 @@ void BathymetryLayer::updateCosts(
         // unsurveyed: leave the master untouched. COVERAGE-GAP CONTRACT: while the
         // first pass fills in, an un-generated tile contributes nothing — under
         // unsurveyed_is_lethal a land cell here is NOT yet lethal. current_ is
-        // held false (all_tiles_generated_ below) for exactly this window, so a
+        // held false (core_ready_ below) for exactly this window, so a
         // consumer that respects costmap currentness will not plan on it. Nav2's
         // controller/planner gate on costmap currentness, so the gap is not acted
         // on; it self-closes within a few cycles for the (small) local costmap.
@@ -927,13 +977,13 @@ void BathymetryLayer::updateCosts(
   }
 
   // MF2: only report this cycle "current" when the MF1 tide gate and the store
-  // window gate held AND every window tile has been rendered at least once
-  // (all_tiles_generated_; see updateBounds for the #3 stale-vs-rendered
-  // distinction). coverage_empty_lethal_ (#2) also forces not-current so an
-  // all-LETHAL grid from an empty store window is never asserted as usable.
-  // While the first pass is still filling tiles in, current_=false so Nav2's
-  // staleness monitor sees a not-yet-complete costmap.
-  current_ = map_tide_valid_ && window_valid_ && all_tiles_generated_ &&
+  // window gate held AND the robot-centred CORE region has been rendered
+  // (core_ready_; see updateBounds for the #3 stale-vs-rendered distinction and
+  // the review-A core-readiness rationale). coverage_empty_lethal_ (#2) also
+  // forces not-current so an all-LETHAL grid from an empty store window is never
+  // asserted as usable. While the core is still filling in, current_=false so
+  // Nav2's staleness monitor sees a not-yet-ready costmap.
+  current_ = map_tide_valid_ && window_valid_ && core_ready_ &&
     !coverage_empty_lethal_;
 
   // Diagnostic breadcrumb: while the layer withholds readiness, say WHICH gate is
@@ -947,10 +997,10 @@ void BathymetryLayer::updateCosts(
     RCLCPP_WARN_THROTTLE(
       logger_, *clock_, 5000,
       "bathymetry_layer '%s' NOT current: map_tide_valid=%d window_valid=%d "
-      "all_tiles_rendered=%d coverage_empty_lethal=%d (resident tiles=%zu)",
+      "core_rendered=%d coverage_empty_lethal=%d (resident tiles=%zu)",
       name_.c_str(),
       static_cast<int>(map_tide_valid_), static_cast<int>(window_valid_),
-      static_cast<int>(all_tiles_generated_),
+      static_cast<int>(core_ready_),
       static_cast<int>(coverage_empty_lethal_), tiles_.size());
   }
 }

@@ -262,11 +262,19 @@ private:
   double y_origin_ = 0.0;
   int tile_size_ = 100;
   double update_timeout_ = 0.5;
-  // True when every tile overlapping the current window is generated and
-  // up to date (no pending render work). Gates current_ (MF2) alongside the
-  // tide/window flags so Nav2 sees a "not yet current" costmap while the first
-  // pass is still filling tiles in, then "current" once complete.
-  bool all_tiles_generated_ = false;
+  // Readiness radius (metres) around the vehicle for the current_ gate (review A).
+  // current_ is reported once the tiles within this radius of the vehicle are
+  // rendered — NOT the whole window — so a large global (which takes far longer
+  // than the planner's costmap_update_timeout to render fully) does not stall the
+  // planner. Robot-first rendering fills the core first; the rest fills outward in
+  // the background. Scale-independent: a bigger global does not change time-to-ready.
+  double ready_radius_ = 200.0;
+  // True when the robot-centred CORE region (within ready_radius_) has been
+  // rendered at least once. Gates current_ (MF2) alongside the tide/window flags
+  // and coverage_empty_lethal_ (#2), so Nav2 sees "not yet current" only until the
+  // vehicle's neighbourhood is ready — seconds, regardless of total global size —
+  // rather than until the entire window is rendered (minutes on a 4 km global).
+  bool core_ready_ = false;
 
   // Tide-change invalidation: re-render tiles only when the water surface moves
   // more than this (metres) from the value the cache was rendered against.

@@ -71,7 +71,8 @@ unsurveyed cell. Treating it as unsurveyed would be a safety regression.
 | `map_frame` | string | `map` | Ellipsoid-referenced world frame (REP-105 `map`, z=0 at the WGS84 ellipsoid). The water-surface height is read as `map_tide_frame`'s z in this frame. **Must** be set and distinct from both `map_tide_frame` and the costmap's own global frame — otherwise the tide lookup self-references and reads 0, flooding the survey LETHAL (#220). Prefix per platform (`<tf_prefix>/map`). |
 | `buffer_fraction` | double | `0.05` | Fractional margin around the costmap window for `loadWindow` / `evictOutside`. |
 | `tide_invalidate_threshold` | double | `0.1` | Re-render the cached cost tiles only when the water surface moves more than this (m) from the value they were rendered against. Above realistic sea-surface-estimate jitter (~±0.02 m) so noise doesn't constantly re-render and defeat the cache, while still tracking a real (e.g. reservoir) level change. |
-| `update_timeout` | double | `0.5` | Per-cycle wall-clock budget (s) for tile (re)rendering. The window fills over a few cycles instead of blocking the costmap thread; with the no-coverage short-circuit most tiles are cheap, so a large global drains in ~1–2 cycles. |
+| `update_timeout` | double | `0.5` | Per-cycle wall-clock budget (s) for tile (re)rendering. The window fills over a few cycles (robot-first) instead of blocking the costmap thread. |
+| `ready_radius` | double | `200.0` | Radius (m) around the vehicle whose tiles must be rendered before the layer reports `current_`. Decouples readiness from the full window so a large global (which can take minutes to render fully) doesn't stall the planner: the robot-centred core is ready in seconds, the rest fills outward in the background, and the local costmap covers the immediate surroundings meanwhile. Scale-independent — enlarging the global for longer transits doesn't change time-to-ready. |
 
 ## Layer coexistence
 

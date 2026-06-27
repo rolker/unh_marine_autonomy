@@ -56,5 +56,26 @@ per cell = 1 tf transform (`worldToLatLon`→`tf_->transform(...,"earth")`) + 2 
   hoist transform.
 - `bathymetry_layer/test/test_bathymetry_layer.cpp` — tile cache + regenerate-on-tide tests.
 
+## Live-sim finding (2026-06-27) + scale-independent fix (A+B)
+
+Instrumented sim (`bizzyboat_massabesic_launch`) showed the real blocker on the
+GLOBAL costmap was `core_rendered`(was `all_tiles_rendered`)`=0`: the first-pass
+render of the 4 km global (~1936 tiles) crept at ~8 tiles/s → ~4 min, and
+`current_` was gated on the WHOLE window → planner timed out (5 s) every cycle.
+The coverage short-circuit gave ~zero benefit at Massabesic because the chart
+store's coarse ~864 m GGGS tiles **blanket** the whole window, so every tile
+tested "covered" and took the full per-cell render. Operator rejected shrinking
+the global (size is a location/transit knob — may get BIGGER). Fix = scale-independent:
+
+- **A — robot-first render + core-region readiness.** `current_` now gates on a
+  robot-centred CORE (`ready_radius_`, default 200 m) being rendered, not the whole
+  window; tiles render nearest-vehicle-first. Core is ready in a cycle or two
+  regardless of global size; the rest fills outward in the background; the local
+  costmap covers the immediate surroundings. `all_tiles_generated_`→`core_ready_`.
+- **B — per-tile bilinear projection.** The covered-tile render interpolates each
+  cell's lat/lon from the 4 projected corners instead of an ECEF/tf round-trip per
+  cell (world→lat/lon is near-affine over ~100 m, sub-mm error). Removes the
+  dominant per-cell cost so the background fill keeps ahead of the vehicle.
+
 ## Acceptance
 Local holds 5 Hz; planner activates in seconds; costmap clearances unchanged vs current.
