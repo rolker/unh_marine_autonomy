@@ -224,6 +224,32 @@ TEST(TileCatalogReconciler, ReorderedStalePushIgnored)
   EXPECT_EQ(*reconciler.versionOf(gridAt(0)), 200);
 }
 
+// Invalid (default/sentinel) indices are ignored at ingestion, so they cannot
+// collapse together into one bogus map key on either side.
+TEST(TileCatalogBuilderReconciler, InvalidIndexIgnored)
+{
+  const gggs::GridIndex invalid;  // default-constructed -> invalid sentinel
+  ASSERT_FALSE(invalid.valid());
+
+  mtrs::TileCatalogBuilder builder;
+  builder.update(invalid, 100);
+  EXPECT_EQ(builder.size(), 0u);
+  EXPECT_FALSE(builder.versionOf(invalid).has_value());
+
+  mtrs::TileCatalogReconciler reconciler;
+  reconciler.markHave(invalid, 100);
+  EXPECT_EQ(reconciler.size(), 0u);
+  EXPECT_FALSE(reconciler.has(invalid));
+
+  // A malformed catalog carrying an invalid entry does not request/prune it.
+  mtrs::TileCatalog catalog;
+  catalog.generation_time = 300;
+  catalog.entries.push_back(mtrs::TileCatalogEntry{invalid, 100});
+  const mtrs::ReconcileResult res = reconciler.reconcile(catalog);
+  EXPECT_TRUE(res.to_request.empty());
+  EXPECT_TRUE(res.to_prune.empty());
+}
+
 // ---- Convergence -----------------------------------------------------------
 
 // A fresh boat advertises a small catalog with a new generation time; the

@@ -154,3 +154,18 @@ Static analysis: ament_cpplint clean; independent `g++ -fsyntax-only -Wall -Wext
 - [ ] (suggestion) `reconcile()` `to_request` carries bare `GridIndex`; returning `TileCatalogEntry` (index+version) resists markHave-on-ack desync — `tile_catalog.hpp:76-77`
 - [ ] (suggestion) Validate `index.valid()` at ingestion (invalid GridIndices collapse to one map key; untested path) — `tile_catalog.cpp:28,67,103`
 - [ ] (suggestion) Note `markHave`-after-`drop` resurrection + cache-growth bound for the node author; minor: `reserve` reconcile result vectors — `tile_catalog.cpp:66-79`
+
+## Review Triage (PR2)
+**Status**: complete
+**When**: 2026-06-27 17:50 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8)
+
+Container review-code verdict **approved**, 0 must-fix, 5 suggestions (all
+docs/API-hardening, no defects). All 5 folded in pre-push:
+- [x] Single-monotonic-clock / `generation_time`=0-disables-prune invariant documented prominently (file note + struct doc).
+- [x] Thread-safety contract documented ("not thread-safe; serialize externally").
+- [x] `to_request` bare-index rationale documented (mirrors `TileRequest.msg`; delivered tile self-describes version) — kept as-is, intentional.
+- [x] **Invalid-index guard** added at ingestion (`update`/`markHave` ignore invalid; `reconcile` skips invalid catalog entries) + new test `InvalidIndexIgnored`.
+- [x] `markHave`-after-`drop` resurrection noted as intentional + cache-bound note for node author; `reserve()` on reconcile result vectors.
+
+**Verified**: rebuild clean; `colcon test` → 14/14 catalog tests pass; cpplint clean.

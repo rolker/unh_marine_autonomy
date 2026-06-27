@@ -28,6 +28,9 @@ namespace marine_tiled_raster_store
 
 void TileCatalogBuilder::update(const gggs::GridIndex & index, TileVersion version)
 {
+  if (!index.valid()) {
+    return;  // not a real tile; all invalid indices collapse to one map key
+  }
   auto it = versions_.find(index);
   if (it == versions_.end()) {
     versions_.emplace(index, version);
@@ -65,6 +68,9 @@ TileCatalog TileCatalogBuilder::buildCatalog(TileVersion generation_time) const
 
 void TileCatalogReconciler::markHave(const gggs::GridIndex & index, TileVersion version)
 {
+  if (!index.valid()) {
+    return;  // not a real tile; all invalid indices collapse to one map key
+  }
   auto it = cache_.find(index);
   if (it == cache_.end()) {
     cache_.emplace(index, version);
@@ -95,12 +101,17 @@ std::optional<TileVersion> TileCatalogReconciler::versionOf(const gggs::GridInde
 ReconcileResult TileCatalogReconciler::reconcile(const TileCatalog & catalog) const
 {
   ReconcileResult result;
+  result.to_request.reserve(catalog.entries.size());
+  result.to_prune.reserve(cache_.size());
 
   // Index the catalog for lookup of held tiles below. A well-formed catalog has
   // unique indices; if one repeats (malformed source), keep the newest version
   // so the request/prune decisions stay conservative.
   std::map<gggs::GridIndex, TileVersion> catalog_versions;
   for (const auto & entry : catalog.entries) {
+    if (!entry.index.valid()) {
+      continue;  // ignore a malformed catalog's invalid entries
+    }
     auto it = catalog_versions.find(entry.index);
     if (it == catalog_versions.end()) {
       catalog_versions.emplace(entry.index, entry.version);

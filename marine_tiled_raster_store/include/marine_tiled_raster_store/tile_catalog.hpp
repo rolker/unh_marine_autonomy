@@ -42,6 +42,15 @@ namespace marine_tiled_raster_store
 ///        store-to-store sync. The node boundary adapts the `marine_interfaces`
 ///        wire messages (`TileCatalog` / `TileRequest` / `SonarVisualizationTile`)
 ///        to/from these types.
+///
+/// @note **Not thread-safe.** Builder/reconciler hold plain `std::map` state; a
+///   node touching one from multiple threads (e.g. a subscription callback and a
+///   timer) must serialize access externally.
+/// @note **Single monotonic source clock.** Versions and `generation_time` must
+///   come from one monotonically-increasing source (the boat). The prune gate
+///   compares held versions against a catalog's `generation_time`, so cross-clock
+///   skew can over-/under-prune. Invalid `gggs::GridIndex` values are ignored at
+///   ingestion (they are not real tiles).
 
 /// @brief A per-tile version stamp — monotonic per source, newest-wins.
 ///
@@ -63,7 +72,10 @@ struct TileCatalogEntry
 ///
 /// Completeness is a contract: prune-on-absence is only valid against a full
 /// snapshot (ADR-0008 D4a). `generation_time` is the prune gate (D4b) — a held
-/// tile absent from the catalog is pruned only if older than this time.
+/// tile absent from the catalog is pruned only if older than this time. It must
+/// be at least as new as every entry's version (the source stamps "now"); a
+/// `generation_time` of 0 (e.g. an un-stamped or sim-time-0 catalog) disables
+/// pruning entirely, since no held version can be strictly older than 0.
 struct TileCatalog
 {
   TileVersion generation_time{0};
@@ -73,8 +85,13 @@ struct TileCatalog
 /// @brief The two action lists a reconcile produces.
 struct ReconcileResult
 {
-  std::vector<gggs::GridIndex> to_request;  ///< missing or stale on the consumer
-  std::vector<gggs::GridIndex> to_prune;    ///< held but absent from the catalog (gated)
+  /// Missing or stale on the consumer. Bare indices (no version) — this mirrors
+  /// the `marine_interfaces/TileRequest` wire shape, and the requested version
+  /// is unnecessary: the delivered `SonarVisualizationTile` self-describes its
+  /// version, which the consumer passes to `markHave`.
+  std::vector<gggs::GridIndex> to_request;
+  /// Held but absent from the catalog and older than its generation_time (gated).
+  std::vector<gggs::GridIndex> to_prune;
 };
 
 /// @brief Source-side (boat) authoritative tile→version registry that emits
@@ -120,6 +137,9 @@ public:
   /// @brief Record that the consumer now holds @p index at @p version (e.g. a
   ///        tile was received and applied). Newest-wins: an older version is
   ///        ignored, so a reordered stale arrival cannot lower the held version.
+  ///        Calling this after `drop()` re-adds the tile — intentional, so a
+  ///        re-received tile returns. An invalid @p index is ignored. The node
+  ///        author bounds cache growth (e.g. evict by area/recency).
   void markHave(const gggs::GridIndex & index, TileVersion version);
 
   /// @brief Forget @p index (the consumer deleted it, e.g. after a prune).
