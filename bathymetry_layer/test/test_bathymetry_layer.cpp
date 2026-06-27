@@ -738,7 +738,7 @@ TEST(BathymetryLayer, EmptyCoverageWithUnsurveyedLethalHoldsNotCurrent)
   const int ts = layer.tileSize();
   auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
     ts, ts, 1.0, 0.0, 0.0, nav2_costmap_2d::NO_INFORMATION);
-  layer.injectTile(0, 0, tile);   // marks all_tiles_generated_ true
+  layer.injectTile(0, 0, tile);   // marks core_ready_ true
   layer.setMapTideValid(true);
   layer.setWindowValid(true);
 

@@ -736,7 +736,9 @@ void BathymetryLayer::updateBounds(
         name_.c_str());
     }
 
-    // The vehicle sits at the centre of the rolling window; render ROBOT-FIRST.
+    // Render ROBOT-FIRST: order pending tiles by distance to the vehicle's tile.
+    // (For a rolling costmap the vehicle is near the window centre; the core
+    // readiness region below is clamped to the window regardless.)
     const TileID robot_tile = worldToTile(robot_x, robot_y);
 
     // Render pending tiles nearest-the-vehicle first, time-boxed per cycle
