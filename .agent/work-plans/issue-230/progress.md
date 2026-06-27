@@ -47,3 +47,24 @@ All five plan-review findings folded into the plan (commit below):
 - [x] (suggestion) PointField dtype constants → **local `uint8` constants**, no `sensor_msgs` dep; made explicit.
 
 Plan now review-plan-ready; no open questions.
+
+## Implementation
+**Status**: PR1 complete (messages); PR2 (reconciler lib) not started
+**When**: 2026-06-27 16:30 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8)
+
+**Commit**: `c686bcc` — feat(marine_interfaces): SonarVisualizationTile transport messages (#230)
+**Branch**: feature/issue-230
+
+PR1 delivered:
+- Six `.msg` files: `TileIndex`, `VisualizationBand`, `SonarVisualizationTile`, `TileCatalogEntry`, `TileCatalog`, `TileRequest`.
+- Registered in `CMakeLists.txt` `MSG_FILES`; added `<depend>builtin_interfaces</depend>` to `package.xml`.
+- Documented the family in `docs/interfaces.md` (ADR-0008 section).
+- **Build-verified**: `colcon build` clean (36.6s); `ros2 interface show` confirms all six generate and compose correctly (embedded `TileIndex`, dtype constants, `builtin_interfaces/Time`).
+
+Notes:
+- No pre-commit config/hooks wired in this project repo (onboarding gap, not addressed here).
+
+### Next
+- [ ] `/review-code` (pre-push) on the PR1 diff before pushing.
+- [ ] PR2: payload-agnostic reconciler in `marine_tiled_raster_store` + GTest + `tile_io.hpp` comment fix.
