@@ -241,5 +241,6 @@ prune-on-absence). See [ADR-0008](decisions/0008-live-sonar-coverage-transport-a
 - `TileIndex[] tiles`: consumer's missing/stale "need" list
 
 ## Related Documentation
+- [Sonar Data Ecosystem](sonar_ecosystem.md) - Big-picture map of sonar data flow + umbrella/ADR tracker
 - [Data Flows](data_flows.md) - System-level data flow diagrams
 - [Autonomy Modes](autonomy_modes.md) - State machine documentation
