@@ -43,8 +43,8 @@ gating, the "never drop a covered tile" margin property, eviction, and the MF1 t
 regression. Static analysis clean via colcon test (41 tests).
 
 ### Findings
-- [ ] (suggestion) README param table omits update_timeout + tide_invalidate_threshold — `bathymetry_layer/README.md:59`
-- [ ] (suggestion) empty store window + unsurveyed_is_lethal_ → whole costmap LETHAL reported current_; add throttled WARN / hold current_ false — `bathymetry_layer.cpp` generateTile/updateCosts
-- [ ] (suggestion, generalization) tide-change invalidation drops current_ for full-window re-render → can re-trip planner 5s timeout on large OPEN-WATER surveys (not the lake) — `bathymetry_layer.cpp:603`
-- [ ] (suggestion) budget loop + uniform-fill (LETHAL vs nullptr) decision not directly unit-tested (seam test deferred to sim) — `test_bathymetry_layer.cpp`
-- [ ] (suggestion) generateTile always returns true though header doc says false-on-failure; return is vestigial — `bathymetry_layer.cpp:384`, `.hpp:208`
+- [x] (suggestion) README param table omits update_timeout + tide_invalidate_threshold — `bathymetry_layer/README.md:59`
+- [x] (suggestion) empty store window + unsurveyed_is_lethal_ → whole costmap LETHAL reported current_; add throttled WARN / hold current_ false — `bathymetry_layer.cpp` generateTile/updateCosts
+- [x] (suggestion, generalization) tide-change invalidation drops current_ for full-window re-render → can re-trip planner 5s timeout on large OPEN-WATER surveys (not the lake) — `bathymetry_layer.cpp:603`
+- [ ] (suggestion, follow-up) budget-loop timing + uniform-fill (LETHAL vs nullptr) paths still need the earth-frame + disk-store fixture; gating decisions (#2 empty-coverage, #3 stale-vs-rendered) now ARE unit-tested — `test_bathymetry_layer.cpp`
+- [x] (suggestion) generateTile always returns true though header doc says false-on-failure; return is vestigial — `bathymetry_layer.cpp:384`, `.hpp:208`

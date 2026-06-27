@@ -109,6 +109,15 @@ protected:
   void injectTile(int ti, int tj, std::shared_ptr<nav2_costmap_2d::Costmap2D> tile);
   int tileSize() const {return tile_size_;}
 
+  // Test seam: force window_valid_ (normally set by refreshWindow on a
+  // successful loadWindow) so the current_ gate can be unit-tested without TF.
+  void setWindowValidForTest(bool v) {window_valid_ = v;}
+
+  // Test seam: mark an already-injected tile stale (needs_update) without a tide
+  // move, so windowFullyRendered's "stale-but-rendered still counts as ready"
+  // property (#3) can be unit-tested. No-op if the tile is not resident.
+  void markTileNeedsUpdate(int ti, int tj);
+
   // A lat/lon axis-aligned bounding box of one store tile, used as a cheap
   // whole-tile coverage test in generateTile (mirrors s57_layer testing a tile
   // against its loaded chart grids before sampling). Built once per generation
@@ -131,6 +140,14 @@ protected:
     double min_lat, double min_lon, double max_lat, double max_lon,
     const std::vector<CoverageBox> & coverage) const;
 
+  // Whether every tile in the inclusive grid range [ (ti_lo,tj_lo) .. (ti_hi,tj_hi) ]
+  // has been rendered at least once (resident and `generated`). This is the
+  // current_ readiness signal: a tile that is generated but `needs_update`
+  // (stale-but-serving after a tide move) still counts as rendered, so a tide
+  // drift does not drop the costmap to not-current (#3). A never-rendered tile
+  // (first fill / freshly scrolled-in region) returns false. Exposed for testing.
+  bool windowFullyRendered(int ti_lo, int tj_lo, int ti_hi, int tj_hi) const;
+
   // Test seams: the store and the cached water-surface height, so a test fixture
   // can populate a synthetic store and drive cost evaluation without TF.
   std::unique_ptr<marine_bathymetry_store::BathymetryStore> store_;
@@ -140,6 +157,14 @@ protected:
   // is not a valid water-surface datum and would produce arbitrary clearance
   // values. updateCosts() also gates current_=true on this flag (MF1/MF2).
   bool map_tide_valid_ = false;
+
+  // #2 safety latch (set each updateBounds pass): the current window has NO store
+  // coverage AND unsurveyed_is_lethal_ is set, so every tile would short-circuit
+  // to LETHAL — an all-obstacle grid including the vehicle's own cell. updateCosts
+  // gates current_=false on this so that fabricated all-lethal grid is never
+  // asserted as a usable costmap (the layer warns instead). Protected so the test
+  // fixture can drive the gate directly.
+  bool coverage_empty_lethal_ = false;
 
   // Parameters (protected so the test fixture can configure them directly).
   double minimum_depth_ = 1.0;
@@ -205,9 +230,10 @@ private:
   // none of them has no store data, so it is filled uniformly without the
   // per-cell projection+query (LETHAL_OBSTACLE when unsurveyed_is_lethal_, else
   // left fully NO_INFORMATION) — the bulk of tiles on a large global costmap.
-  // Returns false if rendering failed (e.g. a per-cell projection threw); the
-  // tile is left ungenerated.
-  bool generateTile(
+  // Always marks the tile generated: a cell whose projection throws is skipped
+  // (left NO_INFORMATION) rather than failing the tile, so a single bad cell
+  // cannot pin the tile ungenerated and hold current_ false forever.
+  void generateTile(
     const TileID & id, const geometry_msgs::msg::TransformStamped & to_earth,
     const std::vector<CoverageBox> & coverage);
 

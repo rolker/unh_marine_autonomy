@@ -63,6 +63,8 @@ public:
   void setMaxUncertainty(double v) {max_uncertainty_ = v;}
   void setMaxAge(double v) {max_age_ = v;}
   void setUnsurveyedIsLethal(bool v) {unsurveyed_is_lethal_ = v;}
+  void setWindowValid(bool v) {setWindowValidForTest(v);}
+  void setCoverageEmptyLethal(bool v) {coverage_empty_lethal_ = v;}
   // enabled_ is set from the "enabled" param in onInitialize(); the blit tests
   // skip initialize(), so set it directly.
   void setEnabled(bool v) {enabled_ = v;}
@@ -75,6 +77,8 @@ public:
   using BathymetryLayer::tileSize;
   using BathymetryLayer::CoverageBox;
   using BathymetryLayer::tileHasCoverage;
+  using BathymetryLayer::windowFullyRendered;
+  using BathymetryLayer::markTileNeedsUpdate;
 };
 
 // ---------------------------------------------------------------------------
@@ -717,4 +721,72 @@ TEST(BathymetryLayer, TileCoverageOverlapDecision)
   // Empty store (no data loaded) → nothing is covered, so every tile takes the
   // short-circuit (uniform lethal land / NO_INFORMATION).
   EXPECT_FALSE(layer.tileHasCoverage(42.985, -71.395, 42.990, -71.390, {}));
+}
+
+// #2 safety gate: when the store window has NO coverage and unsurveyed_is_lethal
+// is set, the whole costmap would read LETHAL (incl. the boat's own cell). The
+// layer must report NOT current in that case rather than asserting the fabricated
+// all-lethal grid as a usable costmap. Drives the gate through updateCosts (which
+// sets current_) + isCurrent().
+TEST(BathymetryLayer, EmptyCoverageWithUnsurveyedLethalHoldsNotCurrent)
+{
+  BathymetryLayerForTest layer;
+  layer.setStore(std::make_unique<BathymetryStore>(10));  // non-null for the guard
+  layer.setEnabled(true);
+  layer.setUnsurveyedIsLethal(true);
+
+  const int ts = layer.tileSize();
+  auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
+    ts, ts, 1.0, 0.0, 0.0, nav2_costmap_2d::NO_INFORMATION);
+  layer.injectTile(0, 0, tile);   // marks all_tiles_generated_ true
+  layer.setMapTideValid(true);
+  layer.setWindowValid(true);
+
+  nav2_costmap_2d::Costmap2D master(ts, ts, 1.0, 0.0, 0.0, nav2_costmap_2d::FREE_SPACE);
+
+  // Coverage present (flag false): all gates satisfied → current.
+  layer.setCoverageEmptyLethal(false);
+  layer.updateCosts(master, 0, 0, ts, ts);
+  EXPECT_TRUE(layer.isCurrent())
+    << "tide + window valid and tiles rendered → costmap is current";
+
+  // Empty-coverage-lethal: must drop to not-current even though every other gate
+  // still holds, so the planner does not act on an all-lethal grid.
+  layer.setCoverageEmptyLethal(true);
+  layer.updateCosts(master, 0, 0, ts, ts);
+  EXPECT_FALSE(layer.isCurrent())
+    << "empty store window + unsurveyed_is_lethal must report NOT current";
+}
+
+// #3: a tide drift past the invalidation threshold marks every tile needs_update;
+// gating current_ on that would drop the costmap to not-current for a full-window
+// re-render (and re-trip the planner timeout) even though the cached costs are
+// only sub-threshold stale. windowFullyRendered must therefore treat a
+// generated-but-needs_update tile as STILL rendered (ready), and only a
+// never-rendered (absent) tile as not-ready.
+TEST(BathymetryLayer, WindowReadyTreatsStaleTileAsRendered)
+{
+  BathymetryLayerForTest layer;
+  layer.setStore(std::make_unique<BathymetryStore>(10));
+  const int ts = layer.tileSize();
+  auto make_tile = [ts]() {
+      return std::make_shared<nav2_costmap_2d::Costmap2D>(
+        ts, ts, 1.0, 0.0, 0.0, nav2_costmap_2d::NO_INFORMATION);
+    };
+  layer.injectTile(0, 0, make_tile());
+  layer.injectTile(0, 1, make_tile());
+  layer.injectTile(1, 0, make_tile());
+  layer.injectTile(1, 1, make_tile());
+
+  EXPECT_TRUE(layer.windowFullyRendered(0, 0, 1, 1))
+    << "every window tile generated → ready";
+
+  // Mark one tile stale (as a tide move would): still rendered, still ready.
+  layer.markTileNeedsUpdate(1, 1);
+  EXPECT_TRUE(layer.windowFullyRendered(0, 0, 1, 1))
+    << "a generated-but-stale (needs_update) tile must NOT hold current_ false (#3)";
+
+  // A window region with a never-rendered (absent) tile is not ready.
+  EXPECT_FALSE(layer.windowFullyRendered(0, 0, 2, 2))
+    << "an absent (never-rendered) tile → not ready";
 }

@@ -32,6 +32,16 @@ per cell = 1 tf transform (`worldToLatLon`→`tf_->transform(...,"earth")`) + 2 
      8-tiles/cycle throttle that caused `planner_server` "Costmap timed out waiting for update").
      `tileHasCoverage()` pads the AABB by ~1e-4 deg (~11 m) so an edge-straddling tile is treated as
      covered (full render) — never the reverse, so a covered cell is never dropped.
+   - **Empty-coverage safety guard** (review #2): if the window has NO store coverage AND
+     `unsurveyed_is_lethal_`, every tile would short-circuit to LETHAL (whole costmap incl. the boat's
+     cell). `coverage_empty_lethal_` flags this; `updateCosts` holds `current_` false and the layer warns,
+     rather than asserting a fabricated all-lethal grid as usable. Scoped to `unsurveyed_is_lethal_` so the
+     explore case (unknown lake, flag false) stays current with no-data tiles.
+   - **Readiness vs staleness** (review #3): `current_` gates on `windowFullyRendered()` = every window
+     tile rendered *at least once*, NOT on `needs_update`. A tide drift past `tide_invalidate_threshold_`
+     (e.g. a reservoir level changing gradually over a long survey) marks all tiles `needs_update`; serving
+     the sub-threshold-stale cached costs as current while re-rendering in the background avoids dropping the
+     costmap to not-current (and re-tripping the planner's `costmap_update_timeout`) for a full re-render.
 4. **updateCosts = blit**: map master bounds→tiles, copy cached tile char-maps into master with
    the existing max-combine (raise-only; skip NO_INFORMATION).
 5. **Tide-change invalidation**: if `|map_tide_z_ - last_tide_z_| > tide_invalidate_threshold_`,

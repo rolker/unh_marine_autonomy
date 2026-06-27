@@ -271,6 +271,14 @@ void BathymetryLayer::injectTile(
   all_tiles_generated_ = true;
 }
 
+void BathymetryLayer::markTileNeedsUpdate(int ti, int tj)
+{
+  const auto it = tiles_.find(std::make_pair(ti, tj));
+  if (it != tiles_.end()) {
+    it->second.needs_update = true;
+  }
+}
+
 BathymetryLayer::TileID BathymetryLayer::worldToTile(double x, double y) const
 {
   const double tile_meters = resolution_ * tile_size_;
@@ -301,6 +309,23 @@ bool BathymetryLayer::tileHasCoverage(
   return false;
 }
 
+bool BathymetryLayer::windowFullyRendered(
+  int ti_lo, int tj_lo, int ti_hi, int tj_hi) const
+{
+  // "Rendered at least once" = the tile is resident and generated. needs_update
+  // (a stale-but-serving tile awaiting re-render) does NOT count as un-rendered:
+  // its cached costs are valid to serve, so it must not hold current_ false (#3).
+  for (int ti = ti_lo; ti <= ti_hi; ++ti) {
+    for (int tj = tj_lo; tj <= tj_hi; ++tj) {
+      const auto it = tiles_.find(std::make_pair(ti, tj));
+      if (it == tiles_.end() || !it->second.generated) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 std::vector<BathymetryLayer::CoverageBox> BathymetryLayer::buildCoverage() const
 {
   std::vector<CoverageBox> coverage;
@@ -321,7 +346,7 @@ std::vector<BathymetryLayer::CoverageBox> BathymetryLayer::buildCoverage() const
   return coverage;
 }
 
-bool BathymetryLayer::generateTile(
+void BathymetryLayer::generateTile(
   const TileID & id, const geometry_msgs::msg::TransformStamped & to_earth,
   const std::vector<CoverageBox> & coverage)
 {
@@ -381,7 +406,7 @@ bool BathymetryLayer::generateTile(
       }
       info.generated = true;
       info.needs_update = false;
-      return true;
+      return;
     }
   }
   // corners_ok == false falls through to the per-cell path, which itself skips
@@ -435,7 +460,6 @@ bool BathymetryLayer::generateTile(
   info.costmap = tile;
   info.generated = true;
   info.needs_update = false;
-  return true;
 }
 
 void BathymetryLayer::refreshWindow()
@@ -588,6 +612,7 @@ void BathymetryLayer::updateBounds(
   // Render the static prior into world-anchored tiles HERE (once per tile), so
   // updateCosts is a cheap blit instead of a per-cell store query every cycle.
   all_tiles_generated_ = false;
+  coverage_empty_lethal_ = false;
   if (store_ && window_valid_ && map_tide_valid_) {
     const double buffer =
       std::max(world_max_x - world_min_x, world_max_y - world_min_y) * buffer_fraction_;
@@ -661,13 +686,34 @@ void BathymetryLayer::updateBounds(
     // per-cell projection on tiles that fall entirely outside coverage.
     const std::vector<CoverageBox> coverage = buildCoverage();
 
+    // #2 safety: an EMPTY store window under unsurveyed_is_lethal_ would make
+    // every tile short-circuit to LETHAL — the whole costmap, including the
+    // vehicle's own cell, reads as obstacle. Rather than assert that fabricated
+    // all-lethal grid as a usable ("current") costmap, flag it so updateCosts
+    // holds current_ false, and warn so the operator sees a misconfig (wrong/empty
+    // store_path) or the vehicle being outside the surveyed extent, instead of a
+    // silent box-in. When unsurveyed_is_lethal_ is false, empty coverage just
+    // means "no data here" — tiles stay NO_INFORMATION for other priors to fill,
+    // so this does not fire and exploration is not frozen.
+    coverage_empty_lethal_ = unsurveyed_is_lethal_ && coverage.empty();
+    if (coverage_empty_lethal_) {
+      RCLCPP_WARN_THROTTLE(
+        logger_, *clock_, 10000,
+        "bathymetry_layer '%s': no store coverage in the current window and "
+        "unsurveyed_is_lethal is set; the whole costmap would read LETHAL. "
+        "Reporting NOT current instead of an all-lethal grid — check store_path "
+        "and that the vehicle is within the store's surveyed extent.",
+        name_.c_str());
+    }
+
     // Render pending tiles, time-boxed per cycle (mirrors s57_layer) so the first
     // pass over a large (e.g. 4000x4000) global costmap is spread across cycles
-    // instead of blocking the costmap thread. all_tiles_generated_ gates current_
-    // (MF2) below. With the no-coverage short-circuit, the whole window typically
-    // drains in ~1-2 cycles, so current_ goes true promptly.
-    bool all_done = have_xf;
-    if (have_xf) {
+    // instead of blocking the costmap thread. Skipped when empty-lethal (#2):
+    // no point allocating ~1600 uniform-LETHAL tiles for a grid we will report
+    // not-current. A tile is (re)rendered when never generated OR stale
+    // (needs_update after a tide move); a stale-but-generated tile keeps serving
+    // its cached costs until it regenerates (no flicker).
+    if (have_xf && !coverage_empty_lethal_) {
       const rclcpp::Time gen_start = clock_->now();
       const rclcpp::Duration budget = rclcpp::Duration::from_seconds(update_timeout_);
       bool time_up = false;
@@ -677,23 +723,29 @@ void BathymetryLayer::updateBounds(
           auto it = tiles_.find(id);
           const bool needs =
             (it == tiles_.end()) || !it->second.generated || it->second.needs_update;
-          if (!needs) {
-            continue;
-          }
-          if (!time_up) {
+          if (needs && !time_up) {
             generateTile(id, to_earth, coverage);
-            it = tiles_.find(id);
             if (clock_->now() - gen_start > budget) {
               time_up = true;
             }
           }
-          if (it == tiles_.end() || !it->second.generated || it->second.needs_update) {
-            all_done = false;
-          }
         }
       }
     }
-    all_tiles_generated_ = all_done;
+
+    // #3: current_ readiness is "every window tile has been rendered at least
+    // once" — NOT "no tile needs re-rendering". A tide that drifts past
+    // tide_invalidate_threshold_ (e.g. a reservoir level changing gradually over
+    // a long survey) marks every tile needs_update; gating current_ on that would
+    // drop the whole costmap to not-current for a full-window re-render (seconds
+    // on a 4 km global) and re-trip the planner's costmap_update_timeout — even
+    // though the cached costs are only sub-threshold (<0.1 m, well inside the
+    // ~1.5 m clearance ramp) stale. So serve the cached costs as current while the
+    // re-render proceeds in the background; only a genuinely never-rendered tile
+    // (first fill, or a freshly scrolled-in window region) holds current_ false.
+    all_tiles_generated_ =
+      have_xf && !coverage_empty_lethal_ &&
+      windowFullyRendered(lo.first, lo.second, hi.first, hi.second);
   }
 
   // This layer contributes data over the whole parent window; expand the update
@@ -875,10 +927,14 @@ void BathymetryLayer::updateCosts(
   }
 
   // MF2: only report this cycle "current" when the MF1 tide gate and the store
-  // window gate held AND every tile in the window has been rendered against the
-  // current tide. While the first pass is still filling tiles in, current_=false
-  // so Nav2's staleness monitor sees a not-yet-complete costmap.
-  current_ = map_tide_valid_ && window_valid_ && all_tiles_generated_;
+  // window gate held AND every window tile has been rendered at least once
+  // (all_tiles_generated_; see updateBounds for the #3 stale-vs-rendered
+  // distinction). coverage_empty_lethal_ (#2) also forces not-current so an
+  // all-LETHAL grid from an empty store window is never asserted as usable.
+  // While the first pass is still filling tiles in, current_=false so Nav2's
+  // staleness monitor sees a not-yet-complete costmap.
+  current_ = map_tide_valid_ && window_valid_ && all_tiles_generated_ &&
+    !coverage_empty_lethal_;
 }
 
 }  // namespace bathymetry_layer
