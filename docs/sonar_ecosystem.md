@@ -54,15 +54,19 @@ looked.
 | **Reprocess** | Offline M3 bag → store tiles; PINGMapper offline sidescan EGN | [#171](https://github.com/rolker/unh_marine_autonomy/issues/171) (C1) | — | ✅ M3 import landed ([cube#63] closed); 📋 sidescan offline pipeline to validate; ⚠️ draft→**processed** promotion workflow thin |
 | **Metering** | Per-topic priority on the `udp_bridge` rate-limiter | [udp_bridge#19](https://github.com/rolker/udp_bridge/issues/19) | 0008 (D9) | 📋 |
 
+[cube#15]: https://github.com/rolker/cube_bathymetry/issues/15
 [cube#44]: https://github.com/rolker/cube_bathymetry/issues/44
 [cube#54]: https://github.com/rolker/cube_bathymetry/issues/54
 [cube#59]: https://github.com/rolker/cube_bathymetry/issues/59
 [cube#63]: https://github.com/rolker/cube_bathymetry/issues/63
 [cube#70]: https://github.com/rolker/cube_bathymetry/issues/70
 [cube#78]: https://github.com/rolker/cube_bathymetry/issues/78
+[cube#80]: https://github.com/rolker/cube_bathymetry/issues/80
 [camp#63]: https://github.com/rolker/camp/issues/63
+[camp#90]: https://github.com/rolker/camp/issues/90
 [camp#108]: https://github.com/rolker/camp/issues/108
 [camp#121]: https://github.com/rolker/camp/issues/121
+[rqt#58]: https://github.com/rolker/rqt_operator_tools/issues/58
 [uma#220]: https://github.com/rolker/unh_marine_autonomy/issues/220
 [echoboats#337]: https://github.com/rolker/unh_echoboats_project11/issues/337
 [echoboats#338]: https://github.com/rolker/unh_echoboats_project11/issues/338
@@ -121,16 +125,51 @@ topic), intentionally *not* the Arc-1 raster tile-sync.
 
 ## Where to direct efforts
 
-Highest-leverage moves, given the map above:
+### Near-term: last few days of Massabesic — three operator tools
 
-1. **Finish the live-view chain** ([#230](https://github.com/rolker/unh_marine_autonomy/issues/230) → [cube#78] → [camp#121]) — newest Arc-1 capability; gives the operator live coverage to explore.
-2. **Advance the Arc-2 mark→contact link** ([rqt#59]/[rqt#81] → #157/#167) — this is the **Massabesic mission payload** (mark a found object from a live view). Currently the least-tracked arc; consider the umbrella follow-up above.
-3. **Make the costmap usable** ([uma#220] tide-frame fix + cost-model rework) — built but 100% lethal today; best ratio of "unlocks autonomy" to work remaining.
-4. **Land acquisition data-quality bugs** ([echoboats#337]/[echoboats#338]/[echoboats#339]) — corrupt every downstream product in *both* arcs; cheap, foundational.
+Mission-driven priority (Roland, 2026-06-27): the three tools worth having before
+the final surveying days. Coverage (Tools 1–2) is **band-selectable** — the
+operator views it as **depth / uncertainty / backscatter** through one CAMP
+band-picker + colormap (ADR-0008 D6; [camp#108]/[camp#121]).
 
-Bigger, longer bets to sequence after: the **sidescan track** ([#171]/[#185]) and
-the **processed-layer production + coverage-QC loop** (the gap between "collected
-data" and "finished survey").
+1. **Display existing coverage, especially multibeam.** The M3 bathy is already
+   in the GGGS store ([cube#63] closed); CAMP's GGGS raster layer ([camp#90],
+   closed) renders it. Shortest path: point CAMP at the Massabesic store + a
+   colormap. **Closest of the three**, and the render foundation Tool 2 reuses.
+   - **Bands:** depth + uncertainty come from the bathy store today. **Backscatter
+     is added by [cube#80]** — the offline M3 import also writes a float32
+     backscatter store layer (float32 tiles already persist in
+     `marine_tiled_raster_store`; ADR-0007 producer). First cut = beam-angle-vs-nadir;
+     GeoCoder-grade incidence ([cube#15]/[cube#59]) is a follow-up.
+2. **Display new coverage as it's collected.** The [#230] chain (messages +
+   reconciler ✅ merged) → [cube#78] producer → [camp#121] live cache, **feeding
+   the same band-generic render as Tool 1**. [cube#78] already carries the live
+   3-band tile (depth/uncertainty/backscatter; co-estimation [cube#54] done).
+   Farthest, but the live cache is the only new display piece.
+3. **Mark a target on the live sidescan view → save a contact to the operator bag.**
+   The waterfall's slant→ground geometry ([rqt#58]) is closed; add the draw-box
+   marking ([rqt#59]'s UI half) and **publish a `marine_interfaces/Contact`**
+   (already defined, `ORIGIN_HUMAN`) on a bag-recorded topic. **Sidesteps two
+   blockers**: the unsettled `TargetAnnotation` message gating [rqt#59], and the
+   `contact_manager` backend (#157/#167) — neither is needed to record a contact.
+
+**Producer symmetry:** existing coverage's backscatter comes from the offline
+import ([cube#80], durable store layer); live coverage's from [cube#78] (display
+tile). One band-generic CAMP renderer shows either.
+
+**Sequence:** Tool 1 first (closest; shared render foundation; [cube#80] gives it
+backscatter) ‖ Tool 3 in parallel (independent rqt track, unblocked) → Tool 2
+(live cache on Tool 1's render).
+
+### Longer-term / supporting
+
+- **Make the costmap usable** ([uma#220] tide-frame fix + cost-model rework) —
+  built but 100% lethal today; best ratio of "unlocks autonomy" to work remaining.
+- **Land acquisition data-quality bugs** ([echoboats#337]/[echoboats#338]/[echoboats#339])
+  — corrupt every downstream product in *both* arcs; cheap, foundational.
+- The **sidescan track** ([#171]/[#185]) and the **draft→processed + coverage-QC
+  loop** (the gap between "collected data" and "finished survey") — [cube#80] is
+  a first step, producing an authoritative backscatter layer off-boat.
 
 ## Related
 
