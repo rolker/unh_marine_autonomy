@@ -67,3 +67,15 @@ Both fixes are correctly described in the issue. The `cube_bathymetry` repo curr
 
 ### Actions
 - [ ] No actions — issue is plan-task-ready.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-27 12:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-228/plan.md` at `34854ef`
+**Branch**: feature/issue-228 at `34854ef`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
