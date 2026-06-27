@@ -1,0 +1,16 @@
+# Source dependencies for CI consumers (vcstool / industrial_ci
+# UPSTREAM_WORKSPACE convention). Lists the unreleased source repos this
+# monorepo depends on but does not vendor, so a downstream `vcs import` can
+# obtain them before a whole-workspace rosdep resolve + build.
+#
+# Currently only unh_marine_navigation (provides marine_nav_interfaces /
+# marine_nav_tasks, depended on by mission_manager*, mission_manager_interfaces,
+# and marine_autonomy_integration_tests). See #228.
+#
+# This is intentionally minimal — config/repos/core.repos lists the full
+# development manifest (many repos beyond what a CI source-dep import needs).
+repositories:
+  unh_marine_navigation:
+    type: git
+    url: https://github.com/rolker/unh_marine_navigation.git
+    version: jazzy
