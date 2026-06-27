@@ -16,7 +16,7 @@
   <depend>marine_autonomy</depend>
   <depend>marine_tiled_raster_store</depend>
   <depend>geographic_msgs</depend>
-  <depend>nlohmann_json</depend>
+  <depend>nlohmann-json-dev</depend>
   <depend>libgdal-dev</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>

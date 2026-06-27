@@ -20,7 +20,7 @@
   <depend>marine_tiled_raster_store</depend>
   <depend>marine_backscatter</depend>
   <depend>geographic_msgs</depend>
-  <depend>nlohmann_json</depend>
+  <depend>nlohmann-json-dev</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
