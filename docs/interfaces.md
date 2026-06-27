@@ -206,5 +206,6 @@ This document describes all ROS communication interfaces (topics, services, acti
 - `TaskInformation[] tasks`: Full task list with status
 
 ## Related Documentation
+- [Sonar Data Ecosystem](sonar_ecosystem.md) - Big-picture map of sonar data flow + umbrella/ADR tracker
 - [Data Flows](data_flows.md) - System-level data flow diagrams
 - [Autonomy Modes](autonomy_modes.md) - State machine documentation

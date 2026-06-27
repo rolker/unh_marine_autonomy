@@ -279,5 +279,6 @@ This document illustrates the data flows through the UNH Marine Autonomy system,
 - **Task Failure**: Navigator reports failure in action result
 
 ## Related Documentation
+- [Sonar Data Ecosystem](sonar_ecosystem.md) - Big-picture map of sonar data flow + umbrella/ADR tracker
 - [Interfaces](interfaces.md) - Detailed topic/service/action specifications
 - [Autonomy Modes](autonomy_modes.md) - State machine documentation
