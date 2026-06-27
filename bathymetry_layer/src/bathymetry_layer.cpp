@@ -935,6 +935,24 @@ void BathymetryLayer::updateCosts(
   // staleness monitor sees a not-yet-complete costmap.
   current_ = map_tide_valid_ && window_valid_ && all_tiles_generated_ &&
     !coverage_empty_lethal_;
+
+  // Diagnostic breadcrumb: while the layer withholds readiness, say WHICH gate is
+  // responsible, so a "planner can't plan / costmap timed out waiting for update"
+  // symptom maps to a cause (no tide TF, store window not loaded, first-pass tile
+  // fill still in progress, or empty-coverage-lethal #2) without re-running blind.
+  // Only fires when not current; in steady state the layer is current and silent.
+  // clock_ guard: unit tests drive updateCosts without onInitialize (no clock_),
+  // and RCLCPP_WARN_THROTTLE dereferences the clock.
+  if (!current_ && clock_) {
+    RCLCPP_WARN_THROTTLE(
+      logger_, *clock_, 5000,
+      "bathymetry_layer '%s' NOT current: map_tide_valid=%d window_valid=%d "
+      "all_tiles_rendered=%d coverage_empty_lethal=%d (resident tiles=%zu)",
+      name_.c_str(),
+      static_cast<int>(map_tide_valid_), static_cast<int>(window_valid_),
+      static_cast<int>(all_tiles_generated_),
+      static_cast<int>(coverage_empty_lethal_), tiles_.size());
+  }
 }
 
 }  // namespace bathymetry_layer
