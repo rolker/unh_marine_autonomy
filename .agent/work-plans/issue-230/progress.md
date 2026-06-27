@@ -104,3 +104,32 @@ clarifications (no wire-layout change — generated code unchanged, no rebuild):
 Follow-up (not PR1): consumer patch-application ordering rule is camp #121's to specify; optional ADR-0008 D3 clarification can ride that work.
 
 PR1 clear to push.
+
+## Implementation (PR2)
+**Status**: complete (local) — reconciler lib + tests
+**When**: 2026-06-27 17:25 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8)
+
+**Branch**: feature/issue-230 (off merged jazzy `e372718`)
+
+PR2 delivered — payload-agnostic anti-entropy tile-sync in `marine_tiled_raster_store`:
+- `include/marine_tiled_raster_store/tile_catalog.hpp` + `src/tile_catalog.cpp`:
+  `TileVersion`/`TileCatalogEntry`/`TileCatalog`/`ReconcileResult` types,
+  `TileCatalogBuilder` (source registry → complete snapshot), `TileCatalogReconciler`
+  (pure `reconcile()` → request missing/stale + timestamp-gated prune-on-absence;
+  `markHave`/`drop` for async state). ROS-free, no `marine_interfaces` dep — over
+  `gggs::GridIndex` + `TileVersion` only, so reusable by full- and light-tile sync.
+- `test/test_tile_catalog.cpp`: 13 GTests — builder snapshot/newest-wins/remove;
+  reconciler cold-start/up-to-date/stale/missing/prune/**timestamp-gated prune
+  (fresh tile survives stale catalog)**/reordered-stale-ignored/**boat-reset
+  convergence**/**convergence under loss+reorder**.
+- `tile_io.hpp`: stale "content-hash sync" comment → timestamp/version (ADR-0008 D3) — review finding #2.
+- `CMakeLists.txt`: source added to lib + `test_tile_catalog` gtest registered.
+- `README.md`: documented the sync facility + the new test.
+
+**Verified**: `colcon build` clean (-Wall -Wextra -Wpedantic, no warnings);
+`colcon test` → test_tile_catalog 13/13 pass; `ament_cpplint` clean; no long
+lines / trailing whitespace.
+
+### Next
+- [ ] `/review-code` (container) on the PR2 diff, then push + PR (Part of #230 — closes it).

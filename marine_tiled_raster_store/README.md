@@ -21,6 +21,22 @@ originates in [ADR-0002](../docs/decisions/0002-bathymetric-data-store.md) §D5/
   WGS84-georeferenced from its GGGS grid corners, written north-up; `loadTile`
   recovers the `GridIndex` from the geotransform and **rejects** a tile written
   at a different level or a non-WGS84 raster.
+- **Anti-entropy tile-sync** (`tile_catalog.hpp`) — the `#86`-Phase-6 sync logic
+  this package was always meant to host. **Payload-agnostic** (reasons over tile
+  `GridIndex` + `TileVersion` only, never tile contents) and **ROS-free**, so it
+  serves both the light display-tile transport ([ADR-0008]) and a future
+  full-tile store-to-store sync:
+  - **`TileCatalogBuilder`** (source/boat) — a tile→version registry that emits a
+    **complete** `TileCatalog` snapshot.
+  - **`TileCatalogReconciler`** (consumer/operator) — `reconcile(catalog)` returns
+    the tiles to **request** (missing/stale) and to **prune** (held but absent,
+    **timestamp-gated** so a late/reordered catalog can't delete a just-pushed
+    fresh tile). Pure (no mutation); converges to the catalog under loss/reorder.
+
+  The node boundary adapts the `marine_interfaces` wire messages
+  (`TileCatalog` / `TileRequest` / `SonarVisualizationTile`) to/from these types.
+
+[ADR-0008]: ../docs/decisions/0008-live-sonar-coverage-transport-and-render.md
 
 ## Element types
 
@@ -48,7 +64,11 @@ colcon test --packages-select marine_tiled_raster_store
 
 `test_tile_io` (headless GTest) covers the uint16 single-band and double 3-band
 round-trips, level-mismatch rejection, the `band_nodata`-size guard, and
-dirty-only `saveTiles` / `loadTiles`.
+dirty-only `saveTiles` / `loadTiles`. `test_tile_catalog` covers the
+builder/reconciler: complete-snapshot emission, newest-wins, request of
+missing/stale tiles, prune-on-absence with the timestamp gate (fresh tile
+survives a stale catalog), and convergence under simulated loss/reorder + boat
+reset.
 
 ## Dependencies
 

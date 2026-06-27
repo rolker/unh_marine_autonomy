@@ -16,6 +16,7 @@ find_package(GDAL CONFIG REQUIRED)
 
 add_library(${PROJECT_NAME}
   src/tile_io.cpp
+  src/tile_catalog.cpp
 )
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
@@ -63,6 +64,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_tile_io test/test_tile_io.cpp)
   target_link_libraries(test_tile_io ${PROJECT_NAME})
+
+  ament_add_gtest(test_tile_catalog test/test_tile_catalog.cpp)
+  target_link_libraries(test_tile_catalog ${PROJECT_NAME})
 endif()
 
 ament_package()
