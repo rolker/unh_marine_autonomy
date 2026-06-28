@@ -134,9 +134,14 @@ Each cell stores at minimum **depth** (ellipsoidal height, WGS84),
 **uncertainty**, **source layer**, and **timestamp**. Three source layers,
 queried by descending priority:
 
-1. **Processed** — externally produced grids (bathy-BAG / GeoTIFF), highest
-   confidence.
-2. **Draft** — real-time CUBE output, valuable but potentially noisy.
+1. **Processed** — the authoritative product, highest confidence: externally
+   produced grids (bathy-BAG / GeoTIFF) **or the off-boat CUBE re-run** (the
+   full-bag offline replay via `cube_bathymetry`'s `import_bag`,
+   [cube_bathymetry#85](https://github.com/rolker/cube_bathymetry/issues/85)).
+   Mirrors the backscatter store's `Processed` (ADR-0007): off-boat re-processing
+   is authoritative regardless of source. The *live* node writes Draft, not
+   Processed.
+2. **Draft** — real-time (on-boat, live) CUBE output, valuable but potentially noisy.
 3. **Chart** — S57-derived depths (after datum correction), broad but coarse.
 
 Default query returns the highest-priority source present per cell. A separate
@@ -152,6 +157,15 @@ supersedes draft without data loss.
 [ADR-0005](0005-multi-platform-provenance-registry.md) D2/D8; see D5. The
 navigation-safety **shallowest-reliable** query deliberately ignores the
 provenance axis (ADR-0005 D5 carve-out): it selects on depth + uncertainty only.)
+
+(Amended 2026-06-28, [#241](https://github.com/rolker/unh_marine_autonomy/issues/241):
+the **Processed** layer is broadened from "externally produced grids" to "the
+authoritative product" — externally-processed grids **or the off-boat CUBE re-run**
+(`cube_bathymetry`'s `import_bag`, which now writes Processed by default,
+[cube_bathymetry#85](https://github.com/rolker/cube_bathymetry/issues/85)). This
+aligns with the backscatter store's `Processed` (ADR-0007): off-boat re-processing
+is authoritative regardless of whether it came from an external package or our own
+CUBE replay. The live node still writes Draft.)
 
 ### D4 — All depths on the WGS84 ellipsoid; datum conversion happens at import
 
