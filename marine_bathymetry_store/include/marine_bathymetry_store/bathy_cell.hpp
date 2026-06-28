@@ -46,8 +46,12 @@ namespace marine_bathymetry_store
 /// construction flag the importer opts into.
 enum class SourceLayer : uint8_t
 {
-  Processed = 0,  ///< Externally produced grids (bathy-BAG / GeoTIFF). Highest confidence.
-  Draft = 1,      ///< Real-time CUBE output. Valuable but potentially noisy.
+  Processed = 0,  ///< The authoritative product: externally-processed grids
+                  ///< (bathy-BAG / GeoTIFF) OR the off-boat CUBE re-run (the full-bag
+                  ///< replay via cube_bathymetry `import_bag`, cube_bathymetry#85).
+                  ///< Highest confidence. Mirrors the backscatter store's Processed
+                  ///< (ADR-0007). The *live* node writes Draft, not Processed.
+  Draft = 1,      ///< Real-time (on-boat, live) CUBE output. Valuable but potentially noisy.
   Chart = 2,      ///< Contour / S57-derived prior. Broad, coarse, read-only.
 };
 
