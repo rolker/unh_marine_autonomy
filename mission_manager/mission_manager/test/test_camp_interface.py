@@ -79,6 +79,21 @@ class TestCampInterfaceInit(unittest.TestCase):
         ci = CampInterface(mm)
         self.assertIsNone(ci.command_subscriber)
         self.assertIsNone(ci.status_publisher)
+        self.assertIsNone(ci.task_feedback_publisher)
+
+    def test_on_configure_creates_task_feedback_publisher(self):
+        """on_configure() creates the structured TaskFeedback publisher."""
+        mm = MagicMock()
+        ci = CampInterface(mm)
+        with patch('mission_manager.camp_interface.nav'):
+            ci.on_configure()
+        topics = [
+            call.args[1]
+            for call in mm.create_lifecycle_publisher.call_args_list
+        ]
+        self.assertIn('marine/status/mission_tasks', topics)
+        self.assertIn('marine/status/mission_manager', topics)
+        self.assertIsNotNone(ci.task_feedback_publisher)
 
 
 class TestCommandCallback(unittest.TestCase):
@@ -470,6 +485,7 @@ class TestNavigatorFeedback(unittest.TestCase):
 
         self.ci = CampInterface(self.mm)
         self.ci.status_publisher = MagicMock()
+        self.ci.task_feedback_publisher = MagicMock()
 
     def test_feedback_none_publishes_heartbeat(self):
         """Even with None feedback, a heartbeat should be published."""
@@ -479,6 +495,15 @@ class TestNavigatorFeedback(unittest.TestCase):
                        return_value=MagicMock(values=[])):
                 self.ci.navigatorFeedback(None)
         self.ci.status_publisher.publish.assert_called_once()
+
+    def test_feedback_none_skips_task_feedback(self):
+        """No feedback means no structured TaskFeedback is published."""
+        with patch('mission_manager.camp_interface.KeyValue',
+                   side_effect=MagicMock):
+            with patch('mission_manager.camp_interface.Heartbeat',
+                       return_value=MagicMock(values=[])):
+                self.ci.navigatorFeedback(None)
+        self.ci.task_feedback_publisher.publish.assert_not_called()
 
     def test_feedback_with_tasks_publishes_heartbeat(self):
         """Feedback with task info should publish a heartbeat."""
@@ -491,6 +516,20 @@ class TestNavigatorFeedback(unittest.TestCase):
                        return_value=MagicMock(values=[])):
                 self.ci.navigatorFeedback(feedback_msg)
         self.ci.status_publisher.publish.assert_called_once()
+
+    def test_feedback_with_tasks_publishes_structured_feedback(self):
+        """The raw TaskFeedback is published unflattened for CAMP."""
+        feedback_msg = MagicMock()
+        task_feedback = feedback_msg.feedback.feedback
+        task_feedback.current_navigation_task = 'task_1'
+        task_feedback.tasks = []
+        with patch('mission_manager.camp_interface.KeyValue',
+                   side_effect=MagicMock):
+            with patch('mission_manager.camp_interface.Heartbeat',
+                       return_value=MagicMock(values=[])):
+                self.ci.navigatorFeedback(feedback_msg)
+        self.ci.task_feedback_publisher.publish.assert_called_once_with(
+            task_feedback)
 
 
 class TestNavigatorDone(unittest.TestCase):
@@ -509,6 +548,7 @@ class TestNavigatorDone(unittest.TestCase):
 
         self.ci = CampInterface(self.mm)
         self.ci.status_publisher = MagicMock()
+        self.ci.task_feedback_publisher = MagicMock()
 
     def test_done_with_none_result(self):
         """Handle None result by still publishing a heartbeat."""
@@ -518,6 +558,17 @@ class TestNavigatorDone(unittest.TestCase):
                        return_value=MagicMock(values=[])):
                 self.ci.navigatorDone(None, None)
         self.ci.status_publisher.publish.assert_called_once()
+
+    def test_done_none_result_publishes_empty_task_feedback(self):
+        """Done with no result publishes a current-task-less TaskFeedback."""
+        with patch('mission_manager.camp_interface.KeyValue',
+                   side_effect=MagicMock):
+            with patch('mission_manager.camp_interface.Heartbeat',
+                       return_value=MagicMock(values=[])):
+                self.ci.navigatorDone(None, None)
+        self.ci.task_feedback_publisher.publish.assert_called_once()
+        published = self.ci.task_feedback_publisher.publish.call_args.args[0]
+        self.assertEqual(published.current_navigation_task, '')
 
     def test_done_with_result(self):
         """Publish heartbeat with tasks when a result is provided."""
@@ -529,6 +580,20 @@ class TestNavigatorDone(unittest.TestCase):
                        return_value=MagicMock(values=[])):
                 self.ci.navigatorDone(None, result)
         self.ci.status_publisher.publish.assert_called_once()
+
+    def test_done_result_publishes_structured_task_feedback(self):
+        """Done with a result carries the result task list for CAMP."""
+        result = MagicMock()
+        result.tasks = [MagicMock(id='t1', type='goto', done=True, status='')]
+        with patch('mission_manager.camp_interface.KeyValue',
+                   side_effect=MagicMock):
+            with patch('mission_manager.camp_interface.Heartbeat',
+                       return_value=MagicMock(values=[])):
+                self.ci.navigatorDone(None, result)
+        self.ci.task_feedback_publisher.publish.assert_called_once()
+        published = self.ci.task_feedback_publisher.publish.call_args.args[0]
+        self.assertEqual(published.current_navigation_task, '')
+        self.assertEqual(published.tasks, result.tasks)
 
 
 class TestAlignPoses(unittest.TestCase):
