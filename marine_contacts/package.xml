@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>marine_contacts</name>
+  <version>0.0.0</version>
+  <description>
+    Qt-free builder + manual-curation store for marine_interfaces/Contact: build a
+    BOX Contact from a map-frame footprint, query a contact set by bounding box,
+    persist as a CDR ContactArray, and export GeoJSON. Deps are intentionally tiny
+    (marine_interfaces + rclcpp) so any Contact producer — the operator UI today,
+    an automated detector tomorrow — can link it without pulling a UI/perception
+    toolchain. Extracted from marine_perception_tools (see rqt_operator_tools#86).
+  </description>
+  <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>marine_interfaces</depend>
+  <depend>rclcpp</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
