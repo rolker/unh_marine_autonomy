@@ -38,7 +38,7 @@ from typing import Optional
 from geometry_msgs.msg import PoseStamped, Quaternion
 from marine_autonomy import nav
 from marine_interfaces.msg import BehaviorInformation, Heartbeat, KeyValue
-from marine_nav_interfaces.msg import TaskInformation
+from marine_nav_interfaces.msg import TaskFeedback, TaskInformation
 from rclpy.lifecycle import Node, Publisher
 from rclpy.subscription import Subscription
 from std_msgs.msg import String
@@ -107,6 +107,7 @@ class CampInterface:
         self.mission_manager = mission_manager
         self.command_subscriber: Optional[Subscription] = None
         self.status_publisher: Optional[Publisher] = None
+        self.task_feedback_publisher: Optional[Publisher] = None
         self.earth: Optional[nav.EarthTransforms] = None
 
     def on_configure(self):
@@ -119,6 +120,22 @@ class CampInterface:
             self.mission_manager.create_lifecycle_publisher(
                 Heartbeat,
                 'marine/status/mission_manager',
+                10
+            )
+        )
+
+        # Structured task state for operator stations (CAMP). The Heartbeat
+        # above flattens tasks into key/value strings for at-a-glance status;
+        # this publishes the unflattened TaskFeedback (current task + full task
+        # list) so CAMP can render a structured running-task view. Published on
+        # the same periodic cadence as the Heartbeat (in navigatorFeedback /
+        # navigatorDone) rather than relying on transient_local, because the
+        # udp_bridge to shore is best-effort UDP and does not tunnel DDS
+        # durability — periodic re-publish is what survives the link.
+        self.task_feedback_publisher = (
+            self.mission_manager.create_lifecycle_publisher(
+                TaskFeedback,
+                'marine/status/mission_tasks',
                 10
             )
         )
@@ -157,6 +174,8 @@ class CampInterface:
                 KeyValue(key='Current Nav Task',
                          value=task_feedback.current_navigation_task))
             listTasks(task_feedback.tasks, hb)
+            # Structured mirror of the same feedback for CAMP.
+            self.task_feedback_publisher.publish(task_feedback)
         self.status_publisher.publish(hb)
 
     def navigatorDone(self, state, result):
@@ -170,11 +189,17 @@ class CampInterface:
                 key='T',
                 value=now.isoformat(timespec='milliseconds')))
         hb.values.append(KeyValue(key='Navigator', value='done'))
+        task_feedback = TaskFeedback()
+        task_feedback.current_navigation_task = ''
         if result is None:
             listTasks(None, hb)
         else:
             listTasks(result.tasks, hb)
+            task_feedback.tasks = result.tasks
         self.status_publisher.publish(hb)
+        # Structured final state for CAMP: no current task (navigator done),
+        # carrying the result task list (with their done flags) when present.
+        self.task_feedback_publisher.publish(task_feedback)
 
     def commandCallback(self, msg):
         """Receive ROS command String.
