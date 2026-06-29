@@ -7,7 +7,7 @@ current; when an umbrella closes or a frontier shifts, update the relevant row.
 
 > Status legend: ✅ done · 🔨 in progress · 📋 designed, not built · ⚠️ blocked/degraded
 
-_Last verified: 2026-06-28 (full status audit against PR/merge state)._
+_Last verified: 2026-06-29 (full status audit against PR/merge state)._
 
 ## The two arcs
 
@@ -47,9 +47,9 @@ looked.
 | **Store — bathy** | Multi-source bathy store; layers (draft/processed/chart), priority query | [#86](https://github.com/rolker/unh_marine_autonomy/issues/86) | 0002 | ✅ readiness arc complete; sub-features: [cube#44] chart prior 🔨 implemented (PR#45); [#151] levels / [#188] pyramids / [#189] atomic write 📋 |
 | **Store — backscatter** | Two-tier backscatter store (GeoCoder, draft/processed) | [#180](https://github.com/rolker/unh_marine_autonomy/issues/180) | 0006 / 0007 | 🔨 **M3/MBES half ✅ done**: [cube#80] offline producer merged → `marine_mbes_backscatter_store`; sidescan half 📋 |
 | **Store — provenance** | Cross-store multi-platform source-id + registry | [#179](https://github.com/rolker/unh_marine_autonomy/issues/179) | 0005 | 📋 deferred (multi-platform later tier) |
-| **Live transport** | `SonarVisualizationTile` + anti-entropy tile-sync | [#230](https://github.com/rolker/unh_marine_autonomy/issues/230) (= #86-Phase-6 / #171-I3) | 0008 | ✅ **#230 transport closed + [cube#78] producer merged**; only [camp#121] consumer (live cache) remains |
+| **Live transport** | `SonarVisualizationTile` + anti-entropy tile-sync | [#230](https://github.com/rolker/unh_marine_autonomy/issues/230) (= #86-Phase-6 / #171-I3) | 0008 | ✅ **end-to-end**: #230 transport + [cube#78] producer + [camp#121] consumer (live cache) all merged |
 | **Costmap** | Bathy → Nav2 costmap layer | [#127](https://github.com/rolker/unh_marine_autonomy/issues/127) | — | ✅ **usable** — tide-frame fix [uma#220] + latch-hardening [uma#223] merged (PR#222). Midpoint+uncertainty cost-model rework is a separate enhancement, not a blocker |
-| **Render — CAMP** | Unified band-select + colormap raster render + live cache | [#175](https://github.com/rolker/unh_marine_autonomy/issues/175) (I4), [camp#121], [camp#108], [camp#63] | 0001 / 0008 | 🔨 file-store display + GPU raster ([camp#90]) ✅; band-select [camp#108] in PR review ([camp#124]); live cache [camp#121] 📋 |
+| **Render — CAMP** | Unified band-select + colormap raster render + live cache | [#175](https://github.com/rolker/unh_marine_autonomy/issues/175) (I4), [camp#121], [camp#108], [camp#63] | 0001 / 0008 | ✅ file-store display + GPU raster ([camp#90]), band-select ([camp#108], PR [camp#124] merged), and live cache ([camp#121], PR [camp#139] merged) all landed |
 | **Render — web** | Browser SA viewer (contacts + bathy + sidescan) | [#166](https://github.com/rolker/unh_marine_autonomy/issues/166) | — | 📋 |
 | **Reprocess** | Offline M3 bag → store tiles; PINGMapper offline sidescan EGN | [#171](https://github.com/rolker/unh_marine_autonomy/issues/171) (C1) | — | ✅ M3 import landed ([cube#63] closed); 📋 sidescan offline pipeline to validate; ⚠️ draft→**processed** promotion workflow thin |
 | **Metering** | Per-topic priority on the `udp_bridge` rate-limiter | [udp_bridge#19](https://github.com/rolker/udp_bridge/issues/19) | 0008 (D9) | 📋 |
@@ -68,6 +68,7 @@ looked.
 [camp#108]: https://github.com/rolker/camp/issues/108
 [camp#121]: https://github.com/rolker/camp/issues/121
 [camp#124]: https://github.com/rolker/camp/pull/124
+[camp#139]: https://github.com/rolker/camp/pull/139
 [rqt#58]: https://github.com/rolker/rqt_operator_tools/issues/58
 [uma#220]: https://github.com/rolker/unh_marine_autonomy/issues/220
 [uma#223]: https://github.com/rolker/unh_marine_autonomy/issues/223
@@ -80,6 +81,7 @@ looked.
 [#185]: https://github.com/rolker/unh_marine_autonomy/issues/185
 [#188]: https://github.com/rolker/unh_marine_autonomy/issues/188
 [#189]: https://github.com/rolker/unh_marine_autonomy/issues/189
+[#230]: https://github.com/rolker/unh_marine_autonomy/issues/230
 
 ## Arc 2 — Targets (find, mark, curate)
 
@@ -91,7 +93,7 @@ topic), intentionally *not* the Arc-1 raster tile-sync.
 | Stage | What | Owning issue(s) | ADR | Status |
 |-------|------|-----------------|-----|--------|
 | **Explore** | `rqt` sonar review tools: waterfall over sidescan **and now MBES**, echogram, target views | [rqt#53] (echogram), [rqt#40] (MBES backscatter extractor), [rqt#50]/[rqt#69]/[rqt#73]/[rqt#82] (waterfall) | — | ✅ waterfall + echogram modernized ([rqt#53] done: PR#52/#55/#64/#80 merged); MBES backscatter extractor [rqt#40] 📋 |
-| **Mark** | draw-a-box target marking in the live view → `TargetAnnotation` | [rqt#59] | — | 📋 (gated on the `TargetAnnotation` msg); **near-term subset [rqt#86]** publishes a `Contact` to the bag instead |
+| **Mark** | draw-a-box target marking in the live view → `TargetAnnotation` | [rqt#59] | — | 📋 (gated on the `TargetAnnotation` msg); **near-term subset [rqt#86] ✅ done** (PR#89) — waterfall box-drag publishes a `Contact` to the operator bag. Spawned the lightweight `marine_contacts` builder pkg ([uma#243]), bag recording ([echoboats#348]), configurable topic ([rqt#90]) |
 | **Mark → Contact** | live-view marking publishes into `contact_manager` | [rqt#81] | 0004 | 📋 — the load-bearing link between the arcs |
 | **Contact** | unified `Contact` CRUD store + curate/confirm + distribution | [#157](https://github.com/rolker/unh_marine_autonomy/issues/157) / [#167](https://github.com/rolker/unh_marine_autonomy/issues/167) (+#156) | 0004 | 🔨 v1 core in flight |
 | **Device control** | bridgeable settings for the review tools / CA tuning | [#168](https://github.com/rolker/unh_marine_autonomy/issues/168) | 0003 | 🔨 |
@@ -106,6 +108,9 @@ topic), intentionally *not* the Arc-1 raster tile-sync.
 [rqt#81]: https://github.com/rolker/rqt_operator_tools/issues/81
 [rqt#82]: https://github.com/rolker/rqt_operator_tools/issues/82
 [rqt#86]: https://github.com/rolker/rqt_operator_tools/issues/86
+[rqt#90]: https://github.com/rolker/rqt_operator_tools/issues/90
+[uma#243]: https://github.com/rolker/unh_marine_autonomy/issues/243
+[echoboats#348]: https://github.com/rolker/unh_echoboats_project11/issues/348
 
 > **Tracking gap (follow-up):** unlike Arc 1 (which has #86 / #171 / ADR-0008),
 > the explore→mark→contact→display arc has **no unifying umbrella** tying the
@@ -129,38 +134,41 @@ topic), intentionally *not* the Arc-1 raster tile-sync.
 
 ## Where to direct efforts
 
-### Near-term: last few days of Massabesic — three operator tools
+### Near-term: last few days of Massabesic — three operator tools ✅ COMPLETE
 
 Mission-driven priority (Roland, 2026-06-27): the three tools worth having before
-the final surveying days. Coverage (Tools 1–2) is **band-selectable** — the
-operator views it as **depth / uncertainty / backscatter** through one CAMP
-band-picker + colormap (ADR-0008 D6; [camp#108]/[camp#121]).
+the final surveying days. **All three landed (as of 2026-06-29).** Coverage
+(Tools 1–2) is **band-selectable** — the operator views it as **depth /
+uncertainty / backscatter** through one CAMP band-picker + colormap (ADR-0008 D6).
 
-1. **Display existing coverage, especially multibeam — essentially DONE.** M3 bathy
-   is in the GGGS store ([cube#63] closed); CAMP's GGGS raster layer ([camp#90])
-   renders it; the offline backscatter producer [cube#80] ✅ **merged**
-   (`marine_mbes_backscatter_store`). The band picker (depth/uncertainty/backscatter
-   + colormap, [camp#108]) is **in PR review ([camp#124])** — once it lands, Tool 1
-   is complete. Remaining = land [camp#124].
-2. **Display new coverage as it's collected — producers DONE, consumer is the gap.**
-   The [#230] transport ✅ closed and the [cube#78] producer ✅ **merged** (3-band
-   live tile, sim-verified on Massabesic M3). The one remaining piece is
-   **[camp#121]** — the CAMP consumer + disk-backed live cache, reusing Tool 1's
-   band-generic render. **Untouched; this is the real bottleneck for Tool 2.**
-3. **Mark a target on the live sidescan view → save a contact to the operator bag.**
-   The waterfall's slant→ground geometry ([rqt#58]) is closed; **[rqt#86]** adds the
-   draw-box marking and **publishes a `marine_interfaces/Contact`** (`ORIGIN_HUMAN`)
-   on a bag-recorded topic — sidestepping the unsettled `TargetAnnotation` ([rqt#59])
-   and the `contact_manager` backend (#157/#167). **Untouched.**
+1. **Display existing coverage, especially multibeam — ✅ DONE.** M3 bathy in the
+   GGGS store ([cube#63] closed) + CAMP's GGGS raster layer ([camp#90]) + offline
+   backscatter producer ([cube#80], `marine_mbes_backscatter_store`) + the
+   band picker (depth/uncertainty/backscatter + colormap, [camp#108], PR [camp#124]
+   **merged**).
+2. **Display new coverage as it's collected — ✅ DONE.** [#230] transport closed +
+   [cube#78] producer merged (3-band live tile, sim-verified on Massabesic M3) +
+   the CAMP consumer / disk-backed live cache ([camp#121], PR [camp#139] **merged**)
+   — the last bottleneck, now closed.
+3. **Mark a target on the live sidescan view → save a contact to the operator bag —
+   ✅ DONE.** [rqt#86] (PR#89 **merged**): waterfall box-drag publishes a
+   `marine_interfaces/Contact` (`ORIGIN_HUMAN`) on `/operator/sonar_waterfall/contacts`,
+   recorded by the operator bag ([echoboats#348]); topic is a configurable plugin
+   setting ([rqt#90]). The Qt-free Contact builder got a lightweight home
+   (`marine_contacts`, [uma#243]). Sidesteps the unsettled `TargetAnnotation`
+   ([rqt#59]) and the `contact_manager` backend (#157/#167).
 
 **Producer symmetry:** both backscatter producers are merged — existing coverage
 from the offline import ([cube#80], durable store layer), live coverage from
 [cube#78] (display tile). **Both surface the co-estimated value UNCORRECTED**; the
-nadir-stripe angle-correction is a separate gated issue ([cube#81], now an
-empirical angular-response/ARA approach) that, once landed, corrects both at once.
+nadir-stripe angle-correction ([cube#81]) is now **closed** (PR cube#84 merged, an
+empirical angular-response/ARA approach) and corrects both once enabled.
 
-**Sequence now:** land [camp#124] (finishes Tool 1) → build **[camp#121]** (the
-Tool 2 consumer — top priority) ‖ **[rqt#86]** in parallel (independent rqt track).
+**Next frontier:** the three-tools push is complete. The remaining legibility gaps
+are **Arc 2's `contact_manager` link** — the load-bearing `mark → contact_manager`
+hop ([rqt#81]) plus the CRUD/curate store (#157/#167, in flight) and a unifying
+target-arc umbrella (see the tracking-gap note above) — and the **sidescan track**
+([#171]/[#185]: live mosaic + offline EGN). See "Longer-term / supporting" below.
 
 ### Longer-term / supporting
 
