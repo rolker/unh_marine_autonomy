@@ -254,3 +254,24 @@ Lifecycle: **Implementation → review-code** (re-review the fixes). Hand off to
 fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 248 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-01 04:50 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-248 at `7095cb3`
+**Mode**: pre-push
+**Depth**: Deep (reason: large cross-layer change — two C++ store libs + Nav2 costmap safety layer + 3 substantive ADR amendments; on-disk format break, no migration)
+**Must-fix**: 0 | **Suggestions**: 3
+**Round**: 2 | **Ship**: recommended — 0 must-fix; the primary change (lossless store round-trips + staleness-gate retirement) re-confirmed clean by both Deep adversarial lenses; the 3 surviving suggestions are mechanical twin-store parity guards, non-blocking
+
+### Findings
+- [ ] (suggestion) MBES `load()` lacks the dropped-companion skip the bathy store got in round 1 — a stray `*_time.tif`/`*_source.tif` in `survey/` throws in `loadTile` and aborts the whole load; mirror `isDroppedCompanionTile`. — `marine_mbes_backscatter_store/src/tile_io.cpp:132`
+- [ ] (suggestion) MBES `load()` lacks a `warnIfUnrecognizedStoreLayout` equivalent — a pre-#248 (`draft`/`processed`) store loads silently empty; diagnostic-only (MBES is not a costmap input) but an unjustified asymmetry with bathy. — `marine_mbes_backscatter_store/src/tile_io.cpp:122`
+- [ ] (suggestion) MBES `StoreMetadata::load()` never validates the `version` it writes (magic `2` at :57); a pre-#248/foreign registry loads all-empty untraced. Mirror bathy's `kRegistryVersion` + warn-on-mismatch. — `marine_mbes_backscatter_store/src/registry.cpp:57`
+- [ ] (host) Build + test `bathymetry_layer` (geodesy/nav2 underlay absent in-container) and sim-validate per ADR-0002 D7. (deferred: host action — carried forward from round 1.)
+- [ ] (host) Co-land `cube_bathymetry#96` (synchronized merge — ADR-0002 A2.5) to avoid a broken-build window. (deferred: host action — carried forward from round 1.)
+
+**Notes**: All 3 code suggestions are the same three round-1 bathy store-robustness fixes (`82ba65a`, `604512a`, `b640f5b`) never mirrored to the twin MBES store; round 1 reviewed only `marine_bathymetry_store`, so this round caught the parity gap. Both were cross-pass confirmed by Deep Lens A (logic) + Lens B (systemic/safety), which otherwise verified: lossless Welford `(mean,SE,SD)↔(n,M2)` round-trips with correct n=1 sentinel vs NaN no-data handling; complete, clean staleness-gate retirement with the uncertainty→LETHAL and no-data-conservative gates preserved (`bathymetry_layer.cpp:848–853`); no off-by-one in the collapsed layer arrays. Governance: all principles Pass/Watch, all 3 ADR amendments (0002/0005/0007) accurately mirror the code, all 4 READMEs updated. Plan drift: zero. Static analysis: ament cpplint clean; cppcheck effectively clean (one optional `useStlAlgorithm` nit dropped; ODR error is a separate-test-executable false positive). Copilot Adversarial off (not opted in). Persisted to the project-repo (`unh_marine_autonomy`) timeline, consistent with all prior #248 phase entries.
