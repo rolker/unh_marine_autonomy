@@ -22,9 +22,9 @@ migration is needed — a clean break is safe and the issue justifies it clearly
 
 Key changes:
 - **Bathy store**: collapse three source layers (`chart`/`draft`/`processed`) to
-  two (`pre-existing` + `cube`); drop per-cell `_time` and `_source` rasters;
+  two (`reference` + `survey`); drop per-cell `_time` and `_source` rasters;
   retain `depth`+`uncertainty` value tile (unchanged).
-- **Backscatter store**: collapse `draft`/`processed` to a single `cube` layer;
+- **Backscatter store**: collapse `draft`/`processed` to a single `survey` layer;
   change value tile from `{intensity, intensity_variance}` to
   `{mean, standard_error, sample_sd}` (Float32, 3-band); drop `_time`/`_source`
   rasters; encode Welford sufficient stats for lossless reload.
@@ -49,7 +49,7 @@ import_bag). References #247 (sidescan/source-tag callback, deferred).
 | ADR | Triggered | Notes |
 |---|---|---|
 | Project ADR-0001 (Adopt ADRs) | Yes | Design decisions being made (layer taxonomy reversal, value-band change, source-index drop). Issue proposes ADR-0002 addendum — scope should be widened. |
-| Project ADR-0002 (Bathy store) | Yes — amended | D3 layer taxonomy (`chart`/`draft`/`processed` → `pre-existing`/`cube`) and D5 per-tile file layout (drop `_time`/`_source`, single value tile) are directly revised. Issue correctly calls for an addendum. |
+| Project ADR-0002 (Bathy store) | Yes — amended | D3 layer taxonomy (`chart`/`draft`/`processed` → `reference`/`survey`) and D5 per-tile file layout (drop `_time`/`_source`, single value tile) are directly revised. Issue correctly calls for an addendum. |
 | Project ADR-0005 (Provenance registry) | Yes — not listed | D2/D8 define the per-cell source index (`_source.tif`) + `registry.json` as the platform/sensor provenance mechanism. Dropping per-cell source rasters supersedes those decisions. "Coarse metadata at tile/store level" is the replacement; that decision should be recorded in ADR-0005 as an amendment or a superseding ADR. |
 | Project ADR-0007 (MBES backscatter store) | Yes — not listed | D6 (value tile schema: Float32 `{intensity, intensity_variance}`) and D7 (`draft`/`processed` layer semantics with live-vs-offline distinction) are both overridden by this issue. An ADR-0007 amendment (or addendum to ADR-0002's bathy-addendum) is needed. |
 | Workspace ADR-0008 (ROS 2 conventions) | Watch | No new `.msg`/`.srv` expected here (pure store-format change), so not directly triggered. If any ROS interface changes are added in implementation, conventions apply. |
@@ -114,29 +114,29 @@ Per the consequences map and ADR cross-references:
 **Commits** (atomic, agent identity, hooks passing, no `--no-verify`):
 - `af5189c` docs(adr): amend ADR-0002/0005/0007
 - `8c23003` feat(marine_bathymetry_store): greenfield store-format simplification
-- `09aed92` feat(bathymetry_layer): retire per-cell staleness gate + cube/pre-existing
-- `844ef82` feat(marine_mbes_backscatter_store): 3-band Welford value tile + single cube layer
+- `09aed92` feat(bathymetry_layer): retire per-cell staleness gate + survey/reference
+- `844ef82` feat(marine_mbes_backscatter_store): 3-band Welford value tile + single survey layer
 - `d68bc44` docs(marine_tiled_raster_store): refresh bathy/mbes tile-format cross-references
 
 ### What was implemented (all plan steps)
 
 1. **ADR addenda** (step 1, before code): ADR-0002 Amendment A2 (layer taxonomy
-   chart/draft/processed → cube/pre-existing; drop `_time`/`_source` tiles →
+   chart/draft/processed → survey/reference; drop `_time`/`_source` tiles →
    single 2-band value tile; registry.json → coarse StoreMetadata; **staleness-gate
    retirement rationale** — surveyed static bottom, not a live feed); ADR-0005
    amendment (per-cell source index dropped for single-platform stores; registry
    repurposed; multi-platform contract retained); ADR-0007 amendment A.1–A.4
    (value bands `{intensity,intensity_variance}` → `{mean,standard_error,sample_sd}`
-   Welford stats + confidence-scaled SE; draft/processed → single cube; `_time`/
+   Welford stats + confidence-scaled SE; draft/processed → single survey; `_time`/
    `_source` dropped; safety non-goal unchanged).
 
-2. **marine_bathymetry_store**: `SourceLayer{Cube,PreExisting}`; `BathyCell` /
+2. **marine_bathymetry_store**: `SourceLayer{Survey,Reference}`; `BathyCell` /
    `BathymetryTile` value-only 2-band tile (dropped timestamp/source_index and
    companion tiles); `registry.hpp/.cpp` `SourceRegistry` → flat `StoreMetadata`;
    persistence free fns take `StoreMetadata*`; `DepthSample` slimmed; `geotiff_import`
    drops registry/timestamp/source stamping; `import_geotiff` CLI drops
    `--source-id`/`--datum`/`--timestamp` + SourceRegistry, layer names
-   `cube|pre-existing`, added optional coarse `--platform/--sensor/--survey/--date`.
+   `survey|reference`, added optional coarse `--platform/--sensor/--survey/--date`.
    Tests + README updated; bathy uncertainty round-trip + StoreMetadata round-trip
    added.
 
@@ -145,10 +145,10 @@ Per the consequences map and ADR cross-references:
    re-render interval + `last_full_render_ns_`; `evaluateCell` LETHALs an
    over-uncertain/unreliable cell purely on the uncertainty gate. Removed the
    `StaleCellIsLethal` test and the staleness arm of test 7; dropped the `max_age`
-   README row/param/yaml. Adopted `cube/pre-existing` naming in the store
+   README row/param/yaml. Adopted `survey/reference` naming in the store
    construction + tests.
 
-4. **marine_mbes_backscatter_store**: single `cube` layer; 3-band `Float32`
+4. **marine_mbes_backscatter_store**: single `survey` layer; 3-band `Float32`
    `{mean,standard_error,sample_sd}` value tile; dropped companions; registry →
    `StoreMetadata{...,calibration_ref}`; `IntensitySample` → `BackscatterSample`.
    Tests + README updated.
@@ -204,12 +204,53 @@ Per the consequences map and ADR cross-references:
 **Round**: 1 | **Ship**: continue — one safety-observability must-fix (silent-empty nav prior) worth closing before push; everything else clean
 
 ### Findings
-- [ ] (must-fix) Bathy `load()`/`loadWindow()` silently return empty on an old-layout store dir (no `survey`/`reference` subdir) — no warning; with `unsurveyed_is_lethal_=false` default, unknown seabed reads as navigable. Add a warning matching the existing stale-subdir idiom. — `marine_bathymetry_store/src/tile_io.cpp:262,304`
-- [ ] (suggestion) Stale public accessor `preExistingWritable()` not renamed by the `da258a1` taxonomy rename → `referenceWritable()` + call sites. — `marine_bathymetry_store/include/marine_bathymetry_store/bathymetry_store.hpp:114`
-- [ ] (suggestion) `registry.json` writes `"version": 2` but `load` never validates it; old-schema json loads all-empty silently — add version check or document advisory-only. — `marine_bathymetry_store/src/registry.cpp:57`
-- [ ] (suggestion) Stray `_time.tif`/`_source.tif` companion in a new-named dir aborts the entire bathy load (no per-file try/catch); skip known suffixes or warn-and-skip. — `marine_bathymetry_store/src/tile_io.cpp:269`
-- [ ] (suggestion) Stale class doc describes pre-#248 chart/draft/processed taxonomy. — `bathymetry_layer/src/bathymetry_layer.hpp:30`
-- [ ] (suggestion) progress.md Issue Review + Implementation narrative use old `cube`/`pre-existing` layer names (pre-`da258a1` rename); refresh to match shipped `survey`/`reference`. — `.agent/work-plans/issue-248/progress.md:30`
-- [ ] (host) Build+test `bathymetry_layer` (geodesy/nav2 underlay absent in-container) and sim-validate per ADR-0002 D7; co-land cube_bathymetry#96 (still on old API — build break if #248 lands alone).
+- [x] (must-fix) Bathy `load()`/`loadWindow()` silently return empty on an old-layout store dir (no `survey`/`reference` subdir) — no warning; with `unsurveyed_is_lethal_=false` default, unknown seabed reads as navigable. Add a warning matching the existing stale-subdir idiom. — `marine_bathymetry_store/src/tile_io.cpp:262,304`
+- [x] (suggestion) Stale public accessor `preExistingWritable()` not renamed by the `da258a1` taxonomy rename → `referenceWritable()` + call sites. — `marine_bathymetry_store/include/marine_bathymetry_store/bathymetry_store.hpp:114`
+- [x] (suggestion) `registry.json` writes `"version": 2` but `load` never validates it; old-schema json loads all-empty silently — add version check or document advisory-only. — `marine_bathymetry_store/src/registry.cpp:57`
+- [x] (suggestion) Stray `_time.tif`/`_source.tif` companion in a new-named dir aborts the entire bathy load (no per-file try/catch); skip known suffixes or warn-and-skip. — `marine_bathymetry_store/src/tile_io.cpp:269`
+- [x] (suggestion) Stale class doc describes pre-#248 chart/draft/processed taxonomy. — `bathymetry_layer/src/bathymetry_layer.hpp:30`
+- [x] (suggestion) progress.md Issue Review + Implementation narrative use old `cube`/`pre-existing` layer names (pre-`da258a1` rename); refresh to match shipped `survey`/`reference`. — `.agent/work-plans/issue-248/progress.md:30`
+- [x] (host) Build+test `bathymetry_layer` (geodesy/nav2 underlay absent in-container) and sim-validate per ADR-0002 D7; co-land cube_bathymetry#96 (still on old API — build break if #248 lands alone). (deferred: host action — the geodesy/nav2 underlay is not built in this container, and sim-validation + cross-repo cube_bathymetry#96 co-land are host/operator responsibilities; carried forward to the host.)
 
 **Notes**: Static analysis clean on ament profile (cpplint/uncrustify/cppcheck); deeper cppcheck reports were serialization/separate-test-executable false positives, dropped. Two Deep Claude adversarial passes (Lens A logic + Lens B systemic/safety) both confirmed lossless store round-trips and a clean, complete staleness-gate retirement with LETHAL guards intact. Copilot Adversarial off (not opted in). Progress persisted to the project-repo timeline (`unh_marine_autonomy`), consistent with all prior #248 phase entries.
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-01 04:38 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-248 at `aefefa6`
+**Addressed**: `## Local Review (Pre-Push)` (When 2026-07-01 04:10 +00:00, branch feature/issue-248 at `da258a1`)
+**Commits**: `82ba65a`, `604512a`, `89e1952`, `b640f5b`, `aefefa6` (+ this progress commit)
+
+Worked the 7 open findings of the latest source review (the pre-push
+`## Local Review (Pre-Push)`). Six fixed with atomic commits (hooks passing, no
+`--no-verify`); the one `(host)` finding deferred with a reason. `marine_bathymetry_store`
+rebuilt and tested green after every change (**269 tests, 0 failures**); the
+doc-only `bathymetry_layer` change is not buildable in-container (geodesy underlay
+absent). No re-classification, no self-review — that is the next `review-code` pass.
+
+### Actions
+- [x] (must-fix) Warn on old-layout store load — `load()`/`loadWindow()` now emit a WARNING (matching the stale-subdir idiom) when a store dir holds content but exposes no recognized `survey/`/`reference/` layer subdir, so a silently-empty nav prior is observable; silent for a fresh/empty or metadata-only store. — `marine_bathymetry_store/src/tile_io.cpp` (`82ba65a`)
+- [x] (suggestion) Renamed stale accessor `preExistingWritable()` → `referenceWritable()` + call sites. — `marine_bathymetry_store/include/marine_bathymetry_store/bathymetry_store.hpp` (`89e1952`)
+- [x] (suggestion) Validate `registry.json` schema version on load — added `kRegistryVersion` and a warn-on-mismatch so a pre-#248/foreign registry is not silently read all-empty. — `marine_bathymetry_store/src/registry.cpp` (`b640f5b`)
+- [x] (suggestion) Skip stray `_time`/`_source` companions on load — known-dropped suffixes are warned-and-skipped in both `load()`/`loadWindow()` so a lingering companion no longer aborts the whole load. — `marine_bathymetry_store/src/tile_io.cpp` (`604512a`)
+- [x] (suggestion) Refreshed stale pre-#248 class doc (and the identical README prose) to the shipped `survey`/`reference` taxonomy. — `bathymetry_layer/src/bathymetry_layer.hpp`, `bathymetry_layer/README.md` (`aefefa6`)
+- [x] (suggestion) Refreshed `cube`/`pre-existing` layer names in the Issue Review + Implementation narrative to `survey`/`reference` (the `cube_bathymetry#96` project name and the review-finding text left verbatim). — `.agent/work-plans/issue-248/progress.md` (this commit)
+- [x] (host) Build+test `bathymetry_layer` + sim-validate + co-land `cube_bathymetry#96` — checked, so it reads as consciously handled. (deferred: host action — the geodesy/nav2 underlay is not built in this container; sim-validation and the cross-repo #96 co-land are host/operator responsibilities. Carried forward to the host.)
+
+### Tests added
+- `LoadWarnsOnUnrecognizedStoreLayout` / `LoadDoesNotWarnOnFreshOrMetadataOnlyStore` (F1)
+- `LoadSkipsStrayCompanionRasters` (F4)
+- `MetadataLoadWarnsOnUnrecognizedSchemaVersion` / `MetadataLoadIsSilentOnCurrentSchemaVersion` (F3)
+
+### For the host
+- **Build + test `bathymetry_layer`** (needs the geodesy/nav2 underlay built) and sim-validate per ADR-0002 D7.
+- **Co-land `cube_bathymetry#96`** (synchronized merge — ADR-0002 A2.5) to avoid a broken-build window.
+- Do NOT push / open PR (local-first; host publishes).
+
+### Next step
+Lifecycle: **Implementation → review-code** (re-review the fixes). Hand off to a
+fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 248 --skill review-code
