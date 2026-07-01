@@ -22,23 +22,36 @@
 /// @file
 /// @brief Offline sidescan bag importer → Tier-1 (ADR-0006 D2/D3, issue #184).
 ///
-/// Reads a bag **directly** (rosbag2, not replay): pass 1 fills a `tf2::BufferCore`
-/// from `/tf` + `/tf_static`; pass 2 walks the port/starboard `RawSonarImage`
-/// channels (+ the nadir `Range`), resolves the **baked `earth`→transducer pose**
-/// at each ping time, decodes the backscatter, and writes one Tier-1 record per
-/// ping. No bottom model is applied — that is Tier-2's job.
+/// Reads a bag **directly** (rosbag2, not replay) in a **single interleaved pass**
+/// over `/tf` + `/tf_static` + the port/starboard `RawSonarImage` channels + the
+/// nadir `Range`, all in chronological order. `/tf` feeds a **bounded-window**
+/// `tf2::BufferCore`; each ping waits in a short FIFO until the TF frontier has
+/// advanced a guard interval past its stamp (so both bracketing transforms are
+/// present), then resolves the **baked `earth`→transducer pose**, decodes the
+/// backscatter, and writes one Tier-1 record. No bottom model is applied — that
+/// is Tier-2's job.
+///
+/// The bounded window replaces an earlier two-pass design that buffered the whole
+/// bag's `/tf` history (a 10-hour cache) and did a per-ping `lookupTransform`
+/// against it — an O(n) linear walk of tf2's `std::list`-backed `TimeCache` that
+/// made real survey bags take ~17 min each (issue #251; the same fix as
+/// cube_bathymetry#63).
 ///
 /// NOTE (issue #184): the decode/stamp helpers are replicated from `mosaic_node`
 /// for the prototype; the shared per-ping engine extraction (ADR-0006 D12) is a
 /// follow-up after #177 (PR #181) merges, to avoid touching the node in parallel.
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "builtin_interfaces/msg/time.hpp"
@@ -130,30 +143,18 @@ int main(int argc, char ** argv)
   const double nadir_staleness_s = toDouble(argValue(argc, argv, "--nadir-staleness", "5.0"), "--nadir-staleness");
   const int expected_bins = toInt(argValue(argc, argv, "--bins", "2048"), "--bins");
 
-  // Pass 1 — fill the TF buffer from /tf + /tf_static.
-  tf2::BufferCore tf_buffer(tf2::durationFromSec(36000.0));
-  {
-    rosbag2_cpp::Reader reader;
-    rosbag2_storage::StorageOptions so;
-    so.uri = bag_uri;
-    reader.open(so);
-    rosbag2_storage::StorageFilter filter;
-    filter.topics = {"/tf", "/tf_static"};
-    reader.set_filter(filter);
-    std::size_t n_tf = 0;
-    while (reader.has_next()) {
-      auto bag_msg = reader.read_next();
-      const bool is_static = bag_msg->topic_name == "/tf_static";
-      auto m = deserialize<tf2_msgs::msg::TFMessage>(bag_msg);
-      for (const auto & tr : m.transforms) {
-        tf_buffer.setTransform(tr, "bag", is_static);
-        ++n_tf;
-      }
-    }
-    std::cerr << "pass 1: buffered " << n_tf << " transforms\n";
-  }
+  // Bounded TF cache: the projection only needs the transforms bracketing each
+  // ping's stamp, so a small rolling window keeps tf2's std::list-backed
+  // TimeCache short. Whole-bag buffering (a 10-hour window) made every
+  // lookupTransform an O(n) linear list walk over ~574k transforms → ~17 min/bag
+  // (issue #251; same fix as cube_bathymetry#63). The guard is how far the TF
+  // frontier must advance past a ping before we project it, so both bracketing
+  // transforms are present (no frontier drops).
+  constexpr double kCacheWindowSec = 60.0;
+  constexpr double kGuardSec = 3.0;
+  const std::int64_t kGuardNs = static_cast<std::int64_t>(kGuardSec * 1e9);
+  tf2::BufferCore tf_buffer(tf2::durationFromSec(kCacheWindowSec));
 
-  // Pass 2 — pings + nadir, resolve pose, decode, write Tier-1.
   std::ofstream out(out_path, std::ios::binary);
   if (!out) {
     std::cerr << "error: cannot open output " << out_path << "\n";
@@ -166,16 +167,82 @@ int main(int argc, char ** argv)
   so.uri = bag_uri;
   reader.open(so);
   rosbag2_storage::StorageFilter filter;
-  filter.topics = {port_topic, stbd_topic, nadir_topic};
+  filter.topics = {"/tf", "/tf_static", port_topic, stbd_topic, nadir_topic};
   reader.set_filter(filter);
 
   float held_nadir = -1.0F;
   std::int64_t held_nadir_ns = 0;
-  std::size_t n_written = 0, n_no_tf = 0, n_no_rate = 0, n_bad_bins = 0;
+  std::size_t n_written = 0, n_no_tf = 0, n_no_rate = 0, n_bad_bins = 0, n_tf = 0;
 
+  // How far the newest dynamic /tf stamp has advanced. Static transforms carry a
+  // zero stamp and cover all time, so they do not move the frontier.
+  std::int64_t tf_frontier_ns = std::numeric_limits<std::int64_t>::min();
+
+  // Pings awaiting their bracketing TF. Everything but the earth→transducer pose
+  // is filled at enqueue (including the nadir snapshot, so the last-nadir-within-
+  // staleness semantics are evaluated at the ping's own time, not at drain time);
+  // the pose lookup is deferred until the frontier passes ping_ns + guard.
+  struct PendingPing
+  {
+    std::int64_t ping_ns;
+    std::string frame_id;
+    marine_sidescan_mosaic::Tier1Ping p;
+  };
+  std::deque<PendingPing> pending;
+
+  // Project queued pings whose bracketing TF is now present (frontier advanced a
+  // guard interval past the ping stamp). With flush=true, project whatever
+  // remains at end-of-stream against the available coverage.
+  auto drain_pending = [&](bool flush) {
+      while (!pending.empty()) {
+        auto & front = pending.front();
+        if (!flush &&
+          (tf_frontier_ns == std::numeric_limits<std::int64_t>::min() ||
+          front.ping_ns > tf_frontier_ns - kGuardNs))
+        {
+          break;
+        }
+        try {
+          const auto pose = tf_buffer.lookupTransform(
+            earth_frame, front.frame_id,
+            tf2::TimePoint(std::chrono::nanoseconds(front.ping_ns)));
+          front.p.tx = pose.transform.translation.x;
+          front.p.ty = pose.transform.translation.y;
+          front.p.tz = pose.transform.translation.z;
+          front.p.qx = pose.transform.rotation.x;
+          front.p.qy = pose.transform.rotation.y;
+          front.p.qz = pose.transform.rotation.z;
+          front.p.qw = pose.transform.rotation.w;
+          marine_sidescan_mosaic::writeTier1Ping(out, front.p);
+          ++n_written;
+        } catch (const tf2::TransformException &) {
+          // No earth transform in the bounded buffer at this stamp — before the
+          // first fix, or a TF gap wider than the cache window. Counted, not
+          // silently dropped.
+          ++n_no_tf;
+        }
+        pending.pop_front();
+      }
+    };
+
+  // SINGLE INTERLEAVED PASS over the chronological message stream.
   while (reader.has_next()) {
     auto bag_msg = reader.read_next();
     const std::string & topic = bag_msg->topic_name;
+
+    if (topic == "/tf" || topic == "/tf_static") {
+      const bool is_static = topic == "/tf_static";
+      auto m = deserialize<tf2_msgs::msg::TFMessage>(bag_msg);
+      for (const auto & tr : m.transforms) {
+        tf_buffer.setTransform(tr, "bag", is_static);
+        ++n_tf;
+        if (!is_static) {
+          tf_frontier_ns = std::max(tf_frontier_ns, stampNs(tr.header.stamp));
+        }
+      }
+      drain_pending(false);
+      continue;
+    }
 
     if (topic == nadir_topic) {
       auto r = deserialize<sensor_msgs::msg::Range>(bag_msg);
@@ -202,31 +269,20 @@ int main(int argc, char ** argv)
     }
     const std::int64_t ping_ns = stampNs(msg.header.stamp);
 
-    geometry_msgs::msg::TransformStamped pose;
-    try {
-      pose = tf_buffer.lookupTransform(
-        earth_frame, msg.header.frame_id,
-        tf2::TimePoint(std::chrono::nanoseconds(ping_ns)));
-    } catch (const tf2::TransformException &) {
-      ++n_no_tf;
-      continue;
-    }
-
-    marine_sidescan_mosaic::Tier1Ping p;
+    PendingPing pp;
+    pp.ping_ns = ping_ns;
+    pp.frame_id = msg.header.frame_id;
+    marine_sidescan_mosaic::Tier1Ping & p = pp.p;
     p.stamp_ns = ping_ns;
     p.channel = is_port ? marine_sidescan_mosaic::Tier1Channel::Port
       : marine_sidescan_mosaic::Tier1Channel::Starboard;
-    p.tx = pose.transform.translation.x;
-    p.ty = pose.transform.translation.y;
-    p.tz = pose.transform.translation.z;
-    p.qx = pose.transform.rotation.x;
-    p.qy = pose.transform.rotation.y;
-    p.qz = pose.transform.rotation.z;
-    p.qw = pose.transform.rotation.w;
     p.sound_speed = msg.ping_info.sound_speed > 0.0 ? msg.ping_info.sound_speed
       : sound_speed_fallback;
     p.sample_rate = msg.sample_rate;
     p.sample0 = static_cast<std::int32_t>(msg.sample0);
+    // Snapshot the held nadir at the ping's own time (not at drain), matching the
+    // pre-single-pass semantics: the most recent nadir at/before the ping, within
+    // the staleness bound.
     const double age_s = std::abs(ping_ns - held_nadir_ns) / 1e9;
     p.nadir_altitude_m = (held_nadir > 0.0F && age_s <= nadir_staleness_s) ? held_nadir : -1.0F;
     // Along-track tx −3 dB beamwidth (Tier-1 v2), so offline Tier-2 reproduces the
@@ -237,9 +293,9 @@ int main(int argc, char ** argv)
     const auto raw = marine_sidescan_mosaic::decodeSamples(msg);
     p.samples.assign(raw.begin(), raw.end());   // double -> float (lossless for GCV range).
 
-    marine_sidescan_mosaic::writeTier1Ping(out, p);
-    ++n_written;
+    pending.push_back(std::move(pp));
   }
+  drain_pending(true);   // project the tail (within a guard of end-of-stream).
 
   out.flush();
   if (!out.good()) {
@@ -247,8 +303,8 @@ int main(int argc, char ** argv)
               << " may be truncated\n";
     return 1;
   }
-  std::cerr << "pass 2: wrote " << n_written << " Tier-1 pings to " << out_path
-            << " (dropped: no-tf=" << n_no_tf << " no-rate=" << n_no_rate
-            << " bad-bins=" << n_bad_bins << ")\n";
+  std::cerr << "wrote " << n_written << " Tier-1 pings to " << out_path
+            << " (fed " << n_tf << " transforms; dropped: no-tf=" << n_no_tf
+            << " no-rate=" << n_no_rate << " bad-bins=" << n_bad_bins << ")\n";
   return 0;
 }
