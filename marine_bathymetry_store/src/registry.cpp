@@ -21,18 +21,17 @@
 
 #include "marine_bathymetry_store/registry.hpp"
 
-#include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <limits>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 
 #include <nlohmann/json.hpp>
 
 /// @file
-/// @brief `SourceRegistry` implementation: in-memory interning plus atomic
-/// `registry.json` persistence (ADR-0005 D2/D8).
+/// @brief `StoreMetadata` persistence: a flat, atomic `registry.json` sidecar
+/// recording coarse store-level provenance (ADR-0005 #248 amendment).
 
 namespace marine_bathymetry_store
 {
@@ -42,18 +41,10 @@ namespace
 constexpr const char * kRegistryFile = "registry.json";
 constexpr const char * kRegistryTmpFile = "registry.json.tmp";
 
-nlohmann::json recordToJson(uint16_t index, const SourceRecord & r)
-{
-  return nlohmann::json{
-    {"index", index},
-    {"source_id", r.source_id},
-    {"platform", r.platform},
-    {"sensor", r.sensor},
-    {"sensor_class", r.sensor_class},
-    {"campaign", r.campaign},
-    {"datum", r.datum},
-  };
-}
+/// Schema version of the coarse `StoreMetadata` sidecar (ADR-0005 #248
+/// amendment). Bump when the field set or semantics change; `load` warns on a
+/// mismatch so an older/foreign schema is not silently read as all-empty.
+constexpr int kRegistryVersion = 2;
 
 /// Read a string field, defaulting to empty if absent (forward-compatible load).
 std::string jsonStr(const nlohmann::json & j, const char * key)
@@ -63,42 +54,17 @@ std::string jsonStr(const nlohmann::json & j, const char * key)
 }
 }  // namespace
 
-uint16_t SourceRegistry::registerSource(const SourceRecord & record)
-{
-  const auto existing = by_source_id_.find(record.source_id);
-  if (existing != by_source_id_.end()) {
-    return existing->second;
-  }
-  // Indices are 1-based (0 reserved); the next index is size() + 1.
-  if (by_index_.size() >= std::numeric_limits<uint16_t>::max()) {
-    throw std::overflow_error("SourceRegistry: exhausted all 65535 source indices");
-  }
-  const uint16_t index = static_cast<uint16_t>(by_index_.size() + 1);
-  by_index_.push_back(record);
-  by_source_id_.emplace(record.source_id, index);
-  return index;
-}
-
-std::optional<SourceRecord> SourceRegistry::lookup(uint16_t index) const
-{
-  if (index == kUnset || index > by_index_.size()) {
-    return std::nullopt;
-  }
-  return by_index_[static_cast<std::size_t>(index) - 1];
-}
-
-void SourceRegistry::saveRegistry(const std::string & store_root_dir) const
+void StoreMetadata::save(const std::string & store_root_dir) const
 {
   namespace fs = std::filesystem;
   fs::create_directories(store_root_dir);
 
-  nlohmann::json sources = nlohmann::json::array();
-  for (std::size_t i = 0; i < by_index_.size(); ++i) {
-    sources.push_back(recordToJson(static_cast<uint16_t>(i + 1), by_index_[i]));
-  }
   const nlohmann::json doc{
-    {"version", 1},
-    {"sources", std::move(sources)},
+    {"version", kRegistryVersion},
+    {"platform", platform},
+    {"sensor", sensor},
+    {"survey", survey},
+    {"date", date},
   };
 
   const fs::path tmp = fs::path(store_root_dir) / kRegistryTmpFile;
@@ -106,15 +72,15 @@ void SourceRegistry::saveRegistry(const std::string & store_root_dir) const
   {
     std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
     if (!out) {
-      throw std::runtime_error("SourceRegistry::saveRegistry: could not open " + tmp.string());
+      throw std::runtime_error("StoreMetadata::save: could not open " + tmp.string());
     }
     out << doc.dump(2) << '\n';
     out.flush();
     if (!out) {
-      throw std::runtime_error("SourceRegistry::saveRegistry: write failed for " + tmp.string());
+      throw std::runtime_error("StoreMetadata::save: write failed for " + tmp.string());
     }
   }
-  // Atomic publish: rename over the existing registry. rename() on the same
+  // Atomic publish: rename over the existing file. rename() on the same
   // filesystem is atomic, so a reader sees either the old or the new file whole.
   // On rename failure, remove the tmp file to avoid leaving an orphan.
   try {
@@ -126,71 +92,44 @@ void SourceRegistry::saveRegistry(const std::string & store_root_dir) const
   }
 }
 
-void SourceRegistry::loadRegistry(const std::string & store_root_dir)
+void StoreMetadata::load(const std::string & store_root_dir)
 {
   namespace fs = std::filesystem;
   const fs::path path = fs::path(store_root_dir) / kRegistryFile;
   if (!fs::is_regular_file(path)) {
-    return;   // fresh store: no registry yet
+    return;   // fresh store: no metadata yet
   }
 
   std::ifstream in(path, std::ios::binary);
   if (!in) {
-    throw std::runtime_error("SourceRegistry::loadRegistry: could not open " + path.string());
+    throw std::runtime_error("StoreMetadata::load: could not open " + path.string());
   }
   nlohmann::json doc;
   try {
     in >> doc;
   } catch (const nlohmann::json::parse_error & e) {
     throw std::runtime_error(
-            "SourceRegistry::loadRegistry: malformed " + path.string() + ": " + e.what());
+            "StoreMetadata::load: malformed " + path.string() + ": " + e.what());
   }
 
-  by_index_.clear();
-  by_source_id_.clear();
-  const auto sources = doc.find("sources");
-  if (sources == doc.end() || !sources->is_array()) {
-    return;   // empty / sourceless registry
+  // Validate the schema version so a pre-#248 (or foreign) registry is not read
+  // as all-empty without a trace. Fields are still read forward-compatibly
+  // (jsonStr defaults absent keys to empty); the warning is the observability.
+  const auto vit = doc.find("version");
+  const int version = (vit != doc.end() && vit->is_number_integer()) ?
+    vit->get<int>() :
+    0;
+  if (version != kRegistryVersion) {
+    std::cerr << "[marine_bathymetry_store] WARNING: registry.json at '"
+              << path.string() << "' has unrecognized schema version " << version
+              << " (expected " << kRegistryVersion << "); coarse store provenance "
+              << "may load empty or incomplete.\n";
   }
-  // Records carry an explicit "index"; validate them against the expected
-  // position (1-based, contiguous, monotonically increasing by +1).  A
-  // reordered, sparse, or duplicate hand-edited registry.json would produce
-  // mismatches between the stored index and the reconstructed by_index_ /
-  // by_source_id_ maps — silently delivering wrong provenance.  Reject early
-  // with a clear error rather than silently diverge.
-  for (const auto & entry : *sources) {
-    SourceRecord r{
-      jsonStr(entry, "source_id"), jsonStr(entry, "platform"),
-      jsonStr(entry, "sensor"), jsonStr(entry, "sensor_class"),
-      jsonStr(entry, "campaign"), jsonStr(entry, "datum")};
-    // Expected index for this entry (1-based: position 0 → index 1, etc.).
-    const uint16_t expected = static_cast<uint16_t>(by_index_.size() + 1);
-    // Stored index field — must match.
-    const auto idx_it = entry.find("index");
-    if (idx_it == entry.end() || !idx_it->is_number_unsigned()) {
-      throw std::runtime_error(
-              "SourceRegistry::loadRegistry: entry for source_id=\"" + r.source_id +
-              "\" is missing a valid \"index\" field (expected " +
-              std::to_string(expected) + ")");
-    }
-    const uint16_t stored = idx_it->get<uint16_t>();
-    if (stored != expected) {
-      throw std::runtime_error(
-              "SourceRegistry::loadRegistry: entry for source_id=\"" + r.source_id +
-              "\" has stored index " + std::to_string(stored) +
-              " but expected " + std::to_string(expected) +
-              " (indices must be contiguous from 1; the registry may have been"
-              " reordered, has gaps, or contains duplicate entries)");
-    }
-    if (by_source_id_.count(r.source_id)) {
-      throw std::runtime_error(
-              "SourceRegistry::loadRegistry: duplicate source_id=\"" + r.source_id +
-              "\" at index " + std::to_string(expected) +
-              " (each source_id must appear at most once in registry.json)");
-    }
-    by_index_.push_back(r);
-    by_source_id_.emplace(r.source_id, expected);
-  }
+
+  platform = jsonStr(doc, "platform");
+  sensor = jsonStr(doc, "sensor");
+  survey = jsonStr(doc, "survey");
+  date = jsonStr(doc, "date");
 }
 
 }  // namespace marine_bathymetry_store

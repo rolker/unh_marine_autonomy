@@ -11,6 +11,15 @@ backscatter stores — **sidescan** (ADR-0006) and **MBES** (ADR-0007), both und
 #180 — and defines the provenance contract all three share. It is foundational to
 those store ADRs rather than owned by any one of them.
 
+**Amended 2026-07-01 ([#248](https://github.com/rolker/unh_marine_autonomy/issues/248)):**
+for the current **single-platform** deployment the per-cell source-index axis (D2)
+is **dropped** from the bathy and MBES stores, and their `registry.json` sidecar is
+**repurposed** from a per-cell interning table to a coarse store-level
+`StoreMetadata{platform, sensor, survey, date}`. The per-cell provenance mechanism
+(D2/D4) is **retained in this ADR as the multi-platform contract**; it is simply not
+instantiated per-cell while there is one platform. See the **#248 amendment** at the
+end of the Decision section.
+
 ## Context
 
 Depth and backscatter data will increasingly come from **more than one platform
@@ -275,6 +284,37 @@ navigation query.
   **local indices** stay consistent across synced stores, is deferred); and the
   reconciliation policy for divergent registry records. Staged with multi-platform
   ingest, after single-platform (Garmin) ingest is real.
+
+## Amendment — Per-cell source index dropped for single-platform stores ([#248](https://github.com/rolker/unh_marine_autonomy/issues/248), 2026-07-01)
+
+D2 persists a compact **per-cell source index** in each tile and a `registry.json`
+sidecar interning `index → { source-id, record }`. That is the right contract **once
+more than one platform contributes cells to the same tile** (D2's premise). The
+current deployment is **single-platform** (BizzyBoat M3), so within any tile the
+winning source is a **constant** — the exact condition ADR-0002's original D5 cited
+before multi-platform fusion reintroduced the band (D2, "Persistence — this amends
+ADR-0002 D5").
+
+Decision for the bathy store (ADR-0002) and the MBES backscatter store (ADR-0007):
+
+- **Drop the per-cell source-index band** (`_source.tif`). With one platform it
+  carries no information; storing it per-cell is unwarranted state. This reverts the
+  D2 per-cell obligation **for these two single-platform stores only**.
+- **Repurpose `registry.json`** from the D2/D3 interning table (`SourceRegistry` +
+  per-index `SourceRecord`) to a flat, store-level
+  **`StoreMetadata{platform, sensor, survey, date}`**. Coarse provenance — who made
+  this store — is recorded **once at the store root**, not per-cell. This keeps the
+  D3 core fields that matter at store granularity (`platform`, `sensor`, plus a
+  `survey`/`date`) without the interning machinery.
+- **The multi-platform contract (D1–D8) is unchanged and retained.** When a second
+  platform/sensor contributes, the per-cell index + interning registry is the
+  mechanism to reintroduce — this amendment does not delete the design, it declines
+  to instantiate it per-cell while there is nothing to disambiguate. The **D5 safety
+  carve-out** never depended on the source index (it selects by depth + uncertainty
+  only), so retiring the per-cell axis does not touch navigation safety.
+
+The sidescan store (ADR-0006) is **not** affected: its `uint16` value tile already
+co-locates the source index in a shared dtype, and it is the multi-sensor path.
 
 ## References
 

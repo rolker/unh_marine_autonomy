@@ -23,16 +23,15 @@
 /// @brief CLI: import a depth/uncertainty GeoTIFF into a store layer.
 ///
 /// usage: import_geotiff <store_dir> <layer> <geotiff>
-///                       [--cell-size m] [--level N] [--timestamp unix_seconds]
+///                       [--cell-size m] [--level N]
 ///                       [--uncertainty m] [--depth-scale s] [--depth-offset m]
-///                       [--source-id ID --platform P --sensor S
-///                        --sensor-class C --campaign K --datum D]
+///                       [--platform P] [--sensor S] [--survey K] [--date D]
 ///
 /// Loads any existing tiles under <store_dir>, imports the GeoTIFF into <layer>'s
-/// single fused surface (#221 — no per-day epoch), registers the provenance
-/// source (if --source-id given) and stamps every cell with its registry index
-/// (ADR-0005 D2/D8), then saves. If --timestamp is omitted cells are stamped 0
-/// (unset) — a whole-file product carries no native per-cell time.
+/// single fused surface (#221 — no per-day epoch), then saves. Per-cell time /
+/// source provenance was dropped in #248; coarse store-level provenance
+/// (StoreMetadata) may be set with the --platform/--sensor/--survey/--date flags
+/// and is written to <store_dir>/registry.json.
 
 #include <cstring>
 #include <iostream>
@@ -51,39 +50,33 @@ void usage()
 {
   std::cout <<
     "usage: import_geotiff <store_dir> <layer> <geotiff>\n"
-    "                      [--cell-size m] [--level N] [--timestamp unix_seconds]\n"
+    "                      [--cell-size m] [--level N]\n"
     "                      [--uncertainty m] [--depth-scale s] [--depth-offset m]\n"
-    "                      [--source-id ID --platform P --sensor S\n"
-    "                       --sensor-class C --campaign K --datum D]\n"
-    "  layer:      processed | draft | chart\n"
+    "                      [--platform P] [--sensor S] [--survey K] [--date D]\n"
+    "  layer:      survey | reference\n"
     "  --cell-size: store default cell size in metres (default 0.5)\n"
     "  --level:     GGGS level to import at (default: derived from --cell-size).\n"
     "               The store is multi-level; pass a level to match the source.\n"
-    "  --timestamp: per-cell acquisition time (Unix seconds); defaults to 0\n"
-    "               (unset) — a whole-file product carries no native per-cell time\n"
     "  --uncertainty: ignore the file's uncertainty band and assign this\n"
     "               constant 1-sigma value (for sources without one)\n"
     "  --depth-scale / --depth-offset: vertical conversion at import,\n"
     "               height = scale*pixel + offset (defaults 1, 0). A\n"
     "               positive-down depths-below-lake-surface product imports\n"
     "               with scale -1 and offset = lake surface ellipsoidal height\n"
-    "  --source-id ... --datum: register a provenance SourceRecord (ADR-0005);\n"
-    "               every imported cell is stamped with its registry index\n";
+    "  --platform/--sensor/--survey/--date: coarse store-level provenance\n"
+    "               (StoreMetadata) written to registry.json (ADR-0005 #248)\n";
   exit(1);
 }
 
 marine_bathymetry_store::SourceLayer layerFromName(const std::string & name)
 {
-  if (name == "processed") {
-    return marine_bathymetry_store::SourceLayer::Processed;
+  if (name == "survey") {
+    return marine_bathymetry_store::SourceLayer::Survey;
   }
-  if (name == "draft") {
-    return marine_bathymetry_store::SourceLayer::Draft;
+  if (name == "reference") {
+    return marine_bathymetry_store::SourceLayer::Reference;
   }
-  if (name == "chart") {
-    return marine_bathymetry_store::SourceLayer::Chart;
-  }
-  std::cerr << "unknown layer '" << name << "' (expected processed|draft|chart)\n";
+  std::cerr << "unknown layer '" << name << "' (expected survey|reference)\n";
   exit(1);
 }
 
@@ -95,11 +88,10 @@ int main(int argc, char * argv[])
   int n_positional = 0;
   double cell_size = 0.5;
   int level = -1;                       // sentinel: derive from --cell-size
-  double timestamp = 0.0;               // default: unset (no native per-cell time)
   double constant_uncertainty = -1.0;   // sentinel: use the file's band
   double depth_scale = 1.0;
   double depth_offset = 0.0;
-  marine_bathymetry_store::SourceRecord source;
+  marine_bathymetry_store::StoreMetadata metadata;
 
   const auto need_arg = [&](int & i) -> const char * {
       if (i + 1 >= argc) {
@@ -113,26 +105,20 @@ int main(int argc, char * argv[])
       cell_size = std::stod(need_arg(i));
     } else if (std::strcmp(argv[i], "--level") == 0) {
       level = std::stoi(need_arg(i));
-    } else if (std::strcmp(argv[i], "--timestamp") == 0) {
-      timestamp = std::stod(need_arg(i));
     } else if (std::strcmp(argv[i], "--uncertainty") == 0) {
       constant_uncertainty = std::stod(need_arg(i));
     } else if (std::strcmp(argv[i], "--depth-scale") == 0) {
       depth_scale = std::stod(need_arg(i));
     } else if (std::strcmp(argv[i], "--depth-offset") == 0) {
       depth_offset = std::stod(need_arg(i));
-    } else if (std::strcmp(argv[i], "--source-id") == 0) {
-      source.source_id = need_arg(i);
     } else if (std::strcmp(argv[i], "--platform") == 0) {
-      source.platform = need_arg(i);
+      metadata.platform = need_arg(i);
     } else if (std::strcmp(argv[i], "--sensor") == 0) {
-      source.sensor = need_arg(i);
-    } else if (std::strcmp(argv[i], "--sensor-class") == 0) {
-      source.sensor_class = need_arg(i);
-    } else if (std::strcmp(argv[i], "--campaign") == 0) {
-      source.campaign = need_arg(i);
-    } else if (std::strcmp(argv[i], "--datum") == 0) {
-      source.datum = need_arg(i);
+      metadata.sensor = need_arg(i);
+    } else if (std::strcmp(argv[i], "--survey") == 0) {
+      metadata.survey = need_arg(i);
+    } else if (std::strcmp(argv[i], "--date") == 0) {
+      metadata.date = need_arg(i);
     } else if (n_positional < 3) {
       positional[n_positional++] = argv[i];
     } else {
@@ -146,24 +132,24 @@ int main(int argc, char * argv[])
   const auto layer = layerFromName(positional[1]);
   const std::string & geotiff = positional[2];
 
-  // The importer is the one sanctioned writer of the read-only Chart prior, so
-  // it opts into chart_writable only when the target layer is Chart (ADR-0002
-  // §D3). For Processed/Draft this stays false, so a typo'd layer can't touch
-  // Chart.
-  const bool chart_writable = (layer == marine_bathymetry_store::SourceLayer::Chart);
+  // The importer is the one sanctioned writer of the read-only Reference prior,
+  // so it opts into reference_writable only when the target layer is
+  // Reference (ADR-0002 §D3). For Survey this stays false, so a typo'd layer
+  // can't touch the prior.
+  const bool reference_writable =
+    (layer == marine_bathymetry_store::SourceLayer::Reference);
   auto store = marine_bathymetry_store::BathymetryStore::fromCellSize(
-    static_cast<float>(cell_size), chart_writable);
+    static_cast<float>(cell_size), reference_writable);
   std::cout << "store default level: " << static_cast<int>(store.level().level()) << "\n";
 
-  marine_bathymetry_store::SourceRegistry registry;
-  const std::size_t loaded = marine_bathymetry_store::load(store, store_dir, &registry);
+  marine_bathymetry_store::StoreMetadata existing_metadata;
+  const std::size_t loaded =
+    marine_bathymetry_store::load(store, store_dir, &existing_metadata);
   std::cout << "loaded " << loaded << " existing tile(s) from " << store_dir << "\n";
 
   marine_bathymetry_store::GeoTiffImportOptions options;
-  options.timestamp = timestamp;
   options.depth_scale = depth_scale;
   options.depth_offset = depth_offset;
-  options.source = source;
   if (level >= 0) {
     if (level > 20) {
       std::cerr << "invalid --level " << level << " (GGGS levels are 0..20)\n";
@@ -176,10 +162,15 @@ int main(int argc, char * argv[])
     options.default_uncertainty = constant_uncertainty;
   }
   const std::size_t imported = marine_bathymetry_store::importGeoTiff(
-    store, registry, layer, geotiff, options);
+    store, layer, geotiff, options);
   std::cout << "imported " << imported << " cell(s) into " << positional[1] << "\n";
 
-  const std::size_t saved = marine_bathymetry_store::save(store, store_dir, &registry);
+  // Write the coarse StoreMetadata only if any field was supplied; otherwise
+  // preserve whatever registry.json already held (loaded above).
+  const marine_bathymetry_store::StoreMetadata * to_write =
+    metadata.empty() ? (existing_metadata.empty() ? nullptr : &existing_metadata) :
+    &metadata;
+  const std::size_t saved = marine_bathymetry_store::save(store, store_dir, to_write);
   std::cout << "saved " << saved << " tile(s) under " << store_dir << "\n";
   return 0;
 }

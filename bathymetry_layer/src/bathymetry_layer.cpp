@@ -86,9 +86,6 @@ void BathymetryLayer::onInitialize()
   declareParameter("max_uncertainty", rclcpp::ParameterValue(max_uncertainty_));
   node->get_parameter(name_ + ".max_uncertainty", max_uncertainty_);
 
-  declareParameter("max_age", rclcpp::ParameterValue(max_age_));
-  node->get_parameter(name_ + ".max_age", max_age_);
-
   declareParameter("unsurveyed_is_lethal", rclcpp::ParameterValue(unsurveyed_is_lethal_));
   node->get_parameter(name_ + ".unsurveyed_is_lethal", unsurveyed_is_lethal_);
 
@@ -187,8 +184,8 @@ void BathymetryLayer::onInitialize()
     logger_,
     "bathymetry_layer '" << name_ << "': store_path='" << store_path_ << "', minimum_depth="
                          << minimum_depth_ << " m, maximum_caution_depth=" << maximum_caution_depth_
-                         << " m, max_uncertainty=" << max_uncertainty_ << " m, max_age=" << max_age_
-                         << " s, unsurveyed_is_lethal=" << unsurveyed_lethal_str
+                         << " m, max_uncertainty=" << max_uncertainty_
+                         << " m, unsurveyed_is_lethal=" << unsurveyed_lethal_str
                          << ", map_frame='" << map_frame_ << "', map_tide_frame='"
                          << map_tide_frame_ << "'");
 
@@ -217,8 +214,8 @@ void BathymetryLayer::openStore()
   }
   try {
     // The default level only governs cellIndex(lat,lon); the store is otherwise
-    // multi-level. chart_writable=false: a navigation consumer never mutates the
-    // read-only prior.
+    // multi-level. reference_writable=false: a navigation consumer never
+    // mutates the read-only prior.
     store_ = std::make_unique<BathymetryStore>(
       BathymetryStore::fromCellSize(static_cast<float>(resolution_), false));
   } catch (const std::exception & e) {
@@ -427,7 +424,6 @@ void BathymetryLayer::generateTile(
     auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
       tile_size_, tile_size_, resolution_, world_min_x, world_min_y,
       nav2_costmap_2d::NO_INFORMATION);
-    const int64_t now_ns = clock_->now().nanoseconds();
     const double inv = 1.0 / static_cast<double>(tile_size_);
     for (int ty = 0; ty < tile_size_; ++ty) {
       const double fy = (static_cast<double>(ty) + 0.5) * inv;
@@ -440,7 +436,7 @@ void BathymetryLayer::generateTile(
         const double lat = w00 * clat[0] + w10 * clat[1] + w01 * clat[2] + w11 * clat[3];
         const double lon = w00 * clon[0] + w10 * clon[1] + w01 * clon[2] + w11 * clon[3];
         const gggs::CellIndex cell = store_->cellIndex(lat, lon);
-        const std::optional<unsigned char> evaluated = evaluateCell(cell, now_ns);
+        const std::optional<unsigned char> evaluated = evaluateCell(cell);
         if (evaluated) {
           tile->setCost(
             static_cast<unsigned int>(tx), static_cast<unsigned int>(ty), *evaluated);
@@ -460,7 +456,6 @@ void BathymetryLayer::generateTile(
   auto tile = std::make_shared<nav2_costmap_2d::Costmap2D>(
     tile_size_, tile_size_, resolution_, world_min_x, world_min_y,
     nav2_costmap_2d::NO_INFORMATION);
-  const int64_t now_ns = clock_->now().nanoseconds();
   for (int ty = 0; ty < tile_size_; ++ty) {
     for (int tx = 0; tx < tile_size_; ++tx) {
       double wx;
@@ -478,7 +473,7 @@ void BathymetryLayer::generateTile(
           name_.c_str(), e.what());
         continue;
       }
-      const std::optional<unsigned char> evaluated = evaluateCell(cell, now_ns);
+      const std::optional<unsigned char> evaluated = evaluateCell(cell);
       if (evaluated) {
         tile->setCost(
           static_cast<unsigned int>(tx), static_cast<unsigned int>(ty), *evaluated);
@@ -647,8 +642,6 @@ void BathymetryLayer::updateBounds(
     const double buffer =
       std::max(world_max_x - world_min_x, world_max_y - world_min_y) * buffer_fraction_;
 
-    const int64_t now_ns = clock_->now().nanoseconds();
-
     // Tide-CHANGE invalidation: re-render when the surface MOVED materially.
     // Cached costs keep being served until each tile regenerates (no flicker).
     // NOTE: this handles a tide that *moves*, not a tide that *freezes/stops*
@@ -663,22 +656,6 @@ void BathymetryLayer::updateBounds(
       }
       last_tide_z_ = map_tide_z_;
       tide_rendered_ = true;
-    }
-
-    // Staleness vs caching: a tile is rendered once, so without this a cell that
-    // ages past max_age_ would keep its cached (possibly non-lethal) cost instead
-    // of flipping to stale-LETHAL like the old per-cycle evaluation did. When the
-    // staleness gate is on (max_age_ > 0), force a full re-render every
-    // ~max_age_/2 so a cell goes stale-LETHAL within ~max_age_ of when it should.
-    // max_age_ == 0 (default) disables the gate, keeping the full caching benefit.
-    if (max_age_ > 0.0) {
-      const int64_t interval_ns = static_cast<int64_t>(max_age_ * 5e8);
-      if (now_ns - last_full_render_ns_ >= interval_ns) {
-        for (auto & entry : tiles_) {
-          entry.second.needs_update = true;
-        }
-        last_full_render_ns_ = now_ns;
-      }
     }
 
     // Tiles overlapping the buffered window.
@@ -833,17 +810,8 @@ unsigned char BathymetryLayer::computeCost(double clearance) const
   return static_cast<unsigned char>(scaled);
 }
 
-bool BathymetryLayer::isStale(int64_t timestamp_ns, int64_t now_ns) const
-{
-  if (max_age_ <= 0.0 || timestamp_ns == 0) {
-    return false;
-  }
-  const int64_t max_age_ns = static_cast<int64_t>(max_age_ * 1e9);
-  return (now_ns - timestamp_ns) > max_age_ns;
-}
-
 std::optional<unsigned char> BathymetryLayer::evaluateCell(
-  const gggs::CellIndex & cell, int64_t now_ns) const
+  const gggs::CellIndex & cell) const
 {
   if (!store_) {
     return std::nullopt;
@@ -877,15 +845,10 @@ std::optional<unsigned char> BathymetryLayer::evaluateCell(
   //   2. shallowestReliable — the navigation-safety gate (uncertainty).
   const std::optional<DepthSample> sample = shallowestReliable(*store_, cell, max_uncertainty_);
 
-  // MF3: use sample->timestamp (the reliable record's age) for the staleness
-  // check, not any->timestamp (the quality-blind record). bestSource may return
-  // an over-uncertain record at this cell while shallowestReliable returns a
-  // different, confident one; we age-check the record we actually use for
-  // clearance (the reliable one), not the quality-blind bestSource record.
-  if (!sample || isStale(sample->timestamp, now_ns)) {
-    // Data exists but every sample is over-uncertain (sample==nullopt), or the
-    // reliable sample is stale → conservative LETHAL. A surveyed-but-unusable
-    // cell must NOT be treated as unsurveyed (review M1).
+  if (!sample) {
+    // Data exists but every sample is over-uncertain → conservative LETHAL. A
+    // surveyed-but-unusable cell must NOT be treated as unsurveyed (review M1).
+    // (The pre-#248 per-cell staleness gate was retired — ADR-0002 A2.4.)
     return nav2_costmap_2d::LETHAL_OBSTACLE;
   }
 

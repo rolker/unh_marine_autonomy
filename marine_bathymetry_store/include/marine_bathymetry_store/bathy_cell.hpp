@@ -37,59 +37,51 @@ namespace marine_bathymetry_store
 /// deliberate, cleaner realization of ADR-0002 §D3's "each cell stores a
 /// source layer": the layer is the map it lives in.
 ///
-/// The numeric value is the priority rank (0 = highest). `Chart` (the broad,
-/// coarse contour / S57-derived prior) is lowest priority: best-source falls
-/// through to it where no Processed/Draft data exists. Chart cells are
-/// ellipsoidal heights converted from chart datum **at import** (ADR-0002 §D7);
-/// the store treats Chart as a **read-only prior** so live Draft/CUBE ingest can
-/// never clobber it — see `BathymetryStore::set` and the `chart_writable`
+/// The taxonomy was simplified to **two** layers in #248 (ADR-0002 Amendment
+/// A2.1): the old `chart`/`draft`/`processed` collapse to `survey` (highest
+/// priority) and `reference` (the read-only prior). The numeric value is the
+/// priority rank (0 = highest). `Reference` (any prior surface imported before
+/// the survey — a chart-derived contour prior, an external processed grid) is
+/// lowest priority: best-source falls through to it where no CUBE data exists.
+/// The store treats `Reference` as a **read-only prior** so live CUBE ingest can
+/// never clobber it — see `BathymetryStore::set` and the `reference_writable`
 /// construction flag the importer opts into.
 enum class SourceLayer : uint8_t
 {
-  Processed = 0,  ///< The authoritative product: externally-processed grids
-                  ///< (bathy-BAG / GeoTIFF) OR the off-boat CUBE re-run (the full-bag
-                  ///< replay via cube_bathymetry `import_bag`, cube_bathymetry#85).
-                  ///< Highest confidence. Mirrors the backscatter store's Processed
-                  ///< (ADR-0007). The *live* node writes Draft, not Processed.
-  Draft = 1,      ///< Real-time (on-boat, live) CUBE output. Valuable but potentially noisy.
-  Chart = 2,      ///< Contour / S57-derived prior. Broad, coarse, read-only.
+  Survey = 0,         ///< The CUBE product (live on-boat or off-boat re-run). Highest
+                      ///< priority. Subsumes the pre-#248 draft/processed distinction
+                      ///< (one fused surface per layer since #221).
+  Reference = 1,  ///< A prior surface imported before the survey (chart-derived
+                  ///< contour prior, external processed grid). Broad, coarse,
+                  ///< read-only. Ellipsoidal heights converted at import (§D4).
 };
 
 /// @brief Source layers in descending priority order — iterate for best-source.
-inline constexpr std::array<SourceLayer, 3> source_layers_by_priority{
-  SourceLayer::Processed, SourceLayer::Draft, SourceLayer::Chart};
+inline constexpr std::array<SourceLayer, 2> source_layers_by_priority{
+  SourceLayer::Survey, SourceLayer::Reference};
 
 /// @brief Number of source layers present in this phase.
 inline constexpr std::size_t source_layer_count = source_layers_by_priority.size();
 
 /// @brief Per-cell bathymetric record.
 ///
-/// `depth` and `uncertainty` are `double` (a 2-band `Float64` value tile); the
-/// **timestamp is `int64_t` nanoseconds since the Unix epoch** (ROS-native:
-/// `rclcpp::Time` is int64 ns), persisted as a separate 1-band `Int64` tile so
-/// it keeps nanosecond exactness (a `Float64` seconds band resolved absolute
-/// 2026 stamps to only ~0.4 µs). The `source_index` is a small interning handle
-/// into the store-wide `registry.json` (ADR-0005 D2/D8): which platform/sensor
-/// contributed this cell. 0 = no-data/unset (ADR-0005 D4 sentinel) and is the
-/// default for pre-existing single-platform data. The on-disk layout is three
-/// tiles per grid — value (`<grid>.tif`), time (`<grid>_time.tif`), and source
-/// (`<grid>_source.tif`); see `BathymetryTile` and `tile_io`.
+/// `depth` and `uncertainty` are `double` — a single 2-band `Float64` value tile
+/// per grid (ADR-0002 §D5 as simplified by #248 / Amendment A2.2). The per-cell
+/// `timestamp` and `source_index` of the pre-#248 format were dropped: the store
+/// is a regenerable cache over raw bags, the per-cell time band's only in-tree
+/// consumer (the `bathymetry_layer` staleness gate) was retired, and per-cell
+/// source provenance is a constant for the single-platform deployment (coarse
+/// provenance now lives in the store-level `registry.json` `StoreMetadata`,
+/// ADR-0005 #248 amendment). The on-disk layout is one tile per grid —
+/// `<grid>.tif`; see `BathymetryTile` and `tile_io`.
 struct BathyCell
 {
   /// Ellipsoidal height (WGS84), metres. NaN = no data.
   double depth = std::numeric_limits<double>::quiet_NaN();
   /// 1-sigma vertical uncertainty, metres. NaN = unknown.
   double uncertainty = std::numeric_limits<double>::quiet_NaN();
-  /// Acquisition / import time, nanoseconds since the Unix epoch. 0 = unset.
-  int64_t timestamp = 0;
-  /// Local source index into the store-wide registry. 0 = no-data/unset.
-  uint16_t source_index = 0;
 
   /// @brief True if this cell carries a usable depth (depth is not NaN).
-  ///
-  /// Data presence is **depth-only**: `source_index` is provenance, not a
-  /// data-presence signal, so a cell with a registered source but NaN depth is
-  /// still no-data.
   bool hasData() const noexcept
   {
     return !std::isnan(depth);

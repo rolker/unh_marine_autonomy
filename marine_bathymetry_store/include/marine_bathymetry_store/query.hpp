@@ -43,14 +43,7 @@ struct DepthSample
 {
   double depth;            ///< Ellipsoidal height (WGS84, m, up-positive).
   double uncertainty;      ///< 1-sigma vertical uncertainty (m).
-  int64_t timestamp;       ///< Acquisition / import time (ns since the Unix epoch).
   SourceLayer source;      ///< Which layer this value came from.
-  /// Per-cell registry source index (ADR-0005 D2/D8): which platform/sensor
-  /// contributed this value. 0 = unset (pre-migration / single-platform data).
-  /// The navigation-safety query (`shallowestReliable`) ignores this axis
-  /// (ADR-0005 D5 carve-out); it is exposed so provenance-aware consumers can
-  /// resolve the record off a query result.
-  uint16_t source_index = 0;
   /// GGGS level of the cell this value was resolved at. The store is
   /// multi-level (ADR-0002 §D2); the query resolves the best-available level
   /// per cell, so a single region scan can return samples at mixed levels.

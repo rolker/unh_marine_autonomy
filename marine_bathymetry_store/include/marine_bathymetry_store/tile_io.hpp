@@ -33,26 +33,24 @@
 #include "marine_bathymetry_store/registry.hpp"
 
 /// @file
-/// @brief Per-tile GeoTIFF persistence (ADR-0002 §D5, amended by #178).
+/// @brief Per-tile GeoTIFF persistence (ADR-0002 §D5, simplified by #248).
 ///
-/// Each GGGS tile is persisted as **three** GeoTIFFs, all WGS84-georeferenced
-/// from the same grid corners and written north-up (raster row 0 = north), so
-/// persistence flips rows relative to the in-memory GGGS cell order
-/// (row 0 = south):
+/// Each GGGS tile is persisted as **one** GeoTIFF, WGS84-georeferenced from its
+/// grid corners and written north-up (raster row 0 = north), so persistence flips
+/// rows relative to the in-memory GGGS cell order (row 0 = south):
 ///
 /// - `<level>_<row>_<col>.tif` — 2-band `Float64` value tile (depth,
 ///   uncertainty), NaN no-data on both.
-/// - `<level>_<row>_<col>_time.tif` — 1-band `Int64` timestamp tile
-///   (nanoseconds since epoch, ROS-native and exact; 0 = unset, no no-data tag).
-/// - `<level>_<row>_<col>_source.tif` — 1-band `UInt16` source-index tile
-///   (registry index, ADR-0005 D2/D8; 0 = no-data/unset).
 ///
-/// The quality/maturity axis (Processed / Draft / Chart) is encoded as the
-/// on-disk subdirectory (`processed/`, `draft/`, `chart/`); each holds **one
-/// fused** set of value tiles directly (no per-day epoch subdirectory since
-/// #221). The platform/sensor provenance axis moves to the per-cell source index
-/// + the store-wide `registry.json` (ADR-0005 D8). On load, a missing
-/// `_time.tif` / `_source.tif` fills timestamp / source_index with 0.
+/// The pre-#248 `_time.tif` (Int64 ns) and `_source.tif` (UInt16 source index)
+/// companions were dropped (ADR-0002 Amendment A2.2): the store is a regenerable
+/// cache, the per-cell time band's only reader (the costmap staleness gate) was
+/// retired, and per-cell source provenance is a constant for a single platform.
+///
+/// The quality/maturity axis (Survey / Reference) is encoded as the on-disk
+/// subdirectory (`survey/`, `reference/`); each holds **one fused** set of value
+/// tiles directly (no per-day epoch subdirectory since #221). Coarse provenance
+/// moves to the store-wide `registry.json` `StoreMetadata` (ADR-0005 #248).
 ///
 /// @note Round-trip persistence is validated for **non-polar** latitudes
 /// (|lat| < 72°), the intended lake/coastal survey envelope. Near GGGS's polar
@@ -69,29 +67,23 @@ namespace marine_bathymetry_store
 ///        `<level>_<row>_<col>.tif`.
 std::string tileFilename(const gggs::GridIndex & grid);
 
-/// @brief Subdirectory name for a source layer (`"processed"` / `"draft"` /
-///        `"chart"`). Each holds one fused set of value tiles directly (#221).
+/// @brief Subdirectory name for a source layer (`"survey"` / `"reference"`).
+///        Each holds one fused set of value tiles directly (#221).
 std::string layerDirName(SourceLayer layer);
 
-/// @brief Write one tile as three GeoTIFFs derived from the value-tile @p path.
-///
-/// @p path is the value tile (`<grid>.tif`); the `_time.tif` and `_source.tif`
-/// companions are written alongside it (same directory, suffixed stem).
+/// @brief Write one tile as a single value GeoTIFF at @p path (`<grid>.tif`).
 /// @throws std::runtime_error on any GDAL failure.
 void saveTile(const BathymetryTile & tile, const std::string & path);
 
-/// @brief Load a tile from its three GeoTIFFs, reconstructing its GridIndex at
+/// @brief Load a tile from its value GeoTIFF, reconstructing its GridIndex at
 ///        @p level.
 ///
-/// @p path is the value tile (`<grid>.tif`); the `_time.tif` and `_source.tif`
-/// companions are read from the derived paths. A **missing** companion fills the
-/// corresponding band with 0 (pre-migration backward compatibility). The grid is
-/// recovered from the value file's geotransform (the cell center maps back
-/// through @p level), so a file written at a different level is rejected. @p
-/// level must therefore be the level the file was written at — callers loading a
-/// multi-level store recover it from the `<level>_<row>_<col>` filename prefix
-/// (see `levelFromTileFilename`) and pass it per-file.
-/// The returned tile is clean (not dirty).
+/// @p path is the value tile (`<grid>.tif`). The grid is recovered from the
+/// value file's geotransform (the cell center maps back through @p level), so a
+/// file written at a different level is rejected. @p level must therefore be the
+/// level the file was written at — callers loading a multi-level store recover it
+/// from the `<level>_<row>_<col>` filename prefix (see `levelFromTileFilename`)
+/// and pass it per-file. The returned tile is clean (not dirty).
 /// @throws std::runtime_error on GDAL failure, wrong dimensions, or a
 ///         geotransform that doesn't match any grid at @p level.
 BathymetryTile loadTile(const std::string & path, const gggs::Level & level);
@@ -109,42 +101,39 @@ uint8_t levelFromTileFilename(const std::string & filename);
 /// @brief Persist every **dirty** tile of @p store under @p dir, then clear
 ///        their dirty flags. Also writes the store-wide `registry.json`.
 ///
-/// Layout: `<dir>/<layer>/<level>_<row>_<col>{,_time,_source}.tif` plus a
-/// store-wide `<dir>/registry.json` (flat, no per-day epoch subdirectory since
-/// #221). Creates directories as needed. Clean tiles are skipped (incremental
-/// save). The registry (a store-wide sidecar, not per-layer) is written once at
-/// the end via @p registry; pass `nullptr` to skip it (e.g. a caller with no
-/// registry to persist).
+/// Layout: `<dir>/<layer>/<level>_<row>_<col>.tif` plus a store-wide
+/// `<dir>/registry.json` (flat, no per-day epoch subdirectory since #221).
+/// Creates directories as needed. Clean tiles are skipped (incremental save). The
+/// coarse `StoreMetadata` (a store-wide sidecar, not per-layer) is written once at
+/// the end via @p metadata; pass `nullptr` to skip it (e.g. a caller with no
+/// metadata to persist).
 /// @return The number of tiles written.
 /// @throws std::runtime_error on any GDAL failure; std::filesystem::filesystem_error
 ///         (a std::runtime_error subclass) on a directory-creation failure.
 std::size_t save(
   BathymetryStore & store, const std::string & dir,
-  const SourceRegistry * registry = nullptr);
+  const StoreMetadata * metadata = nullptr);
 
-/// @brief Load every tile found under @p dir into @p store, plus the registry.
+/// @brief Load every tile found under @p dir into @p store, plus the metadata.
 ///
-/// Scans `<dir>/<layer>/` for value tiles (`<level>_<row>_<col>.tif`),
-/// **skipping** the `_time.tif` / `_source.tif` companions (loaded with their
-/// value tile). Each tile's level is recovered from its filename
-/// (`levelFromTileFilename`), so a **mixed-level** store loads correctly — the
-/// store's default level is irrelevant to loading (ADR-0002 §D2). Subdirectory
-/// entries (stale old-style epoch dirs, if any) are ignored — there is no
-/// production data to migrate (#221). If @p registry is non-null, `registry.json`
-/// is loaded into it. Loaded tiles are clean.
+/// Scans `<dir>/<layer>/` for value tiles (`<level>_<row>_<col>.tif`). Each
+/// tile's level is recovered from its filename (`levelFromTileFilename`), so a
+/// **mixed-level** store loads correctly — the store's default level is irrelevant
+/// to loading (ADR-0002 §D2). Subdirectory entries (stale old-style epoch dirs, if
+/// any) are ignored — there is no production data to migrate (#221). If @p
+/// metadata is non-null, `registry.json` is loaded into it. Loaded tiles are clean.
 /// @return The number of tiles loaded.
 /// @throws std::runtime_error on any GDAL failure or a per-file level mismatch;
 ///         std::filesystem::filesystem_error (a std::runtime_error subclass) on a
 ///         directory-iteration failure.
 std::size_t load(
   BathymetryStore & store, const std::string & dir,
-  SourceRegistry * registry = nullptr);
+  StoreMetadata * metadata = nullptr);
 
 /// @brief Load only tiles whose geographic AABB intersects [@p min_pt, @p max_pt].
 ///
-/// Mirrors `load()` in structure (flat layer-dir scan, companion-skip,
-/// level-recovery, backward-compat 0-fill for missing companions) but gates each
-/// tile on two conditions before paying the GDAL I/O cost:
+/// Mirrors `load()` in structure (flat layer-dir scan, level-recovery) but gates
+/// each tile on two conditions before paying the GDAL I/O cost:
 /// 1. The tile's geographic bounding box (derived from its `<level>_<row>_<col>`
 ///    filename, not from a file open) intersects the box [min_pt, max_pt]
 ///    (inclusive on all boundaries — a tile whose edge exactly touches the box
@@ -156,7 +145,7 @@ std::size_t load(
 /// overlap is tested using its own `GridIndex` geographic accessors rather than
 /// a single-level `GridAreaIterator`.
 ///
-/// If @p registry is non-null, `registry.json` is loaded into it (same as
+/// If @p metadata is non-null, `registry.json` is loaded into it (same as
 /// `load()`). Loaded tiles are clean.
 ///
 /// @note Concurrency: safe only if no concurrent writer is active in the same
@@ -171,7 +160,7 @@ std::size_t loadWindow(
   BathymetryStore & store, const std::string & dir,
   const geographic_msgs::msg::GeoPoint & min_pt,
   const geographic_msgs::msg::GeoPoint & max_pt,
-  SourceRegistry * registry = nullptr);
+  StoreMetadata * metadata = nullptr);
 
 /// @brief Remove all **clean** tiles outside [@p min_pt, @p max_pt] from @p store.
 ///
@@ -180,11 +169,11 @@ std::size_t loadWindow(
 /// `loadWindow`).
 ///
 /// **Dirty-tile guard (safety invariant)**: a tile flagged `dirty()` is **never**
-/// evicted, regardless of its position. A dirty Draft or Processed tile is live
-/// sensor data that has not yet reached disk; evicting it would lose that data
-/// with no reload path. Chart tiles are always clean (never mutated at runtime)
-/// and are always safely evictable. Save the store before calling `evictOutside`
-/// if you want all outside tiles to be eligible for eviction.
+/// evicted, regardless of its position. A dirty Survey tile is live sensor data that
+/// has not yet reached disk; evicting it would lose that data with no reload path.
+/// Reference tiles are always clean (never mutated at runtime) and are always
+/// safely evictable. Save the store before calling `evictOutside` if you want all
+/// outside tiles to be eligible for eviction.
 ///
 /// @note Concurrency: safe only if no concurrent writer is active in the same
 ///   process. A writer racing to dirty a tile between the dirty check and the

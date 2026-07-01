@@ -36,33 +36,31 @@ namespace marine_mbes_backscatter_store
 {
 
 class MbesBackscatterStore;
-class SourceRegistry;
+struct StoreMetadata;
 // Persistence free functions (defined in tile_io.cpp). Forward-declared here so
-// the store can friend them: `load` must populate any layer from disk, which the
+// the store can friend them: `load` must populate the layer from disk, which the
 // public API otherwise routes only through set().
 std::size_t save(
-  MbesBackscatterStore & store, const std::string & dir, const SourceRegistry * registry);
+  MbesBackscatterStore & store, const std::string & dir, const StoreMetadata * metadata);
 std::size_t load(
-  MbesBackscatterStore & store, const std::string & dir, SourceRegistry * registry);
+  MbesBackscatterStore & store, const std::string & dir, StoreMetadata * metadata);
 
-/// @brief In-memory, GGGS-tiled, two-layer MBES backscatter store (ADR-0007 phase 3).
+/// @brief In-memory, GGGS-tiled, single-layer MBES backscatter store (ADR-0007).
 ///
-/// Holds one tile map per `SourceLayer` (`Draft`, `Processed`), keyed by
+/// Holds one tile map for the sole `SourceLayer::Survey`, keyed by
 /// `gggs::GridIndex`. All tiles live at a single GGGS level fixed at
-/// construction. Source priority is a **non-destructive query-time overlay**
-/// (see `query.hpp`): the layers are independent, so a live draft write never
-/// clobbers a durable processed cell and a later processed build never has to
-/// merge with draft (ADR-0007 D7, mirroring ADR-0002 §D3).
+/// construction. The pre-#248 `draft`/`processed` two-layer overlay collapsed to
+/// this single `survey` layer (ADR-0007 #248 amendment A.2).
 ///
-/// **Draft recency policy (ADR-0007 D7):** `set(Draft, …)` is *newest-valid-wins*
-/// — it overwrites the existing cell unconditionally. Callers supply
-/// angle-corrected node-output values (ADR-0007 D2/D3); the store does **no**
-/// accumulation. Welford accumulation lives upstream in the CUBE node-output
-/// pass (cube#54), not here.
+/// **Recency policy (ADR-0007 D7):** `set(Survey, …)` is *newest-valid-wins* — it
+/// overwrites the existing cell unconditionally. Callers supply angle-corrected
+/// node-output values (ADR-0007 D2/D3); the store does **no** accumulation. The
+/// Welford sufficient statistics `{mean, standard_error, sample_sd}` ride the
+/// per-cell record so a downstream re-run can continue the accumulation.
 ///
 /// This phase has no importers, ROS interface, or distribution — just storage,
 /// in-process queries (`query.hpp`), per-tile GeoTIFF persistence
-/// (`tile_io.hpp`), and the source registry (`registry.hpp`).
+/// (`tile_io.hpp`), and the coarse store metadata (`registry.hpp`).
 class MbesBackscatterStore
 {
 public:
@@ -93,8 +91,8 @@ public:
   /// @brief Write @p value into @p layer at @p cell (newest-valid-wins overwrite).
   ///
   /// Creates the backing tile on first write to its grid. The cell's grid must
-  /// be at this store's level. On `Draft`, an existing cell is overwritten
-  /// unconditionally (ADR-0007 D7 recency policy) — there is no accumulation.
+  /// be at this store's level. An existing cell is overwritten unconditionally
+  /// (ADR-0007 D7 recency policy) — there is no accumulation.
   /// @throws std::invalid_argument if @p cell is invalid or at the wrong level.
   void set(SourceLayer layer, const gggs::CellIndex & cell, const MbesCell & value);
 
@@ -110,12 +108,12 @@ public:
   }
 
 private:
-  // Persistence needs to populate any layer from disk, so the free functions in
+  // Persistence needs to populate the layer from disk, so the free functions in
   // tile_io.cpp are friends.
   friend std::size_t save(
-    MbesBackscatterStore & store, const std::string & dir, const SourceRegistry * registry);
+    MbesBackscatterStore & store, const std::string & dir, const StoreMetadata * metadata);
   friend std::size_t load(
-    MbesBackscatterStore & store, const std::string & dir, SourceRegistry * registry);
+    MbesBackscatterStore & store, const std::string & dir, StoreMetadata * metadata);
 
   /// @brief Find or create the tile for @p grid in @p layer.
   ///

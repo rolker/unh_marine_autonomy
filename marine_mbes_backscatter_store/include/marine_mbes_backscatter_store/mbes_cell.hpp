@@ -34,59 +34,59 @@ namespace marine_mbes_backscatter_store
 ///
 /// As in the bathy store, a cell's source layer is implied by which layer holds
 /// it (the store keeps one tile map per layer), so it is not stored in the
-/// per-cell record. There is **no Chart layer** here: a contour / S57 prior is a
-/// bathymetric concept; MBES backscatter has no chart prior (ADR-0007 D7). The
-/// two layers are `Processed` (the durable, quality-arbitrated re-run) and
-/// `Draft` (the live, newest-valid-wins survey view).
-///
-/// The numeric value is the priority rank (0 = highest): best-source prefers
-/// `Processed` and falls through to `Draft`.
+/// per-cell record. The pre-#248 `draft`/`processed` two-layer overlay collapsed
+/// to a **single `survey` layer** (ADR-0007 #248 amendment A.2): with one platform
+/// and one coverage, the live-vs-durable split added no query value.
 enum class SourceLayer : uint8_t
 {
-  Processed = 0,  ///< Durable deferred-settled re-run product (ADR-0007 D7). Highest.
-  Draft = 1,      ///< Live CUBE node-output, newest-valid-wins (ADR-0007 D7).
+  Survey = 0,  ///< The CUBE node-output product (live or off-boat re-run). The only layer.
 };
 
 /// @brief Source layers in descending priority order — iterate for best-source.
-inline constexpr std::array<SourceLayer, 2> source_layers_by_priority{
-  SourceLayer::Processed, SourceLayer::Draft};
+inline constexpr std::array<SourceLayer, 1> source_layers_by_priority{SourceLayer::Survey};
 
 /// @brief Number of source layers present in this phase.
 inline constexpr std::size_t source_layer_count = source_layers_by_priority.size();
 
-/// @brief Per-cell MBES backscatter record (ADR-0007 D4/D6).
+/// @brief Per-cell MBES backscatter record (ADR-0007 D6, #248 amendment A.1).
 ///
-/// `intensity` and `intensity_variance` are `float` (a 2-band `Float32` value
-/// tile): the M3 is AGC/relative, so single-precision is ample, and the variance
-/// **is** the quality/uncertainty signal (ADR-0007 D6 — there is no separate
-/// integer quality band as in the sidescan store). `intensity_variance` is the
-/// Welford estimate variance (D4), shrinking with sample count, mirroring the
-/// bathy store's depth uncertainty. The `timestamp` is `int64_t` nanoseconds
-/// since the Unix epoch (ROS-native, exact), persisted as a separate 1-band
-/// `Int64` tile. The `source_index` is a small interning handle into the
-/// store-wide `registry.json` (ADR-0005 D2/D8); 0 = no-data/unset. The on-disk
-/// layout is three tiles per grid — value (`<grid>.tif`), time
-/// (`<grid>_time.tif`), and source (`<grid>_source.tif`); see `MbesTile` and
-/// `tile_io`.
+/// A 3-band `Float32` value tile encoding the **Welford sufficient statistics**
+/// so the estimate reconstructs losslessly on reload (rather than collapsing to a
+/// mean+variance pair):
+///
+/// - `mean` — Welford running mean of corrected backscatter. NaN = no data.
+/// - `standard_error` — **confidence-scaled** standard error of the mean (D4
+///   estimate uncertainty), `scale · sample_sd / √n`. The scale mirrors the bathy
+///   store's confidence-scaled uncertainty convention; the consumer divides it
+///   out on reload before interpreting it as a true standard error.
+/// - `sample_sd` — sample standard deviation of the contributing beams,
+///   `√(M2 / (n−1))` — the D4 within-node dispersion / texture signal.
+///
+/// The store round-trips all three floats bit-exactly and does **no** scaling.
+/// From them (dividing the confidence scale out of `standard_error` to recover
+/// the true `SE = sample_sd / √n`), a downstream re-run recovers the full Welford
+/// state: `n = (sample_sd / SE)²` and `M2 = sample_sd² · (n − 1)`.
+///
+/// **`n = 1` sentinel:** a single-beam node has no dispersion — `sample_sd == 0`
+/// with a **finite** `mean` encodes `n = 1, M2 = 0`, distinct from **no-data**
+/// (`mean = NaN`). `hasData()` keys on `mean`, so a one-sample cell is real data.
+///
+/// The pre-#248 per-cell `timestamp` (`_time.tif`) and `source_index`
+/// (`_source.tif`) companions were dropped (#248 amendment A.3); each grid is a
+/// single 3-band value tile. See `MbesTile` and `tile_io`.
 struct MbesCell
 {
-  /// Corrected backscatter intensity (relative, dB-domain). NaN = no data.
-  float intensity = std::numeric_limits<float>::quiet_NaN();
-  /// Welford estimate variance of the intensity. NaN = unknown.
-  float intensity_variance = std::numeric_limits<float>::quiet_NaN();
-  /// Acquisition / import time, nanoseconds since the Unix epoch. 0 = unset.
-  int64_t timestamp = 0;
-  /// Local source index into the store-wide registry. 0 = no-data/unset.
-  uint16_t source_index = 0;
+  /// Welford running mean of corrected backscatter (relative). NaN = no data.
+  float mean = std::numeric_limits<float>::quiet_NaN();
+  /// Confidence-scaled standard error of the mean (D4 estimate uncertainty).
+  float standard_error = std::numeric_limits<float>::quiet_NaN();
+  /// Sample standard deviation of contributing beams (within-node dispersion).
+  float sample_sd = std::numeric_limits<float>::quiet_NaN();
 
-  /// @brief True if this cell carries a usable intensity (intensity is not NaN).
-  ///
-  /// Data presence is **intensity-only**: `source_index` is provenance, not a
-  /// data-presence signal, so a cell with a registered source but NaN intensity
-  /// is still no-data.
+  /// @brief True if this cell carries a usable mean (mean is not NaN).
   bool hasData() const noexcept
   {
-    return !std::isnan(intensity);
+    return !std::isnan(mean);
   }
 };
 

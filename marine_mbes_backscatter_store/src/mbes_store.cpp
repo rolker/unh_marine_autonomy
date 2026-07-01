@@ -39,9 +39,9 @@ void MbesBackscatterStore::set(
             std::to_string(cell.level()) + " but store is at level " +
             std::to_string(level_.level()));
   }
-  // Draft recency policy (ADR-0007 D7): newest-valid-wins. tile.set overwrites
-  // the cell unconditionally — there is no accumulation in the store; the
-  // caller supplies already-corrected node-output values.
+  // Recency policy (ADR-0007 D7): newest-valid-wins. tile.set overwrites the cell
+  // unconditionally — there is no accumulation in the store; the caller supplies
+  // already-corrected node-output values.
   MbesTile & tile = getOrCreateTile(layer, cell.grid());
   tile.set(cell.row(), cell.column(), value);
 }

@@ -34,69 +34,68 @@ TEST(Store, SetGetRoundTrip)
 {
   MbesBackscatterStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Draft, cell, MbesCell{-18.5f, 0.25f, 2'000'000'000LL, 3u});
+  store.set(SourceLayer::Survey, cell, MbesCell{-18.5f, 0.25f, 0.75f});
 
-  const auto got = store.get(SourceLayer::Draft, cell);
+  const auto got = store.get(SourceLayer::Survey, cell);
   ASSERT_TRUE(got.has_value());
-  EXPECT_FLOAT_EQ(got->intensity, -18.5f);
-  EXPECT_FLOAT_EQ(got->intensity_variance, 0.25f);
-  EXPECT_EQ(got->timestamp, 2'000'000'000LL);
-  EXPECT_EQ(got->source_index, 3u);
+  EXPECT_FLOAT_EQ(got->mean, -18.5f);
+  EXPECT_FLOAT_EQ(got->standard_error, 0.25f);
+  EXPECT_FLOAT_EQ(got->sample_sd, 0.75f);
 }
 
-TEST(Store, DraftRecencyNewestWins)
+TEST(Store, SurveyRecencyNewestWins)
 {
-  // ADR-0007 D7: Draft is newest-valid-wins — a second write at the same cell
-  // overwrites the first (the store does no accumulation).
+  // ADR-0007 D7: newest-valid-wins — a second write at the same cell overwrites
+  // the first (the store does no accumulation).
   MbesBackscatterStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Draft, cell, MbesCell{-20.0f, 1.0f, 1LL, 1u});
-  store.set(SourceLayer::Draft, cell, MbesCell{-15.0f, 0.5f, 2LL, 2u});
+  store.set(SourceLayer::Survey, cell, MbesCell{-20.0f, 1.0f, 2.0f});
+  store.set(SourceLayer::Survey, cell, MbesCell{-15.0f, 0.5f, 1.0f});
 
-  const auto got = store.get(SourceLayer::Draft, cell);
+  const auto got = store.get(SourceLayer::Survey, cell);
   ASSERT_TRUE(got.has_value());
-  EXPECT_FLOAT_EQ(got->intensity, -15.0f);          // second write wins
-  EXPECT_FLOAT_EQ(got->intensity_variance, 0.5f);
-  EXPECT_EQ(got->timestamp, 2LL);
-  EXPECT_EQ(got->source_index, 2u);
+  EXPECT_FLOAT_EQ(got->mean, -15.0f);          // second write wins
+  EXPECT_FLOAT_EQ(got->standard_error, 0.5f);
+  EXPECT_FLOAT_EQ(got->sample_sd, 1.0f);
 }
 
 TEST(Store, UnknownCellReturnsNullopt)
 {
   MbesBackscatterStore store(5);
-  EXPECT_FALSE(store.get(SourceLayer::Processed, store.cellIndex(43.0, -70.5)).has_value());
+  EXPECT_FALSE(store.get(SourceLayer::Survey, store.cellIndex(43.0, -70.5)).has_value());
 }
 
-TEST(Store, LayersAreIndependent)
-{
-  // A draft write must not touch the processed layer at the same cell.
-  MbesBackscatterStore store(5);
-  const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Processed, cell, MbesCell{-10.0f, 0.1f, 1LL});
-  store.set(SourceLayer::Draft, cell, MbesCell{-12.0f, 2.0f, 2LL});
-  EXPECT_FLOAT_EQ(store.get(SourceLayer::Processed, cell)->intensity, -10.0f);
-  EXPECT_FLOAT_EQ(store.get(SourceLayer::Draft, cell)->intensity, -12.0f);
-}
-
-TEST(Store, TilesAllocatedLazilyPerLayer)
+TEST(Store, TilesAllocatedLazily)
 {
   MbesBackscatterStore store(5);
-  EXPECT_TRUE(store.tiles(SourceLayer::Draft).empty());
-  EXPECT_TRUE(store.tiles(SourceLayer::Processed).empty());
+  EXPECT_TRUE(store.tiles(SourceLayer::Survey).empty());
 
-  store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5), MbesCell{-30.0f, 0.5f, 1LL});
-  EXPECT_EQ(store.tiles(SourceLayer::Draft).size(), 1u);
-  EXPECT_TRUE(store.tiles(SourceLayer::Processed).empty());
+  store.set(SourceLayer::Survey, store.cellIndex(43.0, -70.5), MbesCell{-30.0f, 0.5f, 1.0f});
+  EXPECT_EQ(store.tiles(SourceLayer::Survey).size(), 1u);
 }
 
 TEST(Store, NoDataCellReadsBackAsNoData)
 {
   MbesBackscatterStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Draft, cell, MbesCell{});  // intensity NaN
-  const auto got = store.get(SourceLayer::Draft, cell);
+  store.set(SourceLayer::Survey, cell, MbesCell{});  // mean NaN
+  const auto got = store.get(SourceLayer::Survey, cell);
   ASSERT_TRUE(got.has_value());      // tile exists
-  EXPECT_FALSE(got->hasData());      // but the cell carries no usable intensity
+  EXPECT_FALSE(got->hasData());      // but the cell carries no usable mean
+}
+
+TEST(Store, OneSampleSentinelIsData)
+{
+  // n=1 sentinel (#248 A.1): sample_sd == 0 with a finite mean is real data
+  // (n=1, M2=0), distinct from no-data (NaN mean).
+  MbesBackscatterStore store(5);
+  const auto cell = store.cellIndex(43.0, -70.5);
+  store.set(SourceLayer::Survey, cell, MbesCell{-12.0f, 0.0f, 0.0f});
+  const auto got = store.get(SourceLayer::Survey, cell);
+  ASSERT_TRUE(got.has_value());
+  EXPECT_TRUE(got->hasData());
+  EXPECT_FLOAT_EQ(got->mean, -12.0f);
+  EXPECT_FLOAT_EQ(got->sample_sd, 0.0f);
 }
 
 TEST(Store, WrongLevelCellThrows)
@@ -104,14 +103,14 @@ TEST(Store, WrongLevelCellThrows)
   MbesBackscatterStore store(5);
   gggs::Level other(6);
   const auto level6_cell = other.cellIndex(gggs::geoPoint(43.0, -70.5));
-  EXPECT_THROW(store.set(SourceLayer::Draft, level6_cell, MbesCell{}), std::invalid_argument);
+  EXPECT_THROW(store.set(SourceLayer::Survey, level6_cell, MbesCell{}), std::invalid_argument);
 }
 
 TEST(Store, InvalidCellThrows)
 {
   MbesBackscatterStore store(5);
   EXPECT_THROW(
-    store.set(SourceLayer::Draft, gggs::CellIndex{}, MbesCell{}), std::invalid_argument);
+    store.set(SourceLayer::Survey, gggs::CellIndex{}, MbesCell{}), std::invalid_argument);
 }
 
 TEST(Store, FromCellSizeChoosesAFiniteLevel)

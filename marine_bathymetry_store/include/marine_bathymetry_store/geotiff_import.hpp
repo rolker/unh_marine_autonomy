@@ -29,14 +29,13 @@
 #include <string>
 
 #include "marine_bathymetry_store/bathymetry_store.hpp"
-#include "marine_bathymetry_store/registry.hpp"
 
 /// @file
 /// @brief Import a depth/uncertainty GeoTIFF into a store layer's single fused
 /// surface (ADR-0002 Phase 2, §D4). Footprint fill, datum conversion at import,
-/// lowest-uncertainty contention resolution, and per-cell SourceRegistry
-/// provenance stamping (ADR-0005 D2/D8). The per-day epoch dimension was dropped
-/// in #221; the importer bulk-inserts its tiles via `BathymetryStore::importTiles`.
+/// and lowest-uncertainty contention resolution. Per-cell provenance stamping was
+/// dropped in #248 (coarse provenance is store-level now, ADR-0005 #248 amendment);
+/// the importer bulk-inserts its tiles via `BathymetryStore::importTiles`.
 
 namespace marine_bathymetry_store
 {
@@ -57,9 +56,6 @@ struct GeoTiffImportOptions
   /// weight in 1/sigma^2 fusion). NaN (the default) makes such cells
   /// never-reliable in the safety query — the conservative choice.
   double default_uncertainty = std::numeric_limits<double>::quiet_NaN();
-  /// Acquisition time (Unix seconds) recorded on every imported cell — a
-  /// whole-file product carries no per-cell time. 0 = unset.
-  double timestamp = 0.0;
   /// Vertical conversion applied at import (ADR-0002 §D4):
   /// `height = depth_scale * pixel + depth_offset`. The defaults pass
   /// store-convention inputs (ellipsoidal height, up-positive) through
@@ -74,11 +70,6 @@ struct GeoTiffImportOptions
   /// store's default level (`store.level()`), preserving the single-level
   /// caller's behaviour; pass a level to match the source resolution.
   std::optional<uint8_t> level = std::nullopt;
-  /// Provenance record to register in the store's `SourceRegistry` (ADR-0005
-  /// D2/D8). Every imported cell is stamped with the returned source index. If
-  /// `source.source_id` is empty the importer skips registration and stamps the
-  /// unset index (0) — for callers that don't track provenance.
-  SourceRecord source;
 };
 
 /// @brief Import @p path into @p layer's single fused surface.
@@ -88,18 +79,16 @@ struct GeoTiffImportOptions
 /// still produces coverage), converts the vertical datum at import (§D4), keeps
 /// the lowest-uncertainty value on contention, and bulk-inserts the resulting
 /// tiles into @p layer via `BathymetryStore::importTiles` (merging into any
-/// existing surface; last-write-wins per cell). If `options.source.source_id` is
-/// non-empty, registers the `SourceRecord` in @p registry and stamps its index
-/// on every imported cell.
+/// existing surface; last-write-wins per cell).
 ///
 /// @return The number of distinct cells imported.
 /// @throws std::invalid_argument on a bad band index;
-///         std::logic_error if @p layer is `Chart` and the store is not
-///         `chart_writable` (the read-only-prior gate);
+///         std::logic_error if @p layer is `Reference` and the store is not
+///         `reference_writable` (the read-only-prior gate);
 ///         std::runtime_error on GDAL failure, a non-WGS84 / rotated raster, or
 ///         a missing geotransform.
 std::size_t importGeoTiff(
-  BathymetryStore & store, SourceRegistry & registry, SourceLayer layer,
+  BathymetryStore & store, SourceLayer layer,
   const std::string & path,
   const GeoTiffImportOptions & options = GeoTiffImportOptions{});
 

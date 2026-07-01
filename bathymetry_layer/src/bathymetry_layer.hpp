@@ -27,12 +27,12 @@ namespace bathymetry_layer
 
 /// @brief Nav2 costmap layer fed by the bathymetric store (marine_bathymetry_store).
 ///
-/// Reads the store's read-only prior layers (`chart/`, and any `processed/`
-/// present) from disk and turns *clearance* — the water-surface ellipsoidal
-/// height minus the seafloor ellipsoidal height — into occupancy cost so the
-/// planner routes around shoals. This is the D1 (prior-only, static) deliverable
-/// of issue #164: no live `draft/` reload (deferred to D2, which depends on the
-/// atomic-tile-write work in #189).
+/// Reads the store's persisted layers (`survey/` and the read-only `reference/`
+/// prior — the post-#248 taxonomy, ADR-0002 A2.1) from disk and turns *clearance*
+/// — the water-surface ellipsoidal height minus the seafloor ellipsoidal height —
+/// into occupancy cost so the planner routes around shoals. This is the D1
+/// (prior-only, static) deliverable of issue #164: no live re-read of the store
+/// (deferred to D2, which depends on the atomic-tile-write work in #189).
 ///
 /// **No-data policy (ADR-0002 §D7, two-query safety pattern):** per cell,
 /// `bestSource` first answers "is there ANY data here?" (quality-blind). If not,
@@ -47,9 +47,11 @@ namespace bathymetry_layer
 /// choose it per deployment. It is still held behind the tide gate: no cost,
 /// lethal-land included, is emitted before a valid `map_tide` arrives.
 /// If there *is* data, `shallowestReliable` applies the navigation-safety gate; a
-/// cell that has data but fails the uncertainty gate, or whose freshest sample is
-/// stale, is written `LETHAL_OBSTACLE` (conservative). Only the clearance ramp
-/// produces non-lethal cost.
+/// cell that has data but fails the uncertainty gate is written `LETHAL_OBSTACLE`
+/// (conservative). Only the clearance ramp produces non-lethal cost. (The
+/// pre-#248 per-cell staleness gate was retired — ADR-0002 Amendment A2.4: the
+/// bathy store is a surveyed static bottom, not a live feed, so per-cell age is
+/// not a meaningful costmap hazard.)
 ///
 /// **Layer coexistence:** writes use max-cost semantics (a cell is only raised,
 /// never lowered, and an unsurveyed cell is skipped), so this layer composes with
@@ -88,14 +90,7 @@ protected:
   // decoupled from the costmap/TF pipeline. Reads store_ and map_tide_z_.
   // Returns std::nullopt when the cell is truly unsurveyed (the layer leaves the
   // master cost untouched); otherwise the cost to combine into the master grid.
-  // @p now_ns is "now" in nanoseconds since the Unix epoch (for the staleness gate).
-  std::optional<unsigned char> evaluateCell(
-    const gggs::CellIndex & cell, int64_t now_ns) const;
-
-  // Whether @p timestamp_ns (nanoseconds since the Unix epoch) is older than
-  // max_age_ relative to @p now_ns. Returns false when the gate is disabled
-  // (max_age_ <= 0) or the timestamp is unset (0).
-  bool isStale(int64_t timestamp_ns, int64_t now_ns) const;
+  std::optional<unsigned char> evaluateCell(const gggs::CellIndex & cell) const;
 
   // Expand a leading "~"/"~/" in @p path to $HOME (so one portable store_path
   // resolves on both the boat and dev/sim). Absolute, empty, and "~user" paths
@@ -170,7 +165,6 @@ protected:
   double minimum_depth_ = 1.0;
   double maximum_caution_depth_ = 2.5;
   double max_uncertainty_ = 0.5;
-  double max_age_ = 0.0;
   // When true, a truly-unsurveyed (no-data) cell is written LETHAL_OBSTACLE
   // instead of being left untouched (NO_INFORMATION). Opt-in (default false):
   // a blanket rule suited to a closed basin whose prior covers the whole
@@ -285,14 +279,6 @@ private:
   double last_tide_z_ = 0.0;
   bool tide_rendered_ = false;
   double tide_invalidate_threshold_ = 0.1;
-
-  // Staleness vs caching: a tile is rendered once, so a cell that ages past
-  // max_age_ would keep its cached (possibly non-lethal) cost rather than
-  // flipping to stale-LETHAL the way the old per-cycle evaluation did. When the
-  // staleness gate is enabled (max_age_ > 0) the cache is fully re-rendered on
-  // this interval so a cell goes stale-LETHAL within ~max_age_ of when it should.
-  // last_full_render_ns_ is the time of the last such forced re-render.
-  int64_t last_full_render_ns_ = 0;
 
   // Last buffered geographic window passed to loadWindow/evictOutside. Used to
   // skip redundant reloads when the costmap has not scrolled past the buffer.
