@@ -23,6 +23,9 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -224,4 +227,107 @@ TEST_F(TileIoTest, StoreMetadataRoundTrip)
   EXPECT_EQ(reloaded.survey, "massabesic-2026");
   EXPECT_EQ(reloaded.date, "2026-06-30");
   EXPECT_EQ(reloaded.calibration_ref, "");   // empty until a calibration exists
+}
+
+// --- Twin-store parity load-robustness guards (#248, mirrors bathy store) ---
+
+TEST_F(TileIoTest, MetadataLoadWarnsOnUnrecognizedSchemaVersion)
+{
+  // A pre-#248 (or foreign) registry.json whose "version" != the current schema
+  // would otherwise load as all-empty without a trace. load() must warn.
+  fs::create_directories(dir_);
+  {std::ofstream(dir_ / "registry.json") << R"({"version": 1, "site": "old"})";}
+
+  StoreMetadata md;
+  std::ostringstream captured;
+  std::streambuf * prev = std::cerr.rdbuf(captured.rdbuf());
+  md.load(dir_.string());
+  std::cerr.rdbuf(prev);
+
+  EXPECT_NE(captured.str().find("unrecognized schema version"), std::string::npos)
+    << "expected a version-mismatch warning, got: " << captured.str();
+  EXPECT_TRUE(md.empty());   // unknown-schema fields do not map — loads empty
+}
+
+TEST_F(TileIoTest, MetadataLoadIsSilentOnCurrentSchemaVersion)
+{
+  fs::create_directories(dir_);
+  StoreMetadata md{"bizzy", "m3", "massabesic-2026", "2026-06-30", ""};
+  md.save(dir_.string());
+
+  StoreMetadata loaded;
+  std::ostringstream captured;
+  std::streambuf * prev = std::cerr.rdbuf(captured.rdbuf());
+  loaded.load(dir_.string());
+  std::cerr.rdbuf(prev);
+
+  EXPECT_TRUE(captured.str().empty()) << "current-schema load must be silent";
+  EXPECT_EQ(loaded.survey, "massabesic-2026");
+}
+
+TEST_F(TileIoTest, LoadWarnsOnUnrecognizedStoreLayout)
+{
+  // A pre-#248 (draft/processed) store has no survey/ subdir, so load() reaches
+  // no tiles and returns empty. That silent-empty load must warn (diagnostic).
+  fs::create_directories(dir_ / "processed");
+  {std::ofstream(dir_ / "processed" / "5_0_0.tif") << "old-layout tile";}
+
+  MbesBackscatterStore reloaded(5);
+  std::ostringstream captured;
+  std::streambuf * prev = std::cerr.rdbuf(captured.rdbuf());
+  const std::size_t n = marine_mbes_backscatter_store::load(reloaded, dir_.string());
+  std::cerr.rdbuf(prev);
+
+  EXPECT_EQ(n, 0u);
+  EXPECT_NE(captured.str().find("no recognized"), std::string::npos)
+    << "expected an old-layout warning, got: " << captured.str();
+}
+
+TEST_F(TileIoTest, LoadDoesNotWarnOnFreshOrMetadataOnlyStore)
+{
+  auto load_stderr = [this]() {
+      MbesBackscatterStore reloaded(5);
+      std::ostringstream captured;
+      std::streambuf * prev = std::cerr.rdbuf(captured.rdbuf());
+      marine_mbes_backscatter_store::load(reloaded, dir_.string());
+      std::cerr.rdbuf(prev);
+      return captured.str();
+    };
+
+  EXPECT_TRUE(load_stderr().empty());              // absent store dir
+  fs::create_directories(dir_);
+  EXPECT_TRUE(load_stderr().empty());              // empty store dir
+
+  StoreMetadata md;
+  md.survey = "massabesic-2026";
+  md.save(dir_.string());
+  ASSERT_TRUE(fs::is_regular_file(dir_ / "registry.json"));
+  EXPECT_TRUE(load_stderr().empty()) << "metadata-only store must not warn";
+}
+
+TEST_F(TileIoTest, LoadSkipsStrayCompanionRasters)
+{
+  // A dropped pre-#248 companion (`*_time.tif`/`*_source.tif`) lingering in a
+  // new-layout survey/ dir would throw in loadTile() and abort the whole load.
+  // It must be warned-and-skipped so the valid value tiles still load.
+  MbesBackscatterStore writer(5);
+  const auto cell = writer.cellIndex(43.0, -70.5);
+  writer.set(SourceLayer::Survey, cell, MbesCell{-30.0f, 0.5f, 1.0f});
+  marine_mbes_backscatter_store::save(writer, dir_.string());
+
+  const std::string tile = marine_mbes_backscatter_store::tileFilename(cell.grid());
+  const std::string stem = tile.substr(0, tile.size() - 4);   // drop ".tif"
+  {std::ofstream(dir_ / "survey" / (stem + "_source.tif")) << "stale companion";}
+  {std::ofstream(dir_ / "survey" / (stem + "_time.tif")) << "stale companion";}
+
+  MbesBackscatterStore reloaded(5);
+  std::ostringstream captured;
+  std::streambuf * prev = std::cerr.rdbuf(captured.rdbuf());
+  const std::size_t n = marine_mbes_backscatter_store::load(reloaded, dir_.string());
+  std::cerr.rdbuf(prev);
+
+  EXPECT_EQ(n, 1u) << "the valid value tile must still load past the companions";
+  ASSERT_TRUE(reloaded.get(SourceLayer::Survey, cell).has_value());
+  EXPECT_FLOAT_EQ(reloaded.get(SourceLayer::Survey, cell)->mean, -30.0f);
+  EXPECT_NE(captured.str().find("companion raster"), std::string::npos);
 }

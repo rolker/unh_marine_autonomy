@@ -23,6 +23,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <iostream>
 #include <limits>
 #include <optional>
 #include <string>
@@ -51,6 +52,52 @@ const std::vector<std::optional<float>> & valueBandNoData()
   static const float nan = std::numeric_limits<float>::quiet_NaN();
   static const std::vector<std::optional<float>> nodata{nan, nan, nan};
   return nodata;
+}
+
+/// True for a pre-#248 companion raster (`*_time.tif` / `*_source.tif`) that may
+/// linger in a `survey/` dir. The per-cell `_time`/`_source` companions were
+/// dropped by #248 (ADR-0007 amendment A.3); a straggler must be skipped, not
+/// fed to `loadTile` (it would throw on the band-count mismatch and abort the
+/// whole load). Mirrors the bathy store's guard.
+bool isDroppedCompanionTile(const std::string & filename)
+{
+  const auto hasSuffix = [&filename](const std::string & suffix) {
+      return filename.size() >= suffix.size() &&
+             filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+  return hasSuffix("_time.tif") || hasSuffix("_source.tif");
+}
+
+/// Diagnostic (MBES is not a costmap input): warn when a store dir holds content
+/// but exposes no recognized `survey/` layer subdir, so a silently-empty load is
+/// observable. Silent for a fresh/absent or metadata-only store. Mirrors the
+/// bathy store's guard.
+void warnIfUnrecognizedStoreLayout(const std::string & dir, bool any_layer_dir_present)
+{
+  namespace fs = std::filesystem;
+  if (any_layer_dir_present) {
+    return;
+  }
+  std::error_code ec;
+  if (!fs::is_directory(dir, ec)) {
+    return;   // fresh/absent store — nothing to warn about
+  }
+  bool has_store_content = false;
+  for (const auto & entry : fs::directory_iterator(dir, ec)) {
+    if (entry.is_directory() ||
+      (entry.is_regular_file() && entry.path().extension() == ".tif"))
+    {
+      has_store_content = true;
+      break;
+    }
+  }
+  if (!has_store_content) {
+    return;   // empty store, or metadata-only sidecar — legitimately nothing loaded
+  }
+  std::cerr << "[marine_mbes_backscatter_store] WARNING: store directory '" << dir
+            << "' has content but no recognized 'survey/' layer subdirectory — "
+            << "NOTHING was loaded. A pre-#248 old-layout store "
+            << "(draft/processed) is not migrated (#221/#248); regenerate it.\n";
 }
 }  // namespace
 
@@ -124,13 +171,24 @@ std::size_t load(
 {
   namespace fs = std::filesystem;
   std::size_t loaded = 0;
+  bool any_layer_dir_present = false;
   for (const SourceLayer layer : source_layers_by_priority) {
     const fs::path layer_dir = fs::path(dir) / layerDirName(layer);
     if (!fs::is_directory(layer_dir)) {
       continue;
     }
+    any_layer_dir_present = true;
     for (const auto & entry : fs::directory_iterator(layer_dir)) {
       if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
+        continue;
+      }
+      // Skip dropped pre-#248 companions (`*_time.tif`/`*_source.tif`) that may
+      // linger in a survey/ dir; feeding one to loadTile would throw on the
+      // band-count mismatch and abort the whole load.
+      if (isDroppedCompanionTile(entry.path().filename().string())) {
+        std::cerr << "[marine_mbes_backscatter_store] WARNING: skipping dropped "
+                  << "companion raster (not a value tile; #248): " << entry.path()
+                  << "\n";
         continue;
       }
       MbesTile tile = loadTile(entry.path().string(), store.level());
@@ -138,6 +196,9 @@ std::size_t load(
       ++loaded;
     }
   }
+  // Observability: a store dir with content but no recognized layer subdir loaded
+  // nothing (e.g. a pre-#248 draft/processed store). Diagnostic-only for MBES.
+  warnIfUnrecognizedStoreLayout(dir, any_layer_dir_present);
   if (metadata != nullptr) {
     metadata->load(dir);
   }

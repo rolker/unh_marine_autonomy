@@ -23,6 +23,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 
@@ -40,6 +41,11 @@ namespace
 constexpr const char * kRegistryFile = "registry.json";
 constexpr const char * kRegistryTmpFile = "registry.json.tmp";
 
+/// Schema version of the coarse `StoreMetadata` sidecar (ADR-0005 / ADR-0007
+/// #248 amendment). Bump when the field set or semantics change; `load` warns on
+/// a mismatch so an older/foreign schema is not silently read as all-empty.
+constexpr int kRegistryVersion = 2;
+
 /// Read a string field, defaulting to empty if absent (forward-compatible load).
 std::string jsonStr(const nlohmann::json & j, const char * key)
 {
@@ -54,7 +60,7 @@ void StoreMetadata::save(const std::string & store_root_dir) const
   fs::create_directories(store_root_dir);
 
   const nlohmann::json doc{
-    {"version", 2},
+    {"version", kRegistryVersion},
     {"platform", platform},
     {"sensor", sensor},
     {"survey", survey},
@@ -105,6 +111,20 @@ void StoreMetadata::load(const std::string & store_root_dir)
   } catch (const nlohmann::json::parse_error & e) {
     throw std::runtime_error(
             "StoreMetadata::load: malformed " + path.string() + ": " + e.what());
+  }
+
+  // Validate the schema version so a pre-#248 (or foreign) registry is not read
+  // as all-empty without a trace. Fields are still read forward-compatibly
+  // (jsonStr defaults absent keys to empty); the warning is the observability.
+  const auto vit = doc.find("version");
+  const int version = (vit != doc.end() && vit->is_number_integer()) ?
+    vit->get<int>() :
+    0;
+  if (version != kRegistryVersion) {
+    std::cerr << "[marine_mbes_backscatter_store] WARNING: registry.json at '"
+              << path.string() << "' has unrecognized schema version " << version
+              << " (expected " << kRegistryVersion << "); coarse store provenance "
+              << "may load empty or incomplete.\n";
   }
 
   platform = jsonStr(doc, "platform");
