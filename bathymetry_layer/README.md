@@ -6,9 +6,10 @@ the planner routes around shoals.
 
 This is the **D1** (prior-only, static) deliverable of issue
 [#164](https://github.com/rolker/unh_marine_autonomy/issues/164): the layer reads
-the store's read-only prior layers (`chart/`, and any `processed/` present) from
-disk and converts depth to cost. It does **not** yet reload live `draft/` tiles
-as the boat surveys — that is the D2 follow-on (see [Follow-on work](#follow-on-work)).
+the store's persisted layers (`survey/` and the read-only `reference/` prior — the
+post-#248 taxonomy) from disk and converts depth to cost. It does **not** yet
+re-read the store live as the boat surveys — that is the D2 follow-on (see
+[Follow-on work](#follow-on-work)).
 
 ## How it works
 
@@ -131,8 +132,8 @@ windowed tile residency keeps memory bounded even on a large global costmap).
 
 ## Follow-on work
 
-- **D2 — live Draft tile reload.** After [#189](https://github.com/rolker/unh_marine_autonomy/issues/189)
-  (atomic tile writes) merges, add tile-change detection on the `draft/` layer so
+- **D2 — live survey tile reload.** After [#189](https://github.com/rolker/unh_marine_autonomy/issues/189)
+  (atomic tile writes) merges, add tile-change detection on the `survey/` layer so
   the costmap refines where the boat has surveyed. File as a new issue:
   "Depends on #164 (D1) and #189 (atomic writes)".
 - **nav2_params registration.** Add the snippet above to the bizzy / echoboat
