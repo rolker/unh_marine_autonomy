@@ -22,3 +22,12 @@ issue: 253
 - [ ] (suggestion) Test gap: `foldTile`'s `if (q==0) continue` no-data guard is redundant with the strict-`>` test, so `FoldTileKeepsBetterIncumbentAndSkipsNoData` doesn't distinguish the skip path. — `test_processed_accumulator.cpp:114`
 
 Sound (verified): tile is square 960×960 so foldTile bounds correct; merge is order-independent + idempotent (strict `>`, incumbent-wins-ties); grids snapshotted before fold → no iterator invalidation; saveTiles dirty-only leaves untouched tiles alone; `--accumulate` default-off preserves prior behavior. ADR-0006 D5/D7 (cross-pass best-source composite) — now actually implemented.
+
+## Address Findings
+**When**: 2026-07-01 06:45 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+- [x] (must-fix) Reload failure → data loss: now ABORTS (exit 1) before any save; corrupt-tile test confirms the tile is preserved, not overwritten.
+- [x] (must-fix) Registry source-id mismatch: guard refuses (exit 2) with a re-run hint, before decoding; same-source re-accumulate unchanged (exit 0).
+- [ ] (suggestion) `saveTile` non-atomic (temp+rename) — deferred to a `marine_tiled_raster_store` follow-up issue (shared I/O, pre-existing).
+- [ ] (suggestion) concurrency lockfile + test distinguishing the no-data-skip path — hardening follow-ups, not blocking.
