@@ -152,6 +152,41 @@ int main(int argc, char ** argv)
   const std::string campaign = argValue(argc, argv, "--campaign", "unknown");
   const bool accumulate = hasFlag(argc, argv, "--accumulate");
 
+  // Provenance guard (#253 review; ADR-0005 D8 / #179). foldTile preserves each
+  // existing cell's original source band, but writeRegistry() is a write-once
+  // single-source writer — so accumulating a DIFFERENT source-id into a store
+  // leaves tiles carrying mixed source indices while registry.json names only
+  // this run's source, silently corrupting provenance. Until the registry is an
+  // append-only merge (#179), refuse the mismatch rather than corrupt it. Fail
+  // fast, before decoding.
+  if (accumulate) {
+    const std::string reg_path =
+      (std::filesystem::path(out_dir) / "registry.json").string();
+    std::ifstream reg(reg_path);
+    std::string line;
+    while (std::getline(reg, line)) {
+      const auto key = line.find("\"source_id\"");
+      if (key == std::string::npos) {
+        continue;
+      }
+      const auto colon = line.find(':', key);
+      if (colon == std::string::npos) {
+        continue;
+      }
+      const int existing_sid = std::atoi(line.c_str() + colon + 1);
+      if (existing_sid > 0 && existing_sid != source_id_arg) {
+        std::cerr << "error: --accumulate: existing store registry " << reg_path
+                  << " has source_id " << existing_sid << ", but this run uses "
+                  << source_id_arg << ".\n"
+                  << "  A multi-source registry merge is not yet implemented "
+                  << "(ADR-0005 D8 / #179); re-run with --source-id " << existing_sid
+                  << " or use a fresh out_dir to avoid corrupting provenance.\n";
+        return 2;
+      }
+      break;   // registry v1 is single-source: first source_id is authoritative.
+    }
+  }
+
   std::ifstream in(tier1_path, std::ios::binary);
   if (!in) {
     std::cerr << "error: cannot open " << tier1_path << "\n";
@@ -259,8 +294,16 @@ int main(int argc, char ** argv)
         acc.foldTile(existing);
         ++folded;
       } catch (const std::exception & e) {
-        std::cerr << "warning: --accumulate could not reload " << path << ": "
-                  << e.what() << " -- this tile will be OVERWRITTEN, not merged\n";
+        // Never destroy prior coverage on a read hiccup. If we cannot reload an
+        // existing tile, saving would OVERWRITE it with this run's partial
+        // composite and silently drop its accumulated coverage — so abort before
+        // any tile is written. (Nothing has been saved yet at this point.)
+        std::cerr << "error: --accumulate could not reload existing tile " << path
+                  << ": " << e.what() << "\n"
+                  << "  refusing to continue: saving now would OVERWRITE this tile and lose its\n"
+                  << "  prior coverage. Inspect/remove the tile, or re-run WITHOUT --accumulate\n"
+                  << "  to intentionally overwrite. No tiles were written.\n";
+        return 1;
       }
     }
     std::cerr << "accumulate: folded " << folded << " existing tile(s) from " << out_dir << "\n";
