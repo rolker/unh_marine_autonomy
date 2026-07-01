@@ -77,3 +77,15 @@ Per the consequences map and ADR cross-references:
 - [ ] Widen ADR update scope in plan: add ADR-0007 amendment (D6 value bands, D7 layer collapse) and ADR-0005 amendment (per-cell source-index drop → coarse metadata) to the acceptance criteria or plan.
 - [ ] Clarify cube_bathymetry#96 sequencing and merge order relative to #248.
 - [ ] Resolve `registry.json` fate explicitly: removed, repurposed, or replaced by tile sidecar — record in the ADR addendum.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-07-01 12:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-248/plan.md` at `e4e9744`
+**Branch**: feature/issue-248 at `e4e9744`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
