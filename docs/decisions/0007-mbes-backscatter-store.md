@@ -18,6 +18,17 @@ reflectivity (dB) is now carried into the soundings point cloud by
 [cube_bathymetry#52](https://github.com/rolker/cube_bathymetry/issues/52) (merged).
 Kongsberg EM2040 is a later adopter of the *same* store.
 
+**Amended 2026-07-01 ([#248](https://github.com/rolker/unh_marine_autonomy/issues/248)):**
+greenfield format simplification (the store is a regenerable cache; no migration).
+The **value-band schema** changes from D6's 2-band `{intensity, intensity_variance}`
+to a **3-band `Float32` `{mean, standard_error, sample_sd}`** tile encoding the
+Welford sufficient statistics for lossless reload; the D7 `draft`/`processed` layers
+**collapse to a single `cube` layer**; and, matching the bathy store, the per-cell
+`_time.tif` / `_source.tif` companions are **dropped** with `registry.json`
+repurposed to a coarse store-level `StoreMetadata` (cross-ref
+[ADR-0005](0005-multi-platform-provenance-registry.md) #248 amendment). See the
+**#248 amendment** at the end of the Decision section.
+
 ## Context
 
 The M3 multibeam reports **per-beam acoustic backscatter** (reflectivity, dB)
@@ -224,6 +235,11 @@ Same two-layer priority overlay as the sidescan store:
 
 `draft → processed` is an overlay/promotion, mirroring ADR-0002 and ADR-0006.
 
+> **D7 layers collapsed 2026-07-01 ([#248](https://github.com/rolker/unh_marine_autonomy/issues/248)).**
+> The `draft` / `processed` two-layer overlay is superseded by a **single `cube`
+> layer** — see the #248 amendment (A.2). The overlay/promotion semantics above are
+> no longer instantiated for the single-platform, single-coverage deployment.
+
 ### D8 — Cross-sensor-class fusion with sidescan is at the query / central-server layer
 
 This store holds only `sensor_class: mbes-backscatter`. A unified "best backscatter
@@ -259,6 +275,75 @@ Part of #180 / #190):
 3. The MBES backscatter store package + GGGS tile IO (core_ws), `draft` live write.
 4. The deferred-settled processed build (offline CUBE re-run + GeoCoder correction +
    quality arbitration) and CAMP consumption via the #175 GPU tile-warp.
+
+## Amendment (#248) — Value-band schema, layer collapse, coarse metadata (2026-07-01)
+
+The store is a **regenerable cache** over the soundings bags (D1). For the
+single-platform (BizzyBoat M3), single-coverage deployment, this amendment
+simplifies the on-disk format with **no migration shim**.
+
+### A.1 — Value tile: `{mean, standard_error, sample_sd}` (3-band `Float32`)
+
+D6's value tile carried `{intensity, intensity_variance}` (2 bands). It is replaced
+by a **3-band `Float32`** value tile encoding the **Welford sufficient statistics**,
+so the estimate is losslessly reconstructable on reload rather than collapsed to a
+mean+variance pair:
+
+| Band | Field | Meaning |
+|------|-------|---------|
+| 0 | `mean` | Welford running mean of corrected backscatter. NaN = no data. |
+| 1 | `standard_error` | **confidence-scaled** standard error of the mean (D4 estimate uncertainty), `scale · sample_sd / √n`. |
+| 2 | `sample_sd` | sample standard deviation of contributing beams, `√(M2 / (n−1))`. |
+
+**Confidence-scale convention (mirrors the bathy `uncertainty`).** The producer
+writes `standard_error` **scaled by a confidence factor** so it reads symmetrically
+with the bathy store's confidence-scaled 1-σ uncertainty (ADR-0002 D3); the consumer
+**divides the scale out** on reload before interpreting it as a true standard error.
+The store round-trips all three floats bit-exactly and does no scaling itself.
+
+**Lossless reload.** From the three bands (dividing the confidence scale out of
+`standard_error` to recover the true `SE = sample_sd / √n`):
+
+- `n = (sample_sd / SE)²` — the contributing-beam count.
+- `M2 = sample_sd² · (n − 1)` — the Welford sum of squared deviations.
+
+so `{n, mean, M2}` (the full Welford state) is recovered for a downstream re-run to
+**continue** the accumulation, not just read a settled value.
+
+**`n = 1` sentinel.** A node with a single contributing beam has no dispersion:
+`sample_sd = 0` with a **finite** `mean` encodes `n = 1, M2 = 0`. This is distinct
+from **no-data** (`mean = NaN`): `hasData()` keys on `mean` being finite, so a
+one-sample cell is real data, and the `sample_sd == 0 ∧ finite mean` reload path
+recovers `n = 1` without a divide-by-zero.
+
+This supersedes D4's "`intensity_uncertainty` = posterior estimate variance" single
+band: the estimate uncertainty is now `standard_error` (band 1), and the D4
+within-node dispersion (the candidate texture band) is now **carried explicitly** as
+`sample_sd` (band 2).
+
+### A.2 — Single `cube` layer (D7 collapse)
+
+The D7 `draft` / `processed` two-layer overlay collapses to a **single `cube`
+layer**. With one platform, one coverage, and one fused surface per layer (the same
+reasoning as ADR-0002 A2.1), the live-vs-durable layer split added no query value.
+`SourceLayer` becomes a one-element enum (`Cube`); the on-disk subdirectory is
+`cube/`; `bestSource` walks the single layer. When a durable re-run product needs to
+coexist with a live surface again, the overlay is the mechanism to reintroduce.
+
+### A.3 — `_time` / `_source` dropped; `registry.json` → `StoreMetadata`
+
+Matching ADR-0002 A2.2/A2.3: the per-cell `_time.tif` and `_source.tif` companions
+are dropped (single 3-band value tile per grid), and `registry.json` is repurposed
+from the ADR-0005 D2 per-cell interning table to a coarse store-level
+**`StoreMetadata{platform, sensor, survey, date}`**. The `calibration_ref` D6 note
+survives as store-level metadata (empty until a beam-pattern calibration exists).
+The per-cell provenance drop is recorded on its owning ADR
+([ADR-0005](0005-multi-platform-provenance-registry.md) #248 amendment).
+
+### A.4 — Safety non-goal unchanged
+
+Backscatter remains a perception / cartographic product, **not** a navigation input
+(Consequences, safety non-goal). None of the above touches a costmap path.
 
 ## Consequences
 

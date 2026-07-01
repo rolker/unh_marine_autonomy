@@ -41,6 +41,17 @@ compose with mixed-level `<level>_<row>_<col>` tile filenames. See **A1** below.
 > the end of the A1 section). A1 stood for three days. The detail is recorded so
 > readers understand both the original reasoning and why it was reversed.
 
+**Amended 2026-07-01 ([#248](https://github.com/rolker/unh_marine_autonomy/issues/248)):**
+greenfield store-format simplification — the store is a **regenerable cache** over
+raw bags, so the format is simplified with **no migration shim**. The three source
+layers collapse to **two** (`chart`/`draft`/`processed` → `pre-existing`/`cube`),
+the per-cell `_time.tif` and `_source.tif` rasters are **dropped** (a single 2-band
+`Float64` value tile per grid remains), `registry.json` is **repurposed** from a
+per-cell source-index intern table to a coarse store-level `StoreMetadata` sidecar
+(cross-ref [ADR-0005](0005-multi-platform-provenance-registry.md) #248 amendment),
+and the `bathymetry_layer` **per-cell staleness gate is retired** (it read the now-
+dropped per-cell time). See **Amendment A2** below.
+
 The full design is in the issue body; this ADR records the load-bearing
 architecture decisions and their rationale so they survive the issue. It is a
 **cross-cutting** decision in the sense ADR-0001 establishes for this repo's
@@ -471,6 +482,80 @@ The companion `cube_bathymetry` change (dropping `currentUtcDateString()` from
 `cube_bathymetry_node.cpp`, which fed the epoch label) is tracked separately as
 [rolker/cube_bathymetry#69](https://github.com/rolker/cube_bathymetry/issues/69)
 and lands as a coordinated follow-on against the new epoch-free store API.
+
+## Amendment A2 — Greenfield store-format simplification ([#248](https://github.com/rolker/unh_marine_autonomy/issues/248), 2026-07-01)
+
+The store is a **derived cache**: every tile is re-derivable from the raw soundings
+bags (D5/D9, ADR-0007 D1). That framing makes several D3/D5 structures redundant
+now that the deployment is **single-platform** (BizzyBoat M3) and single-coverage.
+This amendment removes them. Because there is no production store to migrate (the
+cache regenerates from bags), the change is a **clean break — no migration shim**.
+
+### A2.1 — Layer taxonomy: three layers collapse to two
+
+The D3 quality/maturity layers `chart` / `draft` / `processed` are replaced by
+**`cube`** (highest priority) and **`pre-existing`** (the read-only prior):
+
+- **`cube`** — the CUBE product, live or off-boat re-run. Subsumes the old
+  `draft` + `processed` distinction: with one fused surface per layer (#221,
+  last-write-wins) and a single platform, separating live from re-run added no
+  query value. Highest priority.
+- **`pre-existing`** — any prior surface imported before the survey (a chart-derived
+  contour prior, an external processed grid). This is the old `chart` layer
+  generalized and **remains the read-only prior**: live `cube` ingest can never
+  clobber it (the D3 read-only gate moves from `chart` to `pre-existing`, opted into
+  at construction by the importer only).
+
+The on-disk subdirectories become `cube/` and `pre-existing/` accordingly. The D3
+priority-overlay semantics (non-destructive, `cube > pre-existing`) are unchanged.
+
+### A2.2 — Tile layout: value tile only; `_time` / `_source` dropped
+
+D5 (as amended by #178) persisted **three** files per grid: a 2-band `Float64`
+value tile, a 1-band `Int64` `_time.tif`, and a 1-band `UInt16` `_source.tif`.
+This amendment keeps **only the 2-band `Float64` value tile** (depth +
+uncertainty; NaN no-data on both). The `_time.tif` and `_source.tif` companions
+are **dropped**:
+
+- **Per-cell time** is redundant with the bag record and its only in-tree consumer
+  was the `bathymetry_layer` staleness gate, retired in A2.4.
+- **Per-cell source index** was the ADR-0005 D2/D8 multi-platform provenance axis;
+  with a single platform it is a constant, so per-cell storage is unwarranted.
+  Coarse provenance moves to the store-level `StoreMetadata` sidecar (A2.3).
+
+`BathyCell` therefore carries only `{depth, uncertainty}`; `DepthSample` drops
+`timestamp` and `source_index`.
+
+### A2.3 — `registry.json` repurposed as coarse `StoreMetadata`
+
+The `registry.json` sidecar (D5/#178, ADR-0005 D2) is **repurposed**, not removed:
+from a per-cell source-index intern table (`SourceRegistry` / `SourceRecord`) to a
+flat store-level **`StoreMetadata{platform, sensor, survey, date}`**. It records who
+made the store once, at the root, instead of interning per-cell handles. The
+per-cell provenance drop and this repurpose are recorded on the owning ADR in the
+[ADR-0005](0005-multi-platform-provenance-registry.md) #248 amendment.
+
+### A2.4 — Retire the `bathymetry_layer` per-cell staleness gate
+
+The Nav2 costmap layer's per-cell staleness gate (`max_age` param + `isStale()`,
+which read `DepthSample::timestamp`) is **retired** — code, parameters, tests, and
+README mention removed, not stubbed. Rationale: the bathy store holds a **surveyed
+static bottom**, not a live sensor feed. A surveyed depth does not "expire": the
+seafloor a survey measured is still there. Per-cell staleness was a costmap hazard
+concept borrowed from live-perception layers that does not apply to a static prior,
+and it was the sole remaining reader of the per-cell time band (A2.2). The
+uncertainty gate (`max_uncertainty`, `shallowestReliable`) and the conservative
+no-data policy (D7) are unchanged and remain the safety mechanism: an over-uncertain
+or unsurveyed cell is still LETHAL / obstacle. This is a deliberate,
+operator-approved removal (issue #248 plan-review resolution, 2026-07-01), not a
+silent drop.
+
+### A2.5 — Synchronized landing with cube_bathymetry#96
+
+The `SourceLayer` rename and the dropped bathy-store obligations (no per-cell time /
+source to feed) are a producer-side contract change. cube_bathymetry#96 (the
+consumption side) must co-land so there is no broken-build window; the merge is
+coordinated (issue #248 resolution 2, 2026-06-30).
 
 ## Consequences
 
