@@ -153,6 +153,51 @@ bool tileOverlapsBox(
   return true;
 }
 
+/// @brief Warn when a store directory holds content but exposes no recognized
+/// `survey/`/`reference/` layer subdirectory — an old-layout (or foreign) store
+/// from which NOTHING loads.
+///
+/// This is a navigation-safety *observability* guard: `load()`/`loadWindow()`
+/// skip a layer whose subdir is absent, so a store written in the pre-#248
+/// taxonomy (`chart/`, `draft/`, `processed/`) loads as **empty** without error.
+/// With `BathymetryLayer`'s `unsurveyed_is_lethal_ == false` default, an empty
+/// bathy prior reads as *navigable*, so a silently-empty load must not pass
+/// unnoticed. Matches the store's existing stale-subdir WARNING idiom.
+///
+/// Stays silent for a genuinely fresh/absent store (a missing dir, or one
+/// holding only the `registry.json` metadata sidecar and no tiles yet):
+/// "content" here means a subdirectory or a top-level `.tif`, i.e. tile data
+/// that the recognized-layer walk could not reach.
+void warnIfUnrecognizedStoreLayout(const std::string & dir, bool any_layer_dir_present)
+{
+  namespace fs = std::filesystem;
+  if (any_layer_dir_present) {
+    return;
+  }
+  std::error_code ec;
+  if (!fs::is_directory(dir, ec)) {
+    return;   // fresh/absent store — nothing to warn about
+  }
+  bool has_store_content = false;
+  for (const auto & entry : fs::directory_iterator(dir, ec)) {
+    if (entry.is_directory() ||
+      (entry.is_regular_file() && entry.path().extension() == ".tif"))
+    {
+      has_store_content = true;
+      break;
+    }
+  }
+  if (!has_store_content) {
+    return;   // empty store, or metadata-only sidecar — legitimately nothing loaded
+  }
+  std::cerr << "[marine_bathymetry_store] WARNING: store directory '" << dir
+            << "' has content but no recognized 'survey/' or 'reference/' layer "
+            << "subdirectory — NOTHING was loaded. A pre-#248 old-layout store "
+            << "(chart/draft/processed) is not migrated (#221/#248); regenerate "
+            << "it. An empty bathy prior reads as unsurveyed (navigable unless "
+            << "unsurveyed_is_lethal is set).\n";
+}
+
 }  // namespace
 
 uint8_t levelFromTileFilename(const std::string & filename)
@@ -257,11 +302,13 @@ std::size_t load(
 {
   namespace fs = std::filesystem;
   std::size_t loaded = 0;
+  bool any_layer_dir_present = false;
   for (const SourceLayer layer : source_layers_by_priority) {
     const fs::path layer_dir = fs::path(dir) / layerDirName(layer);
     if (!fs::is_directory(layer_dir)) {
       continue;
     }
+    any_layer_dir_present = true;
     // Flat layout (#221): value tiles live directly under <dir>/<layer>/. A
     // subdirectory entry (e.g. a stale old-style epoch dir) is ignored — there
     // is no production data to migrate, so old epoch-subdir stores are simply
@@ -285,6 +332,7 @@ std::size_t load(
       ++loaded;
     }
   }
+  warnIfUnrecognizedStoreLayout(dir, any_layer_dir_present);
   if (metadata != nullptr) {
     metadata->load(dir);
   }
@@ -299,11 +347,13 @@ std::size_t loadWindow(
 {
   namespace fs = std::filesystem;
   std::size_t loaded = 0;
+  bool any_layer_dir_present = false;
   for (const SourceLayer layer : source_layers_by_priority) {
     const fs::path layer_dir = fs::path(dir) / layerDirName(layer);
     if (!fs::is_directory(layer_dir)) {
       continue;
     }
+    any_layer_dir_present = true;
     // Flat layout (#221): value tiles live directly under <dir>/<layer>/.
     for (const auto & entry : fs::directory_iterator(layer_dir)) {
       if (entry.is_directory()) {
@@ -336,6 +386,7 @@ std::size_t loadWindow(
       ++loaded;
     }
   }
+  warnIfUnrecognizedStoreLayout(dir, any_layer_dir_present);
   if (metadata != nullptr) {
     metadata->load(dir);
   }

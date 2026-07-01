@@ -24,7 +24,9 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <map>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -283,6 +285,56 @@ TEST_F(TileIoTest, LoadIgnoresEpochSubdirectories)
   // mis-loaded as a tile, which would have thrown on the bogus file).
   EXPECT_EQ(marine_bathymetry_store::load(reloaded, dir_.string()), 1u);
   EXPECT_DOUBLE_EQ(reloaded.get(SourceLayer::Survey, cell)->depth, -30.0);
+}
+
+TEST_F(TileIoTest, LoadWarnsOnUnrecognizedStoreLayout)
+{
+  // A store dir written in the pre-#248 taxonomy (chart/draft/processed) has no
+  // survey/ or reference/ subdir, so load() reaches no tiles and returns empty.
+  // Because an empty bathy prior reads as navigable (unsurveyed_is_lethal default
+  // false), that silent-empty load must warn — matching the stale-subdir idiom.
+  fs::create_directories(dir_ / "chart");
+  {std::ofstream(dir_ / "chart" / "5_0_0.tif") << "old-layout tile";}
+
+  BathymetryStore reloaded(5);
+  std::ostringstream captured;
+  std::streambuf * prev = std::cerr.rdbuf(captured.rdbuf());
+  const std::size_t n = marine_bathymetry_store::load(reloaded, dir_.string());
+  std::cerr.rdbuf(prev);
+
+  EXPECT_EQ(n, 0u);
+  EXPECT_NE(captured.str().find("no recognized"), std::string::npos)
+    << "expected an old-layout warning, got: " << captured.str();
+}
+
+TEST_F(TileIoTest, LoadDoesNotWarnOnFreshOrMetadataOnlyStore)
+{
+  // A genuinely fresh store — absent, empty, or holding only the registry.json
+  // metadata sidecar with no tiles yet — is NOT an old-layout store, so load()
+  // stays silent (no spurious navigation-safety warning).
+  auto load_stderr = [this]() {
+      BathymetryStore reloaded(5);
+      std::ostringstream captured;
+      std::streambuf * prev = std::cerr.rdbuf(captured.rdbuf());
+      marine_bathymetry_store::load(reloaded, dir_.string());
+      std::cerr.rdbuf(prev);
+      return captured.str();
+    };
+
+  // Absent store dir.
+  EXPECT_TRUE(load_stderr().empty());
+
+  // Empty store dir.
+  fs::create_directories(dir_);
+  EXPECT_TRUE(load_stderr().empty());
+
+  // Metadata-only store (registry.json, no tiles).
+  StoreMetadata md;
+  md.survey = "massabesic-2026";
+  md.save(dir_.string());
+  ASSERT_TRUE(fs::is_regular_file(dir_ / "registry.json"));
+  EXPECT_TRUE(load_stderr().empty())
+    << "metadata-only store must not warn";
 }
 
 TEST_F(TileIoTest, ImportTilesPersistAndReload)
