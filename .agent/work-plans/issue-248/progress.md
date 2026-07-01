@@ -104,3 +104,89 @@ Per the consequences map and ADR cross-references:
 - [ ] (must-fix) `marine_bathymetry_store/src/import_geotiff_main.cpp` (built `import_geotiff` CLI) uses `SourceRecord`/`SourceRegistry` and passes `registry` to load/save/import — not in Files to Change; build break. Redesign/remove its `--source-id`/`--datum` provenance path + help text. — `plan.md:110`
 - [ ] (suggestion) Consequences table claims no registry.json readers outside the store lib; `import_geotiff_main.cpp` is a counterexample. — `plan.md:157`
 - [ ] (suggestion) `marine_tiled_raster_store/README.md` cross-references the bathy tile format ("3 bands"); refresh or note out-of-scope. — `plan.md:116`
+
+## Implementation
+**Status**: complete (bathy + MBES built & green in-container; bathymetry_layer edited, not buildable in-container)
+**When**: 2026-07-01 02:45 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-248 at `d68bc44`
+**Commits** (atomic, agent identity, hooks passing, no `--no-verify`):
+- `af5189c` docs(adr): amend ADR-0002/0005/0007
+- `8c23003` feat(marine_bathymetry_store): greenfield store-format simplification
+- `09aed92` feat(bathymetry_layer): retire per-cell staleness gate + cube/pre-existing
+- `844ef82` feat(marine_mbes_backscatter_store): 3-band Welford value tile + single cube layer
+- `d68bc44` docs(marine_tiled_raster_store): refresh bathy/mbes tile-format cross-references
+
+### What was implemented (all plan steps)
+
+1. **ADR addenda** (step 1, before code): ADR-0002 Amendment A2 (layer taxonomy
+   chart/draft/processed → cube/pre-existing; drop `_time`/`_source` tiles →
+   single 2-band value tile; registry.json → coarse StoreMetadata; **staleness-gate
+   retirement rationale** — surveyed static bottom, not a live feed); ADR-0005
+   amendment (per-cell source index dropped for single-platform stores; registry
+   repurposed; multi-platform contract retained); ADR-0007 amendment A.1–A.4
+   (value bands `{intensity,intensity_variance}` → `{mean,standard_error,sample_sd}`
+   Welford stats + confidence-scaled SE; draft/processed → single cube; `_time`/
+   `_source` dropped; safety non-goal unchanged).
+
+2. **marine_bathymetry_store**: `SourceLayer{Cube,PreExisting}`; `BathyCell` /
+   `BathymetryTile` value-only 2-band tile (dropped timestamp/source_index and
+   companion tiles); `registry.hpp/.cpp` `SourceRegistry` → flat `StoreMetadata`;
+   persistence free fns take `StoreMetadata*`; `DepthSample` slimmed; `geotiff_import`
+   drops registry/timestamp/source stamping; `import_geotiff` CLI drops
+   `--source-id`/`--datum`/`--timestamp` + SourceRegistry, layer names
+   `cube|pre-existing`, added optional coarse `--platform/--sensor/--survey/--date`.
+   Tests + README updated; bathy uncertainty round-trip + StoreMetadata round-trip
+   added.
+
+3. **bathymetry_layer staleness-gate retirement** (operator-approved, explicit):
+   removed `max_age` param, `isStale()`, `evaluateCell`'s `now_ns` arg, the forced
+   re-render interval + `last_full_render_ns_`; `evaluateCell` LETHALs an
+   over-uncertain/unreliable cell purely on the uncertainty gate. Removed the
+   `StaleCellIsLethal` test and the staleness arm of test 7; dropped the `max_age`
+   README row/param/yaml. Adopted `cube/pre-existing` naming in the store
+   construction + tests.
+
+4. **marine_mbes_backscatter_store**: single `cube` layer; 3-band `Float32`
+   `{mean,standard_error,sample_sd}` value tile; dropped companions; registry →
+   `StoreMetadata{...,calibration_ref}`; `IntensitySample` → `BackscatterSample`.
+   Tests + README updated.
+
+5. **Load-bearing tests** (all present & passing): backscatter Welford round-trip
+   for n≥2 (`n=(sample_sd/SE)^2`, `M2=sample_sd^2*(n-1)`); the **n=1 sentinel**
+   (`sample_sd==0`, finite mean → n=1, M2=0; distinct from NaN no-data); the
+   **confidence-scale divide-out** (integer n); bathy uncertainty round-trip; the
+   layer-name/field updates across all touched tests.
+
+6. **marine_tiled_raster_store/README.md** bathy tile-format cross-reference
+   refreshed (2-band bathy + 3-band MBES consumer).
+
+### Per-package build/test status
+- **marine_bathymetry_store**: **green** in-container — `colcon build` + `colcon test`
+  → 138 tests, 0 failures (58 gtest cases across store/query/tile_io/geotiff_import,
+  plus linters incl. uncrustify).
+- **marine_mbes_backscatter_store**: **green** in-container — 84 tests, 0 failures.
+- **bathymetry_layer**: **NOT built/tested in-container** — depends on the
+  lower-layer `geodesy` package (`geodesy/ecef.h`), which is absent in this
+  container (nav2/geodesy underlay not provided). Code edits are complete and
+  self-consistent (stale-symbol sweep clean; no dangling `max_age_`/`isStale`/
+  `now_ns`/`last_full_render_ns_`). **Host must `colcon build` + `colcon test`
+  bathymetry_layer** once geodesy/nav2 are available.
+
+### Deviations from the plan
+- **Legacy 3-band `loadTile` guard dropped** (bathy). The pre-#178 rejection guard
+  and its test were removed rather than kept: greenfield, no on-disk migration, and
+  the value tile is now 2-band, so the guard has no legacy to protect against.
+- **import_geotiff CLI gained coarse metadata flags** (`--platform/--sensor/
+  --survey/--date`) writing `StoreMetadata` — a small, natural replacement for the
+  dropped per-cell provenance path (plan said "drop the provenance path"; this keeps
+  provenance at the new store-level granularity). No new per-cell state.
+
+### What the host must finish
+- **Build + test `bathymetry_layer`** (needs geodesy/nav2 underlay).
+- **Co-land cube_bathymetry#96** (synchronized merge — ADR-0002 A2.5): the
+  `SourceLayer` rename and the dropped per-cell time/source obligations are a
+  producer-side contract change; hold #96 until #248 is ready and merge together to
+  avoid a broken-build window.
+- Do NOT push / open PR (local-first; host publishes).
