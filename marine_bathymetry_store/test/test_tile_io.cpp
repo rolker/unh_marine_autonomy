@@ -337,6 +337,33 @@ TEST_F(TileIoTest, LoadDoesNotWarnOnFreshOrMetadataOnlyStore)
     << "metadata-only store must not warn";
 }
 
+TEST_F(TileIoTest, LoadSkipsStrayCompanionRasters)
+{
+  // A dropped pre-#248 companion (`*_time.tif`/`*_source.tif`) may linger inside
+  // a new-layout survey/ dir on a store written by old code. It is not a value
+  // tile; feeding it to loadTile() would throw and abort the WHOLE load. It must
+  // be skipped so the valid value tiles still load.
+  BathymetryStore writer(5);
+  const auto cell = writer.cellIndex(43.0, -70.5);
+  writer.set(SourceLayer::Survey, cell, BathyCell{-30.0, 0.5});
+  marine_bathymetry_store::save(writer, dir_.string());
+
+  const std::string tile = marine_bathymetry_store::tileFilename(cell.grid());
+  const std::string stem = tile.substr(0, tile.size() - 4);   // drop ".tif"
+  {std::ofstream(dir_ / "survey" / (stem + "_source.tif")) << "stale companion";}
+  {std::ofstream(dir_ / "survey" / (stem + "_time.tif")) << "stale companion";}
+
+  BathymetryStore reloaded(5);
+  std::ostringstream captured;
+  std::streambuf * prev = std::cerr.rdbuf(captured.rdbuf());
+  const std::size_t n = marine_bathymetry_store::load(reloaded, dir_.string());
+  std::cerr.rdbuf(prev);
+
+  EXPECT_EQ(n, 1u) << "the valid value tile must still load past the companions";
+  EXPECT_DOUBLE_EQ(reloaded.get(SourceLayer::Survey, cell)->depth, -30.0);
+  EXPECT_NE(captured.str().find("companion raster"), std::string::npos);
+}
+
 TEST_F(TileIoTest, ImportTilesPersistAndReload)
 {
   // The bulk-insert path persists its tiles to the flat layout and reloads.

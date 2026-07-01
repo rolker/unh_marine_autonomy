@@ -198,6 +198,24 @@ void warnIfUnrecognizedStoreLayout(const std::string & dir, bool any_layer_dir_p
             << "unsurveyed_is_lethal is set).\n";
 }
 
+/// @brief True if @p filename is a dropped pre-#248 companion raster
+/// (`*_time.tif` / `*_source.tif`).
+///
+/// The per-cell `_time`/`_source` companions were dropped by #248
+/// (Amendment A2.2). One may still linger inside a new-layout layer dir on a
+/// store written by old code; it is not a 2-band value tile and must be skipped
+/// rather than fed to `loadTile()`, which would throw and abort the whole load.
+/// (Value tiles are `<level>_<row>_<col>.tif` — all-numeric stems — so there is
+/// no collision with these non-numeric suffixes.)
+bool isDroppedCompanionTile(const std::string & filename)
+{
+  const auto hasSuffix = [&filename](const std::string & suffix) {
+      return filename.size() >= suffix.size() &&
+             filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+  return hasSuffix("_time.tif") || hasSuffix("_source.tif");
+}
+
 }  // namespace
 
 uint8_t levelFromTileFilename(const std::string & filename)
@@ -324,6 +342,15 @@ std::size_t load(
       if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
         continue;
       }
+      // Skip dropped pre-#248 companions (`*_time.tif`/`*_source.tif`) that may
+      // linger in a new-layout dir: they are not value tiles and would throw in
+      // loadTile(), aborting the load of every other (valid) tile.
+      if (isDroppedCompanionTile(entry.path().filename().string())) {
+        std::cerr << "[marine_bathymetry_store] WARNING: skipping dropped "
+                  << "companion raster (not a value tile; #248): " << entry.path()
+                  << "\n";
+        continue;
+      }
       // Multi-level: recover each tile's level from its filename and load at
       // that level (the store is not pinned to one level, ADR-0002 §D2).
       const uint8_t lvl = levelFromTileFilename(entry.path().filename().string());
@@ -364,6 +391,14 @@ std::size_t loadWindow(
         continue;
       }
       if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
+        continue;
+      }
+      // Skip dropped pre-#248 companions (`*_time.tif`/`*_source.tif`): not value
+      // tiles; parsing their filename / feeding them to loadTile() would throw.
+      if (isDroppedCompanionTile(entry.path().filename().string())) {
+        std::cerr << "[marine_bathymetry_store] WARNING: skipping dropped "
+                  << "companion raster (not a value tile; #248): " << entry.path()
+                  << "\n";
         continue;
       }
 
