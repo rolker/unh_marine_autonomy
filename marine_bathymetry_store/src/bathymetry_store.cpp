@@ -34,15 +34,15 @@ bool BathymetryStore::set(
 {
   // Validate the input first, then the layer permission — so a malformed cell
   // always reports invalid_argument (the more actionable error), and the
-  // read-only logic_error fires only for an otherwise-valid Chart write. The
-  // cell may be at any valid level — the store is multi-level (ADR-0002 §D2).
+  // read-only logic_error fires only for an otherwise-valid PreExisting write.
+  // The cell may be at any valid level — the store is multi-level (ADR-0002 §D2).
   if (!cell.valid()) {
     throw std::invalid_argument("BathymetryStore::set: invalid CellIndex");
   }
-  if (layer == SourceLayer::Chart && !chart_writable_) {
+  if (layer == SourceLayer::PreExisting && !pre_existing_writable_) {
     throw std::logic_error(
-            "BathymetryStore::set: Chart is a read-only prior layer; construct "
-            "the store with chart_writable=true (importer only) to write it");
+            "BathymetryStore::set: PreExisting is a read-only prior layer; construct "
+            "the store with pre_existing_writable=true (importer only) to write it");
   }
   // Last-write-wins per cell: there is no per-day epoch ordering since #221.
   BathymetryTile & tile = getOrCreateTile(layer, cell.grid());
@@ -67,15 +67,15 @@ std::optional<BathyCell> BathymetryStore::get(
 std::size_t BathymetryStore::importTiles(
   SourceLayer layer, std::map<gggs::GridIndex, BathymetryTile> tiles)
 {
-  // Chart is a read-only prior (ADR-0002 §D3). importTiles is a public mutator
-  // just like set(), so it must honor the same gate -- otherwise the CLI or any
-  // library consumer could overwrite the Chart prior on a default store,
+  // PreExisting is a read-only prior (ADR-0002 §D3). importTiles is a public
+  // mutator just like set(), so it must honor the same gate -- otherwise the CLI
+  // or any library consumer could overwrite the prior on a default store,
   // defeating the read-only guarantee. Only an importer that explicitly opted in
-  // (chart_writable=true) may write Chart.
-  if (layer == SourceLayer::Chart && !chart_writable_) {
+  // (pre_existing_writable=true) may write PreExisting.
+  if (layer == SourceLayer::PreExisting && !pre_existing_writable_) {
     throw std::logic_error(
-            "BathymetryStore::importTiles: Chart is a read-only prior layer; "
-            "construct the store with chart_writable=true (importer only) to write it");
+            "BathymetryStore::importTiles: PreExisting is a read-only prior layer; "
+            "construct the store with pre_existing_writable=true (importer only) to write it");
   }
   for (const auto & [grid, tile] : tiles) {
     if (!grid.valid()) {

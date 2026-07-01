@@ -48,7 +48,7 @@ struct DatasetCloser
 }  // namespace
 
 std::size_t importGeoTiff(
-  BathymetryStore & store, SourceRegistry & registry, SourceLayer layer,
+  BathymetryStore & store, SourceLayer layer,
   const std::string & path, const GeoTiffImportOptions & options)
 {
   if (options.depth_band < 1) {
@@ -56,14 +56,6 @@ std::size_t importGeoTiff(
   }
   if (options.uncertainty_band < 0) {
     throw std::invalid_argument("importGeoTiff: uncertainty_band must be >= 0 (0 = none)");
-  }
-
-  // Register the provenance source (if any) and resolve the per-cell index to
-  // stamp (ADR-0005 D2/D8). An empty source_id means the caller does not track
-  // provenance: stamp the unset index (0).
-  uint16_t source_index = SourceRegistry::kUnset;
-  if (!options.source.source_id.empty()) {
-    source_index = registry.registerSource(options.source);
   }
 
   // Target import level: a caller-specified level (multi-level, ADR-0002 §D2) or
@@ -202,16 +194,15 @@ std::size_t importGeoTiff(
           } else {
             ++imported;   // a new cell (replacements don't recount)
           }
-          tile_it->second.set(cell.row(), cell.column(), BathyCell{depth, uncertainty,
-              static_cast<int64_t>(options.timestamp * 1e9), source_index});
+          tile_it->second.set(cell.row(), cell.column(), BathyCell{depth, uncertainty});
         }
       }
     }
   }
 
-  // Bulk-insert into the layer's single fused surface (#221). The Chart
+  // Bulk-insert into the layer's single fused surface (#221). The PreExisting
   // read-only gate is enforced by importTiles (throws logic_error if the store
-  // is not chart_writable).
+  // is not pre_existing_writable).
   store.importTiles(layer, std::move(tiles));
   return imported;
 }

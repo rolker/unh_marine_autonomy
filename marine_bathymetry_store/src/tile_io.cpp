@@ -35,23 +35,19 @@
 #include "marine_tiled_raster_store/tile_io.hpp"
 
 /// @file
-/// @brief Bathymetry persistence (ADR-0002 §D5, amended by #178): the
+/// @brief Bathymetry persistence (ADR-0002 §D5, simplified by #248): the
 /// multi-layer, SourceLayer subdirectory save/load, delegating each tile's
 /// GeoTIFF read/write to the generic `marine_tiled_raster_store::saveTile` /
-/// `loadTile` (#172). Each GGGS tile persists as three files: a 2-band `Float64`
-/// value tile (depth, uncertainty; NaN no-data on both), a 1-band `Int64` time
-/// tile (`_time.tif`, timestamp ns; no no-data tag), and a 1-band `UInt16`
-/// source tile (`_source.tif`, registry index; 0 no-data). A store-wide
-/// `registry.json` sidecar maps source indices to provenance (ADR-0005 D2/D8).
+/// `loadTile` (#172). Each GGGS tile persists as a single 2-band `Float64` value
+/// tile (depth, uncertainty; NaN no-data on both) — the pre-#248 `_time` /
+/// `_source` companions were dropped (Amendment A2.2). A store-wide
+/// `registry.json` sidecar holds coarse `StoreMetadata` (ADR-0005 #248).
 
 namespace marine_bathymetry_store
 {
 
 namespace
 {
-constexpr const char * kTimeSuffix = "_time";
-constexpr const char * kSourceSuffix = "_source";
-
 /// Per-band no-data for the 2-band Float64 value tile: NaN on both depth and
 /// uncertainty. One entry per band, in band order.
 const std::vector<std::optional<double>> & valueBandNoData()
@@ -59,29 +55,6 @@ const std::vector<std::optional<double>> & valueBandNoData()
   static const double nan = std::numeric_limits<double>::quiet_NaN();
   static const std::vector<std::optional<double>> nodata{nan, nan};
   return nodata;
-}
-
-/// No-data for the 1-band Int64 time tile: none (0 = unset, never tagged).
-const std::vector<std::optional<int64_t>> & timeBandNoData()
-{
-  static const std::vector<std::optional<int64_t>> nodata{std::nullopt};
-  return nodata;
-}
-
-/// No-data for the 1-band UInt16 source tile: 0 = no-data/unset.
-const std::vector<std::optional<uint16_t>> & sourceBandNoData()
-{
-  static const std::vector<std::optional<uint16_t>> nodata{std::optional<uint16_t>(0)};
-  return nodata;
-}
-
-/// Derive a companion path (`_time` / `_source`) from a value-tile path: insert
-/// @p suffix before the `.tif` extension. e.g. `5_1_2.tif` -> `5_1_2_time.tif`.
-std::string companionPath(const std::string & value_path, const char * suffix)
-{
-  namespace fs = std::filesystem;
-  const fs::path p(value_path);
-  return (p.parent_path() / (p.stem().string() + suffix + p.extension().string())).string();
 }
 
 /// Reconstruct a `GridIndex` from a tile filename stem `<level>_<row>_<col>`
@@ -217,9 +190,8 @@ std::string tileFilename(const gggs::GridIndex & grid)
 std::string layerDirName(SourceLayer layer)
 {
   switch (layer) {
-    case SourceLayer::Processed: return "processed";
-    case SourceLayer::Draft: return "draft";
-    case SourceLayer::Chart: return "chart";
+    case SourceLayer::Cube: return "cube";
+    case SourceLayer::PreExisting: return "pre-existing";
   }
   throw std::runtime_error("layerDirName: unknown SourceLayer");
 }
@@ -227,94 +199,21 @@ std::string layerDirName(SourceLayer layer)
 void saveTile(const BathymetryTile & tile, const std::string & path)
 {
   namespace mtrs = marine_tiled_raster_store;
-  // Write ordering: value tile first, then time, then source.  The three files
-  // are not written atomically — a crash mid-sequence leaves a partial set on
-  // disk.  Writing the value tile first is intentional: the safety query
-  // (shallowestReliable) reads only the value tile, so a crashed write that
-  // leaves an absent or stale _time / _source companion does not affect the
-  // depth/uncertainty result used by the collision monitor.  A full reload
-  // after a crash will 0-fill missing companion tiles (backward-compat path
-  // in loadTile), which is the correct degraded-mode behaviour.
+  // A single 2-band Float64 value tile per grid (#248): the pre-#178 _time /
+  // _source companions were dropped (ADR-0002 Amendment A2.2).
   mtrs::saveTile<double>(tile.valueRaster(), path, valueBandNoData());
-  mtrs::saveTile<int64_t>(
-    tile.timeRaster(), companionPath(path, kTimeSuffix), timeBandNoData());
-  mtrs::saveTile<uint16_t>(
-    tile.sourceRaster(), companionPath(path, kSourceSuffix), sourceBandNoData());
 }
 
 BathymetryTile loadTile(const std::string & path, const gggs::Level & level)
 {
   namespace mtrs = marine_tiled_raster_store;
-  namespace fs = std::filesystem;
-
-  // Guard: reject legacy single-file 3-band Float64 tiles written before #178.
-  // The pre-migration layout (depth / uncertainty / Float64-seconds-timestamp)
-  // has exactly 3 bands in one file with no companion _time / _source tiles.
-  // Loading it with value_band_count=2 would silently discard band 3 (the old
-  // seconds timestamp) and 0-fill the new nadir Int64 time tile — losing
-  // acquisition times without warning.  There are no on-disk tiles at the time
-  // of this migration (pre-production), so this guard is a forward-safety check:
-  // if such a tile appears (e.g., from a backup or a partial manual migration),
-  // fail loudly rather than silently corrupt the provenance record.
-  // Decision: explicit rejection is preferred over silent data-drop per the
-  // workspace Quality Standard (never "good enough" when the proper fix exists).
-  {
-    const int band_count = mtrs::tileRasterCount(path);
-    if (band_count == 3) {
-      throw std::runtime_error(
-              "loadTile: rejected pre-#178 legacy 3-band Float64 tile at \"" + path +
-              "\".  This tile was written by a pre-migration store (depth/"
-              "uncertainty/Float64-seconds in one file).  Regenerate or migrate"
-              " the tile before loading it with the current store.");
-    }
-  }
-
   BathymetryTile::Raster value =
     mtrs::loadTile<double>(path, level, BathymetryTile::value_band_count);
-  const gggs::GridIndex grid = value.index();
-
-  // Companion tiles: load if present, else fill with 0 (pre-migration
-  // single-platform data has no _time / _source tile — backward compatibility).
-  const std::string time_path = companionPath(path, kTimeSuffix);
-  BathymetryTile::TimeRaster time =
-    fs::is_regular_file(time_path)
-    ? mtrs::loadTile<int64_t>(time_path, level, BathymetryTile::time_band_count)
-    : BathymetryTile::TimeRaster(grid, BathymetryTile::time_band_count, int64_t{0});
-
-  // Enforce GridIndex consistency: the time companion must map to the same
-  // tile as the value raster.  A mis-renamed companion (e.g., from a manual
-  // store reorganisation or file tampering) would combine cell-for-cell data
-  // from different geographic tiles, silently associating wrong timestamps with
-  // depths.  The check is cheap (one comparison) and closes the tampering hole.
-  if (fs::is_regular_file(time_path) && !(time.index() == grid)) {
-    throw std::runtime_error(
-            "loadTile: companion \"" + time_path +
-            "\" has a GridIndex that does not match the value tile at \"" + path +
-            "\".  The companion file may have been mis-renamed or the store is"
-            " inconsistent.");
-  }
-
-  const std::string source_path = companionPath(path, kSourceSuffix);
-  BathymetryTile::SourceRaster source =
-    fs::is_regular_file(source_path)
-    ? mtrs::loadTile<uint16_t>(source_path, level, BathymetryTile::source_band_count)
-    : BathymetryTile::SourceRaster(grid, BathymetryTile::source_band_count, uint16_t{0});
-
-  // Enforce GridIndex consistency for the source companion (same rationale as
-  // the time-companion check above).
-  if (fs::is_regular_file(source_path) && !(source.index() == grid)) {
-    throw std::runtime_error(
-            "loadTile: companion \"" + source_path +
-            "\" has a GridIndex that does not match the value tile at \"" + path +
-            "\".  The companion file may have been mis-renamed or the store is"
-            " inconsistent.");
-  }
-
-  return BathymetryTile(std::move(value), std::move(time), std::move(source));
+  return BathymetryTile(std::move(value));
 }
 
 std::size_t save(
-  BathymetryStore & store, const std::string & dir, const SourceRegistry * registry)
+  BathymetryStore & store, const std::string & dir, const StoreMetadata * metadata)
 {
   namespace fs = std::filesystem;
   std::size_t written = 0;
@@ -344,17 +243,17 @@ std::size_t save(
       ++written;
     }
   }
-  // The registry is a store-wide sidecar (not per-layer): persist it once at the
-  // end. Written unconditionally when present so a freshly-registered source is
-  // saved even when no tile is dirty.
-  if (registry != nullptr) {
-    registry->saveRegistry(dir);
+  // The metadata is a store-wide sidecar (not per-layer): persist it once at the
+  // end. Written unconditionally when present so coarse provenance is saved even
+  // when no tile is dirty.
+  if (metadata != nullptr) {
+    metadata->save(dir);
   }
   return written;
 }
 
 std::size_t load(
-  BathymetryStore & store, const std::string & dir, SourceRegistry * registry)
+  BathymetryStore & store, const std::string & dir, StoreMetadata * metadata)
 {
   namespace fs = std::filesystem;
   std::size_t loaded = 0;
@@ -378,18 +277,6 @@ std::size_t load(
       if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
         continue;
       }
-      // Skip the companion tiles — they are loaded alongside their value tile,
-      // not as standalone value tiles (a bare *.tif glob would otherwise
-      // mis-load _time / _source as value tiles).
-      const std::string stem = entry.path().stem().string();
-      const auto ends_with = [&stem](const char * suffix) {
-          const std::string s(suffix);
-          return stem.size() >= s.size() &&
-                 stem.compare(stem.size() - s.size(), s.size(), s) == 0;
-        };
-      if (ends_with(kTimeSuffix) || ends_with(kSourceSuffix)) {
-        continue;
-      }
       // Multi-level: recover each tile's level from its filename and load at
       // that level (the store is not pinned to one level, ADR-0002 §D2).
       const uint8_t lvl = levelFromTileFilename(entry.path().filename().string());
@@ -398,8 +285,8 @@ std::size_t load(
       ++loaded;
     }
   }
-  if (registry != nullptr) {
-    registry->loadRegistry(dir);
+  if (metadata != nullptr) {
+    metadata->load(dir);
   }
   return loaded;
 }
@@ -408,7 +295,7 @@ std::size_t loadWindow(
   BathymetryStore & store, const std::string & dir,
   const geographic_msgs::msg::GeoPoint & min_pt,
   const geographic_msgs::msg::GeoPoint & max_pt,
-  SourceRegistry * registry)
+  StoreMetadata * metadata)
 {
   namespace fs = std::filesystem;
   std::size_t loaded = 0;
@@ -427,16 +314,6 @@ std::size_t loadWindow(
         continue;
       }
       if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
-        continue;
-      }
-      // Skip companion tiles (_time / _source) — loaded alongside value tile.
-      const std::string stem = entry.path().stem().string();
-      const auto ends_with = [&stem](const char * suffix) {
-          const std::string s(suffix);
-          return stem.size() >= s.size() &&
-                 stem.compare(stem.size() - s.size(), s.size(), s) == 0;
-        };
-      if (ends_with(kTimeSuffix) || ends_with(kSourceSuffix)) {
         continue;
       }
 
@@ -459,8 +336,8 @@ std::size_t loadWindow(
       ++loaded;
     }
   }
-  if (registry != nullptr) {
-    registry->loadRegistry(dir);
+  if (metadata != nullptr) {
+    metadata->load(dir);
   }
   return loaded;
 }
@@ -480,12 +357,12 @@ std::size_t evictOutside(
       const gggs::GridIndex & grid = it->first;
       const BathymetryTile & tile = it->second;
       if (!tileOverlapsBox(grid, min_pt, max_pt)) {
-        // Dirty-tile guard: a dirty (unsaved) Draft or Processed tile is live
-        // sensor data that has not yet reached disk; evicting it would lose that
-        // data with no reload path.  Chart tiles are always clean (never mutated
-        // at runtime) and are always safely evictable.  Skip dirty tiles here
-        // and let them survive until they are either saved (clearing the flag)
-        // or explicitly discarded by the caller.
+        // Dirty-tile guard: a dirty (unsaved) Cube tile is live sensor data that
+        // has not yet reached disk; evicting it would lose that data with no
+        // reload path.  PreExisting tiles are always clean (never mutated at
+        // runtime) and are always safely evictable.  Skip dirty tiles here and
+        // let them survive until they are either saved (clearing the flag) or
+        // explicitly discarded by the caller.
         if (tile.dirty()) {
           ++it;
           continue;

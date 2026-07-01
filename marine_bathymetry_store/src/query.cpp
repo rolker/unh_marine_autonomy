@@ -78,7 +78,7 @@ std::optional<DepthSample> sampleFor(
       (lvl == cell.level()) ? cell : gggs::Level(lvl).cellIndex(center);
     const auto c = cellIn(tiles, lvl_cell);
     if (c && c->hasData()) {
-      return DepthSample{c->depth, c->uncertainty, c->timestamp, layer, c->source_index, lvl};
+      return DepthSample{c->depth, c->uncertainty, layer, lvl};
     }
   }
   return std::nullopt;
@@ -124,8 +124,7 @@ std::optional<DepthSample> shallowestReliable(
         continue;
       }
       if (!shallowest || c->depth > shallowest->depth) {
-        shallowest = DepthSample{c->depth, c->uncertainty, c->timestamp, layer,
-          c->source_index, lvl};
+        shallowest = DepthSample{c->depth, c->uncertainty, layer, lvl};
       }
     }
   }
