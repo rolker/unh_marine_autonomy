@@ -51,6 +51,11 @@ namespace gggs
 /// @return The containing grid at `child.level() - 1`, or an invalid GridIndex
 ///         when @p child is invalid or already at level 0 (the coarsest level,
 ///         which has no parent).
+/// @note Grids sitting exactly on a pole (+/-90 deg) are geometrically
+///       degenerate and are never produced by `Level::gridIndex`, so they lie
+///       outside the supported input domain. For every grid reachable through
+///       the normal geographic lookups the `children(parent(g))` set contains
+///       `g` (the round-trip invariant the tests check).
 inline GridIndex parent(const GridIndex& child)
 {
   if (!child.valid() || child.level() == 0)

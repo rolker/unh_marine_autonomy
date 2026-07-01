@@ -1309,3 +1309,33 @@ TEST(GGGSIndexMath, ParentChildrenRoundTripPolarBand)
   for (const auto& kid : kids)
     EXPECT_EQ(gggs::parent(kid), parent);
 }
+
+TEST(GGGSIndexMath, ChildrenNearNorthPole)
+{
+  // Northernmost row: northLatitude() clamps to +90, so this exercises the
+  // latitude-clamp path (distinct from mid-band column scaling). Children must
+  // still tile the parent and every child must map back.
+  gggs::Level level(9);
+  auto parent = level.gridIndex(89.9, 10.0);
+  auto kids = gggs::children(parent);
+  ASSERT_FALSE(kids.empty());
+  for (const auto& kid : kids)
+  {
+    EXPECT_EQ(kid.level(), parent.level() + 1);
+    EXPECT_EQ(gggs::parent(kid), parent);
+  }
+}
+
+TEST(GGGSIndexMath, ChildrenNearSouthPole)
+{
+  // Southernmost row: southLatitude() clamps to -90 — the mirror clamp path.
+  gggs::Level level(9);
+  auto parent = level.gridIndex(-89.9, 10.0);
+  auto kids = gggs::children(parent);
+  ASSERT_FALSE(kids.empty());
+  for (const auto& kid : kids)
+  {
+    EXPECT_EQ(kid.level(), parent.level() + 1);
+    EXPECT_EQ(gggs::parent(kid), parent);
+  }
+}
