@@ -65,5 +65,6 @@
 #include "gggs/level.h"
 #include "gggs/grid_area_iterator.h"
 #include "gggs/cell_area_iterator.h"
+#include "gggs/index_math.h"
 
 #endif

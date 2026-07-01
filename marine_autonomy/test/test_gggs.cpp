@@ -1189,3 +1189,123 @@ TEST(GGGSGridBounds, PerRowColumnCount)
       << "Column count should be uniform in same band at row " << r;
   }
 }
+
+// ============================================================================
+// index_math.h — parent() / children() quadtree navigation
+// ============================================================================
+
+TEST(GGGSIndexMath, ParentIsOneLevelCoarser)
+{
+  gggs::Level level(10);
+  auto child = level.gridIndex(43.0, -70.5);  // New Hampshire coast
+  auto parent = gggs::parent(child);
+  ASSERT_TRUE(parent.valid());
+  EXPECT_EQ(parent.level(), 9);
+}
+
+TEST(GGGSIndexMath, ParentContainsChildCentre)
+{
+  gggs::Level level(10);
+  auto child = level.gridIndex(43.0, -70.5);
+  auto parent = gggs::parent(child);
+  ASSERT_TRUE(parent.valid());
+
+  const double child_center_lat = 0.5 * (child.southLatitude() + child.northLatitude());
+  const double child_center_lon = 0.5 * (child.westLongitude() + child.eastLongitude());
+  EXPECT_LE(parent.southLatitude(), child_center_lat);
+  EXPECT_GE(parent.northLatitude(), child_center_lat);
+  EXPECT_LE(parent.westLongitude(), child_center_lon);
+  EXPECT_GE(parent.eastLongitude(), child_center_lon);
+}
+
+TEST(GGGSIndexMath, ParentAtLevelZeroIsInvalid)
+{
+  gggs::Level level(0);
+  auto grid = level.gridIndex(43.0, -70.5);
+  ASSERT_EQ(grid.level(), 0);
+  EXPECT_FALSE(gggs::parent(grid).valid());
+}
+
+TEST(GGGSIndexMath, ParentOfInvalidIsInvalid)
+{
+  gggs::GridIndex invalid;
+  ASSERT_FALSE(invalid.valid());
+  EXPECT_FALSE(gggs::parent(invalid).valid());
+}
+
+TEST(GGGSIndexMath, ChildrenTemperateBandAreFour)
+{
+  gggs::Level level(9);
+  auto parent = level.gridIndex(43.0, -70.5);
+  auto kids = gggs::children(parent);
+  EXPECT_EQ(kids.size(), 4u);
+}
+
+TEST(GGGSIndexMath, ChildrenAllMapBackToParent)
+{
+  gggs::Level level(9);
+  auto parent = level.gridIndex(43.0, -70.5);
+  auto kids = gggs::children(parent);
+  ASSERT_FALSE(kids.empty());
+  for (const auto& kid : kids)
+  {
+    EXPECT_EQ(kid.level(), parent.level() + 1);
+    EXPECT_EQ(gggs::parent(kid), parent);
+  }
+}
+
+TEST(GGGSIndexMath, SiblingsShareTheSameParent)
+{
+  gggs::Level level(10);
+  auto child = level.gridIndex(43.0, -70.5);
+  auto parent = gggs::parent(child);
+  ASSERT_TRUE(parent.valid());
+  auto siblings = gggs::children(parent);
+  ASSERT_GE(siblings.size(), 2u);
+  // The original child is among the siblings, and every sibling shares the parent.
+  bool found_child = false;
+  for (const auto& sibling : siblings)
+  {
+    EXPECT_EQ(gggs::parent(sibling), parent);
+    if (sibling == child)
+      found_child = true;
+  }
+  EXPECT_TRUE(found_child);
+}
+
+TEST(GGGSIndexMath, ChildrenAtFinestLevelIsEmpty)
+{
+  gggs::Level level(20);  // finest level — no children
+  auto grid = level.gridIndex(43.0, -70.5);
+  ASSERT_EQ(grid.level(), 20);
+  EXPECT_TRUE(gggs::children(grid).empty());
+}
+
+TEST(GGGSIndexMath, ChildrenOfInvalidIsEmpty)
+{
+  gggs::GridIndex invalid;
+  ASSERT_FALSE(invalid.valid());
+  EXPECT_TRUE(gggs::children(invalid).empty());
+}
+
+TEST(GGGSIndexMath, ParentChildrenRoundTripSubPolarBand)
+{
+  // ~75 deg latitude — a higher polar column scale-factor band.
+  gggs::Level level(9);
+  auto parent = level.gridIndex(75.0, 10.0);
+  auto kids = gggs::children(parent);
+  ASSERT_FALSE(kids.empty());
+  for (const auto& kid : kids)
+    EXPECT_EQ(gggs::parent(kid), parent);
+}
+
+TEST(GGGSIndexMath, ParentChildrenRoundTripPolarBand)
+{
+  // ~85 deg latitude — the highest polar column scale-factor band.
+  gggs::Level level(9);
+  auto parent = level.gridIndex(85.0, 10.0);
+  auto kids = gggs::children(parent);
+  ASSERT_FALSE(kids.empty());
+  for (const auto& kid : kids)
+    EXPECT_EQ(gggs::parent(kid), parent);
+}
