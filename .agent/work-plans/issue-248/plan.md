@@ -22,11 +22,30 @@ Operator decisions (issue Resolutions, 2026-06-30):
    is ready; both merge together to avoid a broken build window.
 3. `registry.json` repurposed as coarse metadata (not removed).
 
+Plan Review resolutions (2026-07-01, operator-confirmed):
+4. **Retire the `bathymetry_layer` staleness gate.** The Nav2 costmap layer's
+   per-cell staleness gate (`bathymetry_layer.cpp:842,885`) reads
+   `DepthSample::timestamp`, which this change drops. Operator decision: **retire
+   the gate** rather than keep per-cell bathy time. Rationale: bathy is a surveyed
+   *static* bottom (not a live sensor feed), so per-cell staleness is not a
+   meaningful costmap hazard. Retirement is **explicit, not silent**: remove the
+   gate code + its tests + any README mention, and record the decision + rationale
+   in the ADR-0002 addendum.
+5. **`import_geotiff` CLI** (`marine_bathymetry_store/src/import_geotiff_main.cpp`)
+   uses `SourceRecord`/`SourceRegistry` and `--source-id`/`--datum` — a build break
+   otherwise. Drop the per-cell provenance path + its help text (coarse metadata is
+   store-level now). This CLI is a `registry.json` reader — corrects the plan's
+   earlier "no readers outside the lib" claim.
+6. Refresh `marine_tiled_raster_store/README.md` bathy-tile-format cross-reference
+   (it references the old "3 bands" layout).
+
 ## Approach
 
 1. **Write ADR addenda (all three)** — document decisions before touching code.
    - ADR-0002 addendum: layer taxonomy (chart/draft/processed → pre-existing/cube),
-     tile layout (drop `_time.tif`/`_source.tif`; single 2-band value tile only).
+     tile layout (drop `_time.tif`/`_source.tif`; single 2-band value tile only),
+     **and retirement of the `bathymetry_layer` per-cell staleness gate** (with
+     rationale: surveyed static bottom, not a live feed).
    - ADR-0005 addendum: per-cell source-index raster dropped; `registry.json`
      repurposed as store/layer-level coarse metadata (survey, sensor, date).
    - ADR-0007 addendum: value-band schema (`{intensity, intensity_variance}` →
@@ -60,8 +79,19 @@ Operator decisions (issue Resolutions, 2026-06-30):
    i. `test/test_store.cpp`, `test/test_query.cpp`, `test/test_geotiff_import.cpp`
       — purge `timestamp`/`source_index` references; update layer names.
    j. `README.md` — update store format section (layer dirs, tile files, registry schema).
+   k. `import_geotiff_main.cpp` (built `import_geotiff` CLI) — remove the
+      `SourceRecord`/`SourceRegistry` usage and the `--source-id`/`--datum`
+      provenance flags + help text; keep the core geotiff→store import path.
 
-3. **Refactor `marine_mbes_backscatter_store`:**
+3. **Retire the `bathymetry_layer` staleness gate:**
+   a. `bathymetry_layer/src/bathymetry_layer.cpp` — remove the per-cell staleness
+      gate (the `DepthSample::timestamp` reads at ~`:842,885` and the surrounding
+      gate logic/params).
+   b. `bathymetry_layer/test/*` — remove/adjust staleness-gate tests.
+   c. `bathymetry_layer/README.md` (if it documents the gate) — drop the mention.
+   d. Rationale recorded in the ADR-0002 addendum (step 1).
+
+4. **Refactor `marine_mbes_backscatter_store`:**
    a. `mbes_cell.hpp` — replace `SourceLayer{Processed=0, Draft=1}` with
       `SourceLayer{Cube=0}`; update `source_layers_by_priority` to a 1-element array;
       rename `MbesCell` fields: `intensity`→`mean`, `intensity_variance`→`standard_error`;
@@ -94,7 +124,7 @@ Operator decisions (issue Resolutions, 2026-06-30):
 
 | File | Change |
 |------|--------|
-| `docs/decisions/0002-bathymetric-data-store.md` | Addendum: layer taxonomy + tile layout simplification |
+| `docs/decisions/0002-bathymetric-data-store.md` | Addendum: layer taxonomy + tile layout simplification + staleness-gate retirement rationale |
 | `docs/decisions/0005-multi-platform-provenance-registry.md` | Addendum: per-cell source-index dropped; registry.json = coarse metadata |
 | `docs/decisions/0007-mbes-backscatter-store.md` | Addendum: value-band schema + layer collapse |
 | `marine_bathymetry_store/include/marine_bathymetry_store/bathy_cell.hpp` | SourceLayer enum (Cube/PreExisting), BathyCell (drop timestamp/source_index) |
@@ -114,6 +144,11 @@ Operator decisions (issue Resolutions, 2026-06-30):
 | `marine_bathymetry_store/test/test_query.cpp` | DepthSample field updates |
 | `marine_bathymetry_store/test/test_geotiff_import.cpp` | Remove SourceRecord usage |
 | `marine_bathymetry_store/README.md` | Format section update |
+| `marine_bathymetry_store/src/import_geotiff_main.cpp` | Drop `--source-id`/`--datum` + SourceRegistry provenance path + help text (build-break fix) |
+| `bathymetry_layer/src/bathymetry_layer.cpp` | Retire per-cell staleness gate (remove `DepthSample::timestamp` reads ~`:842,885` + gate logic/params) |
+| `bathymetry_layer/test/*` | Remove/adjust staleness-gate tests |
+| `bathymetry_layer/README.md` | Drop staleness-gate mention (if present) |
+| `marine_tiled_raster_store/README.md` | Refresh bathy tile-format cross-reference (old "3 bands") |
 | `marine_mbes_backscatter_store/include/marine_mbes_backscatter_store/mbes_cell.hpp` | SourceLayer (Cube only), MbesCell (mean/SE/SD, drop ts/src) |
 | `marine_mbes_backscatter_store/include/marine_mbes_backscatter_store/mbes_tile.hpp` | 3-band value raster only |
 | `marine_mbes_backscatter_store/include/marine_mbes_backscatter_store/mbes_store.hpp` | Single layer |
@@ -154,7 +189,8 @@ Operator decisions (issue Resolutions, 2026-06-30):
 |---|---|---|
 | SourceLayer enum (bathy) | cube_bathymetry#96 consumption (seed precedence, import_bag) | Yes — synchronized landing constraint; #96 must be ready before merge |
 | SourceLayer enum (MBES) | Any cube_bathymetry code that writes to MBES store | Yes — synchronized landing |
-| registry.json schema | Any code that reads registry.json (currently none outside store lib) | Yes — StoreMetadata struct replaces SourceRegistry throughout |
+| registry.json schema | `import_geotiff` CLI reads/writes it (a registry.json reader — earlier "none outside lib" claim was wrong); StoreMetadata replaces SourceRegistry throughout | Yes |
+| Drop `DepthSample::timestamp` | `bathymetry_layer` staleness gate consumes it → **retire the gate** (layer + tests + README + ADR-0002 rationale) | Yes — step 3 |
 | BathyCell / MbesCell field removal | geotiff_import (no SourceRecord); query results | Yes — in Files to Change |
 | layerDirName constants | On-disk store directories | Yes — greenfield; no existing stores to migrate |
 
