@@ -111,7 +111,7 @@ public:
   }
 
   /// @brief Whether per-cell `set()` may write the read-only `Reference` layer.
-  bool preExistingWritable() const noexcept {return reference_writable_;}
+  bool referenceWritable() const noexcept {return reference_writable_;}
 
   /// @brief The store's **default** level (used by `cellIndex(lat,lon)` only).
   ///

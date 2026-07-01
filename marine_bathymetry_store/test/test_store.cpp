@@ -148,7 +148,7 @@ TEST(Store, ReferenceIsReadOnlyByDefault)
   // The prior must be unclobberable by live ingest: set(Reference) throws
   // unless the store was explicitly opened reference_writable (ADR-0002 §D3).
   BathymetryStore store(5);
-  EXPECT_FALSE(store.preExistingWritable());
+  EXPECT_FALSE(store.referenceWritable());
   EXPECT_THROW(
     store.set(SourceLayer::Reference, store.cellIndex(43.0, -70.5), BathyCell{-10.0, 3.0}),
     std::logic_error);
@@ -161,7 +161,7 @@ TEST(Store, ReferenceWritableStoreAllowsSet)
 {
   // The importer opts in; the converted prior then writes and reads back.
   BathymetryStore store(5, /*reference_writable=*/true);
-  EXPECT_TRUE(store.preExistingWritable());
+  EXPECT_TRUE(store.referenceWritable());
   const auto cell = store.cellIndex(43.0, -70.5);
   store.set(SourceLayer::Reference, cell, BathyCell{38.58, 3.0});
   const auto got = store.get(SourceLayer::Reference, cell);
@@ -172,7 +172,7 @@ TEST(Store, ReferenceWritableStoreAllowsSet)
 TEST(Store, FromCellSizePropagatesReferenceWritable)
 {
   auto store = BathymetryStore::fromCellSize(30.0f, /*reference_writable=*/true);
-  EXPECT_TRUE(store.preExistingWritable());
+  EXPECT_TRUE(store.referenceWritable());
   EXPECT_NO_THROW(
     store.set(SourceLayer::Reference, store.cellIndex(43.0, -70.5), BathyCell{40.0, 3.0}));
 }

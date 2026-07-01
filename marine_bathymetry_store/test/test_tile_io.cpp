@@ -160,7 +160,7 @@ TEST_F(TileIoTest, ReferenceRoundTripsAndLoadsIntoReadOnlyStore)
   EXPECT_TRUE(fs::is_directory(dir_ / "reference"));
 
   BathymetryStore runtime(5);   // Reference NOT writable
-  EXPECT_FALSE(runtime.preExistingWritable());
+  EXPECT_FALSE(runtime.referenceWritable());
   EXPECT_EQ(marine_bathymetry_store::load(runtime, dir_.string()), 1u);
 
   const auto rcell = runtime.cellIndex(43.0, -70.5);
