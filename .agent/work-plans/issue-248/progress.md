@@ -190,3 +190,26 @@ Per the consequences map and ADR cross-references:
   producer-side contract change; hold #96 until #248 is ready and merge together to
   avoid a broken-build window.
 - Do NOT push / open PR (local-first; host publishes).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-01 04:10 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-248 at `da258a1`
+**Mode**: pre-push
+**Depth**: Deep (reason: large cross-layer change — two C++ store libs + Nav2 costmap safety layer + 3 substantive ADR amendments)
+**Must-fix**: 1 | **Suggestions**: 5
+**Round**: 1 | **Ship**: continue — one safety-observability must-fix (silent-empty nav prior) worth closing before push; everything else clean
+
+### Findings
+- [ ] (must-fix) Bathy `load()`/`loadWindow()` silently return empty on an old-layout store dir (no `survey`/`reference` subdir) — no warning; with `unsurveyed_is_lethal_=false` default, unknown seabed reads as navigable. Add a warning matching the existing stale-subdir idiom. — `marine_bathymetry_store/src/tile_io.cpp:262,304`
+- [ ] (suggestion) Stale public accessor `preExistingWritable()` not renamed by the `da258a1` taxonomy rename → `referenceWritable()` + call sites. — `marine_bathymetry_store/include/marine_bathymetry_store/bathymetry_store.hpp:114`
+- [ ] (suggestion) `registry.json` writes `"version": 2` but `load` never validates it; old-schema json loads all-empty silently — add version check or document advisory-only. — `marine_bathymetry_store/src/registry.cpp:57`
+- [ ] (suggestion) Stray `_time.tif`/`_source.tif` companion in a new-named dir aborts the entire bathy load (no per-file try/catch); skip known suffixes or warn-and-skip. — `marine_bathymetry_store/src/tile_io.cpp:269`
+- [ ] (suggestion) Stale class doc describes pre-#248 chart/draft/processed taxonomy. — `bathymetry_layer/src/bathymetry_layer.hpp:30`
+- [ ] (suggestion) progress.md Issue Review + Implementation narrative use old `cube`/`pre-existing` layer names (pre-`da258a1` rename); refresh to match shipped `survey`/`reference`. — `.agent/work-plans/issue-248/progress.md:30`
+- [ ] (host) Build+test `bathymetry_layer` (geodesy/nav2 underlay absent in-container) and sim-validate per ADR-0002 D7; co-land cube_bathymetry#96 (still on old API — build break if #248 lands alone).
+
+**Notes**: Static analysis clean on ament profile (cpplint/uncrustify/cppcheck); deeper cppcheck reports were serialization/separate-test-executable false positives, dropped. Two Deep Claude adversarial passes (Lens A logic + Lens B systemic/safety) both confirmed lossless store round-trips and a clean, complete staleness-gate retirement with LETHAL guards intact. Copilot Adversarial off (not opted in). Progress persisted to the project-repo timeline (`unh_marine_autonomy`), consistent with all prior #248 phase entries.
