@@ -89,3 +89,18 @@ Per the consequences map and ADR cross-references:
 
 ### Open questions
 - [ ] No open questions — plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-07-01 01:45 +00:00
+**By**: Claude Code Agent (Claude Opus)  <!-- independent: fresh-context Opus review of a Sonnet-authored plan; shared workspace agent-name is not a self-review signal -->
+
+**Plan**: `.agent/work-plans/issue-248/plan.md` at `e4e9744`
+**PR**: PR-less (--issue mode; layer worktree feature/issue-248)
+**Verdict**: changes-requested
+
+### Findings
+- [ ] (must-fix) `bathymetry_layer` costmap staleness gate reads `DepthSample::timestamp`, dropped by the plan — not in Files to Change; build break at `bathymetry_layer.cpp:842,885` + silently removes a Nav2 navigation-safety feature (ADR-0002 D3/D5). Keep per-cell bathy time or explicitly retire the gate (update layer+tests+README+ADR-0002 addendum). — `plan.md:108`
+- [ ] (must-fix) `marine_bathymetry_store/src/import_geotiff_main.cpp` (built `import_geotiff` CLI) uses `SourceRecord`/`SourceRegistry` and passes `registry` to load/save/import — not in Files to Change; build break. Redesign/remove its `--source-id`/`--datum` provenance path + help text. — `plan.md:110`
+- [ ] (suggestion) Consequences table claims no registry.json readers outside the store lib; `import_geotiff_main.cpp` is a counterexample. — `plan.md:157`
+- [ ] (suggestion) `marine_tiled_raster_store/README.md` cross-references the bathy tile format ("3 bands"); refresh or note out-of-scope. — `plan.md:116`
