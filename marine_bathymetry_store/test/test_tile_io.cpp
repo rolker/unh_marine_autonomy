@@ -207,6 +207,42 @@ TEST_F(TileIoTest, StoreMetadataAtomicRoundTrip)
   EXPECT_EQ(loaded.date, "2026-06-30");
 }
 
+TEST_F(TileIoTest, MetadataLoadWarnsOnUnrecognizedSchemaVersion)
+{
+  // A pre-#248 (or foreign) registry.json whose "version" != the current schema
+  // would otherwise load as all-empty without a trace. load() must warn.
+  fs::create_directories(dir_);
+  {std::ofstream(dir_ / "registry.json") << R"({"version": 1, "site": "old"})";}
+
+  StoreMetadata md;
+  std::ostringstream captured;
+  std::streambuf * prev = std::cerr.rdbuf(captured.rdbuf());
+  md.load(dir_.string());
+  std::cerr.rdbuf(prev);
+
+  EXPECT_NE(captured.str().find("unrecognized schema version"), std::string::npos)
+    << "expected a version-mismatch warning, got: " << captured.str();
+  EXPECT_TRUE(md.empty());   // unknown-schema fields do not map — loads empty
+}
+
+TEST_F(TileIoTest, MetadataLoadIsSilentOnCurrentSchemaVersion)
+{
+  // A registry.json written by the current code (version == schema) loads
+  // without any warning.
+  fs::create_directories(dir_);
+  StoreMetadata md{"bizzy", "m3", "massabesic-2026", "2026-06-30"};
+  md.save(dir_.string());
+
+  StoreMetadata loaded;
+  std::ostringstream captured;
+  std::streambuf * prev = std::cerr.rdbuf(captured.rdbuf());
+  loaded.load(dir_.string());
+  std::cerr.rdbuf(prev);
+
+  EXPECT_TRUE(captured.str().empty()) << "current-schema load must be silent";
+  EXPECT_EQ(loaded.survey, "massabesic-2026");
+}
+
 TEST_F(TileIoTest, SaveWritesMetadataWhenProvided)
 {
   // The store save() persists the metadata sidecar once, at the store root.
