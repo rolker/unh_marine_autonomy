@@ -42,16 +42,21 @@ originates in [ADR-0002](../docs/decisions/0002-bathymetric-data-store.md) §D5/
 
 GDAL is kept a **private** dependency: the `tile_io` functions are templates
 **explicitly instantiated** in `tile_io.cpp` for the supported element types —
-currently `double` (bathymetry: 3-band Float64) and `std::uint16_t` (sidescan
-backscatter: 1-band, #173). To add a type, add a `gdalType<>` specialization and
-an explicit instantiation in `tile_io.cpp`; nothing in the public headers
-changes.
+`double` (bathymetry: a single 2-band `Float64` value tile since #248),
+`float` (MBES backscatter: a 3-band `Float32` value tile,
+[#194](https://github.com/rolker/unh_marine_autonomy/issues/194)), and
+`std::uint16_t` (sidescan backscatter: 1-band, #173). To add a type, add a
+`gdalType<>` specialization and an explicit instantiation in `tile_io.cpp`;
+nothing in the public headers changes.
 
 ## Consumers
 
-- `marine_bathymetry_store` — instantiates `TiledRasterTile<double>` (3 bands:
-  depth / uncertainty / timestamp) and keeps its multi-layer `SourceLayer` store,
-  priority queries, and `BathyCell` on top.
+- `marine_bathymetry_store` — instantiates `TiledRasterTile<double>` as a single
+  2-band value tile (depth / uncertainty; the per-cell time / source companions
+  were dropped in #248) and keeps its `SourceLayer` store, priority queries, and
+  `BathyCell` on top.
+- `marine_mbes_backscatter_store` — `TiledRasterTile<float>` as a 3-band value
+  tile (mean / standard_error / sample_sd).
 - `marine_sidescan_mosaic` (#173) — `TiledRasterTile<std::uint16_t>` at GGGS
   level 13.
 
