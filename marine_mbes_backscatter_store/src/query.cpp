@@ -28,19 +28,19 @@ namespace
 {
 
 /// Resolve a single layer's sample at a cell, or nullopt if it has no usable data.
-std::optional<IntensitySample> sampleFor(
+std::optional<BackscatterSample> sampleFor(
   const MbesBackscatterStore & store, SourceLayer layer, const gggs::CellIndex & cell)
 {
   const auto c = store.get(layer, cell);
   if (!c || !c->hasData()) {
     return std::nullopt;
   }
-  return IntensitySample{c->intensity, c->intensity_variance, c->timestamp, layer};
+  return BackscatterSample{c->mean, c->standard_error, c->sample_sd, layer};
 }
 
 }  // namespace
 
-std::optional<IntensitySample> bestSource(
+std::optional<BackscatterSample> bestSource(
   const MbesBackscatterStore & store, const gggs::CellIndex & cell)
 {
   for (const SourceLayer layer : source_layers_by_priority) {
@@ -56,7 +56,7 @@ void forEachCellBestSource(
   const geographic_msgs::msg::GeoPoint & minimum,
   const geographic_msgs::msg::GeoPoint & maximum,
   const std::function<void(const gggs::CellIndex &,
-  const std::optional<IntensitySample> &)> & visitor)
+  const std::optional<BackscatterSample> &)> & visitor)
 {
   const gggs::Level & level = store.level();
   gggs::GridAreaIterator grid_it(

@@ -12,14 +12,14 @@ provenance registry pattern.
 
 ## What this phase provides
 
-- An in-memory, GGGS-tiled store with **two priority source layers** — `Draft`
-  (live, newest-valid-wins) and `Processed` (durable overlay). **No Chart layer:**
-  a contour / S57 prior is a bathymetric concept; MBES backscatter has none
-  (ADR-0007 D7).
+- An in-memory, GGGS-tiled store with a **single `cube` source layer** (the CUBE
+  node-output product, live or off-boat re-run). The pre-#248 `draft`/`processed`
+  overlay collapsed to one layer (ADR-0007 #248 amendment A.2). **No Chart layer:**
+  a contour / S57 prior is a bathymetric concept; MBES backscatter has none.
 - A **best-source** query and its region (visitor) form.
-- A store-wide **`SourceRegistry`** (intern + atomic `registry.json`).
-- **Per-tile GeoTIFF persistence** — three files per grid (float value, int64
-  time, uint16 source), incremental save / reload.
+- A coarse store-level **`StoreMetadata`** sidecar (`registry.json`).
+- **Per-tile GeoTIFF persistence** — one 3-band `Float32` value tile per grid,
+  incremental save / reload.
 
 It deliberately does **not** include the producer (the CUBE node-output pass that
 computes corrected, angle-removed backscatter and calls `set(Draft, cell, …)` —
@@ -28,26 +28,31 @@ that is `cube_bathymetry#54`, out of scope here), the offline `Processed` build
 library; it **ingests already-corrected node output** and does no accumulation or
 radiometric correction itself.
 
-## The 3-tile schema (ADR-0007 D6)
+## The value-tile schema (ADR-0007 D6, #248 amendment A.1)
 
-A GeoTIFF is single-dtype-per-file, and the value band is `float`
-(`intensity_variance` rides alongside `intensity`, and the variance **is** the
-quality signal — there is no separate integer quality band as in the sidescan
-store). So each GGGS tile is persisted as three files:
+Each GGGS tile is persisted as a **single 3-band `Float32` value tile**
+`<grid>.tif` encoding the **Welford sufficient statistics** so the estimate
+reconstructs losslessly on reload:
 
-- `<grid>.tif` — 2-band `Float32` value tile (intensity, intensity_variance),
-  NaN no-data on both.
-- `<grid>_time.tif` — 1-band `Int64` timestamp tile (nanoseconds since the Unix
-  epoch, ROS-native and exact; 0 = unset).
-- `<grid>_source.tif` — 1-band `UInt16` source-index tile (registry index,
-  ADR-0005 D2/D8; 0 = no-data/unset).
+| Band | Field | Meaning |
+|------|-------|---------|
+| 0 | `mean` | Welford running mean of corrected backscatter. NaN = no data. |
+| 1 | `standard_error` | **confidence-scaled** standard error of the mean (`scale · sample_sd / √n`); the consumer divides the scale out on reload. |
+| 2 | `sample_sd` | sample standard deviation of contributing beams (`√(M2 / (n−1))`). |
 
-This is the one place the MBES schema departs from the sidescan store, where the
-value/quality/source share a `uint16` dtype and co-locate. The `float` value tile
-is backed by the `GDT_Float32` instantiation added to `marine_tiled_raster_store`
-([#194](https://github.com/rolker/unh_marine_autonomy/issues/194)), mirroring the
-`Int64` instantiation [#178](https://github.com/rolker/unh_marine_autonomy/issues/178)
-added for the bathy time band.
+From these (dividing the confidence scale out of `standard_error` to recover the
+true `SE = sample_sd / √n`), a downstream re-run recovers the full Welford state:
+`n = (sample_sd / SE)²` and `M2 = sample_sd² · (n − 1)`. A single-beam node has no
+dispersion — `sample_sd == 0` with a **finite** `mean` is the **n = 1 sentinel**
+(`n = 1, M2 = 0`), distinct from no-data (`mean = NaN`).
+
+The pre-#248 `_time.tif` (Int64 ns) and `_source.tif` (UInt16) companions were
+dropped (#248 amendment A.3): the store is a regenerable cache and the deployment
+is single-platform. Coarse provenance moves to the store-level `registry.json`
+`StoreMetadata{platform, sensor, survey, date, calibration_ref}`. The `float`
+value tile is backed by the `GDT_Float32` instantiation of
+`marine_tiled_raster_store`
+([#194](https://github.com/rolker/unh_marine_autonomy/issues/194)).
 
 ## Bag-retention dependency (ADR-0007 D1)
 
@@ -67,10 +72,10 @@ scope for this package), but the dependency is real and stated.
 - `marine_autonomy` — the GGGS spatial index (`gggs::Level`/`GridIndex`/`CellIndex`).
 - `marine_tiled_raster_store` — generic tiled-raster type + GeoTIFF persistence
   (the `float`/`int64`/`uint16` tile instantiations).
-- `marine_backscatter` — modality-agnostic backscatter core (provenance schema /
-  `writeRegistry`, future GeoCoder radiometry). This package keeps its **own**
-  multi-source `SourceRegistry` because `marine_backscatter::writeRegistry` is
-  write-only and single-source.
+- `marine_backscatter` — modality-agnostic backscatter core (provenance schema,
+  future GeoCoder radiometry). Since #248 this store keeps only a coarse
+  store-level `StoreMetadata` sidecar (the per-cell interning `SourceRegistry` was
+  dropped for the single-platform deployment — ADR-0005 #248 amendment).
 - `geographic_msgs` — `GeoPoint` for the region query API.
 - `nlohmann_json` — `registry.json` (implementation-only).
 
@@ -87,8 +92,8 @@ colcon test --packages-select marine_mbes_backscatter_store
 ```
 
 Tests (`test_store`, `test_query`, `test_tile_io`) are headless GTest and cover
-set/get round-trip, draft newest-valid-wins recency, best-source priority /
-fallback / nullopt, the region visitor, the 3-tile persistence round-trip
-(float value + int64 time + uint16 source), missing-companion 0-fill for both
-`_time` and `_source`, layer subdirectory layout, level-mismatch rejection,
-companion grid-mismatch rejection, and registry write / intern.
+set/get round-trip, newest-valid-wins recency, the n=1 sentinel, best-source /
+nullopt, the region visitor, the 3-band value-tile persistence round-trip, the
+**Welford sufficient-statistics round-trip** (n≥2 reconstruction of `{n, M2}`, the
+n=1 sentinel, and the confidence-scale divide-out), the `cube/` subdirectory
+layout, level-mismatch rejection, and the coarse `StoreMetadata` round-trip.

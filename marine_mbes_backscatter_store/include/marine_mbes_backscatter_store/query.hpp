@@ -36,25 +36,25 @@ namespace marine_mbes_backscatter_store
 
 /// @brief A backscatter value resolved from the store, tagged with its layer.
 ///
-/// `intensity` is corrected, relative MBES backscatter (ADR-0007 D2/D3);
-/// `intensity_variance` is the Welford estimate variance (D4) — the
-/// quality/uncertainty signal, shrinking with sample count. This is a
-/// perception / cartographic product, **not** a navigation or costmap input
-/// (ADR-0007 Consequences, safety non-goal).
-struct IntensitySample
+/// `mean` is corrected, relative MBES backscatter (ADR-0007 D2/D3);
+/// `standard_error` is the confidence-scaled Welford estimate uncertainty (D4),
+/// and `sample_sd` the within-node dispersion — the Welford sufficient statistics
+/// (#248 amendment A.1). This is a perception / cartographic product, **not** a
+/// navigation or costmap input (ADR-0007 Consequences, safety non-goal).
+struct BackscatterSample
 {
-  float intensity;            ///< Corrected relative backscatter.
-  float intensity_variance;   ///< Welford estimate variance (quality).
-  int64_t timestamp;          ///< Acquisition / import time (ns since the Unix epoch).
-  SourceLayer source;         ///< Which layer this value came from.
+  float mean;             ///< Corrected relative backscatter (Welford mean).
+  float standard_error;   ///< Confidence-scaled standard error of the mean.
+  float sample_sd;        ///< Sample standard deviation (within-node dispersion).
+  SourceLayer source;     ///< Which layer this value came from.
 };
 
-/// @brief Highest-priority layer that has data at @p cell.
+/// @brief The layer that has data at @p cell.
 ///
-/// Walks layers in `source_layers_by_priority` order (`Processed` then `Draft`)
-/// and returns the first with usable data (`hasData()`). `std::nullopt` means no
+/// Walks `source_layers_by_priority` (the sole `Cube` layer since #248) and
+/// returns the first with usable data (`hasData()`). `std::nullopt` means no
 /// layer has backscatter here.
-std::optional<IntensitySample> bestSource(
+std::optional<BackscatterSample> bestSource(
   const MbesBackscatterStore & store, const gggs::CellIndex & cell);
 
 /// @brief Visit every GGGS cell overlapping the geographic box, with its best source.
@@ -68,7 +68,7 @@ void forEachCellBestSource(
   const geographic_msgs::msg::GeoPoint & minimum,
   const geographic_msgs::msg::GeoPoint & maximum,
   const std::function<void(const gggs::CellIndex &,
-  const std::optional<IntensitySample> &)> & visitor);
+  const std::optional<BackscatterSample> &)> & visitor);
 
 }  // namespace marine_mbes_backscatter_store
 
