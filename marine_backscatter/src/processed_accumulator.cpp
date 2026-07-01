@@ -54,4 +54,26 @@ void ProcessedAccumulator::add(
   }
 }
 
+void ProcessedAccumulator::foldTile(const Tile & existing)
+{
+  // Same best-source rule as add(), applied cell-by-cell from a reloaded tile.
+  // A strictly-greater test means the incumbent wins ties, so folding an existing
+  // store tile into a run that already composited the new pings keeps the higher-
+  // quality look regardless of fold order.
+  Tile & tile = ensureOutput(existing.index());
+  for (std::uint16_t row = 0; row < gggs::cell_rows_per_grid; ++row) {
+    for (std::uint16_t col = 0; col < gggs::cell_rows_per_grid; ++col) {
+      const std::uint16_t q = existing.get(row, col, kQuality);
+      if (q == 0) {
+        continue;   // no-data cell in the reloaded tile.
+      }
+      if (q > tile.get(row, col, kQuality)) {
+        tile.set(row, col, kIntensity, existing.get(row, col, kIntensity));
+        tile.set(row, col, kQuality, q);
+        tile.set(row, col, kSource, existing.get(row, col, kSource));
+      }
+    }
+  }
+}
+
 }  // namespace marine_backscatter

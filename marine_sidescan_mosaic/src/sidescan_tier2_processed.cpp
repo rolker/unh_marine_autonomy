@@ -38,6 +38,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -59,6 +60,17 @@ using namespace marine_sidescan_mosaic;   // NOLINT(build/namespaces) — local 
 
 namespace
 {
+// Presence test for a valueless boolean flag (e.g. --accumulate).
+bool hasFlag(int argc, char ** argv, const std::string & flag)
+{
+  for (int i = 1; i < argc; ++i) {
+    if (flag == argv[i]) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::string argValue(int argc, char ** argv, const std::string & flag, const std::string & dflt)
 {
   for (int i = 1; i + 1 < argc; ++i) {
@@ -99,7 +111,9 @@ int main(int argc, char ** argv)
       "       [--level N] [--no-nadir-policy drop|assume_zero]\n"
       "       [--tx-beamwidth-fallback-rad R]   (along-track footprint when the ping\n"
       "                                          lacks tx_beamwidths; 0=point-deposit)\n"
-      "       [--source-id N] [--platform P] [--sensor S] [--sensor-class C] [--campaign X]\n";
+      "       [--source-id N] [--platform P] [--sensor S] [--sensor-class C] [--campaign X]\n"
+      "       [--accumulate]   # composite INTO an existing store (reload+fold each\n"
+      "                        # touched tile) instead of overwriting it\n";
     return 2;
   }
   const std::string tier1_path = argv[1];
@@ -136,6 +150,7 @@ int main(int argc, char ** argv)
   const std::string sensor = argValue(argc, argv, "--sensor", "garmin-gcv20");
   const std::string sensor_class = argValue(argc, argv, "--sensor-class", "sidescan");
   const std::string campaign = argValue(argc, argv, "--campaign", "unknown");
+  const bool accumulate = hasFlag(argc, argv, "--accumulate");
 
   std::ifstream in(tier1_path, std::ios::binary);
   if (!in) {
@@ -218,6 +233,37 @@ int main(int argc, char ** argv)
       ++n_placed;
     }
     ++n_proj;
+  }
+
+  // Accumulate into an existing store: reload each tile this run touched and fold
+  // it back in (best-source) before saving, so bag-by-bag ingestion composites
+  // instead of overwriting (issue #253) — bounded RAM/disk vs one whole-campaign
+  // pass. Without --accumulate, saveTiles overwrites (the prior behavior).
+  if (accumulate) {
+    std::vector<gggs::GridIndex> grids;
+    grids.reserve(acc.tiles().size());
+    for (const auto & kv : acc.tiles()) {
+      grids.push_back(kv.first);
+    }
+    std::size_t folded = 0;
+    for (const auto & grid : grids) {
+      const std::string path =
+        (std::filesystem::path(out_dir) /
+        marine_tiled_raster_store::tileFilename(grid)).string();
+      if (!std::filesystem::exists(path)) {
+        continue;   // new coverage — nothing on disk to merge.
+      }
+      try {
+        const auto existing = marine_tiled_raster_store::loadTile<std::uint16_t>(
+          path, level, ProcessedAccumulator::kBands);
+        acc.foldTile(existing);
+        ++folded;
+      } catch (const std::exception & e) {
+        std::cerr << "warning: --accumulate could not reload " << path << ": "
+                  << e.what() << " -- this tile will be OVERWRITTEN, not merged\n";
+      }
+    }
+    std::cerr << "accumulate: folded " << folded << " existing tile(s) from " << out_dir << "\n";
   }
 
   std::size_t written = 0;

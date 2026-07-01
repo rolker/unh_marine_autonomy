@@ -66,6 +66,14 @@ public:
     const gggs::CellIndex & cell,
     std::uint16_t intensity, std::uint16_t quality, std::uint16_t source_id);
 
+  /// @brief Fold an already-composited tile (e.g. one reloaded from the store)
+  ///   into the accumulator using the same strict best-source-by-quality rule as
+  ///   @ref add. Lets a run **accumulate into an existing store** rather than
+  ///   overwrite it: reload each touched tile, fold it in, then save the merge.
+  ///   No-data cells (quality 0) in @p existing are skipped; ties keep whatever
+  ///   the accumulator already holds. @p existing must have @ref kBands bands.
+  void foldTile(const Tile & existing);
+
   /// @brief The composited tiles (mutable so `saveTiles` can clear dirty flags).
   std::map<gggs::GridIndex, Tile> & tiles() {return output_;}
   const std::map<gggs::GridIndex, Tile> & tiles() const {return output_;}
