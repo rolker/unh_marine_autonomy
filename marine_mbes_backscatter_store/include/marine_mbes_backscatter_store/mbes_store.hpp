@@ -47,12 +47,12 @@ std::size_t load(
 
 /// @brief In-memory, GGGS-tiled, single-layer MBES backscatter store (ADR-0007).
 ///
-/// Holds one tile map for the sole `SourceLayer::Cube`, keyed by
+/// Holds one tile map for the sole `SourceLayer::Survey`, keyed by
 /// `gggs::GridIndex`. All tiles live at a single GGGS level fixed at
 /// construction. The pre-#248 `draft`/`processed` two-layer overlay collapsed to
-/// this single `cube` layer (ADR-0007 #248 amendment A.2).
+/// this single `survey` layer (ADR-0007 #248 amendment A.2).
 ///
-/// **Recency policy (ADR-0007 D7):** `set(Cube, …)` is *newest-valid-wins* — it
+/// **Recency policy (ADR-0007 D7):** `set(Survey, …)` is *newest-valid-wins* — it
 /// overwrites the existing cell unconditionally. Callers supply angle-corrected
 /// node-output values (ADR-0007 D2/D3); the store does **no** accumulation. The
 /// Welford sufficient statistics `{mean, standard_error, sample_sd}` ride the

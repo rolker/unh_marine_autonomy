@@ -60,22 +60,22 @@ TEST_F(TileIoTest, RoundTripPreservesCells)
 {
   MbesBackscatterStore store(5);
   store.set(
-    SourceLayer::Cube, store.cellIndex(43.0, -70.5), MbesCell{-18.5f, 0.375f, 0.75f});
+    SourceLayer::Survey, store.cellIndex(43.0, -70.5), MbesCell{-18.5f, 0.375f, 0.75f});
   store.set(
-    SourceLayer::Cube, store.cellIndex(44.0, -71.0), MbesCell{-12.5f, 0.125f, 0.25f});
+    SourceLayer::Survey, store.cellIndex(44.0, -71.0), MbesCell{-12.5f, 0.125f, 0.25f});
 
   EXPECT_EQ(marine_mbes_backscatter_store::save(store, dir_.string()), 2u);
 
   MbesBackscatterStore reloaded(5);
   EXPECT_EQ(marine_mbes_backscatter_store::load(reloaded, dir_.string()), 2u);
 
-  const auto a = reloaded.get(SourceLayer::Cube, reloaded.cellIndex(43.0, -70.5));
+  const auto a = reloaded.get(SourceLayer::Survey, reloaded.cellIndex(43.0, -70.5));
   ASSERT_TRUE(a.has_value());
   EXPECT_FLOAT_EQ(a->mean, -18.5f);
   EXPECT_FLOAT_EQ(a->standard_error, 0.375f);
   EXPECT_FLOAT_EQ(a->sample_sd, 0.75f);
 
-  const auto b = reloaded.get(SourceLayer::Cube, reloaded.cellIndex(44.0, -71.0));
+  const auto b = reloaded.get(SourceLayer::Survey, reloaded.cellIndex(44.0, -71.0));
   ASSERT_TRUE(b.has_value());
   EXPECT_FLOAT_EQ(b->mean, -12.5f);
 }
@@ -99,13 +99,13 @@ TEST_F(TileIoTest, WelfordRoundTripReconstructsNAndM2)
 
   MbesBackscatterStore store(5);
   store.set(
-    SourceLayer::Cube, store.cellIndex(43.0, -70.5),
+    SourceLayer::Survey, store.cellIndex(43.0, -70.5),
     MbesCell{-18.5f, stored_se, sample_sd});
   EXPECT_EQ(marine_mbes_backscatter_store::save(store, dir_.string()), 1u);
 
   MbesBackscatterStore reloaded(5);
   EXPECT_EQ(marine_mbes_backscatter_store::load(reloaded, dir_.string()), 1u);
-  const auto got = reloaded.get(SourceLayer::Cube, reloaded.cellIndex(43.0, -70.5));
+  const auto got = reloaded.get(SourceLayer::Survey, reloaded.cellIndex(43.0, -70.5));
   ASSERT_TRUE(got.has_value());
 
   // Divide the confidence scale out, then reconstruct.
@@ -123,12 +123,12 @@ TEST_F(TileIoTest, WelfordN1SentinelRoundTrips)
   // from no-data (NaN mean).
   MbesBackscatterStore store(5);
   store.set(
-    SourceLayer::Cube, store.cellIndex(43.0, -70.5), MbesCell{-12.0f, 0.0f, 0.0f});
+    SourceLayer::Survey, store.cellIndex(43.0, -70.5), MbesCell{-12.0f, 0.0f, 0.0f});
   EXPECT_EQ(marine_mbes_backscatter_store::save(store, dir_.string()), 1u);
 
   MbesBackscatterStore reloaded(5);
   EXPECT_EQ(marine_mbes_backscatter_store::load(reloaded, dir_.string()), 1u);
-  const auto got = reloaded.get(SourceLayer::Cube, reloaded.cellIndex(43.0, -70.5));
+  const auto got = reloaded.get(SourceLayer::Survey, reloaded.cellIndex(43.0, -70.5));
   ASSERT_TRUE(got.has_value());
 
   // Finite mean + zero sample_sd -> real data, n=1, M2=0.
@@ -158,13 +158,13 @@ TEST_F(TileIoTest, ConfidenceScaleDividesOutToIntegerN)
 
   MbesBackscatterStore store(5);
   store.set(
-    SourceLayer::Cube, store.cellIndex(43.0, -70.5),
+    SourceLayer::Survey, store.cellIndex(43.0, -70.5),
     MbesCell{-5.0f, stored_se, sample_sd});
   marine_mbes_backscatter_store::save(store, dir_.string());
 
   MbesBackscatterStore reloaded(5);
   marine_mbes_backscatter_store::load(reloaded, dir_.string());
-  const auto got = reloaded.get(SourceLayer::Cube, reloaded.cellIndex(43.0, -70.5));
+  const auto got = reloaded.get(SourceLayer::Survey, reloaded.cellIndex(43.0, -70.5));
   ASSERT_TRUE(got.has_value());
 
   const double se = static_cast<double>(got->standard_error) / scale;
@@ -176,7 +176,7 @@ TEST_F(TileIoTest, ConfidenceScaleDividesOutToIntegerN)
 TEST_F(TileIoTest, LoadedTilesAreCleanAndDontResave)
 {
   MbesBackscatterStore store(5);
-  store.set(SourceLayer::Cube, store.cellIndex(43.0, -70.5), MbesCell{-30.0f, 0.5f, 1.0f});
+  store.set(SourceLayer::Survey, store.cellIndex(43.0, -70.5), MbesCell{-30.0f, 0.5f, 1.0f});
 
   EXPECT_EQ(marine_mbes_backscatter_store::save(store, dir_.string()), 1u);
   EXPECT_EQ(marine_mbes_backscatter_store::save(store, dir_.string()), 0u);  // incremental
@@ -186,18 +186,18 @@ TEST_F(TileIoTest, LoadedTilesAreCleanAndDontResave)
   EXPECT_EQ(marine_mbes_backscatter_store::save(reloaded, dir_.string()), 0u);
 }
 
-TEST_F(TileIoTest, SaveWritesCubeSubdirectory)
+TEST_F(TileIoTest, SaveWritesSurveySubdirectory)
 {
   MbesBackscatterStore store(5);
-  store.set(SourceLayer::Cube, store.cellIndex(43.0, -70.5), MbesCell{-10.0f, 0.1f, 0.2f});
+  store.set(SourceLayer::Survey, store.cellIndex(43.0, -70.5), MbesCell{-10.0f, 0.1f, 0.2f});
   marine_mbes_backscatter_store::save(store, dir_.string());
-  EXPECT_TRUE(fs::is_directory(dir_ / "cube"));
+  EXPECT_TRUE(fs::is_directory(dir_ / "survey"));
 }
 
 TEST_F(TileIoTest, LoadRejectsTilesFromAnotherLevel)
 {
   MbesBackscatterStore store(5);
-  store.set(SourceLayer::Cube, store.cellIndex(43.0, -70.5), MbesCell{-30.0f, 0.5f, 1.0f});
+  store.set(SourceLayer::Survey, store.cellIndex(43.0, -70.5), MbesCell{-30.0f, 0.5f, 1.0f});
   marine_mbes_backscatter_store::save(store, dir_.string());
 
   MbesBackscatterStore wrong_level(6);
@@ -210,7 +210,7 @@ TEST_F(TileIoTest, LoadRejectsTilesFromAnotherLevel)
 TEST_F(TileIoTest, StoreMetadataRoundTrip)
 {
   MbesBackscatterStore store(5);
-  store.set(SourceLayer::Cube, store.cellIndex(43.0, -70.5), MbesCell{-20.0f, 0.5f, 1.0f});
+  store.set(SourceLayer::Survey, store.cellIndex(43.0, -70.5), MbesCell{-20.0f, 0.5f, 1.0f});
   StoreMetadata md{"bizzyboat", "kongsberg-m3", "massabesic-2026", "2026-06-30", ""};
 
   marine_mbes_backscatter_store::save(store, dir_.string(), &md);

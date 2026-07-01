@@ -44,9 +44,9 @@ TEST(Store, SetGetRoundTrip)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Cube, cell, BathyCell{-30.0, 0.5});
+  store.set(SourceLayer::Survey, cell, BathyCell{-30.0, 0.5});
 
-  const auto got = store.get(SourceLayer::Cube, cell);
+  const auto got = store.get(SourceLayer::Survey, cell);
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, -30.0);
   EXPECT_DOUBLE_EQ(got->uncertainty, 0.5);
@@ -55,18 +55,18 @@ TEST(Store, SetGetRoundTrip)
 TEST(Store, GetEmptyLayerIsNullopt)
 {
   BathymetryStore store(5);
-  EXPECT_FALSE(store.get(SourceLayer::Cube, store.cellIndex(43.0, -70.5)).has_value());
+  EXPECT_FALSE(store.get(SourceLayer::Survey, store.cellIndex(43.0, -70.5)).has_value());
 }
 
 TEST(Store, LayersAreIndependent)
 {
-  // A cube write must not touch the pre-existing layer at the same cell.
-  BathymetryStore store(5, /*pre_existing_writable=*/true);
+  // A survey write must not touch the reference layer at the same cell.
+  BathymetryStore store(5, /*reference_writable=*/true);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::PreExisting, cell, BathyCell{-10.0, 0.1});
-  store.set(SourceLayer::Cube, cell, BathyCell{-12.0, 2.0});
-  EXPECT_DOUBLE_EQ(store.get(SourceLayer::PreExisting, cell)->depth, -10.0);
-  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Cube, cell)->depth, -12.0);
+  store.set(SourceLayer::Reference, cell, BathyCell{-10.0, 0.1});
+  store.set(SourceLayer::Survey, cell, BathyCell{-12.0, 2.0});
+  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Reference, cell)->depth, -10.0);
+  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Survey, cell)->depth, -12.0);
 }
 
 TEST(Store, DoubleWriteSameCellLastWriteWins)
@@ -75,33 +75,33 @@ TEST(Store, DoubleWriteSameCellLastWriteWins)
   // first — there is no per-day epoch ordering or provenance guard.
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  EXPECT_TRUE(store.set(SourceLayer::Cube, cell, BathyCell{-10.0, 0.1}));
-  EXPECT_TRUE(store.set(SourceLayer::Cube, cell, BathyCell{-12.0, 0.2}));
-  const auto got = store.get(SourceLayer::Cube, cell);
+  EXPECT_TRUE(store.set(SourceLayer::Survey, cell, BathyCell{-10.0, 0.1}));
+  EXPECT_TRUE(store.set(SourceLayer::Survey, cell, BathyCell{-12.0, 0.2}));
+  const auto got = store.get(SourceLayer::Survey, cell);
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, -12.0);
   EXPECT_DOUBLE_EQ(got->uncertainty, 0.2);
   // Still one tile (same grid).
-  EXPECT_EQ(tilesIn(store, SourceLayer::Cube), 1u);
+  EXPECT_EQ(tilesIn(store, SourceLayer::Survey), 1u);
 }
 
 TEST(Store, TilesAllocatedLazilyPerLayer)
 {
   BathymetryStore store(5);
-  EXPECT_TRUE(store.tiles(SourceLayer::Cube).empty());
-  EXPECT_TRUE(store.tiles(SourceLayer::PreExisting).empty());
+  EXPECT_TRUE(store.tiles(SourceLayer::Survey).empty());
+  EXPECT_TRUE(store.tiles(SourceLayer::Reference).empty());
 
-  store.set(SourceLayer::Cube, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5});
-  EXPECT_EQ(tilesIn(store, SourceLayer::Cube), 1u);
-  EXPECT_TRUE(store.tiles(SourceLayer::PreExisting).empty());
+  store.set(SourceLayer::Survey, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5});
+  EXPECT_EQ(tilesIn(store, SourceLayer::Survey), 1u);
+  EXPECT_TRUE(store.tiles(SourceLayer::Reference).empty());
 }
 
 TEST(Store, NoDataCellReadsBackAsNoData)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Cube, cell, BathyCell{});  // depth NaN
-  const auto got = store.get(SourceLayer::Cube, cell);
+  store.set(SourceLayer::Survey, cell, BathyCell{});  // depth NaN
+  const auto got = store.get(SourceLayer::Survey, cell);
   ASSERT_TRUE(got.has_value());      // tile exists
   EXPECT_FALSE(got->hasData());      // but the cell carries no usable depth
 }
@@ -116,15 +116,15 @@ TEST(Store, MultiLevelTilesCoexist)
   const auto default_cell = store.cellIndex(43.0, -70.5);
   ASSERT_NE(fine_cell.level(), default_cell.level());
 
-  EXPECT_NO_THROW(store.set(SourceLayer::Cube, fine_cell, BathyCell{-22.0, 0.3}));
-  store.set(SourceLayer::Cube, default_cell, BathyCell{-20.0, 0.5});
+  EXPECT_NO_THROW(store.set(SourceLayer::Survey, fine_cell, BathyCell{-22.0, 0.3}));
+  store.set(SourceLayer::Survey, default_cell, BathyCell{-20.0, 0.5});
 
   // Both tiles exist in the same layer at different levels.
-  EXPECT_EQ(tilesIn(store, SourceLayer::Cube), 2u);
-  const auto fine_got = store.get(SourceLayer::Cube, fine_cell);
+  EXPECT_EQ(tilesIn(store, SourceLayer::Survey), 2u);
+  const auto fine_got = store.get(SourceLayer::Survey, fine_cell);
   ASSERT_TRUE(fine_got.has_value());
   EXPECT_DOUBLE_EQ(fine_got->depth, -22.0);
-  const auto default_got = store.get(SourceLayer::Cube, default_cell);
+  const auto default_got = store.get(SourceLayer::Survey, default_cell);
   ASSERT_TRUE(default_got.has_value());
   EXPECT_DOUBLE_EQ(default_got->depth, -20.0);
 }
@@ -132,7 +132,7 @@ TEST(Store, MultiLevelTilesCoexist)
 TEST(Store, InvalidCellThrows)
 {
   BathymetryStore store(5);
-  EXPECT_THROW(store.set(SourceLayer::Cube, gggs::CellIndex{}, BathyCell{}),
+  EXPECT_THROW(store.set(SourceLayer::Survey, gggs::CellIndex{}, BathyCell{}),
     std::invalid_argument);
 }
 
@@ -143,38 +143,38 @@ TEST(Store, FromCellSizeChoosesAFiniteLevel)
   EXPECT_TRUE(store.cellIndex(43.0, -70.5).valid());
 }
 
-TEST(Store, PreExistingIsReadOnlyByDefault)
+TEST(Store, ReferenceIsReadOnlyByDefault)
 {
-  // The prior must be unclobberable by live ingest: set(PreExisting) throws
-  // unless the store was explicitly opened pre_existing_writable (ADR-0002 §D3).
+  // The prior must be unclobberable by live ingest: set(Reference) throws
+  // unless the store was explicitly opened reference_writable (ADR-0002 §D3).
   BathymetryStore store(5);
   EXPECT_FALSE(store.preExistingWritable());
   EXPECT_THROW(
-    store.set(SourceLayer::PreExisting, store.cellIndex(43.0, -70.5), BathyCell{-10.0, 3.0}),
+    store.set(SourceLayer::Reference, store.cellIndex(43.0, -70.5), BathyCell{-10.0, 3.0}),
     std::logic_error);
   // Other layers are unaffected by the guard.
   const auto cell = store.cellIndex(43.0, -70.5);
-  EXPECT_NO_THROW(store.set(SourceLayer::Cube, cell, BathyCell{-12.0, 2.0}));
+  EXPECT_NO_THROW(store.set(SourceLayer::Survey, cell, BathyCell{-12.0, 2.0}));
 }
 
-TEST(Store, PreExistingWritableStoreAllowsSet)
+TEST(Store, ReferenceWritableStoreAllowsSet)
 {
   // The importer opts in; the converted prior then writes and reads back.
-  BathymetryStore store(5, /*pre_existing_writable=*/true);
+  BathymetryStore store(5, /*reference_writable=*/true);
   EXPECT_TRUE(store.preExistingWritable());
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::PreExisting, cell, BathyCell{38.58, 3.0});
-  const auto got = store.get(SourceLayer::PreExisting, cell);
+  store.set(SourceLayer::Reference, cell, BathyCell{38.58, 3.0});
+  const auto got = store.get(SourceLayer::Reference, cell);
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, 38.58);
 }
 
-TEST(Store, FromCellSizePropagatesPreExistingWritable)
+TEST(Store, FromCellSizePropagatesReferenceWritable)
 {
-  auto store = BathymetryStore::fromCellSize(30.0f, /*pre_existing_writable=*/true);
+  auto store = BathymetryStore::fromCellSize(30.0f, /*reference_writable=*/true);
   EXPECT_TRUE(store.preExistingWritable());
   EXPECT_NO_THROW(
-    store.set(SourceLayer::PreExisting, store.cellIndex(43.0, -70.5), BathyCell{40.0, 3.0}));
+    store.set(SourceLayer::Reference, store.cellIndex(43.0, -70.5), BathyCell{40.0, 3.0}));
 }
 
 namespace
@@ -198,22 +198,22 @@ TEST(Store, ImportTilesBulkInsert)
   // (last-write-wins) while leaving other grids untouched.
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  EXPECT_EQ(store.importTiles(SourceLayer::Cube, oneTile(cell, BathyCell{-30.0, 0.5})), 1u);
-  const auto got = store.get(SourceLayer::Cube, cell);
+  EXPECT_EQ(store.importTiles(SourceLayer::Survey, oneTile(cell, BathyCell{-30.0, 0.5})), 1u);
+  const auto got = store.get(SourceLayer::Survey, cell);
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, -30.0);
 
   // Re-importing the same grid replaces it (no provenance ordering since #221).
-  EXPECT_EQ(store.importTiles(SourceLayer::Cube, oneTile(cell, BathyCell{-28.0, 0.4})), 1u);
-  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Cube, cell)->depth, -28.0);
-  EXPECT_EQ(tilesIn(store, SourceLayer::Cube), 1u);
+  EXPECT_EQ(store.importTiles(SourceLayer::Survey, oneTile(cell, BathyCell{-28.0, 0.4})), 1u);
+  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Survey, cell)->depth, -28.0);
+  EXPECT_EQ(tilesIn(store, SourceLayer::Survey), 1u);
 
   // A grid not in the import is left untouched: import a second, distinct grid.
   const auto other = store.cellIndex(44.0, -71.0);
   ASSERT_FALSE(cell.grid() == other.grid());
-  store.importTiles(SourceLayer::Cube, oneTile(other, BathyCell{-15.0, 0.6}));
-  EXPECT_EQ(tilesIn(store, SourceLayer::Cube), 2u);
-  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Cube, cell)->depth, -28.0);   // first grid intact
+  store.importTiles(SourceLayer::Survey, oneTile(other, BathyCell{-15.0, 0.6}));
+  EXPECT_EQ(tilesIn(store, SourceLayer::Survey), 2u);
+  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Survey, cell)->depth, -28.0);   // first grid intact
 }
 
 TEST(Store, ImportTilesRejectsTileKeyMismatch)
@@ -230,26 +230,26 @@ TEST(Store, ImportTilesRejectsTileKeyMismatch)
   marine_bathymetry_store::BathymetryTile mismatched(cell_b.grid());
   tiles.emplace(cell_a.grid(), std::move(mismatched));
   EXPECT_THROW(
-    store.importTiles(SourceLayer::Cube, std::move(tiles)),
+    store.importTiles(SourceLayer::Survey, std::move(tiles)),
     std::invalid_argument);
 }
 
-TEST(Store, ImportTilesHonorsPreExistingReadOnlyGate)
+TEST(Store, ImportTilesHonorsReferenceReadOnlyGate)
 {
-  // importTiles is a public mutator like set(), so it must honor the PreExisting
+  // importTiles is a public mutator like set(), so it must honor the Reference
   // read-only gate (ADR-0002 §D3) — otherwise a bulk import would overwrite the
-  // prior on a default store. Only a pre_existing_writable (importer) store may.
+  // prior on a default store. Only a reference_writable (importer) store may.
   const auto cell = BathymetryStore(5).cellIndex(43.0, -70.5);
 
   BathymetryStore read_only(5);
   EXPECT_THROW(
-    read_only.importTiles(SourceLayer::PreExisting, oneTile(cell, BathyCell{-10.0, 3.0})),
+    read_only.importTiles(SourceLayer::Reference, oneTile(cell, BathyCell{-10.0, 3.0})),
     std::logic_error);
 
-  BathymetryStore importer(5, /*pre_existing_writable=*/true);
+  BathymetryStore importer(5, /*reference_writable=*/true);
   EXPECT_EQ(
-    importer.importTiles(SourceLayer::PreExisting, oneTile(cell, BathyCell{-10.0, 3.0})), 1u);
-  EXPECT_DOUBLE_EQ(importer.get(SourceLayer::PreExisting, cell)->depth, -10.0);
+    importer.importTiles(SourceLayer::Reference, oneTile(cell, BathyCell{-10.0, 3.0})), 1u);
+  EXPECT_DOUBLE_EQ(importer.get(SourceLayer::Reference, cell)->depth, -10.0);
 }
 
 TEST(Store, ImportTilesEmptyIsNoOp)
@@ -257,6 +257,6 @@ TEST(Store, ImportTilesEmptyIsNoOp)
   // An empty import (e.g. an entirely no-data GeoTIFF) inserts nothing and adds
   // no tiles to the layer.
   BathymetryStore store(5);
-  EXPECT_EQ(store.importTiles(SourceLayer::Cube, {}), 0u);
-  EXPECT_TRUE(store.tiles(SourceLayer::Cube).empty());
+  EXPECT_EQ(store.importTiles(SourceLayer::Survey, {}), 0u);
+  EXPECT_TRUE(store.tiles(SourceLayer::Survey).empty());
 }

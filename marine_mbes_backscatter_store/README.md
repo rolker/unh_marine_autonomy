@@ -12,7 +12,7 @@ provenance registry pattern.
 
 ## What this phase provides
 
-- An in-memory, GGGS-tiled store with a **single `cube` source layer** (the CUBE
+- An in-memory, GGGS-tiled store with a **single `survey` source layer** (the CUBE
   node-output product, live or off-boat re-run). The pre-#248 `draft`/`processed`
   overlay collapsed to one layer (ADR-0007 #248 amendment A.2). **No Chart layer:**
   a contour / S57 prior is a bathymetric concept; MBES backscatter has none.
@@ -95,5 +95,5 @@ Tests (`test_store`, `test_query`, `test_tile_io`) are headless GTest and cover
 set/get round-trip, newest-valid-wins recency, the n=1 sentinel, best-source /
 nullopt, the region visitor, the 3-band value-tile persistence round-trip, the
 **Welford sufficient-statistics round-trip** (n≥2 reconstruction of `{n, M2}`, the
-n=1 sentinel, and the confidence-scale divide-out), the `cube/` subdirectory
+n=1 sentinel, and the confidence-scale divide-out), the `survey/` subdirectory
 layout, level-mismatch rejection, and the coarse `StoreMetadata` round-trip.

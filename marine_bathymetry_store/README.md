@@ -21,14 +21,14 @@ or consumer-specific logic.
 
 ### Source layers (`bathy_cell.hpp`)
 
-`SourceLayer` is an ordered enum — `Cube` (highest priority) then `PreExisting`
+`SourceLayer` is an ordered enum — `Survey` (highest priority) then `Reference`
 (the read-only prior). The pre-#248 `chart`/`draft`/`processed` taxonomy collapsed
 to these two (ADR-0002 Amendment A2.1): with one platform and one fused surface per
 layer, the live-vs-durable split added no query value, and `chart` generalized to
-`pre-existing` (any prior surface imported before the survey). A cell's source is
+`reference` (any prior surface imported before the survey). A cell's source is
 **implied by which layer holds it**: the store keeps one tile map per layer, so
 source is the map, not a per-cell field. Priority is a **non-destructive query-time
-overlay** — live `cube` ingest never clobbers the read-only `pre-existing` prior
+overlay** — live `survey` ingest never clobbers the read-only `reference` prior
 (ADR-0002 §D3).
 
 ### Per-cell record (`BathyCell`)

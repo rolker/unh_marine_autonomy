@@ -190,8 +190,8 @@ std::string tileFilename(const gggs::GridIndex & grid)
 std::string layerDirName(SourceLayer layer)
 {
   switch (layer) {
-    case SourceLayer::Cube: return "cube";
-    case SourceLayer::PreExisting: return "pre-existing";
+    case SourceLayer::Survey: return "survey";
+    case SourceLayer::Reference: return "reference";
   }
   throw std::runtime_error("layerDirName: unknown SourceLayer");
 }
@@ -357,9 +357,9 @@ std::size_t evictOutside(
       const gggs::GridIndex & grid = it->first;
       const BathymetryTile & tile = it->second;
       if (!tileOverlapsBox(grid, min_pt, max_pt)) {
-        // Dirty-tile guard: a dirty (unsaved) Cube tile is live sensor data that
+        // Dirty-tile guard: a dirty (unsaved) Survey tile is live sensor data that
         // has not yet reached disk; evicting it would lose that data with no
-        // reload path.  PreExisting tiles are always clean (never mutated at
+        // reload path.  Reference tiles are always clean (never mutated at
         // runtime) and are always safely evictable.  Skip dirty tiles here and
         // let them survive until they are either saved (clearing the flag) or
         // explicitly discarded by the caller.

@@ -83,8 +83,8 @@ struct GeoTiffImportOptions
 ///
 /// @return The number of distinct cells imported.
 /// @throws std::invalid_argument on a bad band index;
-///         std::logic_error if @p layer is `PreExisting` and the store is not
-///         `pre_existing_writable` (the read-only-prior gate);
+///         std::logic_error if @p layer is `Reference` and the store is not
+///         `reference_writable` (the read-only-prior gate);
 ///         std::runtime_error on GDAL failure, a non-WGS84 / rotated raster, or
 ///         a missing geotransform.
 std::size_t importGeoTiff(

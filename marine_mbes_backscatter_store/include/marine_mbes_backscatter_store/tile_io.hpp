@@ -42,8 +42,8 @@
 ///   (mean, standard_error, sample_sd), NaN no-data on all three.
 ///
 /// The pre-#248 `_time.tif` (Int64 ns) and `_source.tif` (UInt16 source index)
-/// companions were dropped (#248 amendment A.3). The sole layer (`Cube`) is
-/// encoded as the on-disk subdirectory (`cube/`); coarse provenance lives in the
+/// companions were dropped (#248 amendment A.3). The sole layer (`Survey`) is
+/// encoded as the on-disk subdirectory (`survey/`); coarse provenance lives in the
 /// store-wide `registry.json` `StoreMetadata` (ADR-0005 #248).
 ///
 /// @note Round-trip persistence is validated for **non-polar** latitudes
@@ -57,7 +57,7 @@ namespace marine_mbes_backscatter_store
 ///        `<level>_<row>_<col>.tif`.
 std::string tileFilename(const gggs::GridIndex & grid);
 
-/// @brief Subdirectory name for a source layer (`"cube"`).
+/// @brief Subdirectory name for a source layer (`"survey"`).
 std::string layerDirName(SourceLayer layer);
 
 /// @brief Write one tile as a single 3-band value GeoTIFF at @p path (`<grid>.tif`).

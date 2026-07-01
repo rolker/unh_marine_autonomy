@@ -64,7 +64,7 @@ std::string tileFilename(const gggs::GridIndex & grid)
 std::string layerDirName(SourceLayer layer)
 {
   switch (layer) {
-    case SourceLayer::Cube: return "cube";
+    case SourceLayer::Survey: return "survey";
   }
   throw std::runtime_error("layerDirName: unknown SourceLayer");
 }

@@ -8,8 +8,8 @@ https://github.com/rolker/unh_marine_autonomy/issues/248
 
 Both stores carry per-cell `time` and `source` rasters that are redundant once the
 stores are treated as regenerable caches over raw bags. Three bathy source layers
-(`chart`/`draft`/`processed`) collapse to two (`pre-existing` / `cube`), and two
-MBES layers (`draft`/`processed`) collapse to one (`cube`). The MBES value-band
+(`chart`/`draft`/`processed`) collapse to two (`reference` / `survey`), and two
+MBES layers (`draft`/`processed`) collapse to one (`survey`). The MBES value-band
 schema changes from `{intensity, intensity_variance}` (2-band) to
 `{mean, standard_error, sample_sd}` (3-band), encoding the Welford sufficient stats
 for lossless reload. The `registry.json` sidecar is repurposed from a per-cell
@@ -42,25 +42,25 @@ Plan Review resolutions (2026-07-01, operator-confirmed):
 ## Approach
 
 1. **Write ADR addenda (all three)** — document decisions before touching code.
-   - ADR-0002 addendum: layer taxonomy (chart/draft/processed → pre-existing/cube),
+   - ADR-0002 addendum: layer taxonomy (chart/draft/processed → reference/survey),
      tile layout (drop `_time.tif`/`_source.tif`; single 2-band value tile only),
      **and retirement of the `bathymetry_layer` per-cell staleness gate** (with
      rationale: surveyed static bottom, not a live feed).
    - ADR-0005 addendum: per-cell source-index raster dropped; `registry.json`
      repurposed as store/layer-level coarse metadata (survey, sensor, date).
    - ADR-0007 addendum: value-band schema (`{intensity, intensity_variance}` →
-     `{mean, standard_error, sample_sd}`) + layer collapse (draft/processed → cube).
+     `{mean, standard_error, sample_sd}`) + layer collapse (draft/processed → survey).
 
 2. **Refactor `marine_bathymetry_store`:**
    a. `bathy_cell.hpp` — replace `SourceLayer{Processed=0, Draft=1, Chart=2}`
-      with `SourceLayer{Cube=0, PreExisting=1}` (`Cube` highest priority); update
+      with `SourceLayer{Survey=0, Reference=1}` (`Survey` highest priority); update
       `source_layers_by_priority`; strip `timestamp` and `source_index` from `BathyCell`.
    b. `bathymetry_tile.hpp` — remove `TimeRaster`/`SourceRaster` members and
       all `_time`/`_source` band accessors; constructor becomes single-arg
       (`gggs::GridIndex`); `set`/`get` operate on `{depth, uncertainty}` only.
    c. `bathymetry_store.hpp/.cpp` — rename `chart_writable_` →
-      `pre_existing_writable_`; layer count 3→2; update `Chart`→`PreExisting` guards.
-   d. `tile_io.hpp/.cpp` — `layerDirName` returns `"cube"`/`"pre-existing"` (drop
+      `reference_writable_`; layer count 3→2; update `Chart`→`Reference` guards.
+   d. `tile_io.hpp/.cpp` — `layerDirName` returns `"survey"`/`"reference"` (drop
       `"draft"`/`"processed"`/`"chart"`); `saveTile`/`loadTile` write/read only the
       2-band value GeoTIFF (no `_time.tif` or `_source.tif` companions); update
       `save`/`load`/`loadWindow` accordingly.
@@ -93,22 +93,22 @@ Plan Review resolutions (2026-07-01, operator-confirmed):
 
 4. **Refactor `marine_mbes_backscatter_store`:**
    a. `mbes_cell.hpp` — replace `SourceLayer{Processed=0, Draft=1}` with
-      `SourceLayer{Cube=0}`; update `source_layers_by_priority` to a 1-element array;
+      `SourceLayer{Survey=0}`; update `source_layers_by_priority` to a 1-element array;
       rename `MbesCell` fields: `intensity`→`mean`, `intensity_variance`→`standard_error`;
       add `sample_sd`; drop `timestamp` and `source_index`.
    b. `mbes_tile.hpp` — remove `TimeRaster`/`SourceRaster`; value raster becomes
       3-band `{mean, standard_error, sample_sd}` (all `float`); band constants
       `kMean=0`, `kStandardError=1`, `kSampleSd=2`.
    c. `mbes_store.hpp/.cpp` — layer count 2→1; remove `set(Draft/Processed, ...)` distinction;
-      single `set(SourceLayer::Cube, ...)`.
-   d. `tile_io.hpp/.cpp` — `layerDirName` returns `"cube"` only; `saveTile`/`loadTile`
+      single `set(SourceLayer::Survey, ...)`.
+   d. `tile_io.hpp/.cpp` — `layerDirName` returns `"survey"` only; `saveTile`/`loadTile`
       write/read 3-band `Float32` value tile only; update `save`/`load`.
    e. `registry.hpp/.cpp` — same repurpose as bathy: `StoreMetadata` struct,
       flat `registry.json` with `{platform, sensor, survey, date}`; the `calibration_ref`
       field survives as a coarse store-level field (not per-cell).
    f. `query.hpp/.cpp` — rename `IntensitySample{intensity, intensity_variance,
       timestamp, source}` → `BackscatterSample{mean, standard_error, sample_sd, source}`;
-      `bestSource` and `forEachCellBestSource` walk the single `Cube` layer.
+      `bestSource` and `forEachCellBestSource` walk the single `Survey` layer.
    g. `test/test_tile_io.cpp` — add Welford round-trip tests:
       - n≥2 case: set `(mean, SE*scale, SD)`, reload, reconstruct
         `n = (SD / (SE*scale/scale))^2 = (SD/SE)^2` and `M2 = SD^2*(n-1)`, verify exact.
@@ -127,10 +127,10 @@ Plan Review resolutions (2026-07-01, operator-confirmed):
 | `docs/decisions/0002-bathymetric-data-store.md` | Addendum: layer taxonomy + tile layout simplification + staleness-gate retirement rationale |
 | `docs/decisions/0005-multi-platform-provenance-registry.md` | Addendum: per-cell source-index dropped; registry.json = coarse metadata |
 | `docs/decisions/0007-mbes-backscatter-store.md` | Addendum: value-band schema + layer collapse |
-| `marine_bathymetry_store/include/marine_bathymetry_store/bathy_cell.hpp` | SourceLayer enum (Cube/PreExisting), BathyCell (drop timestamp/source_index) |
+| `marine_bathymetry_store/include/marine_bathymetry_store/bathy_cell.hpp` | SourceLayer enum (Survey/Reference), BathyCell (drop timestamp/source_index) |
 | `marine_bathymetry_store/include/marine_bathymetry_store/bathymetry_tile.hpp` | Drop time/source rasters; value-only tile |
 | `marine_bathymetry_store/include/marine_bathymetry_store/bathymetry_store.hpp` | Rename chart_writable_, layer count 3→2 |
-| `marine_bathymetry_store/src/bathymetry_store.cpp` | Chart→PreExisting guards |
+| `marine_bathymetry_store/src/bathymetry_store.cpp` | Chart→Reference guards |
 | `marine_bathymetry_store/include/marine_bathymetry_store/tile_io.hpp` | layerDirName, value-only I/O |
 | `marine_bathymetry_store/src/tile_io.cpp` | Implement simplified I/O |
 | `marine_bathymetry_store/include/marine_bathymetry_store/registry.hpp` | Repurpose as StoreMetadata |
@@ -149,7 +149,7 @@ Plan Review resolutions (2026-07-01, operator-confirmed):
 | `bathymetry_layer/test/*` | Remove/adjust staleness-gate tests |
 | `bathymetry_layer/README.md` | Drop staleness-gate mention (if present) |
 | `marine_tiled_raster_store/README.md` | Refresh bathy tile-format cross-reference (old "3 bands") |
-| `marine_mbes_backscatter_store/include/marine_mbes_backscatter_store/mbes_cell.hpp` | SourceLayer (Cube only), MbesCell (mean/SE/SD, drop ts/src) |
+| `marine_mbes_backscatter_store/include/marine_mbes_backscatter_store/mbes_cell.hpp` | SourceLayer (Survey only), MbesCell (mean/SE/SD, drop ts/src) |
 | `marine_mbes_backscatter_store/include/marine_mbes_backscatter_store/mbes_tile.hpp` | 3-band value raster only |
 | `marine_mbes_backscatter_store/include/marine_mbes_backscatter_store/mbes_store.hpp` | Single layer |
 | `marine_mbes_backscatter_store/src/mbes_store.cpp` | Single layer |

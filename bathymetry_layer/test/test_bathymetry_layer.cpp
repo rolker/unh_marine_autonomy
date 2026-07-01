@@ -199,7 +199,7 @@ TEST(BathymetryLayer, SurveyedCellMapsClearanceToCost)
   const auto cell = store->cellIndex(kLat, kLon);
 
   // Shoal: seafloor 0.5 m below the water surface → clearance 0.5 m < 1.0 → LETHAL.
-  store->set(SourceLayer::Cube, cell, BathyCell{-0.5, 0.1});
+  store->set(SourceLayer::Survey, cell, BathyCell{-0.5, 0.1});
   layer.setStore(std::move(store));
   layer.setMapTideValid(true);
   auto shoal = layer.evaluateCell(cell);
@@ -209,7 +209,7 @@ TEST(BathymetryLayer, SurveyedCellMapsClearanceToCost)
   // Deep: seafloor 5 m down → clearance 5 m >= 3.0 → FREE_SPACE.
   auto deep_store = std::make_unique<BathymetryStore>(5);
   const auto deep_cell = deep_store->cellIndex(kLat, kLon);
-  deep_store->set(SourceLayer::Cube, deep_cell, BathyCell{-5.0, 0.1});
+  deep_store->set(SourceLayer::Survey, deep_cell, BathyCell{-5.0, 0.1});
   layer.setStore(std::move(deep_store));
   layer.setMapTideValid(true);
   auto deep = layer.evaluateCell(deep_cell);
@@ -232,7 +232,7 @@ TEST(BathymetryLayer, OverUncertainSurveyedCellIsLethal)
   // Data present, but uncertainty 5.0 m exceeds max_uncertainty 0.5 m: the cell
   // HAS data (bestSource non-null) but fails the reliability gate
   // (shallowestReliable nullopt).
-  store->set(SourceLayer::Cube, cell, BathyCell{-10.0, 5.0});
+  store->set(SourceLayer::Survey, cell, BathyCell{-10.0, 5.0});
   layer.setStore(std::move(store));
   layer.setMapTideValid(true);
 
@@ -259,7 +259,7 @@ TEST(BathymetryLayer, InvalidTideYieldsNoInformation)
   auto store = std::make_unique<BathymetryStore>(5);
   const auto cell = store->cellIndex(kLat, kLon);
   // A perfectly good surveyed cell (deep, reliable, fresh) must still be skipped.
-  store->set(SourceLayer::Cube, cell, BathyCell{47.0, 0.1});
+  store->set(SourceLayer::Survey, cell, BathyCell{47.0, 0.1});
   layer.setStore(std::move(store));
 
   const auto result = layer.evaluateCell(cell);
@@ -292,7 +292,7 @@ TEST(BathymetryLayer, OverUncertainCellIsLethalWithNoPriorFallback)
   {
     auto store = std::make_unique<BathymetryStore>(5);
     const auto cell = store->cellIndex(kLat, kLon);
-    store->set(SourceLayer::Cube, cell, BathyCell{-5.0, 5.0});
+    store->set(SourceLayer::Survey, cell, BathyCell{-5.0, 5.0});
     layer.setStore(std::move(store));
 
     const auto result = layer.evaluateCell(cell);
@@ -307,7 +307,7 @@ TEST(BathymetryLayer, OverUncertainCellIsLethalWithNoPriorFallback)
   {
     auto store = std::make_unique<BathymetryStore>(5);
     const auto cell = store->cellIndex(kLat, kLon);
-    store->set(SourceLayer::Cube, cell, BathyCell{-5.0, 0.1});
+    store->set(SourceLayer::Survey, cell, BathyCell{-5.0, 0.1});
     layer.setStore(std::move(store));
 
     const auto result = layer.evaluateCell(cell);
@@ -377,21 +377,21 @@ TEST(BathymetryLayer, WindowedResidencyStaysBounded)
   fs::create_directories(dir);
 
   // Build a store spanning a wide geographic strip so its tiles land in
-  // distinct GGGS grids, then persist it to disk. pre_existing_writable=true so
-  // the synthetic prior can be written on the read-only PreExisting layer.
+  // distinct GGGS grids, then persist it to disk. reference_writable=true so
+  // the synthetic prior can be written on the read-only Reference layer.
   {
-    BathymetryStore store(12, /*pre_existing_writable=*/true);
+    BathymetryStore store(12, /*reference_writable=*/true);
     for (int k = 0; k < 8; ++k) {
       const double lon = -70.5 + 0.05 * static_cast<double>(k);
       const auto cell = store.cellIndex(43.0, lon);
-      store.set(SourceLayer::PreExisting, cell, BathyCell{-10.0, 0.2});
+      store.set(SourceLayer::Reference, cell, BathyCell{-10.0, 0.2});
     }
     const std::size_t written = marine_bathymetry_store::save(store, dir.string(), nullptr);
     ASSERT_GT(written, 0u);
   }
 
   // A fresh consumer store loads only a small window, leaving most tiles on disk.
-  BathymetryStore consumer(12, /*pre_existing_writable=*/false);
+  BathymetryStore consumer(12, /*reference_writable=*/false);
   const auto small_min = gggs::geoPoint(42.999, -70.51);
   const auto small_max = gggs::geoPoint(43.001, -70.49);
   marine_bathymetry_store::loadWindow(consumer, dir.string(), small_min, small_max);

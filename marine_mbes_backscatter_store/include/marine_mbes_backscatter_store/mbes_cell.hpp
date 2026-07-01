@@ -35,15 +35,15 @@ namespace marine_mbes_backscatter_store
 /// As in the bathy store, a cell's source layer is implied by which layer holds
 /// it (the store keeps one tile map per layer), so it is not stored in the
 /// per-cell record. The pre-#248 `draft`/`processed` two-layer overlay collapsed
-/// to a **single `cube` layer** (ADR-0007 #248 amendment A.2): with one platform
+/// to a **single `survey` layer** (ADR-0007 #248 amendment A.2): with one platform
 /// and one coverage, the live-vs-durable split added no query value.
 enum class SourceLayer : uint8_t
 {
-  Cube = 0,  ///< The CUBE node-output product (live or off-boat re-run). The only layer.
+  Survey = 0,  ///< The CUBE node-output product (live or off-boat re-run). The only layer.
 };
 
 /// @brief Source layers in descending priority order — iterate for best-source.
-inline constexpr std::array<SourceLayer, 1> source_layers_by_priority{SourceLayer::Cube};
+inline constexpr std::array<SourceLayer, 1> source_layers_by_priority{SourceLayer::Survey};
 
 /// @brief Number of source layers present in this phase.
 inline constexpr std::size_t source_layer_count = source_layers_by_priority.size();

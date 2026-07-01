@@ -214,7 +214,7 @@ void BathymetryLayer::openStore()
   }
   try {
     // The default level only governs cellIndex(lat,lon); the store is otherwise
-    // multi-level. pre_existing_writable=false: a navigation consumer never
+    // multi-level. reference_writable=false: a navigation consumer never
     // mutates the read-only prior.
     store_ = std::make_unique<BathymetryStore>(
       BathymetryStore::fromCellSize(static_cast<float>(resolution_), false));

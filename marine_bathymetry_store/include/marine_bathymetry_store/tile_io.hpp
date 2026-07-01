@@ -47,8 +47,8 @@
 /// cache, the per-cell time band's only reader (the costmap staleness gate) was
 /// retired, and per-cell source provenance is a constant for a single platform.
 ///
-/// The quality/maturity axis (Cube / PreExisting) is encoded as the on-disk
-/// subdirectory (`cube/`, `pre-existing/`); each holds **one fused** set of value
+/// The quality/maturity axis (Survey / Reference) is encoded as the on-disk
+/// subdirectory (`survey/`, `reference/`); each holds **one fused** set of value
 /// tiles directly (no per-day epoch subdirectory since #221). Coarse provenance
 /// moves to the store-wide `registry.json` `StoreMetadata` (ADR-0005 #248).
 ///
@@ -67,7 +67,7 @@ namespace marine_bathymetry_store
 ///        `<level>_<row>_<col>.tif`.
 std::string tileFilename(const gggs::GridIndex & grid);
 
-/// @brief Subdirectory name for a source layer (`"cube"` / `"pre-existing"`).
+/// @brief Subdirectory name for a source layer (`"survey"` / `"reference"`).
 ///        Each holds one fused set of value tiles directly (#221).
 std::string layerDirName(SourceLayer layer);
 
@@ -169,9 +169,9 @@ std::size_t loadWindow(
 /// `loadWindow`).
 ///
 /// **Dirty-tile guard (safety invariant)**: a tile flagged `dirty()` is **never**
-/// evicted, regardless of its position. A dirty Cube tile is live sensor data that
+/// evicted, regardless of its position. A dirty Survey tile is live sensor data that
 /// has not yet reached disk; evicting it would lose that data with no reload path.
-/// PreExisting tiles are always clean (never mutated at runtime) and are always
+/// Reference tiles are always clean (never mutated at runtime) and are always
 /// safely evictable. Save the store before calling `evictOutside` if you want all
 /// outside tiles to be eligible for eviction.
 ///

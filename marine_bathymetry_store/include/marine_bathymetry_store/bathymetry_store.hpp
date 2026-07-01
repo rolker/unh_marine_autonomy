@@ -41,7 +41,7 @@ class BathymetryStore;
 struct StoreMetadata;
 // Persistence free functions (defined in tile_io.cpp). Forward-declared here so
 // the store can friend them: `load` / `loadWindow` must reach getOrCreateTile on
-// any layer — including the read-only `PreExisting` prior — which the public API
+// any layer — including the read-only `Reference` prior — which the public API
 // otherwise forbids.  `evictOutside` must reach the non-const layerMap() to erase
 // tiles without const_cast.
 std::size_t save(
@@ -74,8 +74,8 @@ std::size_t evictOutside(
 /// Source priority is a **non-destructive query-time overlay** (see
 /// `query.hpp`): the layers are independent, so a live CUBE write never clobbers
 /// the read-only prior. The single fused surface within a layer is
-/// last-write-wins per cell (there is no provenance ordering); `cube >
-/// pre-existing` layer priority is the only provenance axis (ADR-0002 A2.1).
+/// last-write-wins per cell (there is no provenance ordering); `survey >
+/// reference` layer priority is the only provenance axis (ADR-0002 A2.1).
 ///
 /// This phase has no ROS interface or distribution — just storage, in-process
 /// queries (`query.hpp`), per-tile GeoTIFF persistence (`tile_io.hpp`), and the
@@ -90,28 +90,28 @@ public:
   /// convenience); stored tiles may be at any level (this store is multi-level,
   /// ADR-0002 §D2).
   ///
-  /// @param pre_existing_writable Opt in to per-cell `set()` writes on the
-  ///   read-only `PreExisting` prior layer. Default `false` — only the prior
+  /// @param reference_writable Opt in to per-cell `set()` writes on the
+  ///   read-only `Reference` prior layer. Default `false` — only the prior
   ///   importer (which converts the contour prior to ellipsoidal at import)
   ///   should pass `true`. Runtime consumers leave it `false` so live CUBE ingest
   ///   can never mutate the prior. `load()` (a friend) may still populate
-  ///   PreExisting from disk regardless of this flag — the read-only gate is on
+  ///   Reference from disk regardless of this flag — the read-only gate is on
   ///   per-cell mutation (`set`), not on loading the prior. Direct tile mutation
   ///   is impossible from outside: `getOrCreateTile` is private (persistence-only).
   /// @throws std::out_of_range if the level is invalid (via gggs::Level).
-  explicit BathymetryStore(uint8_t gggs_level, bool pre_existing_writable = false)
-  : level_(gggs_level), pre_existing_writable_(pre_existing_writable) {}
+  explicit BathymetryStore(uint8_t gggs_level, bool reference_writable = false)
+  : level_(gggs_level), reference_writable_(reference_writable) {}
 
   /// @brief Construct a store whose **default** level is the coarsest GGGS level
   ///        whose cells are no larger than @p cell_size_m (clamped to level 20).
-  static BathymetryStore fromCellSize(float cell_size_m, bool pre_existing_writable = false)
+  static BathymetryStore fromCellSize(float cell_size_m, bool reference_writable = false)
   {
     return BathymetryStore(
-      gggs::Level::fromCellSize(cell_size_m).level(), pre_existing_writable);
+      gggs::Level::fromCellSize(cell_size_m).level(), reference_writable);
   }
 
-  /// @brief Whether per-cell `set()` may write the read-only `PreExisting` layer.
-  bool preExistingWritable() const noexcept {return pre_existing_writable_;}
+  /// @brief Whether per-cell `set()` may write the read-only `Reference` layer.
+  bool preExistingWritable() const noexcept {return reference_writable_;}
 
   /// @brief The store's **default** level (used by `cellIndex(lat,lon)` only).
   ///
@@ -139,8 +139,8 @@ public:
   ///         return is retained for source/API stability with the prior epoch
   ///         model and possible future write gates.
   /// @throws std::invalid_argument if @p cell is invalid.
-  /// @throws std::logic_error if @p layer is `PreExisting` and the store was not
-  ///   constructed `pre_existing_writable` — the prior is read-only (ADR-0002 §D3).
+  /// @throws std::logic_error if @p layer is `Reference` and the store was not
+  ///   constructed `reference_writable` — the prior is read-only (ADR-0002 §D3).
   bool set(SourceLayer layer, const gggs::CellIndex & cell, const BathyCell & value);
 
   /// @brief Read the raw cell of one @p layer (no priority overlay).
@@ -154,7 +154,7 @@ public:
   /// tile replaces any tile already resident at that grid, and grids not in
   /// @p tiles are left untouched (no wholesale clear — there is no epoch to
   /// supersede). Every inserted tile is marked dirty so it persists. The
-  /// PreExisting read-only gate applies, identical to `set()`. Tiles may be at
+  /// Reference read-only gate applies, identical to `set()`. Tiles may be at
   /// heterogeneous levels (multi-level, ADR-0002 §D2).
   ///
   /// @note Additive-merge footgun: because this never clears and `save()` never
@@ -167,8 +167,8 @@ public:
   /// @return The number of grids inserted/replaced.
   /// @throws std::invalid_argument if any grid key is invalid or a tile's own
   ///   GridIndex does not match its map key.
-  /// @throws std::logic_error if @p layer is `PreExisting` and the store was not
-  ///   constructed `pre_existing_writable`.
+  /// @throws std::logic_error if @p layer is `Reference` and the store was not
+  ///   constructed `reference_writable`.
   std::size_t importTiles(
     SourceLayer layer, std::map<gggs::GridIndex, BathymetryTile> tiles);
 
@@ -181,11 +181,11 @@ public:
 
 private:
   // Persistence must reach getOrCreateTile to populate any layer (including the
-  // read-only `PreExisting` prior) from disk and to clear dirty flags after a
+  // read-only `Reference` prior) from disk and to clear dirty flags after a
   // save, so the free functions in tile_io.cpp are friends. With getOrCreateTile
-  // private, this is what makes the PreExisting read-only guarantee hold by
+  // private, this is what makes the Reference read-only guarantee hold by
   // construction, not just by convention: the only public per-cell mutator is
-  // `set` (which gates `PreExisting`), and external code cannot obtain a mutable
+  // `set` (which gates `Reference`), and external code cannot obtain a mutable
   // tile. `loadWindow` needs the same private access as `load`; `evictOutside`
   // needs the non-const layerMap() to erase tiles without const_cast.
   friend std::size_t save(
@@ -205,7 +205,7 @@ private:
   /// @brief Find or create the tile for @p grid in @p layer.
   ///
   /// Private: the only mutable tile access. Public mutation goes through `set`
-  /// (which gates `PreExisting`) or `importTiles`; persistence reaches this via
+  /// (which gates `Reference`) or `importTiles`; persistence reaches this via
   /// friendship. @p grid may be at any valid level (multi-level store, ADR-0002
   /// §D2).
   /// @throws std::invalid_argument if @p grid is invalid.
@@ -221,7 +221,7 @@ private:
   }
 
   gggs::Level level_;
-  bool pre_existing_writable_ = false;
+  bool reference_writable_ = false;
   std::array<std::map<gggs::GridIndex, BathymetryTile>, source_layer_count> layers_;
 };
 

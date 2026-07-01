@@ -38,27 +38,27 @@ namespace marine_bathymetry_store
 /// source layer": the layer is the map it lives in.
 ///
 /// The taxonomy was simplified to **two** layers in #248 (ADR-0002 Amendment
-/// A2.1): the old `chart`/`draft`/`processed` collapse to `cube` (highest
-/// priority) and `pre-existing` (the read-only prior). The numeric value is the
-/// priority rank (0 = highest). `PreExisting` (any prior surface imported before
+/// A2.1): the old `chart`/`draft`/`processed` collapse to `survey` (highest
+/// priority) and `reference` (the read-only prior). The numeric value is the
+/// priority rank (0 = highest). `Reference` (any prior surface imported before
 /// the survey — a chart-derived contour prior, an external processed grid) is
 /// lowest priority: best-source falls through to it where no CUBE data exists.
-/// The store treats `PreExisting` as a **read-only prior** so live CUBE ingest can
-/// never clobber it — see `BathymetryStore::set` and the `pre_existing_writable`
+/// The store treats `Reference` as a **read-only prior** so live CUBE ingest can
+/// never clobber it — see `BathymetryStore::set` and the `reference_writable`
 /// construction flag the importer opts into.
 enum class SourceLayer : uint8_t
 {
-  Cube = 0,         ///< The CUBE product (live on-boat or off-boat re-run). Highest
-                    ///< priority. Subsumes the pre-#248 draft/processed distinction
-                    ///< (one fused surface per layer since #221).
-  PreExisting = 1,  ///< A prior surface imported before the survey (chart-derived
-                    ///< contour prior, external processed grid). Broad, coarse,
-                    ///< read-only. Ellipsoidal heights converted at import (§D4).
+  Survey = 0,         ///< The CUBE product (live on-boat or off-boat re-run). Highest
+                      ///< priority. Subsumes the pre-#248 draft/processed distinction
+                      ///< (one fused surface per layer since #221).
+  Reference = 1,  ///< A prior surface imported before the survey (chart-derived
+                  ///< contour prior, external processed grid). Broad, coarse,
+                  ///< read-only. Ellipsoidal heights converted at import (§D4).
 };
 
 /// @brief Source layers in descending priority order — iterate for best-source.
 inline constexpr std::array<SourceLayer, 2> source_layers_by_priority{
-  SourceLayer::Cube, SourceLayer::PreExisting};
+  SourceLayer::Survey, SourceLayer::Reference};
 
 /// @brief Number of source layers present in this phase.
 inline constexpr std::size_t source_layer_count = source_layers_by_priority.size();

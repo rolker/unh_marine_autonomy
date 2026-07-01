@@ -53,7 +53,7 @@ void usage()
     "                      [--cell-size m] [--level N]\n"
     "                      [--uncertainty m] [--depth-scale s] [--depth-offset m]\n"
     "                      [--platform P] [--sensor S] [--survey K] [--date D]\n"
-    "  layer:      cube | pre-existing\n"
+    "  layer:      survey | reference\n"
     "  --cell-size: store default cell size in metres (default 0.5)\n"
     "  --level:     GGGS level to import at (default: derived from --cell-size).\n"
     "               The store is multi-level; pass a level to match the source.\n"
@@ -70,13 +70,13 @@ void usage()
 
 marine_bathymetry_store::SourceLayer layerFromName(const std::string & name)
 {
-  if (name == "cube") {
-    return marine_bathymetry_store::SourceLayer::Cube;
+  if (name == "survey") {
+    return marine_bathymetry_store::SourceLayer::Survey;
   }
-  if (name == "pre-existing") {
-    return marine_bathymetry_store::SourceLayer::PreExisting;
+  if (name == "reference") {
+    return marine_bathymetry_store::SourceLayer::Reference;
   }
-  std::cerr << "unknown layer '" << name << "' (expected cube|pre-existing)\n";
+  std::cerr << "unknown layer '" << name << "' (expected survey|reference)\n";
   exit(1);
 }
 
@@ -132,14 +132,14 @@ int main(int argc, char * argv[])
   const auto layer = layerFromName(positional[1]);
   const std::string & geotiff = positional[2];
 
-  // The importer is the one sanctioned writer of the read-only PreExisting prior,
-  // so it opts into pre_existing_writable only when the target layer is
-  // PreExisting (ADR-0002 §D3). For Cube this stays false, so a typo'd layer
+  // The importer is the one sanctioned writer of the read-only Reference prior,
+  // so it opts into reference_writable only when the target layer is
+  // Reference (ADR-0002 §D3). For Survey this stays false, so a typo'd layer
   // can't touch the prior.
-  const bool pre_existing_writable =
-    (layer == marine_bathymetry_store::SourceLayer::PreExisting);
+  const bool reference_writable =
+    (layer == marine_bathymetry_store::SourceLayer::Reference);
   auto store = marine_bathymetry_store::BathymetryStore::fromCellSize(
-    static_cast<float>(cell_size), pre_existing_writable);
+    static_cast<float>(cell_size), reference_writable);
   std::cout << "store default level: " << static_cast<int>(store.level().level()) << "\n";
 
   marine_bathymetry_store::StoreMetadata existing_metadata;

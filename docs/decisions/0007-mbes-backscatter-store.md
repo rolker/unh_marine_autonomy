@@ -23,7 +23,7 @@ greenfield format simplification (the store is a regenerable cache; no migration
 The **value-band schema** changes from D6's 2-band `{intensity, intensity_variance}`
 to a **3-band `Float32` `{mean, standard_error, sample_sd}`** tile encoding the
 Welford sufficient statistics for lossless reload; the D7 `draft`/`processed` layers
-**collapse to a single `cube` layer**; and, matching the bathy store, the per-cell
+**collapse to a single `survey` layer**; and, matching the bathy store, the per-cell
 `_time.tif` / `_source.tif` companions are **dropped** with `registry.json`
 repurposed to a coarse store-level `StoreMetadata` (cross-ref
 [ADR-0005](0005-multi-platform-provenance-registry.md) #248 amendment). See the
@@ -236,7 +236,7 @@ Same two-layer priority overlay as the sidescan store:
 `draft → processed` is an overlay/promotion, mirroring ADR-0002 and ADR-0006.
 
 > **D7 layers collapsed 2026-07-01 ([#248](https://github.com/rolker/unh_marine_autonomy/issues/248)).**
-> The `draft` / `processed` two-layer overlay is superseded by a **single `cube`
+> The `draft` / `processed` two-layer overlay is superseded by a **single `survey`
 > layer** — see the #248 amendment (A.2). The overlay/promotion semantics above are
 > no longer instantiated for the single-platform, single-coverage deployment.
 
@@ -321,13 +321,13 @@ band: the estimate uncertainty is now `standard_error` (band 1), and the D4
 within-node dispersion (the candidate texture band) is now **carried explicitly** as
 `sample_sd` (band 2).
 
-### A.2 — Single `cube` layer (D7 collapse)
+### A.2 — Single `survey` layer (D7 collapse)
 
-The D7 `draft` / `processed` two-layer overlay collapses to a **single `cube`
+The D7 `draft` / `processed` two-layer overlay collapses to a **single `survey`
 layer**. With one platform, one coverage, and one fused surface per layer (the same
 reasoning as ADR-0002 A2.1), the live-vs-durable layer split added no query value.
-`SourceLayer` becomes a one-element enum (`Cube`); the on-disk subdirectory is
-`cube/`; `bestSource` walks the single layer. When a durable re-run product needs to
+`SourceLayer` becomes a one-element enum (`Survey`); the on-disk subdirectory is
+`survey/`; `bestSource` walks the single layer. When a durable re-run product needs to
 coexist with a live surface again, the overlay is the mechanism to reintroduce.
 
 ### A.3 — `_time` / `_source` dropped; `registry.json` → `StoreMetadata`

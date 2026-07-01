@@ -35,15 +35,15 @@ using marine_mbes_backscatter_store::MbesBackscatterStore;
 using marine_mbes_backscatter_store::MbesCell;
 using marine_mbes_backscatter_store::SourceLayer;
 
-TEST(Query, BestSourceReturnsCube)
+TEST(Query, BestSourceReturnsSurvey)
 {
   MbesBackscatterStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Cube, cell, MbesCell{-12.0f, 2.0f, 3.0f});
+  store.set(SourceLayer::Survey, cell, MbesCell{-12.0f, 2.0f, 3.0f});
 
   const auto best = bestSource(store, cell);
   ASSERT_TRUE(best.has_value());
-  EXPECT_EQ(best->source, SourceLayer::Cube);
+  EXPECT_EQ(best->source, SourceLayer::Survey);
   EXPECT_FLOAT_EQ(best->mean, -12.0f);
   EXPECT_FLOAT_EQ(best->standard_error, 2.0f);
   EXPECT_FLOAT_EQ(best->sample_sd, 3.0f);
@@ -56,7 +56,7 @@ TEST(Query, BestSourceNulloptWhenNoData)
   EXPECT_FALSE(bestSource(store, cell).has_value());
 
   // A written-but-no-data cell (NaN mean) is still unknown.
-  store.set(SourceLayer::Cube, cell, MbesCell{});
+  store.set(SourceLayer::Survey, cell, MbesCell{});
   EXPECT_FALSE(bestSource(store, cell).has_value());
 }
 
@@ -64,7 +64,7 @@ TEST(Query, ForEachCellBestSourceVisitsRegion)
 {
   MbesBackscatterStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Cube, cell, MbesCell{-20.0f, 0.5f, 1.0f});
+  store.set(SourceLayer::Survey, cell, MbesCell{-20.0f, 0.5f, 1.0f});
 
   std::size_t visited = 0;
   std::size_t with_data = 0;
@@ -85,7 +85,7 @@ TEST(Query, ForEachCellBestSourceSkipsCellsOutsideBox)
 {
   // A cell written well outside the queried box must not be visited.
   MbesBackscatterStore store(5);
-  store.set(SourceLayer::Cube, store.cellIndex(45.0, -73.0), MbesCell{-20.0f, 0.5f, 1.0f});
+  store.set(SourceLayer::Survey, store.cellIndex(45.0, -73.0), MbesCell{-20.0f, 0.5f, 1.0f});
 
   std::size_t with_data = 0;
   forEachCellBestSource(

@@ -51,7 +51,7 @@ struct BackscatterSample
 
 /// @brief The layer that has data at @p cell.
 ///
-/// Walks `source_layers_by_priority` (the sole `Cube` layer since #248) and
+/// Walks `source_layers_by_priority` (the sole `Survey` layer since #248) and
 /// returns the first with usable data (`hasData()`). `std::nullopt` means no
 /// layer has backscatter here.
 std::optional<BackscatterSample> bestSource(

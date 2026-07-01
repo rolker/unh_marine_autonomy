@@ -44,7 +44,7 @@ compose with mixed-level `<level>_<row>_<col>` tile filenames. See **A1** below.
 **Amended 2026-07-01 ([#248](https://github.com/rolker/unh_marine_autonomy/issues/248)):**
 greenfield store-format simplification — the store is a **regenerable cache** over
 raw bags, so the format is simplified with **no migration shim**. The three source
-layers collapse to **two** (`chart`/`draft`/`processed` → `pre-existing`/`cube`),
+layers collapse to **two** (`chart`/`draft`/`processed` → `reference`/`survey`),
 the per-cell `_time.tif` and `_source.tif` rasters are **dropped** (a single 2-band
 `Float64` value tile per grid remains), `registry.json` is **repurposed** from a
 per-cell source-index intern table to a coarse store-level `StoreMetadata` sidecar
@@ -494,20 +494,20 @@ cache regenerates from bags), the change is a **clean break — no migration shi
 ### A2.1 — Layer taxonomy: three layers collapse to two
 
 The D3 quality/maturity layers `chart` / `draft` / `processed` are replaced by
-**`cube`** (highest priority) and **`pre-existing`** (the read-only prior):
+**`survey`** (highest priority) and **`reference`** (the read-only prior):
 
-- **`cube`** — the CUBE product, live or off-boat re-run. Subsumes the old
+- **`survey`** — the CUBE product, live or off-boat re-run. Subsumes the old
   `draft` + `processed` distinction: with one fused surface per layer (#221,
   last-write-wins) and a single platform, separating live from re-run added no
   query value. Highest priority.
-- **`pre-existing`** — any prior surface imported before the survey (a chart-derived
+- **`reference`** — any prior surface imported before the survey (a chart-derived
   contour prior, an external processed grid). This is the old `chart` layer
-  generalized and **remains the read-only prior**: live `cube` ingest can never
-  clobber it (the D3 read-only gate moves from `chart` to `pre-existing`, opted into
+  generalized and **remains the read-only prior**: live `survey` ingest can never
+  clobber it (the D3 read-only gate moves from `chart` to `reference`, opted into
   at construction by the importer only).
 
-The on-disk subdirectories become `cube/` and `pre-existing/` accordingly. The D3
-priority-overlay semantics (non-destructive, `cube > pre-existing`) are unchanged.
+The on-disk subdirectories become `survey/` and `reference/` accordingly. The D3
+priority-overlay semantics (non-destructive, `survey > reference`) are unchanged.
 
 ### A2.2 — Tile layout: value tile only; `_time` / `_source` dropped
 

@@ -200,9 +200,9 @@ std::size_t importGeoTiff(
     }
   }
 
-  // Bulk-insert into the layer's single fused surface (#221). The PreExisting
+  // Bulk-insert into the layer's single fused surface (#221). The Reference
   // read-only gate is enforced by importTiles (throws logic_error if the store
-  // is not pre_existing_writable).
+  // is not reference_writable).
   store.importTiles(layer, std::move(tiles));
   return imported;
 }
