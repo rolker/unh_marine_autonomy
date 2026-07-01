@@ -153,6 +153,14 @@ int main(int argc, char ** argv)
   constexpr double kCacheWindowSec = 60.0;
   constexpr double kGuardSec = 3.0;
   const std::int64_t kGuardNs = static_cast<std::int64_t>(kGuardSec * 1e9);
+  // Hard cap on the pending FIFO. Normal backlog is tiny (~guard seconds of pings),
+  // but if the TF frontier stalls — /tf stops early, a long dropout, or a chain
+  // resolvable via static TF only (frontier never advances) — pings would
+  // otherwise accumulate to end-of-stream and grow RAM without bound. Over the cap
+  // we force-project the oldest (its bracketing TF is usually still in the 60s
+  // buffer; if not it is counted as no-tf, never silently lost). ~20k pings caps
+  // the backlog at a few hundred MB while sitting ~1000x above normal operation.
+  constexpr std::size_t kMaxPending = 20000;
   tf2::BufferCore tf_buffer(tf2::durationFromSec(kCacheWindowSec));
 
   std::ofstream out(out_path, std::ios::binary);
@@ -193,35 +201,42 @@ int main(int argc, char ** argv)
   // Project queued pings whose bracketing TF is now present (frontier advanced a
   // guard interval past the ping stamp). With flush=true, project whatever
   // remains at end-of-stream against the available coverage.
+  // Project + write the oldest pending ping (front) and pop it. A ping whose
+  // bracketing earth transform is not in the bounded buffer at its stamp is
+  // counted (n_no_tf), not silently dropped.
+  auto flush_front = [&]() {
+      auto & front = pending.front();
+      try {
+        const auto pose = tf_buffer.lookupTransform(
+          earth_frame, front.frame_id,
+          tf2::TimePoint(std::chrono::nanoseconds(front.ping_ns)));
+        front.p.tx = pose.transform.translation.x;
+        front.p.ty = pose.transform.translation.y;
+        front.p.tz = pose.transform.translation.z;
+        front.p.qx = pose.transform.rotation.x;
+        front.p.qy = pose.transform.rotation.y;
+        front.p.qz = pose.transform.rotation.z;
+        front.p.qw = pose.transform.rotation.w;
+        marine_sidescan_mosaic::writeTier1Ping(out, front.p);
+        ++n_written;
+      } catch (const tf2::TransformException &) {
+        // No earth transform in the bounded buffer at this stamp — before the
+        // first fix, or a TF gap wider than the cache window. Counted, not
+        // silently dropped.
+        ++n_no_tf;
+      }
+      pending.pop_front();
+    };
+
   auto drain_pending = [&](bool flush) {
       while (!pending.empty()) {
-        auto & front = pending.front();
         if (!flush &&
           (tf_frontier_ns == std::numeric_limits<std::int64_t>::min() ||
-          front.ping_ns > tf_frontier_ns - kGuardNs))
+          pending.front().ping_ns > tf_frontier_ns - kGuardNs))
         {
           break;
         }
-        try {
-          const auto pose = tf_buffer.lookupTransform(
-            earth_frame, front.frame_id,
-            tf2::TimePoint(std::chrono::nanoseconds(front.ping_ns)));
-          front.p.tx = pose.transform.translation.x;
-          front.p.ty = pose.transform.translation.y;
-          front.p.tz = pose.transform.translation.z;
-          front.p.qx = pose.transform.rotation.x;
-          front.p.qy = pose.transform.rotation.y;
-          front.p.qz = pose.transform.rotation.z;
-          front.p.qw = pose.transform.rotation.w;
-          marine_sidescan_mosaic::writeTier1Ping(out, front.p);
-          ++n_written;
-        } catch (const tf2::TransformException &) {
-          // No earth transform in the bounded buffer at this stamp — before the
-          // first fix, or a TF gap wider than the cache window. Counted, not
-          // silently dropped.
-          ++n_no_tf;
-        }
-        pending.pop_front();
+        flush_front();
       }
     };
 
@@ -294,6 +309,12 @@ int main(int argc, char ** argv)
     p.samples.assign(raw.begin(), raw.end());   // double -> float (lossless for GCV range).
 
     pending.push_back(std::move(pp));
+    // Bound memory if the TF frontier stalls (see kMaxPending): force-project the
+    // oldest so the FIFO cannot grow to end-of-stream on a static-only chain or a
+    // long /tf dropout.
+    if (pending.size() > kMaxPending) {
+      flush_front();
+    }
   }
   drain_pending(true);   // project the tail (within a guard of end-of-stream).
 
