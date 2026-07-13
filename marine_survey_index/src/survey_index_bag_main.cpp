@@ -476,7 +476,9 @@ int main(int argc, char ** argv)
       } else {
         const bool is_port = topic == port_topic;
         auto msg = deserialize<marine_acoustic_msgs::msg::RawSonarImage>(bag_msg);
-        if (msg.sample_rate <= 0.0) {
+        // A zero sample count drives slantRange() negative, which flips the
+        // sidescan footprint to the wrong side; skip like sample_rate<=0.
+        if (msg.sample_rate <= 0.0 || msg.samples_per_beam == 0) {
           continue;
         }
         pp.ping_ns = stampNs(msg.header.stamp);
