@@ -74,3 +74,17 @@ Stage 1 of the #258 (survey data exploration) umbrella. Deliverables: an offline
 - [ ] Align `sensor_type` column vocabulary with ADR-0005 D3 `sensor_class` values
 - [ ] Update `docs/sonar_ecosystem.md` to add a "Survey indexer / query" row referencing #258/#259 when the deliverable lands
 - [ ] If a new ROS 2 package is created, ensure `package.xml` / naming / license headers follow ADR-0008
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-07-13 00:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-259/plan.md` at `19d48e6`
+**Branch**: feature/issue-259 at `19d48e6`
+**Phases**: single
+
+### Open questions
+- [ ] GGGS level default — issue says "store's native level" (~level 13, 1 m) but O(10^5) tile rows per survey pass may be impractical; propose level 11 (~4 m) as default with `--level` override. Needs user input before implementation.
+- [ ] Sidescan `sensor_type` split — `sidescan-port`/`sidescan-stbd` vs single `sidescan`; plan proposes split in DB, `--sensor sidescan` matches both in query.
+- [ ] Merge gap tolerance default — 5.0 s placeholder; field calibration needed; exposed as `--merge-gap <s>`.
