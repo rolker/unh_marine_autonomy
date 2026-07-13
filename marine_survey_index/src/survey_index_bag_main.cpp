@@ -158,10 +158,17 @@ BagFingerprint fingerprint(const std::filesystem::path & bag)
         fp.mtime_ns = std::max(fp.mtime_ns, static_cast<std::int64_t>(ns));
       }
     };
-  if (fs::is_directory(bag)) {
-    for (const auto & entry : fs::recursive_directory_iterator(bag)) {
-      if (entry.is_regular_file()) {
-        consider(entry.path());
+  std::error_code ec;
+  if (fs::is_directory(bag, ec)) {
+    // error_code overloads: a broken symlink or unreadable entry sets ec and
+    // ends the walk cleanly instead of throwing and aborting the whole run.
+    for (fs::recursive_directory_iterator it(
+        bag, fs::directory_options::skip_permission_denied, ec), end;
+      !ec && it != end; it.increment(ec))
+    {
+      std::error_code entry_ec;
+      if (it->is_regular_file(entry_ec)) {
+        consider(it->path());
       }
     }
   } else {
@@ -176,12 +183,19 @@ std::vector<std::filesystem::path> scanForBags(const std::filesystem::path & roo
 {
   namespace fs = std::filesystem;
   std::vector<fs::path> bags;
-  if (fs::exists(root / "metadata.yaml")) {
+  std::error_code ec;
+  if (fs::exists(root / "metadata.yaml", ec)) {
     bags.push_back(root);
     return bags;
   }
-  for (fs::recursive_directory_iterator it(root), end; it != end; ++it) {
-    if (it->is_directory() && fs::exists(it->path() / "metadata.yaml")) {
+  // error_code overloads: a broken symlink or unreadable entry sets ec and
+  // ends the walk cleanly instead of throwing and aborting the whole run.
+  for (fs::recursive_directory_iterator it(
+      root, fs::directory_options::skip_permission_denied, ec), end;
+    !ec && it != end; it.increment(ec))
+  {
+    std::error_code entry_ec;
+    if (it->is_directory(entry_ec) && fs::exists(it->path() / "metadata.yaml", entry_ec)) {
       bags.push_back(it->path());
       it.disable_recursion_pending();
     }
