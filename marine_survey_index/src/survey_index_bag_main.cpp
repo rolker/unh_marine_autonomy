@@ -499,7 +499,14 @@ int main(int argc, char ** argv)
 
       pending.push_back(std::move(pp));
       if (pending.size() > kMaxPending) {
-        flush_front();
+        // Prefer flushing pings the TF frontier has already passed (this
+        // honours the guard interval); force the oldest out — accepting a
+        // possible no-tf — only if TF has genuinely stalled and we are still
+        // over the memory cap.
+        drain_pending(false);
+        if (pending.size() > kMaxPending) {
+          flush_front();
+        }
       }
     }
     drain_pending(true);
