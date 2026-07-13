@@ -88,3 +88,27 @@ Stage 1 of the #258 (survey data exploration) umbrella. Deliverables: an offline
 - [ ] GGGS level default — issue says "store's native level" (~level 13, 1 m) but O(10^5) tile rows per survey pass may be impractical; propose level 11 (~4 m) as default with `--level` override. Needs user input before implementation.
 - [ ] Sidescan `sensor_type` split — `sidescan-port`/`sidescan-stbd` vs single `sidescan`; plan proposes split in DB, `--sensor sidescan` matches both in query.
 - [ ] Merge gap tolerance default — 5.0 s placeholder; field calibration needed; exposed as `--merge-gap <s>`.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-07-13 17:57 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-259/plan.md` at `19d48e6`
+**PR**: PR-less (`--issue 259`)
+**Verdict**: approve-with-suggestions
+
+Independent fresh-context review (plan authored by Claude Sonnet; not a self-review).
+Technical claims verified against the tree: GGGS API supports both required directions
+(`Level::gridIndex` point/box→indices, `GridIndex::{west,east,south,north}…` index→bbox);
+the bounded-TF pattern (60 s cache, guard interval, `kMaxPending`) exists verbatim in both
+cited reference impls (`marine_sidescan_mosaic/src/sidescan_mosaic_bag.cpp`,
+`cube_bathymetry/.../import_bag_main.cpp`); message types (`SonarDetections`, `RawSonarImage`)
+correct; `docs/sonar_ecosystem.md` Arc 1 table present. Approach and scope are sound.
+
+### Findings
+- [ ] (must-fix) Core correctness paths untested — footprint→GGGS-tile enumeration and query tile-join have no test; issue-review asked for this. Both testable without bag I/O. — `plan.md:89`
+- [ ] (must-fix) Schema comment overstates ADR-0005 D3 vocab — `sidescan-port`/`sidescan-stbd` extend, not equal, D3 (`sidescan`/`mbes-backscatter`/`mbes-bathy`). — `plan.md:79`
+- [ ] (suggestion) ADR table mixes workspace vs project ADR numbers unlabeled — in-repo ADR-0002/0008 differ from cited workspace ADRs. — `plan.md:123`
+- [ ] (suggestion) New package not added to `.agents/README.md` Package Inventory. — `plan.md:95`
+- [ ] (suggestion) Schema is a cross-stage contract but documented only in ephemeral `plan.md` — consider a durable `docs/`/ADR home for stages 2–5. — `plan.md:59`
