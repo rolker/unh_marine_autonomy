@@ -52,6 +52,7 @@ looked.
 | **Render — CAMP** | Unified band-select + colormap raster render + live cache | [#175](https://github.com/rolker/unh_marine_autonomy/issues/175) (I4), [camp#121], [camp#108], [camp#63] | 0001 / 0008 | ✅ file-store display + GPU raster ([camp#90]), band-select ([camp#108], PR [camp#124] merged), and live cache ([camp#121], PR [camp#139] merged) all landed |
 | **Render — web** | Browser SA viewer (contacts + bathy + sidescan) | [#166](https://github.com/rolker/unh_marine_autonomy/issues/166) | — | 📋 |
 | **Reprocess** | Offline M3 bag → store tiles; PINGMapper offline sidescan EGN | [#171](https://github.com/rolker/unh_marine_autonomy/issues/171) (C1) | — | ✅ M3 import landed ([cube#63] closed); 📋 sidescan offline pipeline to validate; ⚠️ draft→**processed** promotion workflow thin |
+| **Survey index / query** | Location → raw bag data that saw it: `marine_survey_index` per-tile pass intervals (ping geometry, not store acceptance) + query CLI | [#258](https://github.com/rolker/unh_marine_autonomy/issues/258) / [#259](https://github.com/rolker/unh_marine_autonomy/issues/259) | — | ✅ stage 1 (indexer + CLI); explorer stages 2–5 📋 (schema contract: [survey_index_schema.md](survey_index_schema.md)) |
 | **Metering** | Per-topic priority on the `udp_bridge` rate-limiter | [udp_bridge#19](https://github.com/rolker/udp_bridge/issues/19) | 0008 (D9) | 📋 |
 
 [cube#15]: https://github.com/rolker/cube_bathymetry/issues/15

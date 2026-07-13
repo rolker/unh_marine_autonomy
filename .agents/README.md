@@ -15,6 +15,7 @@
 | `marine_bathymetry_store` | C++ | Persistent multi-source bathymetric data store: GGGS-tiled, priority source layers, best-source / shallowest-reliable queries, per-tile GeoTIFF (ADR-0002 / #86) |
 | `marine_interfaces` | C++ (IDL) | ROS 2 message definitions for helm commands, heartbeats, navigation, perception contacts, and sensor data (39 msg types) |
 | `marine_sidescan_mosaic` | C++ | Live georeferenced sidescan backscatter mosaicker: projects GCV port/stbd RawSonarImage samples to GGGS-tiled uint16 GeoTIFF tiles for CAMP / web display (#173 / #171 / #166) |
+| `marine_survey_index` | C++ | Offline survey indexer + query CLI: bags → per-GGGS-tile pass intervals in a regenerable SQLite sidecar; answers "which bags/time-ranges saw this location" (#258 stage 1 / #259; schema contract in `docs/survey_index_schema.md`) |
 | `marine_tiled_raster_store` | C++ | Generic GGGS-tiled raster store core: band/dtype-parametrized `TiledRasterTile<T>` + per-tile GeoTIFF persistence, shared by bathymetry and sidescan (#172) |
 | `mission_manager` | Python | Converts mission plans from CAMP GCS into navigation tasks and manages task execution |
 | `mission_manager_interfaces` | C++ (IDL) | Service definitions for task manipulation (3 srv types) |
