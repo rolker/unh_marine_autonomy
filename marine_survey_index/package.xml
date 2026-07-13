@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>marine_survey_index</name>
+  <version>0.0.0</version>
+  <description>
+    Offline survey index + query CLI: maps a location to the raw bag data that
+    ensonified it. Scans survey bags in a single interleaved pass (bounded TF
+    window), georeferences each sonar ping's footprint, and records per-GGGS-tile
+    pass intervals in a regenerable SQLite sidecar (survey_index.db) next to the
+    stores. The query CLI answers "which bags, which time ranges, which sensor
+    saw this point/box" in seconds, without replaying bags. Stage 1 of
+    unh_marine_autonomy#258 (see #259).
+  </description>
+  <maintainer email="roland.arsenault@unh.edu">Roland Arsenault</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>marine_acoustic_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geographic_msgs</depend>
+  <depend>geodesy</depend>
+  <depend>tf2</depend>
+  <depend>tf2_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>builtin_interfaces</depend>
+  <depend>marine_autonomy</depend>
+  <depend>marine_sidescan_mosaic</depend>
+  <depend>rosbag2_cpp</depend>
+  <depend>rosbag2_storage</depend>
+  <depend>sqlite3</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
