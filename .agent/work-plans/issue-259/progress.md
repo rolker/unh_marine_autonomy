@@ -112,3 +112,28 @@ correct; `docs/sonar_ecosystem.md` Arc 1 table present. Approach and scope are s
 - [ ] (suggestion) ADR table mixes workspace vs project ADR numbers unlabeled — in-repo ADR-0002/0008 differ from cited workspace ADRs. — `plan.md:123`
 - [ ] (suggestion) New package not added to `.agents/README.md` Package Inventory. — `plan.md:95`
 - [ ] (suggestion) Schema is a cross-stage contract but documented only in ephemeral `plan.md` — consider a durable `docs/`/ADR home for stages 2–5. — `plan.md:59`
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-13 19:12 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-259 at `04dc9d7`
+**Mode**: pre-push
+**Depth**: Deep (reason: new C++ package, 2502 LOC, cross-layer GGGS/store + SQLite + rosbag2/TF)
+**Must-fix**: 4 | **Suggestions**: 5
+**Round**: 1 | **Ship**: continue — silent index-corruption path + query-output bug warrant a fix pass and re-read
+
+Static analysis clean (ament_cpplint; cppcheck TEST-macro/unused-member warnings are false positives). Two Claude Adversarial lenses (A logic, B systemic) converged on one theme: the indexer write path assumes every SQLite call succeeds and no exception occurs. Governance and plan adherence clean; all 4 prior plan-review findings resolved.
+
+### Findings
+- [ ] (must-fix) Indexer write/ledger path ignores all sqlite3_step/prepare return codes → failed insert still COMMITs and marks bag fully-indexed (silent partial index; re-run skips as "unchanged") — `marine_survey_index/src/survey_index_bag_main.cpp:209,514-559`
+- [ ] (must-fix) Per-bag loop has no try/catch and no ROLLBACK → a corrupt message (deserialize throws) or SQLite failure aborts the whole run, remaining bags lost, db not closed — `marine_survey_index/src/survey_index_bag_main.cpp:322`
+- [ ] (must-fix) Query results not globally sorted across 200-tile chunks → CLI prints duplicate/out-of-order bag headers for boxes spanning >200 tiles — `marine_survey_index/src/query.cpp:89-137`
+- [ ] (must-fix) Unguarded std::stoi on --level → uncaught exception crash (inconsistent with other args' toInt guard) — `marine_survey_index/src/survey_index_query_main.cpp:155`
+- [ ] (suggestion) kMaxPending overflow flush bypasses the TF guard interval → oldest ping may be dropped as no-tf under backpressure (cross-pass confirmed) — `marine_survey_index/src/survey_index_bag_main.cpp:499-501`
+- [ ] (suggestion) samples_per_beam==0 → negative slant range flips sidescan footprint to wrong side; skip like sample_rate<=0 — `marine_survey_index/src/survey_index_bag_main.cpp:491-495`
+- [ ] (suggestion) fingerprint/scanForBags use throwing filesystem iteration; broken symlink/permission error aborts run — use error_code overloads — `marine_survey_index/src/survey_index_bag_main.cpp:162,183`
+- [ ] (suggestion) std::string from possibly-null sqlite3_column_text (latent UB; columns NOT NULL today) — `marine_survey_index/src/query.cpp:124`
+- [ ] (suggestion) Plan drift: MBES level default L10 vs plan's "~L13 store-native" — per-sensor split refinement, consistent in code+help+schema doc; noted, not a defect — `marine_survey_index/src/survey_index_bag_main.cpp:273`
