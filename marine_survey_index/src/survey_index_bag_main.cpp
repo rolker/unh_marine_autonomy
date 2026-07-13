@@ -44,6 +44,7 @@
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -204,14 +205,62 @@ std::vector<std::filesystem::path> scanForBags(const std::filesystem::path & roo
   return bags;
 }
 
-void execOrDie(sqlite3 * db, const std::string & sql)
+// Thrown by the sqlite wrappers below so a failed write unwinds to the per-bag
+// handler in main(), which ROLLBACKs — instead of silently COMMITting a partial
+// index and marking the bag fully indexed.
+class SqliteError : public std::runtime_error
+{
+public:
+  using std::runtime_error::runtime_error;
+};
+
+void execOrThrow(sqlite3 * db, const char * sql)
 {
   char * err = nullptr;
-  if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &err) != SQLITE_OK) {
-    std::cerr << "error: sqlite: " << (err ? err : "unknown") << "\n";
+  if (sqlite3_exec(db, sql, nullptr, nullptr, &err) != SQLITE_OK) {
+    const std::string msg = err ? err : "unknown";
     sqlite3_free(err);
-    sqlite3_close(db);
-    std::exit(1);
+    throw SqliteError("sqlite exec: " + msg);
+  }
+}
+
+sqlite3_stmt * prepareOrThrow(sqlite3 * db, const char * sql)
+{
+  sqlite3_stmt * stmt = nullptr;
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SqliteError(std::string("sqlite prepare: ") + sqlite3_errmsg(db));
+  }
+  return stmt;
+}
+
+// RAII for a prepared statement: finalized on scope exit, including when a
+// SqliteError unwinds through the write path.
+class StmtGuard
+{
+public:
+  explicit StmtGuard(sqlite3_stmt * stmt)
+  : stmt_(stmt) {}
+  ~StmtGuard()
+  {
+    sqlite3_finalize(stmt_);
+  }
+  StmtGuard(const StmtGuard &) = delete;
+  StmtGuard & operator=(const StmtGuard &) = delete;
+  sqlite3_stmt * get() const
+  {
+    return stmt_;
+  }
+
+private:
+  sqlite3_stmt * stmt_;
+};
+
+// Step a write statement expected to run to completion; throw on any non-DONE
+// return so the caller's transaction is never COMMITted after a failed row.
+void stepDoneOrThrow(sqlite3 * db, sqlite3_stmt * stmt)
+{
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    throw SqliteError(std::string("sqlite step: ") + sqlite3_errmsg(db));
   }
 }
 
@@ -219,9 +268,8 @@ void execOrDie(sqlite3 * db, const std::string & sql)
 // (changed, re-index: caller deletes old passes and updates the row).
 std::int64_t ledgerState(sqlite3 * db, const std::string & path, const BagFingerprint & fp)
 {
-  sqlite3_stmt * stmt = nullptr;
-  sqlite3_prepare_v2(
-    db, "SELECT id, size_bytes, mtime_ns FROM bags WHERE path = ?", -1, &stmt, nullptr);
+  sqlite3_stmt * stmt = prepareOrThrow(
+    db, "SELECT id, size_bytes, mtime_ns FROM bags WHERE path = ?");
   sqlite3_bind_text(stmt, 1, path.c_str(), -1, SQLITE_TRANSIENT);
   std::int64_t result = 0;
   if (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -334,260 +382,266 @@ int main(int argc, char ** argv)
   std::size_t n_bags_indexed = 0, n_bags_skipped = 0;
 
   for (const auto & bag : bags) {
-    const std::string bag_key = std::filesystem::absolute(bag).lexically_normal().string();
-    const BagFingerprint fp = fingerprint(bag);
-    const std::int64_t state = ledgerState(db, bag_key, fp);
-    if (state > 0) {
-      ++n_bags_skipped;
-      std::cerr << "skip (unchanged): " << bag_key << "\n";
-      continue;
-    }
-
-    tf2::BufferCore tf_buffer(tf2::durationFromSec(kCacheWindowSec));
-    marine_survey_index::IntervalAccumulator accumulator(merge_gap_ns);
-    std::int64_t tf_frontier_ns = std::numeric_limits<std::int64_t>::min();
-    std::size_t n_pings = 0, n_no_tf = 0, n_bad_pose = 0;
-
-    // A ping queued for TF resolution: everything except the earth pose is
-    // computed at enqueue. `extent_port`/`extent_stbd` are the signed
-    // across-track horizontal extents (m, + = starboard). For sidescan the
-    // slant range bounds the ground range (conservative overestimate — the
-    // index answers "could this sensor have seen here").
-    struct PendingPing
-    {
-      std::int64_t ping_ns;
-      std::string frame_id;
-      const char * sensor_type;
-      const std::string * topic;
-      const gggs::Level * level;
-      double extent_port;
-      double extent_stbd;
-    };
-    std::deque<PendingPing> pending;
-
-    auto flush_front = [&]() {
-        auto & front = pending.front();
-        try {
-          const auto pose = tf_buffer.lookupTransform(
-            earth_frame, front.frame_id,
-            tf2::TimePoint(std::chrono::nanoseconds(front.ping_ns)));
-          const auto gb = marine_sidescan_mosaic::ecefPoseToGeoBeam(
-            pose.transform.translation.x, pose.transform.translation.y,
-            pose.transform.translation.z,
-            pose.transform.rotation.x, pose.transform.rotation.y,
-            pose.transform.rotation.z, pose.transform.rotation.w);
-          if (!gb.valid) {
-            ++n_bad_pose;
-          } else {
-            const auto origin = groundOrigin(gb);
-            const auto p1 = acrossTrackPoint(origin, gb.heading_rad, front.extent_port);
-            const auto p2 = acrossTrackPoint(origin, gb.heading_rad, front.extent_stbd);
-            const double lat_min =
-              std::min({origin.latitude, p1.latitude, p2.latitude});
-            const double lat_max =
-              std::max({origin.latitude, p1.latitude, p2.latitude});
-            const double lon_min =
-              std::min({origin.longitude, p1.longitude, p2.longitude});
-            const double lon_max =
-              std::max({origin.longitude, p1.longitude, p2.longitude});
-            for (const auto & tile : marine_survey_index::tilesForBoundingBox(
-                lat_min, lon_min, lat_max, lon_max, *front.level))
-            {
-              marine_survey_index::TileKey key;
-              key.level = tile.level();
-              key.tile_row = tile.row();
-              key.tile_col = tile.column();
-              key.sensor_type = front.sensor_type;
-              key.topic = *front.topic;
-              accumulator.addPing(key, front.ping_ns);
-            }
-            ++n_pings;
-          }
-        } catch (const tf2::TransformException &) {
-          // No earth transform in the bounded buffer at this stamp — before
-          // the first fix, or a TF gap wider than the window. Counted, not
-          // silently dropped.
-          ++n_no_tf;
-        }
-        pending.pop_front();
-      };
-
-    auto drain_pending = [&](bool flush) {
-        while (!pending.empty()) {
-          if (!flush &&
-            (tf_frontier_ns == std::numeric_limits<std::int64_t>::min() ||
-            pending.front().ping_ns > tf_frontier_ns - kGuardNs))
-          {
-            break;
-          }
-          flush_front();
-        }
-      };
-
-    rosbag2_cpp::Reader reader;
-    rosbag2_storage::StorageOptions so;
-    so.uri = bag.string();
     try {
-      reader.open(so);
-    } catch (const std::exception & e) {
-      std::cerr << "error: cannot open bag " << bag_key << ": " << e.what() << "\n";
-      continue;
-    }
-    rosbag2_storage::StorageFilter filter;
-    filter.topics = {"/tf", "/tf_static", mbes_topic, port_topic, stbd_topic};
-    reader.set_filter(filter);
-
-    // SINGLE INTERLEAVED PASS over the chronological message stream.
-    while (reader.has_next()) {
-      auto bag_msg = reader.read_next();
-      const std::string & topic = bag_msg->topic_name;
-
-      if (topic == "/tf" || topic == "/tf_static") {
-        const bool is_static = topic == "/tf_static";
-        auto m = deserialize<tf2_msgs::msg::TFMessage>(bag_msg);
-        for (const auto & tr : m.transforms) {
-          tf_buffer.setTransform(tr, "bag", is_static);
-          if (!is_static) {
-            tf_frontier_ns = std::max(tf_frontier_ns, stampNs(tr.header.stamp));
-          }
-        }
-        drain_pending(false);
+      const std::string bag_key = std::filesystem::absolute(bag).lexically_normal().string();
+      const BagFingerprint fp = fingerprint(bag);
+      const std::int64_t state = ledgerState(db, bag_key, fp);
+      if (state > 0) {
+        ++n_bags_skipped;
+        std::cerr << "skip (unchanged): " << bag_key << "\n";
         continue;
       }
 
-      PendingPing pp;
-      if (topic == mbes_topic) {
-        auto msg = deserialize<marine_acoustic_msgs::msg::SonarDetections>(bag_msg);
-        pp.ping_ns = stampNs(msg.header.stamp);
-        pp.frame_id = msg.header.frame_id;
-        pp.sensor_type = kSensorMbes;
-        pp.topic = &mbes_topic;
-        pp.level = &mbes_level;
-        // Across-track extents from the outermost good detections:
-        // horizontal ≈ slant · sin(rx_angle) (+ starboard). No good beams →
-        // extents 0, the sensor-position tile still indexes.
-        const double c = msg.ping_info.sound_speed > 0.0F ?
-          msg.ping_info.sound_speed : sound_speed_fallback;
-        double min_h = 0.0, max_h = 0.0;
-        const std::size_t n = msg.two_way_travel_times.size();
-        for (std::size_t i = 0; i < n; ++i) {
-          if (i < msg.flags.size() &&
-            msg.flags[i].flag != marine_acoustic_msgs::msg::DetectionFlag::DETECT_OK)
-          {
-            continue;
+      tf2::BufferCore tf_buffer(tf2::durationFromSec(kCacheWindowSec));
+      marine_survey_index::IntervalAccumulator accumulator(merge_gap_ns);
+      std::int64_t tf_frontier_ns = std::numeric_limits<std::int64_t>::min();
+      std::size_t n_pings = 0, n_no_tf = 0, n_bad_pose = 0;
+
+      // A ping queued for TF resolution: everything except the earth pose is
+      // computed at enqueue. `extent_port`/`extent_stbd` are the signed
+      // across-track horizontal extents (m, + = starboard). For sidescan the
+      // slant range bounds the ground range (conservative overestimate — the
+      // index answers "could this sensor have seen here").
+      struct PendingPing
+      {
+        std::int64_t ping_ns;
+        std::string frame_id;
+        const char * sensor_type;
+        const std::string * topic;
+        const gggs::Level * level;
+        double extent_port;
+        double extent_stbd;
+      };
+      std::deque<PendingPing> pending;
+
+      auto flush_front = [&]() {
+          auto & front = pending.front();
+          try {
+            const auto pose = tf_buffer.lookupTransform(
+              earth_frame, front.frame_id,
+              tf2::TimePoint(std::chrono::nanoseconds(front.ping_ns)));
+            const auto gb = marine_sidescan_mosaic::ecefPoseToGeoBeam(
+              pose.transform.translation.x, pose.transform.translation.y,
+              pose.transform.translation.z,
+              pose.transform.rotation.x, pose.transform.rotation.y,
+              pose.transform.rotation.z, pose.transform.rotation.w);
+            if (!gb.valid) {
+              ++n_bad_pose;
+            } else {
+              const auto origin = groundOrigin(gb);
+              const auto p1 = acrossTrackPoint(origin, gb.heading_rad, front.extent_port);
+              const auto p2 = acrossTrackPoint(origin, gb.heading_rad, front.extent_stbd);
+              const double lat_min =
+                std::min({origin.latitude, p1.latitude, p2.latitude});
+              const double lat_max =
+                std::max({origin.latitude, p1.latitude, p2.latitude});
+              const double lon_min =
+                std::min({origin.longitude, p1.longitude, p2.longitude});
+              const double lon_max =
+                std::max({origin.longitude, p1.longitude, p2.longitude});
+              for (const auto & tile : marine_survey_index::tilesForBoundingBox(
+                  lat_min, lon_min, lat_max, lon_max, *front.level))
+              {
+                marine_survey_index::TileKey key;
+                key.level = tile.level();
+                key.tile_row = tile.row();
+                key.tile_col = tile.column();
+                key.sensor_type = front.sensor_type;
+                key.topic = *front.topic;
+                accumulator.addPing(key, front.ping_ns);
+              }
+              ++n_pings;
+            }
+          } catch (const tf2::TransformException &) {
+            // No earth transform in the bounded buffer at this stamp — before
+            // the first fix, or a TF gap wider than the window. Counted, not
+            // silently dropped.
+            ++n_no_tf;
           }
-          const double twtt = msg.two_way_travel_times[i];
-          if (!std::isfinite(twtt) || twtt <= 0.0) {
-            continue;
+          pending.pop_front();
+        };
+
+      auto drain_pending = [&](bool flush) {
+          while (!pending.empty()) {
+            if (!flush &&
+              (tf_frontier_ns == std::numeric_limits<std::int64_t>::min() ||
+              pending.front().ping_ns > tf_frontier_ns - kGuardNs))
+            {
+              break;
+            }
+            flush_front();
           }
-          const double rx = i < msg.rx_angles.size() ? msg.rx_angles[i] : 0.0;
-          const double h = (twtt * c / 2.0) * std::sin(rx);
-          min_h = std::min(min_h, h);
-          max_h = std::max(max_h, h);
-        }
-        pp.extent_port = min_h;
-        pp.extent_stbd = max_h;
-      } else {
-        const bool is_port = topic == port_topic;
-        auto msg = deserialize<marine_acoustic_msgs::msg::RawSonarImage>(bag_msg);
-        // A zero sample count drives slantRange() negative, which flips the
-        // sidescan footprint to the wrong side; skip like sample_rate<=0.
-        if (msg.sample_rate <= 0.0 || msg.samples_per_beam == 0) {
+        };
+
+      rosbag2_cpp::Reader reader;
+      rosbag2_storage::StorageOptions so;
+      so.uri = bag.string();
+      try {
+        reader.open(so);
+      } catch (const std::exception & e) {
+        std::cerr << "error: cannot open bag " << bag_key << ": " << e.what() << "\n";
+        continue;
+      }
+      rosbag2_storage::StorageFilter filter;
+      filter.topics = {"/tf", "/tf_static", mbes_topic, port_topic, stbd_topic};
+      reader.set_filter(filter);
+
+      // SINGLE INTERLEAVED PASS over the chronological message stream.
+      while (reader.has_next()) {
+        auto bag_msg = reader.read_next();
+        const std::string & topic = bag_msg->topic_name;
+
+        if (topic == "/tf" || topic == "/tf_static") {
+          const bool is_static = topic == "/tf_static";
+          auto m = deserialize<tf2_msgs::msg::TFMessage>(bag_msg);
+          for (const auto & tr : m.transforms) {
+            tf_buffer.setTransform(tr, "bag", is_static);
+            if (!is_static) {
+              tf_frontier_ns = std::max(tf_frontier_ns, stampNs(tr.header.stamp));
+            }
+          }
+          drain_pending(false);
           continue;
         }
-        pp.ping_ns = stampNs(msg.header.stamp);
-        pp.frame_id = msg.header.frame_id;
-        pp.sensor_type = is_port ? kSensorPort : kSensorStbd;
-        pp.topic = is_port ? &port_topic : &stbd_topic;
-        pp.level = &sidescan_level;
-        const double c = msg.ping_info.sound_speed > 0.0 ?
-          msg.ping_info.sound_speed : sound_speed_fallback;
-        // Max slant range bounds the ground range (flat-earth-free
-        // conservative footprint; the drill-down stages do the exact math).
-        const double max_slant = marine_sidescan_mosaic::slantRange(
-          static_cast<int>(msg.samples_per_beam) - 1,
-          static_cast<int>(msg.sample0), c, msg.sample_rate);
-        pp.extent_port = is_port ? -max_slant : 0.0;
-        pp.extent_stbd = is_port ? 0.0 : max_slant;
-      }
 
-      pending.push_back(std::move(pp));
-      if (pending.size() > kMaxPending) {
-        // Prefer flushing pings the TF frontier has already passed (this
-        // honours the guard interval); force the oldest out — accepting a
-        // possible no-tf — only if TF has genuinely stalled and we are still
-        // over the memory cap.
-        drain_pending(false);
+        PendingPing pp;
+        if (topic == mbes_topic) {
+          auto msg = deserialize<marine_acoustic_msgs::msg::SonarDetections>(bag_msg);
+          pp.ping_ns = stampNs(msg.header.stamp);
+          pp.frame_id = msg.header.frame_id;
+          pp.sensor_type = kSensorMbes;
+          pp.topic = &mbes_topic;
+          pp.level = &mbes_level;
+          // Across-track extents from the outermost good detections:
+          // horizontal ≈ slant · sin(rx_angle) (+ starboard). No good beams →
+          // extents 0, the sensor-position tile still indexes.
+          const double c = msg.ping_info.sound_speed > 0.0F ?
+            msg.ping_info.sound_speed : sound_speed_fallback;
+          double min_h = 0.0, max_h = 0.0;
+          const std::size_t n = msg.two_way_travel_times.size();
+          for (std::size_t i = 0; i < n; ++i) {
+            if (i < msg.flags.size() &&
+              msg.flags[i].flag != marine_acoustic_msgs::msg::DetectionFlag::DETECT_OK)
+            {
+              continue;
+            }
+            const double twtt = msg.two_way_travel_times[i];
+            if (!std::isfinite(twtt) || twtt <= 0.0) {
+              continue;
+            }
+            const double rx = i < msg.rx_angles.size() ? msg.rx_angles[i] : 0.0;
+            const double h = (twtt * c / 2.0) * std::sin(rx);
+            min_h = std::min(min_h, h);
+            max_h = std::max(max_h, h);
+          }
+          pp.extent_port = min_h;
+          pp.extent_stbd = max_h;
+        } else {
+          const bool is_port = topic == port_topic;
+          auto msg = deserialize<marine_acoustic_msgs::msg::RawSonarImage>(bag_msg);
+          // A zero sample count drives slantRange() negative, which flips the
+          // sidescan footprint to the wrong side; skip like sample_rate<=0.
+          if (msg.sample_rate <= 0.0 || msg.samples_per_beam == 0) {
+            continue;
+          }
+          pp.ping_ns = stampNs(msg.header.stamp);
+          pp.frame_id = msg.header.frame_id;
+          pp.sensor_type = is_port ? kSensorPort : kSensorStbd;
+          pp.topic = is_port ? &port_topic : &stbd_topic;
+          pp.level = &sidescan_level;
+          const double c = msg.ping_info.sound_speed > 0.0 ?
+            msg.ping_info.sound_speed : sound_speed_fallback;
+          // Max slant range bounds the ground range (flat-earth-free
+          // conservative footprint; the drill-down stages do the exact math).
+          const double max_slant = marine_sidescan_mosaic::slantRange(
+            static_cast<int>(msg.samples_per_beam) - 1,
+            static_cast<int>(msg.sample0), c, msg.sample_rate);
+          pp.extent_port = is_port ? -max_slant : 0.0;
+          pp.extent_stbd = is_port ? 0.0 : max_slant;
+        }
+
+        pending.push_back(std::move(pp));
         if (pending.size() > kMaxPending) {
-          flush_front();
+          // Prefer flushing pings the TF frontier has already passed (this
+          // honours the guard interval); force the oldest out — accepting a
+          // possible no-tf — only if TF has genuinely stalled and we are still
+          // over the memory cap.
+          drain_pending(false);
+          if (pending.size() > kMaxPending) {
+            flush_front();
+          }
         }
       }
-    }
-    drain_pending(true);
+      drain_pending(true);
 
-    // Persist this bag atomically: ledger row + all pass intervals.
-    const auto intervals = accumulator.flushAll();
-    const std::int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-      std::chrono::system_clock::now().time_since_epoch()).count();
-    execOrDie(db, "BEGIN TRANSACTION;");
-    std::int64_t bag_id = 0;
-    if (state < 0) {
-      bag_id = -state;
-      sqlite3_stmt * del = nullptr;
-      sqlite3_prepare_v2(db, "DELETE FROM passes WHERE bag_id = ?", -1, &del, nullptr);
-      sqlite3_bind_int64(del, 1, bag_id);
-      sqlite3_step(del);
-      sqlite3_finalize(del);
-      sqlite3_stmt * upd = nullptr;
-      sqlite3_prepare_v2(
-        db, "UPDATE bags SET size_bytes = ?, mtime_ns = ?, indexed_at_ns = ? WHERE id = ?",
-        -1, &upd, nullptr);
-      sqlite3_bind_int64(upd, 1, fp.size_bytes);
-      sqlite3_bind_int64(upd, 2, fp.mtime_ns);
-      sqlite3_bind_int64(upd, 3, now_ns);
-      sqlite3_bind_int64(upd, 4, bag_id);
-      sqlite3_step(upd);
-      sqlite3_finalize(upd);
-    } else {
-      sqlite3_stmt * ins = nullptr;
-      sqlite3_prepare_v2(
-        db, "INSERT INTO bags (path, size_bytes, mtime_ns, indexed_at_ns) VALUES (?, ?, ?, ?)",
-        -1, &ins, nullptr);
-      sqlite3_bind_text(ins, 1, bag_key.c_str(), -1, SQLITE_TRANSIENT);
-      sqlite3_bind_int64(ins, 2, fp.size_bytes);
-      sqlite3_bind_int64(ins, 3, fp.mtime_ns);
-      sqlite3_bind_int64(ins, 4, now_ns);
-      sqlite3_step(ins);
-      sqlite3_finalize(ins);
-      bag_id = sqlite3_last_insert_rowid(db);
-    }
-    sqlite3_stmt * ins_pass = nullptr;
-    sqlite3_prepare_v2(
-      db,
-      "INSERT INTO passes (bag_id, level, tile_row, tile_col, sensor_type, topic,"
-      " t_start_ns, t_end_ns, ping_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      -1, &ins_pass, nullptr);
-    for (const auto & pass : intervals) {
-      sqlite3_bind_int64(ins_pass, 1, bag_id);
-      sqlite3_bind_int(ins_pass, 2, pass.key.level);
-      sqlite3_bind_int64(ins_pass, 3, pass.key.tile_row);
-      sqlite3_bind_int64(ins_pass, 4, pass.key.tile_col);
-      sqlite3_bind_text(ins_pass, 5, pass.key.sensor_type.c_str(), -1, SQLITE_TRANSIENT);
-      sqlite3_bind_text(ins_pass, 6, pass.key.topic.c_str(), -1, SQLITE_TRANSIENT);
-      sqlite3_bind_int64(ins_pass, 7, pass.t_start_ns);
-      sqlite3_bind_int64(ins_pass, 8, pass.t_end_ns);
-      sqlite3_bind_int64(ins_pass, 9, pass.ping_count);
-      sqlite3_step(ins_pass);
-      sqlite3_reset(ins_pass);
-    }
-    sqlite3_finalize(ins_pass);
-    execOrDie(db, "COMMIT;");
+      // Persist this bag atomically: ledger row + all pass intervals.
+      const auto intervals = accumulator.flushAll();
+      const std::int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+      execOrThrow(db, "BEGIN TRANSACTION;");
+      std::int64_t bag_id = 0;
+      if (state < 0) {
+        bag_id = -state;
+        {
+          StmtGuard del(prepareOrThrow(db, "DELETE FROM passes WHERE bag_id = ?"));
+          sqlite3_bind_int64(del.get(), 1, bag_id);
+          stepDoneOrThrow(db, del.get());
+        }
+        {
+          const char * upd_sql =
+            "UPDATE bags SET size_bytes = ?, mtime_ns = ?, indexed_at_ns = ? WHERE id = ?";
+          StmtGuard upd(prepareOrThrow(db, upd_sql));
+          sqlite3_bind_int64(upd.get(), 1, fp.size_bytes);
+          sqlite3_bind_int64(upd.get(), 2, fp.mtime_ns);
+          sqlite3_bind_int64(upd.get(), 3, now_ns);
+          sqlite3_bind_int64(upd.get(), 4, bag_id);
+          stepDoneOrThrow(db, upd.get());
+        }
+      } else {
+        const char * ins_sql =
+          "INSERT INTO bags (path, size_bytes, mtime_ns, indexed_at_ns) VALUES (?, ?, ?, ?)";
+        StmtGuard ins(prepareOrThrow(db, ins_sql));
+        sqlite3_bind_text(ins.get(), 1, bag_key.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(ins.get(), 2, fp.size_bytes);
+        sqlite3_bind_int64(ins.get(), 3, fp.mtime_ns);
+        sqlite3_bind_int64(ins.get(), 4, now_ns);
+        stepDoneOrThrow(db, ins.get());
+        bag_id = sqlite3_last_insert_rowid(db);
+      }
+      {
+        const char * pass_sql =
+          "INSERT INTO passes (bag_id, level, tile_row, tile_col, sensor_type, topic,"
+          " t_start_ns, t_end_ns, ping_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        StmtGuard ins_pass(prepareOrThrow(db, pass_sql));
+        for (const auto & pass : intervals) {
+          sqlite3_bind_int64(ins_pass.get(), 1, bag_id);
+          sqlite3_bind_int(ins_pass.get(), 2, pass.key.level);
+          sqlite3_bind_int64(ins_pass.get(), 3, pass.key.tile_row);
+          sqlite3_bind_int64(ins_pass.get(), 4, pass.key.tile_col);
+          sqlite3_bind_text(ins_pass.get(), 5, pass.key.sensor_type.c_str(), -1, SQLITE_TRANSIENT);
+          sqlite3_bind_text(ins_pass.get(), 6, pass.key.topic.c_str(), -1, SQLITE_TRANSIENT);
+          sqlite3_bind_int64(ins_pass.get(), 7, pass.t_start_ns);
+          sqlite3_bind_int64(ins_pass.get(), 8, pass.t_end_ns);
+          sqlite3_bind_int64(ins_pass.get(), 9, pass.ping_count);
+          stepDoneOrThrow(db, ins_pass.get());
+          sqlite3_reset(ins_pass.get());
+        }
+      }
+      execOrThrow(db, "COMMIT;");
 
-    ++n_bags_indexed;
-    std::cerr << (state < 0 ? "re-indexed: " : "indexed: ") << bag_key
-              << " (" << n_pings << " pings -> " << intervals.size()
-              << " pass intervals; no-tf=" << n_no_tf
-              << " bad-pose=" << n_bad_pose << ")\n";
+      ++n_bags_indexed;
+      std::cerr << (state < 0 ? "re-indexed: " : "indexed: ") << bag_key
+                << " (" << n_pings << " pings -> " << intervals.size()
+                << " pass intervals; no-tf=" << n_no_tf
+                << " bad-pose=" << n_bad_pose << ")\n";
+    } catch (const std::exception & e) {
+      // A bad message or a SQLite failure aborts this bag only: roll back
+      // its (possibly open) transaction and move on so the remaining bags
+      // still index and the db is closed cleanly at the end.
+      sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
+      std::cerr << "error: failed to index " << bag.string() << ": "
+                << e.what() << "; skipping\n";
+    }
   }
 
   sqlite3_close(db);
