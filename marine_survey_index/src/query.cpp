@@ -51,6 +51,15 @@ void throwSqlite(sqlite3 * db, const std::string & context)
   throw std::runtime_error("survey index query (" + context + "): " + sqlite3_errmsg(db));
 }
 
+// sqlite3_column_text returns nullptr for a SQL NULL; constructing a
+// std::string from nullptr is UB. These columns are NOT NULL today, but read
+// them defensively so a future schema change can't corrupt the query path.
+std::string columnText(sqlite3_stmt * stmt, int col)
+{
+  const unsigned char * text = sqlite3_column_text(stmt, col);
+  return text ? reinterpret_cast<const char *>(text) : std::string();
+}
+
 }  // namespace
 
 std::vector<std::uint8_t> distinctLevels(sqlite3 * db, const std::string & sensor_filter)
@@ -122,9 +131,9 @@ std::vector<PassRow> queryPasses(
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
       PassRow row;
-      row.bag_path = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0));
-      row.sensor_type = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1));
-      row.topic = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 2));
+      row.bag_path = columnText(stmt, 0);
+      row.sensor_type = columnText(stmt, 1);
+      row.topic = columnText(stmt, 2);
       row.level = static_cast<std::uint8_t>(sqlite3_column_int(stmt, 3));
       row.tile_row = static_cast<std::uint32_t>(sqlite3_column_int64(stmt, 4));
       row.tile_col = static_cast<std::uint32_t>(sqlite3_column_int64(stmt, 5));
