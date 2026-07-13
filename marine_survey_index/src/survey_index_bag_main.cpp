@@ -311,13 +311,14 @@ int main(int argc, char ** argv)
     std::cerr <<
       "usage: survey_index_bag [bag_uri ...] [--scan DIR] [--db survey_index.db]\n"
       "       [--mbes-topic T] [--port-topic T] [--stbd-topic T]\n"
-      "       [--mbes-level N=10] [--sidescan-level N=13] [--level N (overrides both)]\n"
+      "       [--mbes-level N=14] [--sidescan-level N=14] [--level N (overrides both)]\n"
       "       [--merge-gap S=5.0] [--earth-frame F=earth] [--sound-speed S=1500]\n"
       "\n"
       "Indexes where each sonar looked, per bag, into a regenerable SQLite\n"
       "sidecar. Unchanged already-indexed bags are skipped; changed bags are\n"
-      "re-indexed. Level defaults match the stores' native tiling (bathy L10,\n"
-      "sidescan L13).\n";
+      "re-indexed. Default level 14 (~54 m tiles) — a target-inspection\n"
+      "neighbourhood; rolls up to the stores' coarser native tiles (bathy L10,\n"
+      "sidescan L13) via the GGGS parent hierarchy.\n";
     return 2;
   }
 
@@ -332,8 +333,12 @@ int main(int argc, char ** argv)
   const double sound_speed_fallback =
     toDouble(argValue(argc, argv, "--sound-speed", "1500.0"), "--sound-speed");
   const double merge_gap_s = toDouble(argValue(argc, argv, "--merge-gap", "5.0"), "--merge-gap");
-  int mbes_level_n = toInt(argValue(argc, argv, "--mbes-level", "10"), "--mbes-level");
-  int sidescan_level_n = toInt(argValue(argc, argv, "--sidescan-level", "13"), "--sidescan-level");
+  // Default L14 (~54 m tiles): the tile-of-interest scale for target review
+  // (Roland, 2026-07-13) — small enough to select a neighbourhood, and it
+  // rolls up to the coarser store-native tiles (bathy L10, sidescan L13)
+  // through the GGGS quadtree when stage 2 joins against store tiling.
+  int mbes_level_n = toInt(argValue(argc, argv, "--mbes-level", "14"), "--mbes-level");
+  int sidescan_level_n = toInt(argValue(argc, argv, "--sidescan-level", "14"), "--sidescan-level");
   const std::string level_override = argValue(argc, argv, "--level", "");
   if (!level_override.empty()) {
     mbes_level_n = sidescan_level_n = toInt(level_override, "--level");

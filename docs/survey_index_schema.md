@@ -20,11 +20,14 @@ checkpoint (2026-07-13); see `.agent/work-plans/issue-259/plan.md`.
 - **Index = "where did the sensor look."** Pass intervals are computed from
   ping geometry (nav + sonar extents), independent of what any store
   accepted. Pings rejected by CUBE or absent from store coverage still index.
-- **Tile keys match the stores.** Tiles are GGGS grids `(level, tile_row,
-  tile_col)` — the same key space as the tiled stores' per-tile GeoTIFFs
-  (e.g. bathy `10_17788_13902.tif` ⇔ `level=10, tile_row=17788,
-  tile_col=13902`). Default indexing levels are the stores' native tiling:
-  **L10 for MBES** (bathy store), **L13 for sidescan** (sidescan store).
+- **Tile keys live in the stores' key space.** Tiles are GGGS grids `(level,
+  tile_row, tile_col)` — the same key space as the tiled stores' per-tile
+  GeoTIFFs (e.g. bathy `10_17788_13902.tif` ⇔ `level=10, tile_row=17788,
+  tile_col=13902`). The **default indexing level is L14 (~54 m tiles) for both
+  sensors** — a target-inspection neighbourhood, deliberately finer than the
+  stores' native tiling (bathy L10 ≈ 870 m, sidescan L13 ≈ 108 m). Finer keys
+  roll **up** to store tiles through the GGGS parent hierarchy, so consumers
+  joining against store tiling aggregate L14 rows under their L10/L13 parents.
   Mixed levels coexist in one DB; queries carry the level in the key.
 
 ## Tables (schema version 1)

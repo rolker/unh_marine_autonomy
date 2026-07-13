@@ -20,7 +20,7 @@ ros2 run marine_survey_index survey_index_bag <bag_uri ...> [--scan DIR] \
     [--db survey_index.db] \
     [--mbes-topic /bizzy/sensors/m3/detections] \
     [--port-topic ...sonar_image_port] [--stbd-topic ...sonar_image_starboard] \
-    [--mbes-level 10] [--sidescan-level 13] [--level N] \
+    [--mbes-level 14] [--sidescan-level 14] [--level N] \
     [--merge-gap 5.0] [--earth-frame earth] [--sound-speed 1500]
 ```
 
@@ -32,9 +32,11 @@ a SQLite sidecar. Indexing is from **ping geometry, not store acceptance** —
 pings CUBE rejected still index. Unchanged already-indexed bags are skipped
 (size+mtime ledger); changed bags are re-indexed atomically.
 
-Default levels match the stores' native tiling (bathy L10 ⇔
-`10_<row>_<col>.tif`; sidescan L13), so index keys join directly with store
-tiles. Measured: a 2.5 GB Massabesic sonar bag (632k pings) indexes in ~12 s.
+The default level is **L14 (~54 m tiles)** for both sensors — a
+target-inspection neighbourhood, finer than the stores' native tiling (bathy
+L10 ≈ 870 m ⇔ `10_<row>_<col>.tif`; sidescan L13 ≈ 108 m); L14 keys roll up
+to store tiles via the GGGS parent hierarchy. Measured: a 2.5 GB Massabesic
+sonar bag (632k pings) indexes in ~12 s.
 
 ### `survey_index_query` — the answer
 

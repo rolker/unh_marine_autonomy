@@ -150,11 +150,16 @@ labeled per plan-review suggestion.*
 
 ## Decisions (Roland, 2026-07-13 plan checkpoint)
 
-- **GGGS level default = the store's native level (~L13, 1 m)** — chosen over the
-  coarser L11 proposal. Rationale: index tile keys match the store tiling exactly,
-  so stage 2 (stores-as-overview pane) joins on tile keys directly. The larger row
-  count (O(10^5) rows per long pass) is accepted; SQLite with the `(level, tile_row,
-  tile_col)` index handles it. `--level` override remains for coarser re-index runs.
+- **GGGS level default = L14 (~54 m tiles), both sensors** *(revised 2026-07-13,
+  implementation round — supersedes the "store-native level" checkpoint answer,
+  which had conflated grid size with cell size: the bathy store's L10 tiles have
+  ~0.9 m cells but are ~870 m across — far too coarse as a selection unit)*.
+  L14 is a target-inspection neighbourhood (target + shadow + context), and a
+  finer index is strictly more information: L14 keys roll up to the stores'
+  native tiles (bathy L10, sidescan L13) through the GGGS parent hierarchy, so
+  stage 2 can still join against store tiling by aggregation. Row cost remains
+  trivial (a swath touches a handful of 54 m tiles across-track).
+  `--mbes-level` / `--sidescan-level` / `--level` overrides remain.
 - **Sidescan sensor_type split**: `sidescan-port` / `sidescan-stbd` in the DB for
   channel fidelity; the query CLI treats `--sensor sidescan` as matching both.
   This *extends* the ADR-0005 D3 `sensor_class` vocabulary (`sidescan` + channel
