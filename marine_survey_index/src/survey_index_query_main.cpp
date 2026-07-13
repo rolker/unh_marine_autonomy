@@ -66,6 +66,16 @@ double toDouble(const char * s, const std::string & flag)
   }
 }
 
+int toInt(const std::string & s, const std::string & flag)
+{
+  try {
+    return std::stoi(s);
+  } catch (const std::exception &) {
+    std::cerr << "error: expected an integer for " << flag << ", got '" << s << "'\n";
+    std::exit(2);
+  }
+}
+
 std::string isoUtc(std::int64_t t_ns)
 {
   const std::time_t seconds = static_cast<std::time_t>(t_ns / 1000000000LL);
@@ -152,7 +162,7 @@ int main(int argc, char ** argv)
   // or every level the index actually holds (for the sensor filter).
   std::vector<std::uint8_t> levels;
   if (!level_arg.empty()) {
-    levels.push_back(static_cast<std::uint8_t>(std::stoi(level_arg)));
+    levels.push_back(static_cast<std::uint8_t>(toInt(level_arg, "--level")));
   } else {
     levels = marine_survey_index::distinctLevels(db, sensor);
   }
