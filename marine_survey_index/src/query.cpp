@@ -21,6 +21,7 @@
 
 #include "marine_survey_index/query.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -134,6 +135,19 @@ std::vector<PassRow> queryPasses(
     }
     sqlite3_finalize(stmt);
   }
+
+  // Each chunk's statement sorts independently, so a box spanning more than one
+  // chunk yields globally out-of-order rows (and the CLI would repeat a bag
+  // header per chunk). Sort the merged result to honour the documented
+  // "ordered by bag path, then t_start_ns" contract.
+  std::sort(
+    rows.begin(), rows.end(),
+    [](const PassRow & a, const PassRow & b) {
+      if (a.bag_path != b.bag_path) {
+        return a.bag_path < b.bag_path;
+      }
+      return a.t_start_ns < b.t_start_ns;
+    });
   return rows;
 }
 
