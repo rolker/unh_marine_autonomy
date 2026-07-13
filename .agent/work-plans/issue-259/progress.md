@@ -164,3 +164,28 @@ try/catch that catches them and ROLLBACKs), so they share a single commit `d5bc8
 - [x] `fingerprint`/`scanForBags` use `error_code` filesystem iteration (skip_permission_denied) so a broken symlink/permission error no longer aborts the run — `marine_survey_index/src/survey_index_bag_main.cpp` (`a614d8f`)
 - [x] Query row text columns read via a null-safe `columnText` helper (avoids UB if a column is ever NULL) — `marine_survey_index/src/query.cpp` (`a3ad994`)
 - [x] Plan-drift note on the MBES/sidescan level split — `marine_survey_index/src/survey_index_bag_main.cpp:273` (deferred: not a defect — intentional per-sensor split, already reconciled in `docs/survey_index_schema.md` and CLI help; no code change)
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-13 20:12 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-259 at `70ff424`
+**Mode**: pre-push
+**Depth**: Deep (reason: new C++ package, 2679 LOC, cross-layer GGGS/store + SQLite + rosbag2/TF)
+**Must-fix**: 0 | **Suggestions**: 2
+**Round**: 2 | **Ship**: recommended — no must-fix; all 8 round-1 findings verified fixed; only new change (default level → L14) is clean and consistently propagated
+
+Round 2 of the pre-push review. Static analysis clean (ament_cpplint "No problems found").
+Two fresh-context Claude Adversarial lenses (A logic, B systemic) ran; their must-fix
+claims were verified against the code and found to be false positives (the `--scan`
+double-increment skips DIR correctly; sqlite3 bind/step are non-throwing C calls so no
+statement leak; `Time.sec` is int32 so no ns overflow) — none reported. Governance and
+plan adherence clean: package.xml (MIT/ADR-0008), `.agents/README` inventory + ecosystem
+row + durable schema doc all present; L14 default recorded in plan Decisions (no drift).
+Only two low-severity robustness suggestions remain; neither blocks the ship.
+
+### Findings
+- [ ] (suggestion) `jsonEscape` omits JSON control chars (`\n`,`\t`,<0x20) → invalid `--json` for pathological bag paths — `marine_survey_index/src/survey_index_query_main.cpp:89`
+- [ ] (suggestion) Query read loop ignores `sqlite3_step`/`bind` return codes → silent partial results on a mid-scan DB error (indexer checks every code; query path doesn't) — `marine_survey_index/src/query.cpp:79`
