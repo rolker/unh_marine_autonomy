@@ -76,7 +76,9 @@ CREATE TABLE IF NOT EXISTS passes (
   level       INTEGER NOT NULL,
   tile_row    INTEGER NOT NULL,
   tile_col    INTEGER NOT NULL,
-  sensor_type TEXT    NOT NULL,  -- ADR-0005 D3 vocabulary: 'mbes-bathy', 'sidescan-port', 'sidescan-stbd'
+  sensor_type TEXT    NOT NULL,  -- extends ADR-0005 D3 sensor_class vocabulary: 'mbes-bathy' (D3),
+                                 -- plus channel-split 'sidescan-port'/'sidescan-stbd' (D3 'sidescan' + channel;
+                                 -- query CLI treats --sensor sidescan as matching both)
   topic       TEXT    NOT NULL,
   t_start_ns  INTEGER NOT NULL,
   t_end_ns    INTEGER NOT NULL,
@@ -86,9 +88,12 @@ CREATE INDEX IF NOT EXISTS passes_tile ON passes(level, tile_row, tile_col);
 CREATE INDEX IF NOT EXISTS passes_bag  ON passes(bag_id);
 ```
 
-5. **Tests** (`test/`): At minimum:
+5. **Tests** (`test/`) — all bag-I/O-free (plan-review must-fix: cover the core
+   correctness paths, not just plumbing):
    - `test_schema.cpp`: opens a fresh DB, verifies tables and version row, checks that re-open doesn't error.
    - `test_interval_merge.cpp`: unit test for the interval-accumulator logic (gap below threshold → merged; gap above → split); no bag I/O needed.
+   - `test_tile_enumeration.cpp`: footprint→GGGS-tile enumeration — a known lat/lon box at a known level yields exactly the expected tile set (single-tile, tile-boundary-straddling, and multi-tile swath cases).
+   - `test_query_join.cpp`: builds an in-memory index with known passes, runs the query join (point and box, with and without `--sensor` filter incl. `sidescan` matching both channels), asserts the returned bag/interval set.
 
 6. **Update `docs/sonar_ecosystem.md`**: add a "Survey indexer/query" row in the Arc 1 Reprocess section referencing #258/#259.
 
@@ -103,7 +108,11 @@ CREATE INDEX IF NOT EXISTS passes_bag  ON passes(bag_id);
 | `marine_survey_index/src/schema.h` | new — shared schema init + version check |
 | `marine_survey_index/test/test_schema.cpp` | new — schema unit test |
 | `marine_survey_index/test/test_interval_merge.cpp` | new — accumulator unit test |
+| `marine_survey_index/test/test_tile_enumeration.cpp` | new — footprint→tile enumeration test (plan-review must-fix) |
+| `marine_survey_index/test/test_query_join.cpp` | new — query tile-join test (plan-review must-fix) |
+| `docs/survey_index_schema.md` | new — durable schema contract doc for #258 stages 2–5 (plan-review suggestion) |
 | `docs/sonar_ecosystem.md` | update — add survey indexer row |
+| `.agents/README.md` | update — add `marine_survey_index` to Package Inventory (plan-review suggestion) |
 
 ## Principles Self-Check
 
@@ -118,13 +127,17 @@ CREATE INDEX IF NOT EXISTS passes_bag  ON passes(bag_id);
 
 ## ADR Compliance
 
+*(WS) = workspace ADR (`ros2_agent_workspace/docs/decisions/`); (P) = project ADR
+(`unh_marine_autonomy/docs/decisions/`). Numbers overlap between the two sets —
+labeled per plan-review suggestion.*
+
 | ADR | Triggered | How addressed |
 |---|---|---|
-| ADR-0002 (Worktree isolation) | Yes | Working in feature/issue-259 worktree throughout |
-| ADR-0005 (Provenance registry) | Yes | `sensor_type` column uses ADR-0005 D3 `sensor_class` vocabulary (`mbes-bathy`, `sidescan-port`, `sidescan-stbd`); `platform`/`sensor` retained at bag granularity via `bags` table metadata extension is a follow-up |
-| ADR-0008 (ROS 2 conventions) | Yes | `package.xml` with MIT license, ROS 2 naming, standard CMakeLists patterns; no nodes so no node-naming concern |
-| ADR-0009 (Python package management) | No | No Python components |
-| ADR-0013 (progress.md vocabulary) | Yes | Entries use canonical vocabulary |
+| ADR-0002 (WS — Worktree isolation) | Yes | Working in feature/issue-259 worktree throughout |
+| ADR-0005 (P — Provenance registry) | Yes | `sensor_type` column *extends* ADR-0005 D3 `sensor_class` vocabulary: `mbes-bathy` verbatim; `sidescan-port`/`sidescan-stbd` = D3 `sidescan` + channel suffix (query maps `sidescan` → both). `platform`/`sensor` at bag granularity via `bags` table metadata extension is a follow-up |
+| ADR-0008 (WS — ROS 2 conventions) | Yes | `package.xml` with MIT license, ROS 2 naming, standard CMakeLists patterns; no nodes so no node-naming concern |
+| ADR-0009 (WS — Python package management) | No | No Python components |
+| ADR-0013 (WS — progress.md vocabulary) | Yes | Entries use canonical vocabulary |
 
 ## Consequences
 
@@ -135,11 +148,19 @@ CREATE INDEX IF NOT EXISTS passes_bag  ON passes(bag_id);
 | Topic defaults | `survey_index_bag` CLI defaults | Yes — configurable via `--mbes-topic`, `--port-topic`, `--stbd-topic` flags |
 | `docs/sonar_ecosystem.md` | Nothing else | Yes — included in Files to Change |
 
-## Open Questions
+## Decisions (Roland, 2026-07-13 plan checkpoint)
 
-- **GGGS level default**: The issue says "store's native level" — the bathy store defaults to 1 m resolution (GGGS level ~13). At 1 m, a single long survey pass could create O(10^5) tile rows. A coarser default (e.g. level 11, ~4 m cells) might be more practical for the indexer while still supporting sub-meter querying via the `--level` override. **Needs user input** before implementation.
-- **Sidescan sensor_type split**: `sidescan-port` / `sidescan-stbd` vs a single `sidescan`. The split enables filtering to one channel (useful for debugging), but `sidescan` aligns more directly with ADR-0005's `sensor_class`. Proposed: use `sidescan-port` / `sidescan-stbd` in the DB for fidelity; the query CLI treats a `--sensor sidescan` filter as matching both.
-- **Merge gap tolerance default**: 5.0 s is a placeholder. A long straight-line pass should produce one interval per tile; a turn may break it. Field feedback will calibrate this. Flag it as `--merge-gap <s>` so users can tune it.
+- **GGGS level default = the store's native level (~L13, 1 m)** — chosen over the
+  coarser L11 proposal. Rationale: index tile keys match the store tiling exactly,
+  so stage 2 (stores-as-overview pane) joins on tile keys directly. The larger row
+  count (O(10^5) rows per long pass) is accepted; SQLite with the `(level, tile_row,
+  tile_col)` index handles it. `--level` override remains for coarser re-index runs.
+- **Sidescan sensor_type split**: `sidescan-port` / `sidescan-stbd` in the DB for
+  channel fidelity; the query CLI treats `--sensor sidescan` as matching both.
+  This *extends* the ADR-0005 D3 `sensor_class` vocabulary (`sidescan` + channel
+  suffix); it does not redefine it.
+- **Merge gap default 5.0 s**, exposed as `--merge-gap <s>`; calibrate against
+  Massabesic data (a turn splitting intervals is acceptable and informative).
 
 ## Estimated Scope
 
