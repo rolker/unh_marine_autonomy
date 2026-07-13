@@ -128,12 +128,39 @@ correct; `docs/sonar_ecosystem.md` Arc 1 table present. Approach and scope are s
 Static analysis clean (ament_cpplint; cppcheck TEST-macro/unused-member warnings are false positives). Two Claude Adversarial lenses (A logic, B systemic) converged on one theme: the indexer write path assumes every SQLite call succeeds and no exception occurs. Governance and plan adherence clean; all 4 prior plan-review findings resolved.
 
 ### Findings
-- [ ] (must-fix) Indexer write/ledger path ignores all sqlite3_step/prepare return codes → failed insert still COMMITs and marks bag fully-indexed (silent partial index; re-run skips as "unchanged") — `marine_survey_index/src/survey_index_bag_main.cpp:209,514-559`
-- [ ] (must-fix) Per-bag loop has no try/catch and no ROLLBACK → a corrupt message (deserialize throws) or SQLite failure aborts the whole run, remaining bags lost, db not closed — `marine_survey_index/src/survey_index_bag_main.cpp:322`
-- [ ] (must-fix) Query results not globally sorted across 200-tile chunks → CLI prints duplicate/out-of-order bag headers for boxes spanning >200 tiles — `marine_survey_index/src/query.cpp:89-137`
-- [ ] (must-fix) Unguarded std::stoi on --level → uncaught exception crash (inconsistent with other args' toInt guard) — `marine_survey_index/src/survey_index_query_main.cpp:155`
-- [ ] (suggestion) kMaxPending overflow flush bypasses the TF guard interval → oldest ping may be dropped as no-tf under backpressure (cross-pass confirmed) — `marine_survey_index/src/survey_index_bag_main.cpp:499-501`
-- [ ] (suggestion) samples_per_beam==0 → negative slant range flips sidescan footprint to wrong side; skip like sample_rate<=0 — `marine_survey_index/src/survey_index_bag_main.cpp:491-495`
-- [ ] (suggestion) fingerprint/scanForBags use throwing filesystem iteration; broken symlink/permission error aborts run — use error_code overloads — `marine_survey_index/src/survey_index_bag_main.cpp:162,183`
-- [ ] (suggestion) std::string from possibly-null sqlite3_column_text (latent UB; columns NOT NULL today) — `marine_survey_index/src/query.cpp:124`
-- [ ] (suggestion) Plan drift: MBES level default L10 vs plan's "~L13 store-native" — per-sensor split refinement, consistent in code+help+schema doc; noted, not a defect — `marine_survey_index/src/survey_index_bag_main.cpp:273`
+- [x] (must-fix) Indexer write/ledger path ignores all sqlite3_step/prepare return codes → failed insert still COMMITs and marks bag fully-indexed (silent partial index; re-run skips as "unchanged") — `marine_survey_index/src/survey_index_bag_main.cpp:209,514-559`
+- [x] (must-fix) Per-bag loop has no try/catch and no ROLLBACK → a corrupt message (deserialize throws) or SQLite failure aborts the whole run, remaining bags lost, db not closed — `marine_survey_index/src/survey_index_bag_main.cpp:322`
+- [x] (must-fix) Query results not globally sorted across 200-tile chunks → CLI prints duplicate/out-of-order bag headers for boxes spanning >200 tiles — `marine_survey_index/src/query.cpp:89-137`
+- [x] (must-fix) Unguarded std::stoi on --level → uncaught exception crash (inconsistent with other args' toInt guard) — `marine_survey_index/src/survey_index_query_main.cpp:155`
+- [x] (suggestion) kMaxPending overflow flush bypasses the TF guard interval → oldest ping may be dropped as no-tf under backpressure (cross-pass confirmed) — `marine_survey_index/src/survey_index_bag_main.cpp:499-501`
+- [x] (suggestion) samples_per_beam==0 → negative slant range flips sidescan footprint to wrong side; skip like sample_rate<=0 — `marine_survey_index/src/survey_index_bag_main.cpp:491-495`
+- [x] (suggestion) fingerprint/scanForBags use throwing filesystem iteration; broken symlink/permission error aborts run — use error_code overloads — `marine_survey_index/src/survey_index_bag_main.cpp:162,183`
+- [x] (suggestion) std::string from possibly-null sqlite3_column_text (latent UB; columns NOT NULL today) — `marine_survey_index/src/query.cpp:124`
+- [x] (suggestion) Plan drift: MBES level default L10 vs plan's "~L13 store-native" — per-sensor split refinement, consistent in code+help+schema doc; noted, not a defect — `marine_survey_index/src/survey_index_bag_main.cpp:273` (deferred: not a defect — the per-sensor level split is intentional and already reconciled in `docs/survey_index_schema.md` and the CLI help; no code change warranted)
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-13 19:35 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-259 at `507cf09`
+**Addressed**: Local Review (Pre-Push) (2026-07-13 19:12 +00:00, `04dc9d7`) — 4 must-fix + 5 suggestions
+**Commits**: `7652f54` `3f49415` `a614d8f` `d5bc8df` `19e8d41` `a3ad994` `507cf09`
+
+Fixed all 8 actionable findings; the 9th (plan-drift note) was consciously deferred
+as not-a-defect. Rebuilt `marine_survey_index` and re-ran its test suite after the
+fixes: 10/10 test targets pass (4 gtest suites + cpplint/uncrustify/cppcheck/copyright/
+lint_cmake/xmllint), 0 failures. F1 and F2 are the detect and roll-back halves of one
+write-path safety mechanism (adding error-code checks that throw, plus the per-bag
+try/catch that catches them and ROLLBACKs), so they share a single commit `d5bc8df`.
+
+### Actions
+- [x] Indexer write/ledger path now checks every sqlite3 prepare/step return code (SqliteError + prepareOrThrow/stepDoneOrThrow/StmtGuard); a failed write throws instead of COMMITting a partial index — `marine_survey_index/src/survey_index_bag_main.cpp` (`d5bc8df`)
+- [x] Per-bag loop wrapped in try/catch that ROLLBACKs and continues; a corrupt-message deserialize or SQLite failure now loses only that bag and the db closes cleanly — `marine_survey_index/src/survey_index_bag_main.cpp` (`d5bc8df`)
+- [x] Query rows sorted globally across tile chunks so the CLI prints each bag's rows contiguously and in time order — `marine_survey_index/src/query.cpp` (`19e8d41`)
+- [x] `--level` parsed via a guarded `toInt` in the query CLI (matches the other args) instead of an unguarded `std::stoi` — `marine_survey_index/src/survey_index_query_main.cpp` (`507cf09`)
+- [x] kMaxPending overflow first drains TF-passed pings (honours the guard), forcing the oldest out only if TF has genuinely stalled — `marine_survey_index/src/survey_index_bag_main.cpp` (`3f49415`)
+- [x] Sidescan pings with `samples_per_beam == 0` are skipped (would drive slantRange negative and flip the footprint) — `marine_survey_index/src/survey_index_bag_main.cpp` (`7652f54`)
+- [x] `fingerprint`/`scanForBags` use `error_code` filesystem iteration (skip_permission_denied) so a broken symlink/permission error no longer aborts the run — `marine_survey_index/src/survey_index_bag_main.cpp` (`a614d8f`)
+- [x] Query row text columns read via a null-safe `columnText` helper (avoids UB if a column is ever NULL) — `marine_survey_index/src/query.cpp` (`a3ad994`)
+- [x] Plan-drift note on the MBES/sidescan level split — `marine_survey_index/src/survey_index_bag_main.cpp:273` (deferred: not a defect — intentional per-sensor split, already reconciled in `docs/survey_index_schema.md` and CLI help; no code change)
