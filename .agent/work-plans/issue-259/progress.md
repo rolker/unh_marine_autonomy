@@ -285,3 +285,26 @@ Verification: rebuilt + full suite green — **87 tests, 0 failures, 13
 skipped** (one new test; cpplint/uncrustify/cppcheck/xmllint all pass).
 
 Next: push; Copilot re-review round.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-14 15:05 +00:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #261 at `6869ec4` (round 3)
+**Sources**: 2 (Copilot R4 @ `6869ec4`; prior Integrated Review rounds 1–2 — all 6 prior findings verified fixed at head)
+**Cross-source confirmations**: 0
+**CI**: copilot ✅; build in progress at head
+
+All 12 comments from Copilot's earlier reviews target pre-fix commits and are
+Addressed at head. Three NEW hygiene findings from Copilot R4 against current
+code — the first two were introduced by the round-1/2 fixes themselves
+(`std::exit` arrived with the `toLevel`/merge-gap guards without `<cstdlib>`):
+
+### Findings
+- [ ] (low, Copilot R4) `survey_index_query_main.cpp` uses `std::exit` and `std::max` via transitive includes only — add `<cstdlib>` and `<algorithm>` — `marine_survey_index/src/survey_index_query_main.cpp:32`
+- [ ] (low, Copilot R4) `survey_index_bag_main.cpp` uses `std::exit` without `<cstdlib>` — `marine_survey_index/src/survey_index_bag_main.cpp:50`
+- [ ] (low, Copilot R4) `CMakeLists.txt` doesn't set `CMAKE_CXX_STANDARD` while the package uses C++17 (`std::filesystem`, `std::clamp`); sibling packages (marine_autonomy, marine_sidescan_mosaic) set 17 explicitly — adopt marine_sidescan_mosaic's guarded form — `marine_survey_index/CMakeLists.txt:6`
+
+### False positives
+- (none — all three verified: usages confirmed present, includes confirmed absent, repo convention confirmed)
