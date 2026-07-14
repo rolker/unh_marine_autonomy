@@ -1,0 +1,322 @@
+---
+issue: 259
+---
+
+# Issue #259 — Survey Indexer + Query CLI
+
+## Issue Review
+**Status**: complete
+**When**: 2026-07-13 00:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Issue**: #259
+**Comment**: (best-effort post follows this entry; not recorded inline)
+**Scope verdict**: well-scoped
+
+### Summary
+
+Stage 1 of the #258 (survey data exploration) umbrella. Deliverables: an offline SQLite survey indexer and a query CLI. Scope is appropriately bounded — no GUI, no viewer integration, no CUBE re-runs deferred to later stages.
+
+### Principle Alignment
+
+| Principle | Status | Notes |
+|---|---|---|
+| Human control and transparency | OK | Offline tool with human-readable + `--json` output; regenerable sidecar (bags remain data of record) |
+| Enforcement over documentation | Watch | If sensor topic names or SQLite schema become a convention, document them in the knowledge file and enforce via a schema version check |
+| Capture decisions, not just implementations | Action needed | Three open decisions (package home, exact schema, TF pattern reuse vs re-implement) must produce a plan-phase ADR or recorded decision — plan-task should capture them |
+| A change includes its consequences | Action needed | No mention of automated tests; the acceptance sketch is manual. An automated smoke test for the indexer and CLI should be part of the deliverables |
+| Only what's needed | OK | Non-goals are explicitly staged to #258 stages 2–5; scope is minimal |
+| Improve incrementally | OK | Correctly staged as step 1 of 5 |
+| Test what breaks | Watch | Query correctness (wrong tile match, ping-in-gap misidentified) is high-value to test; coverage-chase is not needed but at least one fixture-based regression test is expected |
+| Workspace vs. project separation | OK | Belongs in a project repo (`unh_marine_autonomy` or `marine_tools`); no workspace leakage |
+| Workspace improvements cascade | N/A | Project-specific tooling |
+| Primary framework first | OK | No framework concerns raised |
+
+### Project Principles
+
+| Principle | Status | Notes |
+|---|---|---|
+| Safety First | N/A | Offline tool, no control path |
+| Hardware Agnosticism | Watch | Issue names specific topic namespaces (M3 via kongsberg_em_bridge, Garmin GCV). The `sensor_type` field should use ADR-0005 vocabulary (`sidescan`, `mbes-bathy`) so adding a future sensor doesn't require a schema migration |
+| Modularity and Decoupling | Watch | Package placement affects the dependency graph; plan-task should decide based on which existing package already has the GGGS + store dependency (lean toward `unh_marine_autonomy` next to `marine_tiled_raster_store`) |
+| Simulation-First | N/A | Offline post-processing, no runtime behavior |
+| Iterative, Validated Evolution | OK | Staged correctly |
+| Standards Compliance | Watch | If a new ROS 2 package is created, ADR-0008 requires ROS 2 naming / `package.xml` / license headers; also check REP-144 for package naming |
+
+### ADR Applicability
+
+| ADR | Triggered | Notes |
+|---|---|---|
+| ADR-0001 (Adopt ADRs) | Yes | Open decisions on schema and package home need to be recorded — plan-task should produce a decision record, not just implementation |
+| ADR-0002 (Worktree isolation) | Yes | Already in worktree; continue as required |
+| ADR-0003 (Project-agnostic workspace) | No | Goes in project repo — correct |
+| ADR-0005 (Provenance registry) | Yes | Issue says to align `sensor_type` with ADR-0005 provenance registry ids "where practical." ADR-0005 D3 defines `sensor_class` vocabulary (`sidescan`, `mbes-bathy`, `mbes-backscatter`). The SQLite passes table's `sensor_type` column should use these values exactly; this is cheap insurance against a later schema migration when the second sensor/platform arrives |
+| ADR-0008 (ROS 2 conventions) | Yes | If a new ROS 2 package is created, naming, `package.xml`, and license headers must follow ROS 2 conventions |
+| ADR-0013 (progress.md vocabulary) | Yes | Subsequent phases must use correct entry types |
+
+### Consequences
+
+- `docs/sonar_ecosystem.md` is missing a "Survey indexer / query" row for #258/#259. The **Reprocess** row covers offline M3 bag → store, but the indexer is a distinct capability (it indexes *without* requiring store acceptance — pings that missed CUBE still appear). Add a row when the deliverable lands.
+- The SQLite schema is a cross-stage data contract — stages 2–5 of #258 will consume it. It should be documented in the plan (not just in code comments) so future stages have a stable surface to build against.
+- If a new package is created: `package.xml`, `CMakeLists.txt` (or `setup.py`), and license headers must be added per ADR-0008 and existing unh_marine_autonomy package conventions.
+
+### Recommendations
+
+- **Package home**: lean toward a new package inside `unh_marine_autonomy` (next to `marine_tiled_raster_store`), because GGGS and the store architecture already live there; `marine_tools` would create an inward dependency that `marine_tools` currently doesn't carry. Confirm in plan-task.
+- **Reuse the TF pattern from cube#63 / sidescan_mosaic_bag.cpp** (`marine_sidescan_mosaic/src/sidescan_mosaic_bag.cpp`). cube#63 is closed (M3 import landed). Plan-task should reference these implementations explicitly rather than designing a new TF walk.
+- **SQLite schema alignment with ADR-0005**: use `sensor_class` values from ADR-0005 D3 (`sidescan`, `mbes-bathy`) as the `sensor_type` vocabulary; record `platform` and `sensor` (model) in the bags table or a registry sidecar — consistent with `StoreMetadata` from the ADR-0005 #248 amendment.
+- **Add a fixture-based test**: at minimum, a test that builds a minimal mock bag with known pings, runs the indexer, and verifies the query CLI returns the expected tile/time-window result. The acceptance sketch (point at Massabesic) cannot serve as a regression test.
+- **Document the schema** in the plan ADR or a `docs/` file so stages 2–5 of #258 have a stable interface description without reading the implementation.
+
+### Actions
+- [ ] Capture open decisions (package home, SQLite schema, TF reuse) in a plan-phase ADR or recorded decision (not just code)
+- [ ] Add at least one automated fixture-based test for the indexer and query CLI
+- [ ] Align `sensor_type` column vocabulary with ADR-0005 D3 `sensor_class` values
+- [ ] Update `docs/sonar_ecosystem.md` to add a "Survey indexer / query" row referencing #258/#259 when the deliverable lands
+- [ ] If a new ROS 2 package is created, ensure `package.xml` / naming / license headers follow ADR-0008
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-07-13 00:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-259/plan.md` at `19d48e6`
+**Branch**: feature/issue-259 at `19d48e6`
+**Phases**: single
+
+### Open questions
+- [ ] GGGS level default — issue says "store's native level" (~level 13, 1 m) but O(10^5) tile rows per survey pass may be impractical; propose level 11 (~4 m) as default with `--level` override. Needs user input before implementation.
+- [ ] Sidescan `sensor_type` split — `sidescan-port`/`sidescan-stbd` vs single `sidescan`; plan proposes split in DB, `--sensor sidescan` matches both in query.
+- [ ] Merge gap tolerance default — 5.0 s placeholder; field calibration needed; exposed as `--merge-gap <s>`.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-07-13 17:57 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-259/plan.md` at `19d48e6`
+**PR**: PR-less (`--issue 259`)
+**Verdict**: approve-with-suggestions
+
+Independent fresh-context review (plan authored by Claude Sonnet; not a self-review).
+Technical claims verified against the tree: GGGS API supports both required directions
+(`Level::gridIndex` point/box→indices, `GridIndex::{west,east,south,north}…` index→bbox);
+the bounded-TF pattern (60 s cache, guard interval, `kMaxPending`) exists verbatim in both
+cited reference impls (`marine_sidescan_mosaic/src/sidescan_mosaic_bag.cpp`,
+`cube_bathymetry/.../import_bag_main.cpp`); message types (`SonarDetections`, `RawSonarImage`)
+correct; `docs/sonar_ecosystem.md` Arc 1 table present. Approach and scope are sound.
+
+### Findings
+- [ ] (must-fix) Core correctness paths untested — footprint→GGGS-tile enumeration and query tile-join have no test; issue-review asked for this. Both testable without bag I/O. — `plan.md:89`
+- [ ] (must-fix) Schema comment overstates ADR-0005 D3 vocab — `sidescan-port`/`sidescan-stbd` extend, not equal, D3 (`sidescan`/`mbes-backscatter`/`mbes-bathy`). — `plan.md:79`
+- [ ] (suggestion) ADR table mixes workspace vs project ADR numbers unlabeled — in-repo ADR-0002/0008 differ from cited workspace ADRs. — `plan.md:123`
+- [ ] (suggestion) New package not added to `.agents/README.md` Package Inventory. — `plan.md:95`
+- [ ] (suggestion) Schema is a cross-stage contract but documented only in ephemeral `plan.md` — consider a durable `docs/`/ADR home for stages 2–5. — `plan.md:59`
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-13 19:12 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-259 at `04dc9d7`
+**Mode**: pre-push
+**Depth**: Deep (reason: new C++ package, 2502 LOC, cross-layer GGGS/store + SQLite + rosbag2/TF)
+**Must-fix**: 4 | **Suggestions**: 5
+**Round**: 1 | **Ship**: continue — silent index-corruption path + query-output bug warrant a fix pass and re-read
+
+Static analysis clean (ament_cpplint; cppcheck TEST-macro/unused-member warnings are false positives). Two Claude Adversarial lenses (A logic, B systemic) converged on one theme: the indexer write path assumes every SQLite call succeeds and no exception occurs. Governance and plan adherence clean; all 4 prior plan-review findings resolved.
+
+### Findings
+- [x] (must-fix) Indexer write/ledger path ignores all sqlite3_step/prepare return codes → failed insert still COMMITs and marks bag fully-indexed (silent partial index; re-run skips as "unchanged") — `marine_survey_index/src/survey_index_bag_main.cpp:209,514-559`
+- [x] (must-fix) Per-bag loop has no try/catch and no ROLLBACK → a corrupt message (deserialize throws) or SQLite failure aborts the whole run, remaining bags lost, db not closed — `marine_survey_index/src/survey_index_bag_main.cpp:322`
+- [x] (must-fix) Query results not globally sorted across 200-tile chunks → CLI prints duplicate/out-of-order bag headers for boxes spanning >200 tiles — `marine_survey_index/src/query.cpp:89-137`
+- [x] (must-fix) Unguarded std::stoi on --level → uncaught exception crash (inconsistent with other args' toInt guard) — `marine_survey_index/src/survey_index_query_main.cpp:155`
+- [x] (suggestion) kMaxPending overflow flush bypasses the TF guard interval → oldest ping may be dropped as no-tf under backpressure (cross-pass confirmed) — `marine_survey_index/src/survey_index_bag_main.cpp:499-501`
+- [x] (suggestion) samples_per_beam==0 → negative slant range flips sidescan footprint to wrong side; skip like sample_rate<=0 — `marine_survey_index/src/survey_index_bag_main.cpp:491-495`
+- [x] (suggestion) fingerprint/scanForBags use throwing filesystem iteration; broken symlink/permission error aborts run — use error_code overloads — `marine_survey_index/src/survey_index_bag_main.cpp:162,183`
+- [x] (suggestion) std::string from possibly-null sqlite3_column_text (latent UB; columns NOT NULL today) — `marine_survey_index/src/query.cpp:124`
+- [x] (suggestion) Plan drift: MBES level default L10 vs plan's "~L13 store-native" — per-sensor split refinement, consistent in code+help+schema doc; noted, not a defect — `marine_survey_index/src/survey_index_bag_main.cpp:273` (deferred: not a defect — the per-sensor level split is intentional and already reconciled in `docs/survey_index_schema.md` and the CLI help; no code change warranted)
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-13 19:35 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-259 at `507cf09`
+**Addressed**: Local Review (Pre-Push) (2026-07-13 19:12 +00:00, `04dc9d7`) — 4 must-fix + 5 suggestions
+**Commits**: `7652f54` `3f49415` `a614d8f` `d5bc8df` `19e8d41` `a3ad994` `507cf09`
+
+Fixed all 8 actionable findings; the 9th (plan-drift note) was consciously deferred
+as not-a-defect. Rebuilt `marine_survey_index` and re-ran its test suite after the
+fixes: 10/10 test targets pass (4 gtest suites + cpplint/uncrustify/cppcheck/copyright/
+lint_cmake/xmllint), 0 failures. F1 and F2 are the detect and roll-back halves of one
+write-path safety mechanism (adding error-code checks that throw, plus the per-bag
+try/catch that catches them and ROLLBACKs), so they share a single commit `d5bc8df`.
+
+### Actions
+- [x] Indexer write/ledger path now checks every sqlite3 prepare/step return code (SqliteError + prepareOrThrow/stepDoneOrThrow/StmtGuard); a failed write throws instead of COMMITting a partial index — `marine_survey_index/src/survey_index_bag_main.cpp` (`d5bc8df`)
+- [x] Per-bag loop wrapped in try/catch that ROLLBACKs and continues; a corrupt-message deserialize or SQLite failure now loses only that bag and the db closes cleanly — `marine_survey_index/src/survey_index_bag_main.cpp` (`d5bc8df`)
+- [x] Query rows sorted globally across tile chunks so the CLI prints each bag's rows contiguously and in time order — `marine_survey_index/src/query.cpp` (`19e8d41`)
+- [x] `--level` parsed via a guarded `toInt` in the query CLI (matches the other args) instead of an unguarded `std::stoi` — `marine_survey_index/src/survey_index_query_main.cpp` (`507cf09`)
+- [x] kMaxPending overflow first drains TF-passed pings (honours the guard), forcing the oldest out only if TF has genuinely stalled — `marine_survey_index/src/survey_index_bag_main.cpp` (`3f49415`)
+- [x] Sidescan pings with `samples_per_beam == 0` are skipped (would drive slantRange negative and flip the footprint) — `marine_survey_index/src/survey_index_bag_main.cpp` (`7652f54`)
+- [x] `fingerprint`/`scanForBags` use `error_code` filesystem iteration (skip_permission_denied) so a broken symlink/permission error no longer aborts the run — `marine_survey_index/src/survey_index_bag_main.cpp` (`a614d8f`)
+- [x] Query row text columns read via a null-safe `columnText` helper (avoids UB if a column is ever NULL) — `marine_survey_index/src/query.cpp` (`a3ad994`)
+- [x] Plan-drift note on the MBES/sidescan level split — `marine_survey_index/src/survey_index_bag_main.cpp:273` (deferred: not a defect — intentional per-sensor split, already reconciled in `docs/survey_index_schema.md` and CLI help; no code change)
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-13 20:12 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-259 at `70ff424`
+**Mode**: pre-push
+**Depth**: Deep (reason: new C++ package, 2679 LOC, cross-layer GGGS/store + SQLite + rosbag2/TF)
+**Must-fix**: 0 | **Suggestions**: 2
+**Round**: 2 | **Ship**: recommended — no must-fix; all 8 round-1 findings verified fixed; only new change (default level → L14) is clean and consistently propagated
+
+Round 2 of the pre-push review. Static analysis clean (ament_cpplint "No problems found").
+Two fresh-context Claude Adversarial lenses (A logic, B systemic) ran; their must-fix
+claims were verified against the code and found to be false positives (the `--scan`
+double-increment skips DIR correctly; sqlite3 bind/step are non-throwing C calls so no
+statement leak; `Time.sec` is int32 so no ns overflow) — none reported. Governance and
+plan adherence clean: package.xml (MIT/ADR-0008), `.agents/README` inventory + ecosystem
+row + durable schema doc all present; L14 default recorded in plan Decisions (no drift).
+Only two low-severity robustness suggestions remain; neither blocks the ship.
+
+### Findings
+- [ ] (suggestion) `jsonEscape` omits JSON control chars (`\n`,`\t`,<0x20) → invalid `--json` for pathological bag paths — `marine_survey_index/src/survey_index_query_main.cpp:89`
+- [ ] (suggestion) Query read loop ignores `sqlite3_step`/`bind` return codes → silent partial results on a mid-scan DB error (indexer checks every code; query path doesn't) — `marine_survey_index/src/query.cpp:79`
+
+## Published
+**Status**: complete
+**When**: 2026-07-14
+**By**: Claude Code Agent (Claude Fable 5)
+
+Publish checkpoint approved by Roland. Branch `feature/issue-259` pushed at
+`7cb005b`; PR opened: https://github.com/rolker/unh_marine_autonomy/pull/261
+(base `jazzy`, `Closes #259`). The two round-2 non-blocking suggestions
+(jsonEscape control chars; query read-path sqlite return codes) are noted in
+the PR body to fold into stage 2 (#258) work.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-14 12:40 +00:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #261 at `6957512`
+**Sources**: 3 (Copilot R1 @ `7cb005b`, Copilot R2 @ `6957512`, Local Review (Pre-Push) round 2 @ `70ff424`)
+**Cross-source confirmations**: 2
+**CI**: all-pass (build ✅, copilot ✅)
+
+### Findings
+- [x] (cross-confirmed: Copilot R1+R2 + Local Review round 2) `jsonEscape` only escapes `"` and `\` — control chars (newline/tab/<0x20) in a bag path produce invalid `--json` output; escape standard sequences + `\u00XX` — `marine_survey_index/src/survey_index_query_main.cpp:89`
+- [x] (cross-confirmed: Copilot R1+R2 + Local Review round 2) Query read loops (`distinctLevels`, `queryPasses`) ignore the terminal `sqlite3_step` code — a mid-scan DB error silently returns partial results (CLI may claim "no coverage"); capture final step result, throw unless `SQLITE_DONE` — `marine_survey_index/src/query.cpp:84,145`
+- [x] (medium, Copilot R1+R2) `openIndexDb` treats any non-`SQLITE_ROW` step result as "fresh DB" and INSERTs a schema_version row — a step error (corrupt/unreadable DB) is masked and the DB is written to; only insert on `SQLITE_DONE`, throw+close otherwise — `marine_survey_index/src/schema.cpp:117`
+- [x] (low, Copilot R1) `--level`/`--mbes-level`/`--sidescan-level` are cast to `uint8_t` without range validation — out-of-range values hit `gggs::Level`'s `std::out_of_range` outside any try/catch → `std::terminate` abort instead of a clean CLI error; negative `--merge-gap` degenerates to one pass per ping — validate 0–20 (and merge-gap ≥ 0) at parse time — `marine_survey_index/src/survey_index_bag_main.cpp:347`, `marine_survey_index/src/survey_index_query_main.cpp:165`
+
+### False positives
+- (none — all four verified against current code at head `6957512`; Copilot R1's `commit_id` differs from head only by a progress.md commit, so its code references are current)
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-14 09:40 -0400
+**By**: Claude Code Agent (Claude Opus)
+
+**PR**: #261 at `6d46fda`
+**Addressed**: Integrated Review (2026-07-14 12:40 +00:00, `6957512`) — 4 findings (2 cross-confirmed, 1 medium, 1 low)
+**Commits**: `560dd53` `6cb55a8` `a0d8133` `6d46fda`
+
+All 4 findings actioned; none deferred. Rebuilt `marine_survey_index` and re-ran
+its full test suite after the fixes: 86 tests, 0 failures, 13 skipped (all gtest
+suites + cpplint/uncrustify/cppcheck/copyright/lint_cmake/xmllint green). The
+finding-4 commit's `toLevel` rename pushed one line past 100 cols; the wrap fix
+was amended into that same commit so each commit is self-contained and hook-clean.
+
+### Actions
+- [x] `jsonEscape` now escapes `"` `\` `\b` `\f` `\n` `\r` `\t` and emits `\u00XX` for other control chars (<0x20), producing valid JSON for pathological bag paths — `marine_survey_index/src/survey_index_query_main.cpp` (`560dd53`)
+- [x] `distinctLevels` and `queryPasses` capture the terminal `sqlite3_step` result and throw unless `SQLITE_DONE`, so a mid-scan DB error surfaces instead of returning silent partial results — `marine_survey_index/src/query.cpp` (`6cb55a8`)
+- [x] `openIndexDb` only stamps a fresh DB on `SQLITE_DONE`; any other non-`SQLITE_ROW` step result now throws + closes instead of masking a read error as an empty table and writing to a corrupt DB — `marine_survey_index/src/schema.cpp` (`a0d8133`)
+- [x] Added a bounded `toLevel` helper (rejects levels outside 0–20 with a clean CLI error before `gggs::Level` can `std::terminate`) used for `--level`/`--mbes-level`/`--sidescan-level` in both CLIs, plus a `--merge-gap >= 0` guard (also rejects NaN) — `marine_survey_index/src/survey_index_bag_main.cpp`, `marine_survey_index/src/survey_index_query_main.cpp` (`6d46fda`)
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-14 13:55 +00:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #261 at `5bdbef1` (round 2)
+**Sources**: 2 (Copilot R3 @ `5bdbef1`; prior Integrated Review @ `6957512` — all 4 findings verified fixed at head)
+**Cross-source confirmations**: 0
+**CI**: copilot ✅; build in progress at head
+
+Copilot's R1/R2 comments (10) all target pre-fix commits; each of the four
+underlying findings is verified fixed at head (`560dd53`/`6cb55a8`/`a0d8133`/
+`6d46fda`) — classified Addressed, not repeated below. Two NEW findings from
+Copilot R3 against current code:
+
+### Findings
+- [x] (low, Copilot R3) `tilesForBoundingBox` documents "must not cross the antimeridian" but nothing enforces it — a straddling box (or a ping footprint near ±180°) silently enumerates the long way around: at L14 a near-whole-world tile set (hang / memory blowup). Add a fail-loud guard (lon span > 180° after normalization → throw std::invalid_argument); full dateline-split support stays out of scope for stage 1. The indexer's per-bag try/catch turns the throw into a counted per-bag error; the query CLI reports it cleanly — `marine_survey_index/src/footprint.cpp:51`
+- [x] (low, Copilot R3) test helper `singleInt` uses EXPECT_* then unconditionally calls `sqlite3_step`/`sqlite3_column_int` — a failed prepare leaves `stmt` null and the test can segfault instead of failing cleanly (ASSERT_* can't be used directly in a value-returning helper; guard null/step-result and return a sentinel with ADD_FAILURE) — `marine_survey_index/test/test_schema.cpp:44`
+
+### False positives
+- (none this round; the 10 stale R1/R2 comments are Addressed at head, not false positives)
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-14 14:20 +00:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+Addressed both round-2 Integrated Review findings (host-inline; fixes are
+small and mechanical):
+
+- [x] Antimeridian guard: `tilesForBoundingBox` normalizes longitudes into
+  [-180, 180) and throws `std::invalid_argument` on a >180-deg span instead of
+  silently enumerating the long way around; header contract updated; new
+  regression test `TileEnumeration.AntimeridianCrossingBoxThrows` (crossing
+  expressed both wrapped and unwrapped + non-crossing near-dateline box) —
+  `marine_survey_index/src/footprint.cpp` (`8e3a8ac`)
+- [x] `singleInt` test helper guards prepare/step failures with ADD_FAILURE +
+  sentinel return instead of stepping a possibly-null statement —
+  `marine_survey_index/test/test_schema.cpp` (`7328755`)
+
+Verification: rebuilt + full suite green — **87 tests, 0 failures, 13
+skipped** (one new test; cpplint/uncrustify/cppcheck/xmllint all pass).
+
+Next: push; Copilot re-review round.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-14 15:05 +00:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #261 at `6869ec4` (round 3)
+**Sources**: 2 (Copilot R4 @ `6869ec4`; prior Integrated Review rounds 1–2 — all 6 prior findings verified fixed at head)
+**Cross-source confirmations**: 0
+**CI**: copilot ✅; build in progress at head
+
+All 12 comments from Copilot's earlier reviews target pre-fix commits and are
+Addressed at head. Three NEW hygiene findings from Copilot R4 against current
+code — the first two were introduced by the round-1/2 fixes themselves
+(`std::exit` arrived with the `toLevel`/merge-gap guards without `<cstdlib>`):
+
+### Findings
+- [x] (low, Copilot R4) `survey_index_query_main.cpp` uses `std::exit` and `std::max` via transitive includes only — add `<cstdlib>` and `<algorithm>` — `marine_survey_index/src/survey_index_query_main.cpp:32`
+- [x] (low, Copilot R4) `survey_index_bag_main.cpp` uses `std::exit` without `<cstdlib>` — `marine_survey_index/src/survey_index_bag_main.cpp:50`
+- [x] (low, Copilot R4) `CMakeLists.txt` doesn't set `CMAKE_CXX_STANDARD` while the package uses C++17 (`std::filesystem`, `std::clamp`); sibling packages (marine_autonomy, marine_sidescan_mosaic) set 17 explicitly — adopt marine_sidescan_mosaic's guarded form — `marine_survey_index/CMakeLists.txt:6`
+
+### False positives
+- (none — all three verified: usages confirmed present, includes confirmed absent, repo convention confirmed)
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-14 15:20 +00:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+Addressed all three round-3 findings in one commit (`195dfa8`) — build hygiene
+only, no behavior change: explicit `<cstdlib>` in both CLIs + `<algorithm>`
+in the query CLI; guarded `CMAKE_CXX_STANDARD 17` (marine_sidescan_mosaic
+form). Clean rebuild + full suite green: **87 tests, 0 failures, 13 skipped**.
+
+Merge authorized by Roland ("fix them, then push and merge").
