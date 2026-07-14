@@ -189,3 +189,14 @@ Only two low-severity robustness suggestions remain; neither blocks the ship.
 ### Findings
 - [ ] (suggestion) `jsonEscape` omits JSON control chars (`\n`,`\t`,<0x20) → invalid `--json` for pathological bag paths — `marine_survey_index/src/survey_index_query_main.cpp:89`
 - [ ] (suggestion) Query read loop ignores `sqlite3_step`/`bind` return codes → silent partial results on a mid-scan DB error (indexer checks every code; query path doesn't) — `marine_survey_index/src/query.cpp:79`
+
+## Published
+**Status**: complete
+**When**: 2026-07-14
+**By**: Claude Code Agent (Claude Fable 5)
+
+Publish checkpoint approved by Roland. Branch `feature/issue-259` pushed at
+`7cb005b`; PR opened: https://github.com/rolker/unh_marine_autonomy/pull/261
+(base `jazzy`, `Closes #259`). The two round-2 non-blocking suggestions
+(jsonEscape control chars; query read-path sqlite return codes) are noted in
+the PR body to fold into stage 2 (#258) work.
