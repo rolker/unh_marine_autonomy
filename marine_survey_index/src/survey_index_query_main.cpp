@@ -77,6 +77,19 @@ int toInt(const std::string & s, const std::string & flag)
   }
 }
 
+// GGGS levels are 0..20 (gggs::Level throws std::out_of_range at >= 21, and it
+// is constructed outside any try/catch → std::terminate). Reject out-of-range
+// values here so the CLI exits cleanly instead of aborting.
+std::uint8_t toLevel(const std::string & s, const std::string & flag)
+{
+  const int v = toInt(s, flag);
+  if (v < 0 || v > 20) {
+    std::cerr << "error: " << flag << " must be in [0, 20], got " << v << "\n";
+    std::exit(2);
+  }
+  return static_cast<std::uint8_t>(v);
+}
+
 std::string isoUtc(std::int64_t t_ns)
 {
   const std::time_t seconds = static_cast<std::time_t>(t_ns / 1000000000LL);
@@ -176,7 +189,7 @@ int main(int argc, char ** argv)
   // or every level the index actually holds (for the sensor filter).
   std::vector<std::uint8_t> levels;
   if (!level_arg.empty()) {
-    levels.push_back(static_cast<std::uint8_t>(toInt(level_arg, "--level")));
+    levels.push_back(toLevel(level_arg, "--level"));
   } else {
     levels = marine_survey_index::distinctLevels(db, sensor);
   }

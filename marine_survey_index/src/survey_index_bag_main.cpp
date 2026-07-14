@@ -133,6 +133,19 @@ int toInt(const std::string & s, const std::string & flag)
   }
 }
 
+// GGGS levels are 0..20 (gggs::Level throws std::out_of_range at >= 21, and it
+// is constructed outside any try/catch → std::terminate). Reject out-of-range
+// values here so the CLI exits cleanly instead of aborting.
+int toLevel(const std::string & s, const std::string & flag)
+{
+  const int v = toInt(s, flag);
+  if (v < 0 || v > 20) {
+    std::cerr << "error: " << flag << " must be in [0, 20], got " << v << "\n";
+    std::exit(2);
+  }
+  return v;
+}
+
 // Bag identity for the incremental-skip ledger: total regular-file bytes and
 // the newest mtime under the bag directory (or of the single file). A re-run
 // over an unchanged bag is a no-op; a changed bag is re-indexed.
@@ -333,15 +346,20 @@ int main(int argc, char ** argv)
   const double sound_speed_fallback =
     toDouble(argValue(argc, argv, "--sound-speed", "1500.0"), "--sound-speed");
   const double merge_gap_s = toDouble(argValue(argc, argv, "--merge-gap", "5.0"), "--merge-gap");
+  if (!(merge_gap_s >= 0.0)) {  // also rejects NaN
+    std::cerr << "error: --merge-gap must be >= 0, got " << merge_gap_s << "\n";
+    return 2;
+  }
   // Default L14 (~54 m tiles): the tile-of-interest scale for target review
   // (Roland, 2026-07-13) — small enough to select a neighbourhood, and it
   // rolls up to the coarser store-native tiles (bathy L10, sidescan L13)
   // through the GGGS quadtree when stage 2 joins against store tiling.
-  int mbes_level_n = toInt(argValue(argc, argv, "--mbes-level", "14"), "--mbes-level");
-  int sidescan_level_n = toInt(argValue(argc, argv, "--sidescan-level", "14"), "--sidescan-level");
+  int mbes_level_n = toLevel(argValue(argc, argv, "--mbes-level", "14"), "--mbes-level");
+  int sidescan_level_n =
+    toLevel(argValue(argc, argv, "--sidescan-level", "14"), "--sidescan-level");
   const std::string level_override = argValue(argc, argv, "--level", "");
   if (!level_override.empty()) {
-    mbes_level_n = sidescan_level_n = toInt(level_override, "--level");
+    mbes_level_n = sidescan_level_n = toLevel(level_override, "--level");
   }
   const gggs::Level mbes_level(static_cast<std::uint8_t>(mbes_level_n));
   const gggs::Level sidescan_level(static_cast<std::uint8_t>(sidescan_level_n));
