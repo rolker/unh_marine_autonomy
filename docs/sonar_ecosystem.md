@@ -7,7 +7,8 @@ current; when an umbrella closes or a frontier shifts, update the relevant row.
 
 > Status legend: ✅ done · 🔨 in progress · 📋 designed, not built · ⚠️ blocked/degraded
 
-_Last verified: 2026-06-29 (full status audit against PR/merge state)._
+_Last verified: 2026-06-29 (full status audit against PR/merge state);
+"Where to direct efforts" frontier updated 2026-07-13 ([#258](https://github.com/rolker/unh_marine_autonomy/issues/258))._
 
 ## The two arcs
 
@@ -164,11 +165,26 @@ from the offline import ([cube#80], durable store layer), live coverage from
 nadir-stripe angle-correction ([cube#81]) is now **closed** (PR cube#84 merged, an
 empirical angular-response/ARA approach) and corrects both once enabled.
 
-**Next frontier:** the three-tools push is complete. The remaining legibility gaps
-are **Arc 2's `contact_manager` link** — the load-bearing `mark → contact_manager`
-hop ([rqt#81]) plus the CRUD/curate store (#157/#167, in flight) and a unifying
-target-arc umbrella (see the tracking-gap note above) — and the **sidescan track**
-([#171]/[#185]: live mosaic + offline EGN). See "Longer-term / supporting" below.
+**Next frontier (2026-07-13): survey data exploration —
+[#258](https://github.com/rolker/unh_marine_autonomy/issues/258).** The campaign
+is over and the question changed from "display coverage live" to "review what we
+collected" (target candidates to re-survey / ROV-dive on Massabesic, and the same
+tooling for the late-August Isles of Shoals data). The stores are averaged
+products; target work needs the **raw, un-averaged data behind a location**.
+#258 is the umbrella: a tile-indexed explorer — survey index + "which bags saw
+this spot" query CLI ([#259](https://github.com/rolker/unh_marine_autonomy/issues/259),
+stage 1) → stores-as-overview pane → multi-bag single-pass drill-down (raw
+soundings + sidescan with shadows preserved) → per-tile CUBE re-runs with custom
+parameters → surface texturing / sidescan drape. CAMP deliberately stays the
+realtime monitoring/planning tool; exploration lives in the offline explorer
+(`marine_perception_tools`, growing out of `sidescan_target_viewer`).
+
+The other legibility gaps remain: **Arc 2's `contact_manager` link** — the
+load-bearing `mark → contact_manager` hop ([rqt#81]) plus the CRUD/curate store
+(#157/#167, in flight — where a reviewed mark becomes a curated re-survey/ROV
+target) and a unifying target-arc umbrella (see the tracking-gap note above) —
+and the **sidescan track** ([#171]/[#185]: live mosaic + offline EGN). See
+"Longer-term / supporting" below.
 
 ### Longer-term / supporting
 
