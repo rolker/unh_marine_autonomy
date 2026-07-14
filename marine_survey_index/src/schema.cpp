@@ -109,11 +109,20 @@ sqlite3 * openIndexDb(const std::string & path)
         " — delete the file and re-run the indexer to regenerate it (bags are the "
         "data of record; nothing is lost)");
     }
-  } else {
+  } else if (step == SQLITE_DONE) {
+    // Empty schema_version table → genuinely fresh DB: stamp the version.
     sqlite3_finalize(stmt);
     execOrThrow(
       db, ("INSERT INTO schema_version (version) VALUES (" +
       std::to_string(kSchemaVersion) + ");").c_str());
+  } else {
+    // Any other step result is a read error (corrupt/unreadable DB) — do not
+    // mask it as a fresh DB and write to it.
+    sqlite3_finalize(stmt);
+    const std::string message = sqlite3_errmsg(db);
+    sqlite3_close(db);
+    throw std::runtime_error(
+      "survey index: reading schema_version from '" + path + "': " + message);
   }
   return db;
 }
