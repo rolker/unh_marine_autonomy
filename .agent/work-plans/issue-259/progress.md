@@ -240,3 +240,25 @@ was amended into that same commit so each commit is self-contained and hook-clea
 - [x] `distinctLevels` and `queryPasses` capture the terminal `sqlite3_step` result and throw unless `SQLITE_DONE`, so a mid-scan DB error surfaces instead of returning silent partial results — `marine_survey_index/src/query.cpp` (`6cb55a8`)
 - [x] `openIndexDb` only stamps a fresh DB on `SQLITE_DONE`; any other non-`SQLITE_ROW` step result now throws + closes instead of masking a read error as an empty table and writing to a corrupt DB — `marine_survey_index/src/schema.cpp` (`a0d8133`)
 - [x] Added a bounded `toLevel` helper (rejects levels outside 0–20 with a clean CLI error before `gggs::Level` can `std::terminate`) used for `--level`/`--mbes-level`/`--sidescan-level` in both CLIs, plus a `--merge-gap >= 0` guard (also rejects NaN) — `marine_survey_index/src/survey_index_bag_main.cpp`, `marine_survey_index/src/survey_index_query_main.cpp` (`6d46fda`)
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-14 13:55 +00:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #261 at `5bdbef1` (round 2)
+**Sources**: 2 (Copilot R3 @ `5bdbef1`; prior Integrated Review @ `6957512` — all 4 findings verified fixed at head)
+**Cross-source confirmations**: 0
+**CI**: copilot ✅; build in progress at head
+
+Copilot's R1/R2 comments (10) all target pre-fix commits; each of the four
+underlying findings is verified fixed at head (`560dd53`/`6cb55a8`/`a0d8133`/
+`6d46fda`) — classified Addressed, not repeated below. Two NEW findings from
+Copilot R3 against current code:
+
+### Findings
+- [ ] (low, Copilot R3) `tilesForBoundingBox` documents "must not cross the antimeridian" but nothing enforces it — a straddling box (or a ping footprint near ±180°) silently enumerates the long way around: at L14 a near-whole-world tile set (hang / memory blowup). Add a fail-loud guard (lon span > 180° after normalization → throw std::invalid_argument); full dateline-split support stays out of scope for stage 1. The indexer's per-bag try/catch turns the throw into a counted per-bag error; the query CLI reports it cleanly — `marine_survey_index/src/footprint.cpp:51`
+- [ ] (low, Copilot R3) test helper `singleInt` uses EXPECT_* then unconditionally calls `sqlite3_step`/`sqlite3_column_int` — a failed prepare leaves `stmt` null and the test can segfault instead of failing cleanly (ASSERT_* can't be used directly in a value-returning helper; guard null/step-result and return a sentinel with ADD_FAILURE) — `marine_survey_index/test/test_schema.cpp:44`
+
+### False positives
+- (none this round; the 10 stale R1/R2 comments are Addressed at head, not false positives)
