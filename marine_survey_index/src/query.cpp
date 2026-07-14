@@ -76,10 +76,14 @@ std::vector<std::uint8_t> distinctLevels(sqlite3 * db, const std::string & senso
     sqlite3_bind_text(stmt, 1, bind_value.c_str(), -1, SQLITE_TRANSIENT);
   }
   std::vector<std::uint8_t> levels;
-  while (sqlite3_step(stmt) == SQLITE_ROW) {
+  int rc;
+  while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
     levels.push_back(static_cast<std::uint8_t>(sqlite3_column_int(stmt, 0)));
   }
   sqlite3_finalize(stmt);
+  if (rc != SQLITE_DONE) {
+    throwSqlite(db, "distinctLevels step");
+  }
   return levels;
 }
 
@@ -129,7 +133,8 @@ std::vector<PassRow> queryPasses(
       sqlite3_bind_text(stmt, slot++, bind_value.c_str(), -1, SQLITE_TRANSIENT);
     }
 
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
+    int rc;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
       PassRow row;
       row.bag_path = columnText(stmt, 0);
       row.sensor_type = columnText(stmt, 1);
@@ -143,6 +148,9 @@ std::vector<PassRow> queryPasses(
       rows.push_back(std::move(row));
     }
     sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+      throwSqlite(db, "queryPasses step");
+    }
   }
 
   // Each chunk's statement sorts independently, so a box spanning more than one
