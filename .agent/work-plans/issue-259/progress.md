@@ -257,8 +257,31 @@ underlying findings is verified fixed at head (`560dd53`/`6cb55a8`/`a0d8133`/
 Copilot R3 against current code:
 
 ### Findings
-- [ ] (low, Copilot R3) `tilesForBoundingBox` documents "must not cross the antimeridian" but nothing enforces it — a straddling box (or a ping footprint near ±180°) silently enumerates the long way around: at L14 a near-whole-world tile set (hang / memory blowup). Add a fail-loud guard (lon span > 180° after normalization → throw std::invalid_argument); full dateline-split support stays out of scope for stage 1. The indexer's per-bag try/catch turns the throw into a counted per-bag error; the query CLI reports it cleanly — `marine_survey_index/src/footprint.cpp:51`
-- [ ] (low, Copilot R3) test helper `singleInt` uses EXPECT_* then unconditionally calls `sqlite3_step`/`sqlite3_column_int` — a failed prepare leaves `stmt` null and the test can segfault instead of failing cleanly (ASSERT_* can't be used directly in a value-returning helper; guard null/step-result and return a sentinel with ADD_FAILURE) — `marine_survey_index/test/test_schema.cpp:44`
+- [x] (low, Copilot R3) `tilesForBoundingBox` documents "must not cross the antimeridian" but nothing enforces it — a straddling box (or a ping footprint near ±180°) silently enumerates the long way around: at L14 a near-whole-world tile set (hang / memory blowup). Add a fail-loud guard (lon span > 180° after normalization → throw std::invalid_argument); full dateline-split support stays out of scope for stage 1. The indexer's per-bag try/catch turns the throw into a counted per-bag error; the query CLI reports it cleanly — `marine_survey_index/src/footprint.cpp:51`
+- [x] (low, Copilot R3) test helper `singleInt` uses EXPECT_* then unconditionally calls `sqlite3_step`/`sqlite3_column_int` — a failed prepare leaves `stmt` null and the test can segfault instead of failing cleanly (ASSERT_* can't be used directly in a value-returning helper; guard null/step-result and return a sentinel with ADD_FAILURE) — `marine_survey_index/test/test_schema.cpp:44`
 
 ### False positives
 - (none this round; the 10 stale R1/R2 comments are Addressed at head, not false positives)
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-14 14:20 +00:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+Addressed both round-2 Integrated Review findings (host-inline; fixes are
+small and mechanical):
+
+- [x] Antimeridian guard: `tilesForBoundingBox` normalizes longitudes into
+  [-180, 180) and throws `std::invalid_argument` on a >180-deg span instead of
+  silently enumerating the long way around; header contract updated; new
+  regression test `TileEnumeration.AntimeridianCrossingBoxThrows` (crossing
+  expressed both wrapped and unwrapped + non-crossing near-dateline box) —
+  `marine_survey_index/src/footprint.cpp` (`8e3a8ac`)
+- [x] `singleInt` test helper guards prepare/step failures with ADD_FAILURE +
+  sentinel return instead of stepping a possibly-null statement —
+  `marine_survey_index/test/test_schema.cpp` (`7328755`)
+
+Verification: rebuilt + full suite green — **87 tests, 0 failures, 13
+skipped** (one new test; cpplint/uncrustify/cppcheck/xmllint all pass).
+
+Next: push; Copilot re-review round.
