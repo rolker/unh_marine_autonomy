@@ -33,11 +33,21 @@ namespace
 // the tables and version row; a re-open of a valid DB succeeds; a version
 // mismatch fails loudly with the regenerate hint.
 
+// Returns -1 after ADD_FAILURE on any sqlite error, so a failed prepare
+// fails the test cleanly instead of stepping a null statement (ASSERT_* is
+// unavailable in a value-returning helper).
 int singleInt(sqlite3 * db, const char * sql)
 {
   sqlite3_stmt * stmt = nullptr;
-  EXPECT_EQ(sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr), SQLITE_OK);
-  EXPECT_EQ(sqlite3_step(stmt), SQLITE_ROW);
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    ADD_FAILURE() << "prepare failed for '" << sql << "': " << sqlite3_errmsg(db);
+    return -1;
+  }
+  if (sqlite3_step(stmt) != SQLITE_ROW) {
+    ADD_FAILURE() << "no row for '" << sql << "': " << sqlite3_errmsg(db);
+    sqlite3_finalize(stmt);
+    return -1;
+  }
   const int value = sqlite3_column_int(stmt, 0);
   sqlite3_finalize(stmt);
   return value;
