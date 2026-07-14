@@ -24,6 +24,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <ctime>
 #include <iostream>
 #include <string>
@@ -90,10 +91,23 @@ std::string jsonEscape(const std::string & s)
 {
   std::string out;
   for (const char c : s) {
-    if (c == '"' || c == '\\') {
-      out += '\\';
+    switch (c) {
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\b': out += "\\b"; break;
+      case '\f': out += "\\f"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if (static_cast<unsigned char>(c) < 0x20) {
+          char buffer[7];
+          std::snprintf(buffer, sizeof(buffer), "\\u%04x", static_cast<unsigned char>(c));
+          out += buffer;
+        } else {
+          out += c;
+        }
     }
-    out += c;
   }
   return out;
 }
