@@ -302,9 +302,21 @@ code — the first two were introduced by the round-1/2 fixes themselves
 (`std::exit` arrived with the `toLevel`/merge-gap guards without `<cstdlib>`):
 
 ### Findings
-- [ ] (low, Copilot R4) `survey_index_query_main.cpp` uses `std::exit` and `std::max` via transitive includes only — add `<cstdlib>` and `<algorithm>` — `marine_survey_index/src/survey_index_query_main.cpp:32`
-- [ ] (low, Copilot R4) `survey_index_bag_main.cpp` uses `std::exit` without `<cstdlib>` — `marine_survey_index/src/survey_index_bag_main.cpp:50`
-- [ ] (low, Copilot R4) `CMakeLists.txt` doesn't set `CMAKE_CXX_STANDARD` while the package uses C++17 (`std::filesystem`, `std::clamp`); sibling packages (marine_autonomy, marine_sidescan_mosaic) set 17 explicitly — adopt marine_sidescan_mosaic's guarded form — `marine_survey_index/CMakeLists.txt:6`
+- [x] (low, Copilot R4) `survey_index_query_main.cpp` uses `std::exit` and `std::max` via transitive includes only — add `<cstdlib>` and `<algorithm>` — `marine_survey_index/src/survey_index_query_main.cpp:32`
+- [x] (low, Copilot R4) `survey_index_bag_main.cpp` uses `std::exit` without `<cstdlib>` — `marine_survey_index/src/survey_index_bag_main.cpp:50`
+- [x] (low, Copilot R4) `CMakeLists.txt` doesn't set `CMAKE_CXX_STANDARD` while the package uses C++17 (`std::filesystem`, `std::clamp`); sibling packages (marine_autonomy, marine_sidescan_mosaic) set 17 explicitly — adopt marine_sidescan_mosaic's guarded form — `marine_survey_index/CMakeLists.txt:6`
 
 ### False positives
 - (none — all three verified: usages confirmed present, includes confirmed absent, repo convention confirmed)
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-14 15:20 +00:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+Addressed all three round-3 findings in one commit (`195dfa8`) — build hygiene
+only, no behavior change: explicit `<cstdlib>` in both CLIs + `<algorithm>`
+in the query CLI; guarded `CMAKE_CXX_STANDARD 17` (marine_sidescan_mosaic
+form). Clean rebuild + full suite green: **87 tests, 0 failures, 13 skipped**.
+
+Merge authorized by Roland ("fix them, then push and merge").
