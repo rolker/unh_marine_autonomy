@@ -200,3 +200,22 @@ Publish checkpoint approved by Roland. Branch `feature/issue-259` pushed at
 (base `jazzy`, `Closes #259`). The two round-2 non-blocking suggestions
 (jsonEscape control chars; query read-path sqlite return codes) are noted in
 the PR body to fold into stage 2 (#258) work.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-14 12:40 +00:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #261 at `6957512`
+**Sources**: 3 (Copilot R1 @ `7cb005b`, Copilot R2 @ `6957512`, Local Review (Pre-Push) round 2 @ `70ff424`)
+**Cross-source confirmations**: 2
+**CI**: all-pass (build ✅, copilot ✅)
+
+### Findings
+- [ ] (cross-confirmed: Copilot R1+R2 + Local Review round 2) `jsonEscape` only escapes `"` and `\` — control chars (newline/tab/<0x20) in a bag path produce invalid `--json` output; escape standard sequences + `\u00XX` — `marine_survey_index/src/survey_index_query_main.cpp:89`
+- [ ] (cross-confirmed: Copilot R1+R2 + Local Review round 2) Query read loops (`distinctLevels`, `queryPasses`) ignore the terminal `sqlite3_step` code — a mid-scan DB error silently returns partial results (CLI may claim "no coverage"); capture final step result, throw unless `SQLITE_DONE` — `marine_survey_index/src/query.cpp:84,145`
+- [ ] (medium, Copilot R1+R2) `openIndexDb` treats any non-`SQLITE_ROW` step result as "fresh DB" and INSERTs a schema_version row — a step error (corrupt/unreadable DB) is masked and the DB is written to; only insert on `SQLITE_DONE`, throw+close otherwise — `marine_survey_index/src/schema.cpp:117`
+- [ ] (low, Copilot R1) `--level`/`--mbes-level`/`--sidescan-level` are cast to `uint8_t` without range validation — out-of-range values hit `gggs::Level`'s `std::out_of_range` outside any try/catch → `std::terminate` abort instead of a clean CLI error; negative `--merge-gap` degenerates to one pass per ping — validate 0–20 (and merge-gap ≥ 0) at parse time — `marine_survey_index/src/survey_index_bag_main.cpp:347`, `marine_survey_index/src/survey_index_query_main.cpp:165`
+
+### False positives
+- (none — all four verified against current code at head `6957512`; Copilot R1's `commit_id` differs from head only by a progress.md commit, so its code references are current)
