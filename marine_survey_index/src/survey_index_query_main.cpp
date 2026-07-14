@@ -22,9 +22,11 @@
 /// @file
 /// @brief Survey index query CLI: point/box → which bags saw it (#259).
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <iostream>
 #include <string>
