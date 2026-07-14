@@ -22,6 +22,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <stdexcept>
 
 #include "marine_survey_index/footprint.hpp"
 
@@ -122,6 +123,17 @@ TEST(TileEnumeration, EveryReturnedTileTouchesTheBox)
     EXPECT_LE(t.westLongitude(), lon_max);
     EXPECT_GE(t.eastLongitude(), lon_min);
   }
+}
+
+TEST(TileEnumeration, AntimeridianCrossingBoxThrows)
+{
+  // A crossing box must fail loud rather than enumerate the long way around
+  // (a near-whole-world tile set at fine levels).
+  EXPECT_THROW(tilesForBoundingBox(10.0, 179.9, 11.0, -179.9, kLevel), std::invalid_argument);
+  // Same crossing expressed without the wrap (lon > 180 gets normalized).
+  EXPECT_THROW(tilesForBoundingBox(10.0, 170.0, 11.0, 190.0, kLevel), std::invalid_argument);
+  // A legitimate box near (but not crossing) the antimeridian still works.
+  EXPECT_FALSE(tilesForBoundingBox(10.0, 179.0, 11.0, 179.9, kLevel).empty());
 }
 
 }  // namespace

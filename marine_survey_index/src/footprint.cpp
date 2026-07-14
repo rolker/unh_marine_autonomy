@@ -22,6 +22,8 @@
 #include "marine_survey_index/footprint.hpp"
 
 #include <algorithm>
+#include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace marine_survey_index
@@ -34,8 +36,20 @@ std::vector<gggs::GridIndex> tilesForBoundingBox(
   if (lat_min > lat_max) {
     std::swap(lat_min, lat_max);
   }
+  lon_min = gggs::normalizeLongitude(lon_min);
+  lon_max = gggs::normalizeLongitude(lon_max);
   if (lon_min > lon_max) {
     std::swap(lon_min, lon_max);
+  }
+  // Antimeridian-crossing boxes are unsupported (see the header contract).
+  // After normalization into [-180, 180) a crossing box always presents as a
+  // >180-degree span — without this guard it would silently enumerate the
+  // long way around (a near-whole-world tile set at fine levels). Fail loud;
+  // the indexer's per-bag error isolation and the query CLI both surface it.
+  if (lon_max - lon_min > 180.0) {
+    throw std::invalid_argument(
+      "tilesForBoundingBox: longitude span " + std::to_string(lon_max - lon_min) +
+      " deg exceeds 180 — boxes crossing the antimeridian are not supported");
   }
   lat_min = std::clamp(lat_min, -90.0, 90.0);
   lat_max = std::clamp(lat_max, -90.0, 90.0);

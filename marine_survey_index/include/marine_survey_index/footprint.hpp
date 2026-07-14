@@ -40,11 +40,14 @@ namespace marine_survey_index
 ///
 /// @param lat_min,lat_max Latitude bounds (degrees); swapped inputs are
 ///   normalized. Values are clamped to [-90, 90].
-/// @param lon_min,lon_max Longitude bounds (degrees); swapped inputs are
-///   normalized. The box must not cross the antimeridian — survey areas in
-///   this workspace (Massabesic, Isles of Shoals) never do; a crossing box
-///   would enumerate the long way around.
+/// @param lon_min,lon_max Longitude bounds (degrees); any range accepted
+///   (wrapped into [-180, 180)); swapped inputs are normalized. Boxes
+///   crossing the antimeridian are not supported — survey areas in this
+///   workspace (Massabesic, Isles of Shoals) never do.
 /// @return The touched grids, in iterator (row-major) order.
+/// @throws std::invalid_argument if the normalized longitude span exceeds
+///   180 degrees (an antimeridian-crossing or hemisphere-plus box), instead
+///   of silently enumerating the long way around.
 std::vector<gggs::GridIndex> tilesForBoundingBox(
   double lat_min, double lon_min, double lat_max, double lon_max,
   const gggs::Level & level);
