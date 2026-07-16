@@ -29,7 +29,14 @@ Hybrid adds complexity without a clear gain.
 
 **Accessor contract for #258 stages 3/5:**
 - `queryNavTrack(db, bag_id) → vector<NavPoint>` — full ordered track for one bag
-- `queryNavTrackInBox(db, lat_min, lon_min, lat_max, lon_max) → vector<NavPoint>` — all points inside a geographic bounding box (for map overview)
+- `queryNavTrackInBox(db, lat_min, lon_min, lat_max, lon_max) → vector<NavPoint>` — all points inside a geographic bounding box (for map overview). Antimeridian-crossing boxes (`lon_min > lon_max`) throw, matching the existing fail-loud guard in the pass box query — full split support stays deferred, consistently.
+
+**Point provenance (review-plan finding):** track points derive from each ping's
+*sensor ground origin* (`groundOrigin(gb)`), interleaved across up to three sensor
+topics (mbes/port/stbd) in one bag, then distance-decimated across that mixed
+stream. They are *not* samples of a single vehicle frame (base_link); at a 10 m
+stride the sensor-offset differences are negligible for map rendering, but the
+schema doc must state the provenance rather than imply a vehicle-frame track.
 
 ## Approach
 
@@ -52,6 +59,8 @@ Hybrid adds complexity without a clear gain.
    ≥ `--nav-stride-m` (default 10 m) OR no position has been accepted yet, push
    `{t_ns, lat, lon}` into a per-bag `nav_points` vector. One helper function
    `haversineMeters(lat1, lon1, lat2, lon2) → double` (degrees in, metres out).
+   Validate `--nav-stride-m` (> 0, finite) in `main()`, mirroring the existing
+   `--merge-gap` guard.
 
 5. **Persist nav points** — in the same per-bag `BEGIN … COMMIT` block, after
    flushing passes, INSERT all `nav_points` into `nav_track` bound to the bag id.
@@ -73,9 +82,9 @@ Hybrid adds complexity without a clear gain.
 
 | File | Change |
 |------|--------|
-| `include/marine_survey_index/schema.hpp` | Bump `kSchemaVersion` to 2; add `NavPoint` struct |
+| `include/marine_survey_index/schema.hpp` | Bump `kSchemaVersion` to 2 |
 | `src/schema.cpp` | Add `nav_track` DDL to `kSchemaDdl`; add spatial index |
-| `include/marine_survey_index/query.hpp` | Declare `queryNavTrack`, `queryNavTrackInBox` |
+| `include/marine_survey_index/query.hpp` | Add `NavPoint` struct (next to sibling `PassRow`); declare `queryNavTrack`, `queryNavTrackInBox` |
 | `src/query.cpp` | Implement both nav_track accessor functions |
 | `src/survey_index_bag_main.cpp` | Add `haversineMeters`, per-bag nav collection and INSERT |
 | `test/test_schema.cpp` | Update table-count assert 3→4; add nav_track check |
@@ -113,7 +122,7 @@ CREATE INDEX IF NOT EXISTS nav_track_geo  ON nav_track(latitude, longitude);
 | ADR | Triggered | How addressed |
 |---|---|---|
 | ADR-0005 (provenance registry / sensor_class) | No — nav track is not a sensor class, it is a vehicle position record. | N/A |
-| ADR-0008 (license / copyright headers) | Yes — new source files need MIT + UNH-CCOM header | All new `.cpp/.hpp` files include the standard header |
+| License/copyright header convention (workspace-wide; not this repo's ADR-0008, which is *Live Sonar Coverage Transport & Render* and is untriggered) | Yes — new source files need MIT + UNH-CCOM header | All new `.cpp/.hpp` files include the standard header |
 
 ## Consequences
 
