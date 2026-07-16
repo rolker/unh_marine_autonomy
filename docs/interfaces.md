@@ -240,6 +240,24 @@ prune-on-absence). See [ADR-0008](decisions/0008-live-sonar-coverage-transport-a
 - `std_msgs/Header header`
 - `TileIndex[] tiles`: consumer's missing/stale "need" list
 
+### Per-sensor acoustic metadata (ADR-0009)
+
+The acoustic analog of `sensor_msgs/CameraInfo`: latched (`transient_local`)
+per-sensor metadata published beside a sonar data stream and recorded in bags,
+so offline processing has the acquisition settings (pulse length, bandwidth,
+signal type — the GeoCoder ensonified-area inputs), intensity semantics, and
+correction state. No producer yet (format-proving prototype; `kongsberg_em_bridge`
+is the planned first producer). See
+[ADR-0009](decisions/0009-sonar-info-message.md).
+
+#### `marine_interfaces/SonarInfo`
+- `std_msgs/Header header`: `frame_id` = sensor frame of the data stream
+- `string sonar_model`, `string calibration_ref`, `builtin_interfaces/Time calibration_time`: identity + calibration hook
+- `float32[] pulse_lengths`, `float32[] bandwidths`, `uint8[] tx_signal_types`: acquisition settings, one element per TX sector
+- `uint8 intensity_quantity` / `intensity_scale` / `intensity_reference`, `float32 scale`/`offset`: what the intensity samples mean (three orthogonal axes)
+- `uint8 tvg_model`, `float32 tvg_absorption_db_per_km`, `float32 source_level_db`, `uint8 angular_normalization`: applied-correction state
+- `float32[] angular_response_*`, `float32[] beam_pattern_*`: empirical correction curves as data
+
 ## Related Documentation
 - [Sonar Data Ecosystem](sonar_ecosystem.md) - Big-picture map of sonar data flow + umbrella/ADR tracker
 - [Data Flows](data_flows.md) - System-level data flow diagrams

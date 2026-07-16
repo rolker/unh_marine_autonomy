@@ -55,29 +55,41 @@ topic, frame-aligned with the data stream and recorded in bags.
 
 - Published on a sibling topic next to the data stream (e.g. `.../sonar_info`
   beside `.../detections`), `header.frame_id` matching the stream.
-- **Latched**: `transient_local`, depth 1, so late joiners and bag recordings
-  always capture it.
-- **Republish on change**: any field change (e.g. an operator range-scale
-  change altering pulse length) emits a fresh message. Consumers associate a
-  ping with the most recent `SonarInfo` at or before its stamp.
+- **Latched**: `transient_local`, depth 1, so late joiners capture it.
+- **Republish on change AND on a slow heartbeat** (period ≤ 10 s recommended):
+  any field change (e.g. an operator range-scale change altering pulse
+  length) emits a fresh message immediately. The heartbeat exists because
+  latching alone does not survive **rosbag2 bag splitting** — the recorder
+  captures the latched value when the subscription is made but does not
+  re-persist it into later split segments, so a change-only publisher would
+  leave every segment after the first without any `SonarInfo`. At heartbeat
+  rates the bandwidth cost is negligible even with the curve arrays populated.
+  Consumers associate a ping with the most recent `SonarInfo` at or before
+  its stamp.
 
 ### Field set (see the message for authoritative comments)
 
 - **Identity / calibration hook**: `sonar_model`, `calibration_ref` (points at
-  e.g. `marine_mbes_backscatter_store` `SourceRecord.calibration_ref`,
-  ADR-0007), `calibration_time`.
+  e.g. `marine_mbes_backscatter_store` `StoreMetadata.calibration_ref` —
+  store-level per the ADR-0005 #248 amendment / ADR-0007 A.3),
+  `calibration_time`.
 - **Acquisition settings** *(new relative to the #240 strawman)*:
-  `pulse_lengths` + `tx_signal_types` (CW / FM up / FM down), one element per
-  transmit sector — the GeoCoder ensonified-area inputs. Arrays mirror how
+  `pulse_lengths` + `bandwidths` + `tx_signal_types` (CW / FM up / FM down),
+  one element per transmit sector — the GeoCoder ensonified-area inputs.
+  Bandwidth is required alongside pulse length because an FM pulse's
+  *effective* (post-matched-filter) length is ~1/bandwidth; without it the
+  ensonified area of a chirp is uncomputable from the bag. Arrays mirror how
   `PingInfo` handles per-sector/per-beam quantities.
 - **Intensity semantics**, decomposed into the three independent axes
   marine_msgs#18 conflates: `intensity_quantity` (raw ADC / amplitude /
   power), `intensity_scale` (linear / dB), `intensity_reference`
-  (uncalibrated-relative / dB re 1 µPa), plus a raw→physical `scale`/`offset`
-  map. `SonarImageData.dtype` (bytes) + `SonarInfo` (meaning) together are
-  unambiguous, with no field renames forced on the shared messages.
+  (relative vs absolute-re-1 µPa **only** — whether values are dB or linear
+  is carried entirely by `intensity_scale`, keeping the axes orthogonal),
+  plus a raw→physical `scale`/`offset` map. `SonarImageData.dtype` (bytes) +
+  `SonarInfo` (meaning) together are unambiguous, with no field renames
+  forced on the shared messages.
 - **Correction state**: `tvg_model` + `tvg_absorption_db_per_km`,
-  `source_level_db`, `backscatter_angle_normalized`, the empirical
+  `source_level_db`, `angular_normalization` (tri-state), the empirical
   angular-response curve (cube#81's ARA/AVG curve as data), and a beam-pattern
   curve.
 
@@ -91,9 +103,15 @@ topic, frame-aligned with the data stream and recorded in bags.
   consumer knows the current state and can undo or extend the chain. The
   alternative (describing a corrected/target representation) was considered
   and set aside for now.
-- **`*_UNKNOWN = 0` for every enum** (a deviation from the strawman, which had
-  `NONE = 0` for TVG): a default-constructed message makes no false claims —
-  "no TVG applied" is an assertion, "unknown" is the honest default.
+- **Honest defaults, scoped by type.** Every enum has `*_UNKNOWN = 0` (a
+  deviation from the strawman, which had `NONE = 0` for TVG), and the
+  strawman's `backscatter_angle_normalized` bool became the tri-state
+  `angular_normalization` — for these fields a default-constructed message
+  makes no false claims ("not applied" is an assertion; "unknown" is the
+  honest default). Float fields cannot get the same guarantee: rosidl
+  defaults them to 0.0, a plausible physical value, so the NaN-if-unknown
+  sentinels are a **producer obligation** (set NaN explicitly), stated in the
+  message's conventions block rather than relied on from defaults.
 - **Blended correction model** (option b from #240): one empirical
   angular-response curve carries the whole correction for now; a separate
   "processing parameters" message may split out later.
@@ -129,5 +147,11 @@ producers or consumers** in the same change.
 - Upstreaming will re-open the per-ping-vs-per-sensor split for the
   acquisition block; the raw-vs-corrected framing decision must be finalized
   before proposing there.
+- **Bag-migration debt is accepted**: bags recorded in the interim carry the
+  `marine_interfaces/msg/SonarInfo` type name. When the message upstreams
+  (and/or `pulse_lengths` migrates into `PingInfo`), a
+  `marine_interfaces/bmr/` `MessageUpdateRule` must be added so those bags —
+  the data of record — remain replayable. The package already carries
+  `bmr/from_marine_msgs.bmr` as precedent.
 - One more message in `marine_interfaces`'s already-broad surface; acceptable
   given the explicit upstream exit path.

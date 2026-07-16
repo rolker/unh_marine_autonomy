@@ -29,11 +29,17 @@ immediate follow-up (separate issue in `marine_tools`).
    block**:
    - `float32[] pulse_lengths` — per TX sector (parallel to how `PingInfo` does
      beamwidths); single-sector sonars publish one element.
+   - `float32[] bandwidths` — required to recover the effective
+     (post-matched-filter) pulse length of FM pulses (review round-1 addition).
    - `uint8[] tx_signal_types` (CW / FM up / FM down) — determines whether
-     `pulse_lengths` is the physical or effective (post-matched-filter) length.
+     `pulse_lengths` is the physical or effective length.
    - Flagged as candidates for per-ping placement (`PingInfo`) if upstreamed.
    - Every enum gets `*_UNKNOWN = 0` so a default-constructed message is honest
-     (deviation from the strawman, which had e.g. `NONE = 0` for TVG).
+     (deviation from the strawman, which had e.g. `NONE = 0` for TVG); the
+     strawman's normalization bool became tri-state `angular_normalization`,
+     and NaN sentinels are a stated producer obligation (review round-1).
+   - Publish contract = latched + republish-on-change **+ slow heartbeat**
+     (≤ 10 s) so every rosbag2 split segment captures one (review round-1).
 2. **`CMakeLists.txt`** — add the message to `MSG_FILES`.
 3. **ADR-0009** — the interface decision: topic/QoS pattern (latched
    `transient_local`, republish-on-change), intrinsic-vs-per-ping split, the
