@@ -86,3 +86,19 @@ issue: 265
   pose/TF pathology in that bag (likely dual nav-source conflict; the same
   poses already smear its stage-1 pass footprints). The track overlay will make
   this visible in the explorer; deliberately no speed-heuristic filtering.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-16 14:57 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-265 at `ef12a4d`
+**Mode**: pre-push
+**Depth**: Deep (reason: 200+ changed lines, 12 files, schema-version change)
+**Must-fix**: 0 | **Suggestions**: 2
+**Round**: 1 | **Ship**: recommended — no must-fix findings; static clean, both adversarial lenses concur the change is sound
+
+### Findings
+- [ ] (suggestion) Non-finite ground origin poisons the decimator — `gb.valid` checks only quaternion norm, so a NaN lat/lon is accepted and defeats decimation for the rest of the bag; gate on `std::isfinite` before `accept()` — `src/survey_index_bag_main.cpp:480`
+- [ ] (suggestion) Decimation runs in read/FIFO order but accessors return `ORDER BY t_ns`; the ≥stride invariant may not survive the re-sort — sort `nav_points` by `t_ns` before insert if #258 needs it — `src/survey_index_bag_main.cpp:481`
