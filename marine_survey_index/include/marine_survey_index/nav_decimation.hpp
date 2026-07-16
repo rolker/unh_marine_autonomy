@@ -57,7 +57,9 @@ inline double haversineMeters(double lat1_deg, double lon1_deg, double lat2_deg,
 
 /// Distance gate: accept() returns true for the first point and for any point
 /// at least @c stride_m from the *last accepted* point (accepted points become
-/// the new reference; rejected ones do not accumulate).
+/// the new reference; rejected ones do not accumulate). Non-finite input is
+/// rejected without touching the reference — a NaN accepted as reference would
+/// make every later distance NaN and defeat the gate for the rest of the bag.
 class NavDecimator
 {
 public:
@@ -66,6 +68,9 @@ public:
 
   bool accept(double lat_deg, double lon_deg)
   {
+    if (!std::isfinite(lat_deg) || !std::isfinite(lon_deg)) {
+      return false;
+    }
     if (has_last_ &&
       haversineMeters(last_lat_, last_lon_, lat_deg, lon_deg) < stride_m_)
     {

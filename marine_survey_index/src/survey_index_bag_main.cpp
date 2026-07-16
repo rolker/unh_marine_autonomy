@@ -687,6 +687,11 @@ int main(int argc, char ** argv)
         }
       }
       {
+        // Points were gated in flush (read) order; store them time-ordered so
+        // row order matches the accessors' ORDER BY t_ns.
+        std::stable_sort(
+          nav_points.begin(), nav_points.end(),
+          [](const NavTrackPoint & a, const NavTrackPoint & b) {return a.t_ns < b.t_ns;});
         const char * nav_sql =
           "INSERT INTO nav_track (bag_id, t_ns, latitude, longitude) VALUES (?, ?, ?, ?)";
         StmtGuard ins_nav(prepareOrThrow(db, nav_sql));

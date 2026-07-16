@@ -100,5 +100,11 @@ issue: 265
 **Round**: 1 | **Ship**: recommended — no must-fix findings; static clean, both adversarial lenses concur the change is sound
 
 ### Findings
-- [ ] (suggestion) Non-finite ground origin poisons the decimator — `gb.valid` checks only quaternion norm, so a NaN lat/lon is accepted and defeats decimation for the rest of the bag; gate on `std::isfinite` before `accept()` — `src/survey_index_bag_main.cpp:480`
-- [ ] (suggestion) Decimation runs in read/FIFO order but accessors return `ORDER BY t_ns`; the ≥stride invariant may not survive the re-sort — sort `nav_points` by `t_ns` before insert if #258 needs it — `src/survey_index_bag_main.cpp:481`
+- [x] (suggestion) Non-finite ground origin poisons the decimator — `gb.valid` checks only quaternion norm, so a NaN lat/lon is accepted and defeats decimation for the rest of the bag; gate on `std::isfinite` before `accept()` — `src/survey_index_bag_main.cpp:480`
+- [x] (suggestion) Decimation runs in read/FIFO order but accessors return `ORDER BY t_ns`; the ≥stride invariant may not survive the re-sort — sort `nav_points` by `t_ns` before insert if #258 needs it — `src/survey_index_bag_main.cpp:481`
+
+**Round-1 suggestions addressed** (both fixed, not deferred): NavDecimator
+rejects non-finite input without touching its reference (+ test covering
+leading and mid-stream NaN); nav_points stable-sorted by t_ns before insert
+and the stream-order gating caveat documented in the schema doc ("density
+target, not a per-pair guarantee"). 111 tests, 0 failures.

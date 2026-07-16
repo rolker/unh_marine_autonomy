@@ -87,6 +87,10 @@ direction — without opening any bag.
   ping of the bag or ≥ the stride (default **10 m**, indexer `--nav-stride-m`)
   from the *last kept* point. Spatially uniform by construction: a
   station-keeping boat adds no points; a fast transit stays fully sampled.
+  The gate runs in bag stream order and rows are stored time-ordered; when
+  ping stamps arrive slightly out of order, an occasional consecutive-by-time
+  gap below the stride is possible — treat the stride as a density target,
+  not a per-pair guarantee.
 - **Same lifecycle as passes.** Written in the bag's atomic transaction;
   deleted and rewritten when a changed bag is re-indexed; cascades away with
   the bag row.

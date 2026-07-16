@@ -21,6 +21,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+
 #include "marine_survey_index/nav_decimation.hpp"
 
 namespace
@@ -97,6 +99,21 @@ TEST(NavDecimator, StationKeepingAddsNoPoints)
   for (int i = 0; i < 100; ++i) {
     EXPECT_FALSE(gate.accept(43.02, -71.36));
   }
+}
+
+TEST(NavDecimator, NonFiniteInputRejectedWithoutPoisoningReference)
+{
+  const double nan = std::nan("");
+  NavDecimator gate(10.0);
+  // A leading NaN must not become the reference.
+  EXPECT_FALSE(gate.accept(nan, 0.0));
+  ASSERT_TRUE(gate.accept(0.0, 0.0));
+  // A mid-stream NaN is dropped and the finite reference survives: the
+  // sub-stride point after it is still rejected, the over-stride accepted.
+  EXPECT_FALSE(gate.accept(0.0, nan));
+  EXPECT_FALSE(gate.accept(nan, nan));
+  EXPECT_FALSE(gate.accept(0.0, kUnderStrideDeg));
+  EXPECT_TRUE(gate.accept(0.0, kOverStrideDeg));
 }
 
 TEST(NavDecimator, StrideIsConfigurable)
