@@ -5,6 +5,12 @@
 Proposed (2026-07-16). Tracked by
 [rolker/unh_marine_autonomy#240](https://github.com/rolker/unh_marine_autonomy/issues/240).
 
+**Amended 2026-07-16
+([#268](https://github.com/rolker/unh_marine_autonomy/issues/268)):**
+angular-response TL-provenance fields (`angular_response_tl`,
+`angular_response_absorption_db_per_m`) — see the "Curve TL provenance"
+bullet in the field set.
+
 Relates to **ADR-0006/0007** (backscatter stores — `calibration_ref` is the hook
 into their provenance records) and supersedes the CSV/parameter delivery of the
 angular-response curve from
@@ -162,6 +168,9 @@ producers or consumers** in the same change.
 - Upstreaming will re-open the per-ping-vs-per-sensor split for the
   acquisition block; the raw-vs-corrected framing decision must be finalized
   before proposing there.
+- The #268 TL-provenance fields landed before any curve-bearing SonarInfo was
+  ever recorded (the sole producer publishes empty curves), so that addition
+  itself needs no migration rule — unlike the eventual upstreaming below.
 - **Bag-migration debt is accepted**: bags recorded in the interim carry the
   `marine_interfaces/msg/SonarInfo` type name. When the message upstreams
   (and/or `pulse_lengths` migrates into `PingInfo`), a

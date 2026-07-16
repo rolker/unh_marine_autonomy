@@ -152,7 +152,10 @@ uint8 ANGULAR_RESPONSE_TL_REMOVED = 2
 uint8 angular_response_tl
 
 # Absorption used when the curve's TL was removed. NaN if unknown or TL_IN
-# (producers MUST set NaN explicitly; see conventions above).
+# (producers MUST set NaN explicitly; see conventions above). Deliberately
+# dB per METRE — unlike tvg_absorption_db_per_km above — because consumers
+# apply this alpha verbatim in 40*log10(R) + 2*alpha*R with R in metres
+# (cube_bathymetry#87 never recomputes it).
 float32 angular_response_absorption_db_per_m
 
 # Combined transmit/receive beam-pattern gain vs angle. Parallel arrays;
