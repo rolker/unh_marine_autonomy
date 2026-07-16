@@ -218,6 +218,15 @@ TEST_F(NavTrackQuery, ReversedBoxIsSwapped)
   EXPECT_EQ(points.size(), 4u);
 }
 
+TEST_F(NavTrackQuery, OutOfRangeLatitudesAreClamped)
+{
+  // Same clamp-into-[-90, 90] semantics as tilesForBoundingBox: beyond-pole
+  // bounds behave like the poles, they do not throw or change the result.
+  const auto points = marine_survey_index::queryNavTrackInBox(
+    db_, -100.0, kLon - 0.01, 100.0, kLon + 0.01);
+  EXPECT_EQ(points.size(), 4u);   // far point excluded by longitude only
+}
+
 TEST_F(NavTrackQuery, AntimeridianBoxThrows)
 {
   // 170 E .. -170 E normalizes to a >180-degree span: the same fail-loud

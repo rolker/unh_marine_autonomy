@@ -137,6 +137,8 @@ std::vector<NavPoint> queryNavTrackInBox(
       "queryNavTrackInBox: longitude span " + std::to_string(lon_max - lon_min) +
       " deg exceeds 180 — boxes crossing the antimeridian are not supported");
   }
+  lat_min = std::clamp(lat_min, -90.0, 90.0);
+  lat_max = std::clamp(lat_max, -90.0, 90.0);
 
   sqlite3_stmt * stmt = nullptr;
   if (sqlite3_prepare_v2(

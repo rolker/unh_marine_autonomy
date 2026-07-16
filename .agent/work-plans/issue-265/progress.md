@@ -108,3 +108,16 @@ rejects non-finite input without touching its reference (+ test covering
 leading and mid-stream NaN); nav_points stable-sorted by t_ns before insert
 and the stream-order gating caveat documented in the schema doc ("density
 target, not a per-pair guarantee"). 111 tests, 0 failures.
+
+## Integrated Review (PR #267, round 1)
+**Status**: complete
+**When**: 2026-07-16 (post-publish)
+**By**: Claude Code Agent (Claude Fable 5)
+
+CI: build green (10m). Copilot: 1 finding.
+- [x] (valid, minor) queryNavTrackInBox lacked the [-90, 90] latitude clamp
+  that tilesForBoundingBox applies, despite the doc claiming mirrored
+  semantics. Copilot's failure scenario ("can return an empty set") is
+  overstated — SQLite BETWEEN handles wide bounds — but the consistency gap
+  was real. Clamp added + OutOfRangeLatitudesAreClamped test. 112 tests,
+  0 failures.
