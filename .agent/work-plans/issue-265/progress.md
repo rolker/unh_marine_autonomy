@@ -121,3 +121,16 @@ CI: build green (10m). Copilot: 1 finding.
   overstated — SQLite BETWEEN handles wide bounds — but the consistency gap
   was real. Clamp added + OutOfRangeLatitudesAreClamped test. 112 tests,
   0 failures.
+
+## Integrated Review (PR #267, round 2)
+**Status**: complete
+**When**: 2026-07-16 (post-publish)
+**By**: Claude Code Agent (Claude Fable 5)
+
+CI: green on the round-1 fix (8m24s). Copilot round 2: one finding in two
+parts (same root).
+- [x] (valid, minor) NavDecimator is an installed public header but its ctor
+  accepted stride <= 0 / NaN silently (gate defeated outside the validating
+  CLI path). Ctor now throws std::invalid_argument for non-finite or
+  non-positive stride, <stdexcept> included, InvalidStrideThrows test added
+  (0, -1, NaN, +inf). 113 tests, 0 failures.

@@ -33,6 +33,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 namespace marine_survey_index
 {
@@ -63,8 +64,17 @@ inline double haversineMeters(double lat1_deg, double lon1_deg, double lat2_deg,
 class NavDecimator
 {
 public:
+  /// @throws std::invalid_argument unless @p stride_m is finite and > 0 —
+  ///   a zero/negative/NaN stride would accept every finite point (defeating
+  ///   decimation) and +inf would accept only the first. The CLI validates
+  ///   its flag too, but a public header must defend itself.
   explicit NavDecimator(double stride_m)
-  : stride_m_(stride_m) {}
+  : stride_m_(stride_m)
+  {
+    if (!(stride_m > 0.0) || !std::isfinite(stride_m)) {
+      throw std::invalid_argument("NavDecimator: stride_m must be finite and > 0");
+    }
+  }
 
   bool accept(double lat_deg, double lon_deg)
   {

@@ -22,6 +22,8 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
+#include <stdexcept>
 
 #include "marine_survey_index/nav_decimation.hpp"
 
@@ -121,6 +123,14 @@ TEST(NavDecimator, StrideIsConfigurable)
   NavDecimator fine(1.0);
   ASSERT_TRUE(fine.accept(0.0, 0.0));
   EXPECT_TRUE(fine.accept(0.0, kUnderStrideDeg));  // 5.56 m >= 1 m
+}
+
+TEST(NavDecimator, InvalidStrideThrows)
+{
+  EXPECT_THROW(NavDecimator(0.0), std::invalid_argument);
+  EXPECT_THROW(NavDecimator(-1.0), std::invalid_argument);
+  EXPECT_THROW(NavDecimator(std::nan("")), std::invalid_argument);
+  EXPECT_THROW(NavDecimator(std::numeric_limits<double>::infinity()), std::invalid_argument);
 }
 
 }  // namespace
