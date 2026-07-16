@@ -140,6 +140,21 @@ uint8 angular_normalization
 float32[] angular_response_angle_deg
 float32[] angular_response_db_rel_nadir
 
+# Transmission-loss provenance of the curve above (cube_bathymetry#87): a
+# TL_REMOVED (tier-2) curve is a residual and the consumer must add back
+# 40*log10(R) + 2*alpha*R (alpha = angular_response_absorption_db_per_m)
+# before subtracting it; a TL_IN (tier-1) curve is subtracted as-is.
+# Consumers MUST NOT apply a non-empty curve whose provenance is UNKNOWN —
+# guessing the TL model mis-corrects every sample it touches.
+uint8 ANGULAR_RESPONSE_TL_UNKNOWN = 0
+uint8 ANGULAR_RESPONSE_TL_IN = 1
+uint8 ANGULAR_RESPONSE_TL_REMOVED = 2
+uint8 angular_response_tl
+
+# Absorption used when the curve's TL was removed. NaN if unknown or TL_IN
+# (producers MUST set NaN explicitly; see conventions above).
+float32 angular_response_absorption_db_per_m
+
 # Combined transmit/receive beam-pattern gain vs angle. Parallel arrays;
 # empty if unavailable.
 float32[] beam_pattern_angle_deg

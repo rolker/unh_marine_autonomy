@@ -92,6 +92,21 @@ topic, frame-aligned with the data stream and recorded in bags.
   `source_level_db`, `angular_normalization` (tri-state), the empirical
   angular-response curve (cube#81's ARA/AVG curve as data), and a beam-pattern
   curve.
+- **Curve TL provenance** *(added by
+  [#268](https://github.com/rolker/unh_marine_autonomy/issues/268), same-day
+  addendum before any curve-bearing bags existed — no migration rule
+  needed)*: `angular_response_tl` (tri-state `UNKNOWN`/`TL_IN`/`TL_REMOVED`)
+  + `angular_response_absorption_db_per_m`, mirroring the estimator's
+  `AngularResponseCurve` from
+  [cube#87](https://github.com/rolker/cube_bathymetry/issues/87) — a tier-2
+  curve is a TL-removed residual whose consumer must add back
+  `40·log10(R) + 2αR` first. Consumers reject a non-empty curve with
+  `UNKNOWN` provenance rather than guess the TL model. Delivery arc:
+  producer
+  [marine_tools#71](https://github.com/rolker/marine_tools/issues/71),
+  consumer
+  [cube#102](https://github.com/rolker/cube_bathymetry/issues/102)
+  (curve presence auto-enables the correction; explicit config overrides).
 
 ### Design rules
 
