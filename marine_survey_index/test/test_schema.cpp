@@ -63,8 +63,10 @@ TEST(Schema, FreshOpenCreatesTablesAndVersion)
     singleInt(
       db,
       "SELECT count(*) FROM sqlite_master WHERE type='table'"
-      " AND name IN ('schema_version','bags','passes')"),
-    3);
+      " AND name IN ('schema_version','bags','passes','nav_track')"),
+    4);
+  // The v2 nav_track shape: id, bag_id, t_ns, latitude, longitude.
+  EXPECT_EQ(singleInt(db, "SELECT count(*) FROM pragma_table_info('nav_track')"), 5);
   sqlite3_close(db);
 }
 

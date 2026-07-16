@@ -21,7 +21,8 @@ ros2 run marine_survey_index survey_index_bag <bag_uri ...> [--scan DIR] \
     [--mbes-topic /bizzy/sensors/m3/detections] \
     [--port-topic ...sonar_image_port] [--stbd-topic ...sonar_image_starboard] \
     [--mbes-level 14] [--sidescan-level 14] [--level N] \
-    [--merge-gap 5.0] [--earth-frame earth] [--sound-speed 1500]
+    [--merge-gap 5.0] [--nav-stride-m 10.0] \
+    [--earth-frame earth] [--sound-speed 1500]
 ```
 
 Single interleaved chronological pass per bag (the bounded-TF-window pattern
@@ -30,7 +31,9 @@ from cube#63 / the sidescan importer): georeferences every MBES
 ground-footprint bounding box, and records per-GGGS-tile **pass intervals** in
 a SQLite sidecar. Indexing is from **ping geometry, not store acceptance** —
 pings CUBE rejected still index. Unchanged already-indexed bags are skipped
-(size+mtime ledger); changed bags are re-indexed atomically.
+(size+mtime ledger); changed bags are re-indexed atomically. A **decimated nav
+track** (one point per ≥ `--nav-stride-m` metres, default 10) is recorded per
+bag so the explorer map can draw the survey track from the index alone.
 
 The default level is **L14 (~54 m tiles)** for both sensors — a
 target-inspection neighbourhood, finer than the stores' native tiling (bathy
@@ -61,8 +64,9 @@ see [`docs/survey_index_schema.md`](../docs/survey_index_schema.md).
 ## Testing
 
 Bag-I/O-free unit tests cover the DB-open contract, the interval
-merge/split logic, footprint→tile enumeration (boundary straddling), and the
-query tile-join (sensor filters, level separation):
+merge/split logic, footprint→tile enumeration (boundary straddling), the
+query tile-join (sensor filters, level separation), and the nav-track
+decimation gate and accessors:
 
 ```bash
 colcon test --packages-select marine_survey_index
