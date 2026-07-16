@@ -45,7 +45,44 @@ issue: 265
 **Verdict**: approve-with-suggestions
 
 ### Findings
-- [ ] (suggestion) `NavPoint` struct home is inconsistent — Files table lists it in `schema.hpp`; Approach step 2 puts it in `query.hpp`. Put it in `query.hpp` next to sibling `PassRow` and fix the Files table row — `plan.md:76`, `plan.md:40-42`
-- [ ] (suggestion) ADR citation error — "ADR-0008 (license/copyright headers)" conflates the repo's ADR-0008 (*Live Sonar Coverage Transport & Render*) with the header convention (workspace ADR-0008 / general convention). The header requirement is valid and honored; only the citation is wrong — `plan.md:116`
-- [ ] (suggestion) Nav-source frame semantics — points derive from each ping's *sensor ground origin* (`groundOrigin(gb)`), interleaved across up to 3 sensor topics (mbes/port/stbd) in one bag, then distance-decimated across that mixed stream. Plan calls them "vehicle positions." State the provenance explicitly (sensor origins, not a single base_link); negligible at 10 m stride but the doc should not imply a single vehicle frame — `plan.md:54`, `plan.md:13`
-- [ ] (suggestion) Validate `--nav-stride-m` > 0 and finite in `main()`, mirroring the existing `--merge-gap` guard (`survey_index_bag_main.cpp:350`); a 0/negative stride would keep every point — `plan.md:54`
+- [x] (suggestion) `NavPoint` struct home is inconsistent — Files table lists it in `schema.hpp`; Approach step 2 puts it in `query.hpp`. Put it in `query.hpp` next to sibling `PassRow` and fix the Files table row — `plan.md:76`, `plan.md:40-42`
+- [x] (suggestion) ADR citation error — "ADR-0008 (license/copyright headers)" conflates the repo's ADR-0008 (*Live Sonar Coverage Transport & Render*) with the header convention (workspace ADR-0008 / general convention). The header requirement is valid and honored; only the citation is wrong — `plan.md:116`
+- [x] (suggestion) Nav-source frame semantics — points derive from each ping's *sensor ground origin* (`groundOrigin(gb)`), interleaved across up to 3 sensor topics (mbes/port/stbd) in one bag, then distance-decimated across that mixed stream. Plan calls them "vehicle positions." State the provenance explicitly (sensor origins, not a single base_link); negligible at 10 m stride but the doc should not imply a single vehicle frame — `plan.md:54`, `plan.md:13`
+- [x] (suggestion) Validate `--nav-stride-m` > 0 and finite in `main()`, mirroring the existing `--merge-gap` guard (`survey_index_bag_main.cpp:350`); a 0/negative stride would keep every point — `plan.md:54`
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-16 (host-inline)
+**By**: Claude Code Agent (Claude Fable 5)
+
+**Branch**: feature/issue-265
+**All 4 review-plan suggestions folded into the amended plan and honored.**
+
+### What landed
+- `nav_decimation.hpp` (NEW, header-only like interval_accumulator.hpp — placed
+  in a header rather than main.cpp so the plan's bag-I/O-free tests can reach
+  it): `haversineMeters` + `NavDecimator` distance gate.
+- Schema v2: `nav_track` table + `nav_track_bag`/`nav_track_geo` indexes;
+  `kSchemaVersion = 2`.
+- `query.hpp/cpp`: `NavPoint` (next to `PassRow`), `queryNavTrack(bag_id)`,
+  `queryNavTrackInBox(box)` — box normalizes/swaps and throws on antimeridian
+  spans, mirroring `tilesForBoundingBox`.
+- Indexer: `--nav-stride-m` (default 10, validated finite > 0), collection at
+  the `flush_front` ground origin, explicit `DELETE FROM nav_track` on the
+  re-index path (bag row survives, CASCADE never fires), insert in the same
+  per-bag transaction, nav count in the per-bag log line.
+- Tests: `test_nav_decimation.cpp` (NEW, 8 tests), nav accessor fixture in
+  `test_query_join.cpp` (6 tests), schema table/column checks updated.
+- Docs: schema doc v2 section (provenance: sensor ground origins, NOT a
+  vehicle frame; decimation semantics; accessor contract); package README.
+
+### Verification
+- Worktree build green; `colcon test` 110 tests, 0 failures (cpplint fixed:
+  `<algorithm>` for std::min).
+- Real-bag E2E (scratch DB, bags untouched): 2026-06-16 bag → 346 points,
+  3.46 km / 76 min, 0.76 m/s avg, median gap exactly 10.0 m (gate correct).
+- **Data-quality finding surfaced, not masked**: 2026-06-26T13-57-35 bag shows
+  earth->sensor oscillating ~80 m at ~5 Hz (61 km/27 min "track") — a genuine
+  pose/TF pathology in that bag (likely dual nav-source conflict; the same
+  poses already smear its stage-1 pass footprints). The track overlay will make
+  this visible in the explorer; deliberately no speed-heuristic filtering.

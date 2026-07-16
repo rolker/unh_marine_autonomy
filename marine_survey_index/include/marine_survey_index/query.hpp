@@ -50,9 +50,34 @@ struct PassRow
   std::int64_t ping_count = 0;
 };
 
+/// One decimated nav-track point (#265). Points are each posed ping's
+/// *sensor ground origin* — interleaved across the indexed sonar topics and
+/// distance-decimated — not samples of a single vehicle frame; at the default
+/// 10 m stride the sensor-offset differences are negligible for map display.
+struct NavPoint
+{
+  std::int64_t bag_id = 0;
+  std::int64_t t_ns = 0;
+  double latitude = 0.0;
+  double longitude = 0.0;
+};
+
 /// @brief Distinct GGGS levels present in the index (optionally for one
 ///   sensor filter — same semantics as queryPasses).
 std::vector<std::uint8_t> distinctLevels(sqlite3 * db, const std::string & sensor_filter);
+
+/// @brief Full nav track for one bag, ordered by time.
+std::vector<NavPoint> queryNavTrack(sqlite3 * db, std::int64_t bag_id);
+
+/// @brief Nav-track points inside a geographic bounding box (all bags),
+///   ordered by bag id then time — ready to segment into per-bag polylines.
+///
+/// Longitudes are normalized and a reversed box is swapped, mirroring
+/// tilesForBoundingBox; boxes spanning more than 180 degrees of longitude
+/// (antimeridian-crossing) throw std::invalid_argument — the same fail-loud
+/// contract, deferred consistently.
+std::vector<NavPoint> queryNavTrackInBox(
+  sqlite3 * db, double lat_min, double lon_min, double lat_max, double lon_max);
 
 /// @brief Passes overlapping any of @p tiles, joined with their bags.
 ///

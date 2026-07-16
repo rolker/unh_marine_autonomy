@@ -40,12 +40,13 @@ namespace marine_survey_index
 /// Schema version stamped into a fresh DB and checked on every open. Bump on
 /// any incompatible change; the open then fails with a "regenerate" hint
 /// (never silently migrate — regeneration is the migration).
-constexpr int kSchemaVersion = 1;
+constexpr int kSchemaVersion = 2;
 
 /// @brief Open (creating and initializing if needed) a survey index database.
 ///
-/// Creates the `schema_version`, `bags`, and `passes` tables when absent, and
-/// verifies the stored schema version matches ::kSchemaVersion.
+/// Creates the `schema_version`, `bags`, `passes`, and `nav_track` tables
+/// when absent, and verifies the stored schema version matches
+/// ::kSchemaVersion.
 ///
 /// @param path Filesystem path (or ":memory:" for tests).
 /// @return An open handle; the caller owns it (close with `sqlite3_close`).

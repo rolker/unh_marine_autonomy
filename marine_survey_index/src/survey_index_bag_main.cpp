@@ -67,6 +67,7 @@
 
 #include "marine_survey_index/footprint.hpp"
 #include "marine_survey_index/interval_accumulator.hpp"
+#include "marine_survey_index/nav_decimation.hpp"
 #include "marine_survey_index/schema.hpp"
 
 namespace
@@ -326,13 +327,15 @@ int main(int argc, char ** argv)
       "usage: survey_index_bag [bag_uri ...] [--scan DIR] [--db survey_index.db]\n"
       "       [--mbes-topic T] [--port-topic T] [--stbd-topic T]\n"
       "       [--mbes-level N=14] [--sidescan-level N=14] [--level N (overrides both)]\n"
-      "       [--merge-gap S=5.0] [--earth-frame F=earth] [--sound-speed S=1500]\n"
+      "       [--merge-gap S=5.0] [--nav-stride-m M=10.0]\n"
+      "       [--earth-frame F=earth] [--sound-speed S=1500]\n"
       "\n"
       "Indexes where each sonar looked, per bag, into a regenerable SQLite\n"
       "sidecar. Unchanged already-indexed bags are skipped; changed bags are\n"
       "re-indexed. Default level 14 (~54 m tiles) — a target-inspection\n"
       "neighbourhood; rolls up to the stores' coarser native tiles (bathy L10,\n"
-      "sidescan L13) via the GGGS parent hierarchy.\n";
+      "sidescan L13) via the GGGS parent hierarchy. Also records a decimated\n"
+      "nav track (one point per >= --nav-stride-m metres) for the explorer map.\n";
     return 2;
   }
 
@@ -349,6 +352,15 @@ int main(int argc, char ** argv)
   const double merge_gap_s = toDouble(argValue(argc, argv, "--merge-gap", "5.0"), "--merge-gap");
   if (!(merge_gap_s >= 0.0)) {  // also rejects NaN
     std::cerr << "error: --merge-gap must be >= 0, got " << merge_gap_s << "\n";
+    return 2;
+  }
+  const double nav_stride_m =
+    toDouble(argValue(argc, argv, "--nav-stride-m", "10.0"), "--nav-stride-m");
+  // A zero/negative/NaN stride would keep every posed ping (millions of rows);
+  // +inf would keep only the first point per bag. Reject both.
+  if (!(nav_stride_m > 0.0) || !std::isfinite(nav_stride_m)) {
+    std::cerr << "error: --nav-stride-m must be a finite value > 0, got "
+              << nav_stride_m << "\n";
     return 2;
   }
   // Default L14 (~54 m tiles): the tile-of-interest scale for target review
@@ -421,6 +433,19 @@ int main(int argc, char ** argv)
       std::int64_t tf_frontier_ns = std::numeric_limits<std::int64_t>::min();
       std::size_t n_pings = 0, n_no_tf = 0, n_bad_pose = 0;
 
+      // Decimated nav track (#265): every posed ping's ground origin feeds
+      // the distance gate; accepted points land in nav_track alongside the
+      // passes. Provenance: sensor ground origins interleaved across the
+      // indexed topics — not a single vehicle frame (see the schema doc).
+      marine_survey_index::NavDecimator nav_decimator(nav_stride_m);
+      struct NavTrackPoint
+      {
+        std::int64_t t_ns;
+        double latitude;
+        double longitude;
+      };
+      std::vector<NavTrackPoint> nav_points;
+
       // A ping queued for TF resolution: everything except the earth pose is
       // computed at enqueue. `extent_port`/`extent_stbd` are the signed
       // across-track horizontal extents (m, + = starboard). For sidescan the
@@ -453,6 +478,9 @@ int main(int argc, char ** argv)
               ++n_bad_pose;
             } else {
               const auto origin = groundOrigin(gb);
+              if (nav_decimator.accept(origin.latitude, origin.longitude)) {
+                nav_points.push_back({front.ping_ns, origin.latitude, origin.longitude});
+              }
               const auto p1 = acrossTrackPoint(origin, gb.heading_rad, front.extent_port);
               const auto p2 = acrossTrackPoint(origin, gb.heading_rad, front.extent_stbd);
               const double lat_min =
@@ -612,6 +640,13 @@ int main(int argc, char ** argv)
           stepDoneOrThrow(db, del.get());
         }
         {
+          // The re-index path keeps the bag row, so the CASCADE never fires —
+          // clear the old track explicitly like the passes above.
+          StmtGuard del(prepareOrThrow(db, "DELETE FROM nav_track WHERE bag_id = ?"));
+          sqlite3_bind_int64(del.get(), 1, bag_id);
+          stepDoneOrThrow(db, del.get());
+        }
+        {
           const char * upd_sql =
             "UPDATE bags SET size_bytes = ?, mtime_ns = ?, indexed_at_ns = ? WHERE id = ?";
           StmtGuard upd(prepareOrThrow(db, upd_sql));
@@ -651,12 +686,26 @@ int main(int argc, char ** argv)
           sqlite3_reset(ins_pass.get());
         }
       }
+      {
+        const char * nav_sql =
+          "INSERT INTO nav_track (bag_id, t_ns, latitude, longitude) VALUES (?, ?, ?, ?)";
+        StmtGuard ins_nav(prepareOrThrow(db, nav_sql));
+        for (const auto & p : nav_points) {
+          sqlite3_bind_int64(ins_nav.get(), 1, bag_id);
+          sqlite3_bind_int64(ins_nav.get(), 2, p.t_ns);
+          sqlite3_bind_double(ins_nav.get(), 3, p.latitude);
+          sqlite3_bind_double(ins_nav.get(), 4, p.longitude);
+          stepDoneOrThrow(db, ins_nav.get());
+          sqlite3_reset(ins_nav.get());
+        }
+      }
       execOrThrow(db, "COMMIT;");
 
       ++n_bags_indexed;
       std::cerr << (state < 0 ? "re-indexed: " : "indexed: ") << bag_key
                 << " (" << n_pings << " pings -> " << intervals.size()
-                << " pass intervals; no-tf=" << n_no_tf
+                << " pass intervals, " << nav_points.size()
+                << " nav points; no-tf=" << n_no_tf
                 << " bad-pose=" << n_bad_pose << ")\n";
     } catch (const std::exception & e) {
       // A bad message or a SQLite failure aborts this bag only: roll back

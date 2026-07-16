@@ -61,6 +61,16 @@ CREATE TABLE IF NOT EXISTS passes (
 );
 CREATE INDEX IF NOT EXISTS passes_tile ON passes(level, tile_row, tile_col);
 CREATE INDEX IF NOT EXISTS passes_bag  ON passes(bag_id);
+
+CREATE TABLE IF NOT EXISTS nav_track (
+  id         INTEGER PRIMARY KEY,
+  bag_id     INTEGER NOT NULL REFERENCES bags(id) ON DELETE CASCADE,
+  t_ns       INTEGER NOT NULL,
+  latitude   REAL    NOT NULL,
+  longitude  REAL    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nav_track_bag ON nav_track(bag_id, t_ns);
+CREATE INDEX IF NOT EXISTS nav_track_geo ON nav_track(latitude, longitude);
 )sql";
 
 void execOrThrow(sqlite3 * db, const char * sql)

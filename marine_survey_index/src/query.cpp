@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace marine_survey_index
@@ -85,6 +86,87 @@ std::vector<std::uint8_t> distinctLevels(sqlite3 * db, const std::string & senso
     throwSqlite(db, "distinctLevels step");
   }
   return levels;
+}
+
+std::vector<NavPoint> queryNavTrack(sqlite3 * db, std::int64_t bag_id)
+{
+  sqlite3_stmt * stmt = nullptr;
+  if (sqlite3_prepare_v2(
+      db,
+      "SELECT bag_id, t_ns, latitude, longitude FROM nav_track"
+      " WHERE bag_id = ? ORDER BY t_ns",
+      -1, &stmt, nullptr) != SQLITE_OK)
+  {
+    throwSqlite(db, "queryNavTrack prepare");
+  }
+  sqlite3_bind_int64(stmt, 1, bag_id);
+  std::vector<NavPoint> points;
+  int rc;
+  while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+    NavPoint p;
+    p.bag_id = sqlite3_column_int64(stmt, 0);
+    p.t_ns = sqlite3_column_int64(stmt, 1);
+    p.latitude = sqlite3_column_double(stmt, 2);
+    p.longitude = sqlite3_column_double(stmt, 3);
+    points.push_back(p);
+  }
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_DONE) {
+    throwSqlite(db, "queryNavTrack step");
+  }
+  return points;
+}
+
+std::vector<NavPoint> queryNavTrackInBox(
+  sqlite3 * db, double lat_min, double lon_min, double lat_max, double lon_max)
+{
+  // Same box semantics as tilesForBoundingBox (footprint.cpp): swap a
+  // reversed box, normalize longitudes, and fail loud on an antimeridian
+  // crossing (which presents as a >180-degree span after normalization)
+  // instead of silently returning the long way around.
+  if (lat_min > lat_max) {
+    std::swap(lat_min, lat_max);
+  }
+  lon_min = gggs::normalizeLongitude(lon_min);
+  lon_max = gggs::normalizeLongitude(lon_max);
+  if (lon_min > lon_max) {
+    std::swap(lon_min, lon_max);
+  }
+  if (lon_max - lon_min > 180.0) {
+    throw std::invalid_argument(
+      "queryNavTrackInBox: longitude span " + std::to_string(lon_max - lon_min) +
+      " deg exceeds 180 — boxes crossing the antimeridian are not supported");
+  }
+
+  sqlite3_stmt * stmt = nullptr;
+  if (sqlite3_prepare_v2(
+      db,
+      "SELECT bag_id, t_ns, latitude, longitude FROM nav_track"
+      " WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?"
+      " ORDER BY bag_id, t_ns",
+      -1, &stmt, nullptr) != SQLITE_OK)
+  {
+    throwSqlite(db, "queryNavTrackInBox prepare");
+  }
+  sqlite3_bind_double(stmt, 1, lat_min);
+  sqlite3_bind_double(stmt, 2, lat_max);
+  sqlite3_bind_double(stmt, 3, lon_min);
+  sqlite3_bind_double(stmt, 4, lon_max);
+  std::vector<NavPoint> points;
+  int rc;
+  while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+    NavPoint p;
+    p.bag_id = sqlite3_column_int64(stmt, 0);
+    p.t_ns = sqlite3_column_int64(stmt, 1);
+    p.latitude = sqlite3_column_double(stmt, 2);
+    p.longitude = sqlite3_column_double(stmt, 3);
+    points.push_back(p);
+  }
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_DONE) {
+    throwSqlite(db, "queryNavTrackInBox step");
+  }
+  return points;
 }
 
 std::vector<PassRow> queryPasses(

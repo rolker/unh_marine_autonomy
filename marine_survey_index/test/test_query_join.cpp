@@ -154,6 +154,79 @@ TEST_F(QueryJoin, EmptyTileSetReturnsEmpty)
   EXPECT_TRUE(marine_survey_index::queryPasses(db_, {}, "").empty());
 }
 
+class NavTrackQuery : public QueryJoin
+{
+protected:
+  void SetUp() override
+  {
+    QueryJoin::SetUp();
+    // bagA: three points marching east; bagB: one point nearby and one far
+    // away (outside any box around kLat/kLon). Inserted out of time order to
+    // prove the accessors sort.
+    insertNav(1, 300, kLat, kLon + 0.0002);
+    insertNav(1, 100, kLat, kLon);
+    insertNav(1, 200, kLat, kLon + 0.0001);
+    insertNav(2, 150, kLat + 0.0001, kLon);
+    insertNav(2, 250, kLat + 1.0, kLon + 1.0);
+  }
+
+  void insertNav(int bag_id, std::int64_t t_ns, double lat, double lon)
+  {
+    exec(
+      "INSERT INTO nav_track (bag_id, t_ns, latitude, longitude) VALUES (" +
+      std::to_string(bag_id) + ", " + std::to_string(t_ns) + ", " +
+      std::to_string(lat) + ", " + std::to_string(lon) + ")");
+  }
+};
+
+TEST_F(NavTrackQuery, PerBagTrackIsTimeOrderedAndBagFiltered)
+{
+  const auto track = marine_survey_index::queryNavTrack(db_, 1);
+  ASSERT_EQ(track.size(), 3u);
+  EXPECT_EQ(track[0].t_ns, 100);
+  EXPECT_EQ(track[1].t_ns, 200);
+  EXPECT_EQ(track[2].t_ns, 300);
+  for (const auto & p : track) {
+    EXPECT_EQ(p.bag_id, 1);
+  }
+  EXPECT_DOUBLE_EQ(track[0].latitude, kLat);
+  EXPECT_DOUBLE_EQ(track[0].longitude, kLon);
+}
+
+TEST_F(NavTrackQuery, UnknownBagYieldsEmptyTrack)
+{
+  EXPECT_TRUE(marine_survey_index::queryNavTrack(db_, 999).empty());
+}
+
+TEST_F(NavTrackQuery, BoxQueryReturnsInsidePointsOrderedByBagThenTime)
+{
+  const auto points = marine_survey_index::queryNavTrackInBox(
+    db_, kLat - 0.01, kLon - 0.01, kLat + 0.01, kLon + 0.01);
+  ASSERT_EQ(points.size(), 4u);   // bagB's far point excluded
+  EXPECT_EQ(points[0].bag_id, 1);
+  EXPECT_EQ(points[0].t_ns, 100);
+  EXPECT_EQ(points[1].t_ns, 200);
+  EXPECT_EQ(points[2].t_ns, 300);
+  EXPECT_EQ(points[3].bag_id, 2);
+  EXPECT_EQ(points[3].t_ns, 150);
+}
+
+TEST_F(NavTrackQuery, ReversedBoxIsSwapped)
+{
+  const auto points = marine_survey_index::queryNavTrackInBox(
+    db_, kLat + 0.01, kLon + 0.01, kLat - 0.01, kLon - 0.01);
+  EXPECT_EQ(points.size(), 4u);
+}
+
+TEST_F(NavTrackQuery, AntimeridianBoxThrows)
+{
+  // 170 E .. -170 E normalizes to a >180-degree span: the same fail-loud
+  // contract as tilesForBoundingBox.
+  EXPECT_THROW(
+    marine_survey_index::queryNavTrackInBox(db_, 40.0, 170.0, 45.0, -170.0),
+    std::invalid_argument);
+}
+
 TEST_F(QueryJoin, WrongLevelSameRowColDoesNotMatch)
 {
   // A tile key is (level, row, col) — the same row/col at a different level

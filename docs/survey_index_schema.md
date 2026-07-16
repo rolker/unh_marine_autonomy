@@ -30,7 +30,7 @@ checkpoint (2026-07-13); see `.agent/work-plans/issue-259/plan.md`.
   joining against store tiling aggregate L14 rows under their L10/L13 parents.
   Mixed levels coexist in one DB; queries carry the level in the key.
 
-## Tables (schema version 1)
+## Tables (schema version 2)
 
 ```sql
 CREATE TABLE schema_version (
@@ -59,7 +59,43 @@ CREATE TABLE passes (
 );
 CREATE INDEX passes_tile ON passes(level, tile_row, tile_col);
 CREATE INDEX passes_bag  ON passes(bag_id);
+
+CREATE TABLE nav_track (              -- added in v2 (#265)
+  id         INTEGER PRIMARY KEY,
+  bag_id     INTEGER NOT NULL REFERENCES bags(id) ON DELETE CASCADE,
+  t_ns       INTEGER NOT NULL,        -- ping header stamp (UNIX ns)
+  latitude   REAL    NOT NULL,        -- WGS-84 degrees
+  longitude  REAL    NOT NULL         -- WGS-84 degrees
+);
+CREATE INDEX nav_track_bag ON nav_track(bag_id, t_ns);
+CREATE INDEX nav_track_geo ON nav_track(latitude, longitude);
 ```
+
+## `nav_track` semantics (v2)
+
+A **decimated nav track** per bag for the explorer's overview map (#258):
+drawing the survey track — and, from consecutive time-ordered points, travel
+direction — without opening any bag.
+
+- **Provenance: sensor ground origins, not a vehicle frame.** Each point is a
+  posed ping's *sensor ground origin* (the same `earth`→sensor resolution the
+  pass footprints use), interleaved across all indexed sonar topics and then
+  distance-decimated as one stream. It is **not** a `base_link` track; at the
+  default stride the per-sensor offsets are negligible for map display, but
+  consumers must not treat the points as a single-antenna nav solution.
+- **Distance-based decimation.** A point is kept iff it is the first posed
+  ping of the bag or ≥ the stride (default **10 m**, indexer `--nav-stride-m`)
+  from the *last kept* point. Spatially uniform by construction: a
+  station-keeping boat adds no points; a fast transit stays fully sampled.
+- **Same lifecycle as passes.** Written in the bag's atomic transaction;
+  deleted and rewritten when a changed bag is re-indexed; cascades away with
+  the bag row.
+
+**Accessors** (`marine_survey_index/query.hpp`): `queryNavTrack(db, bag_id)` —
+one bag's track ordered by time; `queryNavTrackInBox(db, lat_min, lon_min,
+lat_max, lon_max)` — all points in a box ordered by bag id then time (segment
+into per-bag polylines at bag-id changes). Boxes crossing the antimeridian
+throw, matching `tilesForBoundingBox`.
 
 ## `sensor_type` vocabulary
 

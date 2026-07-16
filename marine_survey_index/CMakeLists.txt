@@ -89,6 +89,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_interval_merge test/test_interval_merge.cpp)
   target_link_libraries(test_interval_merge ${PROJECT_NAME}_core)
 
+  ament_add_gtest(test_nav_decimation test/test_nav_decimation.cpp)
+  target_link_libraries(test_nav_decimation ${PROJECT_NAME}_core)
+
   ament_add_gtest(test_tile_enumeration test/test_tile_enumeration.cpp)
   target_link_libraries(test_tile_enumeration ${PROJECT_NAME}_core)
 
