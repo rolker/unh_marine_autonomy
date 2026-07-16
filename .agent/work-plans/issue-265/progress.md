@@ -134,3 +134,16 @@ parts (same root).
   CLI path). Ctor now throws std::invalid_argument for non-finite or
   non-positive stride, <stdexcept> included, InvalidStrideThrows test added
   (0, -1, NaN, +inf). 113 tests, 0 failures.
+
+## Integrated Review (PR #267, round 3)
+**Status**: complete
+**When**: 2026-07-16 (post-publish)
+**By**: Claude Code Agent (Claude Fable 5)
+
+CI: green on the round-2 fix (8m28s). Copilot round 3: 1 finding, valid.
+- [x] (valid, minor) std::min(1.0, sqrt(a)) turns NaN input into 1.0 (NaN
+  comparisons are false) so haversineMeters(NaN, ...) returned ~pi*R instead
+  of NaN. Replaced with an explicit `root > 1.0 ? 1.0 : root` clamp that
+  preserves NaN, kept the antipodal-roundoff guard, dropped the now-unused
+  <algorithm>. Tests: NonFiniteInputPropagatesAsNan +
+  AntipodalRoundoffStaysClamped. 115 tests, 0 failures.

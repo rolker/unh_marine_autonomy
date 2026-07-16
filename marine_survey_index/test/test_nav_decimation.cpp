@@ -62,6 +62,25 @@ TEST(HaversineMeters, LongitudeShrinksWithCosLatitude)
   EXPECT_NEAR(haversineMeters(60.0, 0.0, 60.0, 1.0), kMetersPerDegree / 2.0, 1.0);
 }
 
+TEST(HaversineMeters, NonFiniteInputPropagatesAsNan)
+{
+  const double nan = std::nan("");
+  const double inf = std::numeric_limits<double>::infinity();
+  EXPECT_TRUE(std::isnan(haversineMeters(nan, 0.0, 0.0, 0.0)));
+  EXPECT_TRUE(std::isnan(haversineMeters(0.0, nan, 0.0, 0.0)));
+  EXPECT_TRUE(std::isnan(haversineMeters(0.0, 0.0, nan, nan)));
+  EXPECT_TRUE(std::isnan(haversineMeters(inf, 0.0, 0.0, 0.0)));
+}
+
+TEST(HaversineMeters, AntipodalRoundoffStaysClamped)
+{
+  // Exactly antipodal points: a may exceed 1 by roundoff; the result must be
+  // half the mean circumference (pi * R), not NaN from asin(>1).
+  constexpr double kHalfCircumference = M_PI * 6371008.8;
+  EXPECT_NEAR(haversineMeters(0.0, 0.0, 0.0, 180.0), kHalfCircumference, 1.0);
+  EXPECT_NEAR(haversineMeters(-45.0, -90.0, 45.0, 90.0), kHalfCircumference, 1.0);
+}
+
 TEST(HaversineMeters, Symmetric)
 {
   EXPECT_DOUBLE_EQ(

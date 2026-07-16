@@ -31,7 +31,6 @@
 /// point are dropped, giving the `nav_track` table uniform *spatial* density —
 /// a station-keeping boat adds no points, a fast transit stays fully sampled.
 
-#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -41,7 +40,7 @@ namespace marine_survey_index
 /// Great-circle distance between two WGS-84 positions (degrees in, metres
 /// out) via the Haversine formula on a mean-radius sphere. Centimetre-level
 /// accuracy at the decimation strides used here (metres to tens of metres);
-/// not for geodetic-grade work.
+/// not for geodetic-grade work. Non-finite input propagates as NaN.
 inline double haversineMeters(double lat1_deg, double lon1_deg, double lat2_deg, double lon2_deg)
 {
   constexpr double kMeanEarthRadiusM = 6371008.8;
@@ -53,7 +52,12 @@ inline double haversineMeters(double lat1_deg, double lon1_deg, double lat2_deg,
   const double a = sin_half_dlat * sin_half_dlat +
     std::cos(lat1_deg * kDegToRad) * std::cos(lat2_deg * kDegToRad) *
     sin_half_dlon * sin_half_dlon;
-  return 2.0 * kMeanEarthRadiusM * std::asin(std::min(1.0, std::sqrt(a)));
+  // Guard antipodal roundoff (a slightly above 1) without std::min, whose
+  // NaN-comparison ordering would turn a NaN input into a "1.0" — i.e. half
+  // the Earth's circumference. This comparison is false for NaN, so NaN
+  // flows through sqrt/asin and propagates to the caller.
+  const double root = std::sqrt(a);
+  return 2.0 * kMeanEarthRadiusM * std::asin(root > 1.0 ? 1.0 : root);
 }
 
 /// Distance gate: accept() returns true for the first point and for any point
