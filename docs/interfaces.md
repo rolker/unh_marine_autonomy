@@ -255,8 +255,8 @@ is the planned first producer). See
 - `string sonar_model`, `string calibration_ref`, `builtin_interfaces/Time calibration_time`: identity + calibration hook
 - `float32[] pulse_lengths`, `float32[] bandwidths`, `uint8[] tx_signal_types`: acquisition settings, one element per TX sector
 - `uint8 intensity_quantity` / `intensity_scale` / `intensity_reference`, `float32 scale`/`offset`: what the intensity samples mean (three orthogonal axes)
-- `uint8 tvg_model`, `float32 tvg_absorption_db_per_km`, `float32 source_level_db`, `uint8 angular_normalization`: applied-correction state
-- `float32[] angular_response_*`, `float32[] beam_pattern_*`: empirical correction curves as data
+- `uint8 tvg_model`, `float32 tvg_absorption_db_per_km`, `float32 source_level_db`, `uint8 angular_normalization`, `uint8 angular_response_tl`, `float32 angular_response_absorption_db_per_m`: applied-correction state incl. the curve's TL provenance (tier-1 vs tier-2, #268)
+- `float32[] angular_response_angle_deg`/`_db_rel_nadir`, `float32[] beam_pattern_*`: empirical correction curves as data
 
 ## Related Documentation
 - [Sonar Data Ecosystem](sonar_ecosystem.md) - Big-picture map of sonar data flow + umbrella/ADR tracker
