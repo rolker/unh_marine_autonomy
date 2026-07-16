@@ -45,6 +45,8 @@ set(MSG_FILES
   msg/Platform.msg
   msg/PlatformList.msg
   msg/RangeBearing.msg
+  # Per-sensor acoustic metadata — CameraInfo analog (ADR-0009, #240)
+  msg/SonarInfo.msg
   msg/SoundSpeed.msg
   # Formerly project11_nav_msgs
   msg/BoundingBox.msg
