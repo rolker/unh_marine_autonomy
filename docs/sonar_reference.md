@@ -33,8 +33,8 @@ link (head factory IP `192.168.1.234`).
 The ROS-side consumer is `kongsberg_em_bridge`, which decodes the EM datagram
 export — the *datagram format* is EM-standard even though the sonar is not.
 Setup gotchas (1PPS dropdown, silent-until-enabled Export Data widget) are in
-the BizzyBoat hydro payload install log
-(`unh_echoboats_project11/bizzyboat_project11/docs/hydro_payload_install_log.md`).
+the BizzyBoat
+[hydro payload install log](https://github.com/rolker/unh_echoboats_project11/blob/jazzy/bizzyboat_project11/docs/hydro_payload_install_log.md).
 
 **Backscatter characteristics**: `reflectivity_db` is signed int16 × 0.1 dB
 from the "Raw Range and Angle 78" datagram — **raw, not angle-normalized**.
@@ -52,7 +52,8 @@ working real-time route is therefore the **M3's own EM datagram UDP export**,
 consumed directly by `kongsberg_em_bridge`. On the M3 the populated soundings
 datagram is **Raw Range and Angle 78** (`N`); the XYZ88 (`X`) datagram is
 exported but **empty** (kept in the decoder for EM2040/future sonars — see
-`kongsberg_em_bridge/em_datagrams.py`). QINSy remains the hydrographic system
+[`kongsberg_em_bridge/em_datagrams.py`](https://github.com/rolker/marine_tools/blob/jazzy/kongsberg_em_bridge/kongsberg_em_bridge/em_datagrams.py)
+in `marine_tools`). QINSy remains the hydrographic system
 of record on mercat; the ROS side taps the sensor's export in parallel rather
 than downstream of QINSy. Recorded here so nobody re-attempts the QINSy-UDP
 path.
