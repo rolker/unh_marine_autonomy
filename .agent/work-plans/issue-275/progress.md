@@ -4,6 +4,18 @@ issue: 275
 
 # Issue #275 — marine_bathymetry_store: chart source layer and wholesale regeneration
 
+## Plan Authored
+**Status**: complete
+**When**: 2026-07-24 17:45 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-275/plan.md` at `3c67e62`
+**Branch**: feature/issue-275 at `3c67e62`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
+
 ## Issue Review
 **Status**: complete
 **When**: 2026-07-24 00:00 +00:00
