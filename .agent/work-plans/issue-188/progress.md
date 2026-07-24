@@ -161,11 +161,45 @@ Fold engine math, idempotency, OOB-safety, and ADR/contract consistency all veri
 the gaps are the untested + non-robust CLI.
 
 ### Findings
-- [ ] (must-fix) CLI production path (`gridFromName`/`gridsInDir`/`buildLevel`/level loop/arg parsing) has zero test coverage; plan-promised CLI idempotency test was implemented against the header `buildOverviewLevel` instead — `marine_tiled_raster_store/test/test_overview_builder.cpp` / `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:557-622`
-- [ ] (must-fix) `main()` has no try/catch; a GDAL throw from `loadTile`/`saveTile` after `remove_all` terminates uncleanly (exit 134) leaving a partial `overviews/` — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:635-689`
-- [ ] (suggestion) Non-atomic regeneration: build into `overviews.tmp/` then rename on success so an interrupted run can't leave a truncated sidecar read as complete — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:667-685`
-- [ ] (suggestion) Silent per-tile skips + early break always exit 0; add aggregate skip accounting and a loud/nonzero exit on an early-empty level — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:547-552,675-685`
-- [ ] (suggestion) `fs::remove_all(overviews)` guarded only by `is_directory`; require ≥1 fine tile present before wiping — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:662-669`
-- [ ] (suggestion) Missing `#include <cstdlib>` for `std::atoi` (compiles via transitive include) — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:39-46`
-- [ ] (suggestion) `gridFromName` uses latitude-based `latitudeScaleFactor(double)`; disagrees with the row-based variant exactly on 72/80° band boundaries (latent, non-polar envelope avoids it, fails safe) — comment/assert non-polar — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:543`
-- [ ] (suggestion) Empty-string argv `arg[0]` benign but `!arg.empty() && arg[0] != '-'` is clearer — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:649`
+- [x] (must-fix) CLI production path (`gridFromName`/`gridsInDir`/`buildLevel`/level loop/arg parsing) has zero test coverage; plan-promised CLI idempotency test was implemented against the header `buildOverviewLevel` instead — `marine_tiled_raster_store/test/test_overview_builder.cpp` / `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:557-622`
+- [x] (must-fix) `main()` has no try/catch; a GDAL throw from `loadTile`/`saveTile` after `remove_all` terminates uncleanly (exit 134) leaving a partial `overviews/` — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:635-689`
+- [x] (suggestion) Non-atomic regeneration: build into `overviews.tmp/` then rename on success so an interrupted run can't leave a truncated sidecar read as complete — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:667-685`
+- [x] (suggestion) Silent per-tile skips + early break always exit 0; add aggregate skip accounting and a loud/nonzero exit on an early-empty level — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:547-552,675-685`
+- [x] (suggestion) `fs::remove_all(overviews)` guarded only by `is_directory`; require ≥1 fine tile present before wiping — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:662-669`
+- [x] (suggestion) Missing `#include <cstdlib>` for `std::atoi` (compiles via transitive include) — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:39-46`
+- [x] (suggestion) `gridFromName` uses latitude-based `latitudeScaleFactor(double)`; disagrees with the row-based variant exactly on 72/80° band boundaries (latent, non-polar envelope avoids it, fails safe) — comment/assert non-polar — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:543`
+- [x] (suggestion) Empty-string argv `arg[0]` benign but `!arg.empty() && arg[0] != '-'` is clearer — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:649`
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-24 22:04 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-188 at `a38369a`
+**Addressed**: Local Review (Pre-Push) of 2026-07-24 21:44 +00:00, at `3f101f2` (2 must-fix + 6 suggestions, all actioned)
+**Commits**: `5d8bb87`, `6fe2c8f`, `7464338`, `a38369a`
+
+Extracted the `build_sidescan_overviews` production path (grid reconstruction,
+per-level fold, level loop, argument parsing) into a linkable
+`marine_sidescan_mosaic` library unit (`overview_pyramid.{hpp,cpp}`) so it is
+now unit- and integration-testable; `main()` is a thin shell. New
+`test_overview_pyramid` (11 cases) covers argument parsing and an on-disk fold
+(level-distinguished sidecar, mean fold end-to-end, value-idempotency,
+empty-layer guard). Robustness: `main()` try/catch with non-zero exit; atomic
+`overviews.tmp/` staging + rename; empty-layer/mis-pointed-layer guard before
+wiping; skip accounting + non-zero exit on an early-empty level. Verified:
+`colcon build` clean and all 11 `test_overview_pyramid` cases green; my new
+files pass ament_cpplint/uncrustify (the 8 lint failures reported by
+`colcon test` are pre-existing in untouched files — `sidescan_mosaic_bag.cpp`,
+`projection.cpp`, `sidescan_tier2_processed.cpp`, `test_projection.cpp` — and
+are out of scope for #188).
+
+### Actions
+- [x] CLI production path had zero coverage — extracted to `overview_pyramid.{hpp,cpp}` + `test_overview_pyramid.cpp` — `marine_sidescan_mosaic/src/overview_pyramid.cpp`, `marine_sidescan_mosaic/test/test_overview_pyramid.cpp` (`5d8bb87`)
+- [x] `main()` had no try/catch — CLI now catches, reports, exits non-zero — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp` (`5d8bb87`)
+- [x] Non-atomic regeneration — build into `overviews.tmp/`, rename on success; documented in ADR-0011 — `marine_sidescan_mosaic/src/overview_pyramid.cpp`, `docs/decisions/0011-overview-pyramid.md` (`5d8bb87`)
+- [x] Silent skips + early break exited 0 — aggregate skip accounting + non-zero exit on early-empty level — `marine_sidescan_mosaic/src/overview_pyramid.cpp` (`5d8bb87`)
+- [x] `remove_all(overviews)` guarded only by `is_directory` — require ≥1 fine tile before wiping — `marine_sidescan_mosaic/src/overview_pyramid.cpp` (`5d8bb87`)
+- [x] Missing `#include <cstdlib>` for `std::atoi` — added — `marine_sidescan_mosaic/src/overview_pyramid.cpp` (`6fe2c8f`)
+- [x] `gridFromName` latitude-based `latitudeScaleFactor` polar disagreement — documented non-polar assumption + fail-safe round-trip note — `marine_sidescan_mosaic/src/overview_pyramid.cpp` (`7464338`)
+- [x] Empty-string argv `arg[0]` — added `!arg.empty()` guard + test — `marine_sidescan_mosaic/src/overview_pyramid.cpp`, `marine_sidescan_mosaic/test/test_overview_pyramid.cpp` (`a38369a`)
