@@ -79,6 +79,11 @@ std::string findNewestCatalog(
       CPLFree(escaped);
     }
 
+    // Discovery trust boundary: this listing (and the catalog it names) is
+    // TLS-trusted only — it carries no digest, unlike the tile payloads, which
+    // are SHA256-verified against the catalog in fetch.cpp. A compromised or
+    // corrupted listing could point discovery at the wrong/stale catalog; the
+    // integrity guarantee begins at the per-tile digest, not here.
     CPLHTTPResult * result = CPLHTTPFetch(list_url.c_str(), nullptr);
     if (result == nullptr || result->nStatus != 0 || result->pabyData == nullptr) {
       const std::string err =
