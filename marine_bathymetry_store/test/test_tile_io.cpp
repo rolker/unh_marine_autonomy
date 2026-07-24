@@ -21,6 +21,8 @@
 
 #include <gtest/gtest.h>
 
+#include <unistd.h>
+
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -790,4 +792,60 @@ TEST_F(TileIoTest, ReplaceChartLayerClearsStaleBackupFromCrashedRun)
   const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, -22.0);
+}
+
+TEST_F(TileIoTest, ReplaceChartLayerRestoresChartWhenCommitRenameFails)
+{
+  // The must-fix: exercise the restore branch (rename backup -> chart after a
+  // failed commit). We force the commit rename (staged -> chart) to fail AFTER
+  // the live chart/ has already moved to .chart_backup/, and assert chart/ is put
+  // back intact with its ORIGINAL value (ADR-0010 D7: a failed swap leaves the
+  // old layer standing). The trick: make the STAGED dir's parent read-only so
+  // removing the staged entry — part of rename(2) — fails with EACCES, while the
+  // chart/ -> .chart_backup/ rename inside the writable store dir still succeeds.
+  if (::geteuid() == 0) {
+    GTEST_SKIP() << "runs as root: directory-permission denial is bypassed";
+  }
+
+  const fs::path store_dir = dir_ / "store";
+  fs::create_directories(store_dir);
+
+  // Seed an existing chart/ layer with a known value — the layer whose survival
+  // through a failed swap we verify below.
+  BathymetryStore seed(5, false, /*chart_staging_writable=*/true);
+  seed.set(SourceLayer::Chart, seed.cellIndex(43.0, -70.5), BathyCell{-20.5, 1.5});
+  const fs::path seed_staged = dir_ / "seed";
+  ASSERT_EQ(marine_bathymetry_store::save(seed, seed_staged.string()), 1u);
+  marine_bathymetry_store::replaceChartLayer(
+    (seed_staged / "chart").string(), store_dir.string());
+
+  // Build a valid replacement whose staged chart/ lives under a parent we lock.
+  const fs::path ro_parent = dir_ / "ro_parent";
+  fs::create_directories(ro_parent);
+  BathymetryStore regen(5, false, /*chart_staging_writable=*/true);
+  regen.set(SourceLayer::Chart, regen.cellIndex(43.0, -70.5), BathyCell{-99.0, 2.0});
+  ASSERT_EQ(marine_bathymetry_store::save(regen, ro_parent.string()), 1u);
+  const fs::path staged = ro_parent / "chart";   // save() wrote chart/ under ro_parent
+
+  // Lock the staged dir's parent: rename(staged, chart) must remove `chart` from
+  // ro_parent, which now lacks write permission -> EACCES mid-swap. (Keep read +
+  // exec so the pre-swap validation walk of staged still works.)
+  fs::permissions(
+    ro_parent, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
+
+  EXPECT_THROW(
+    marine_bathymetry_store::replaceChartLayer(staged.string(), store_dir.string()),
+    fs::filesystem_error);
+
+  // Unlock so TearDown's remove_all can clean up regardless of assertions below.
+  fs::permissions(ro_parent, fs::perms::owner_all, fs::perm_options::replace);
+
+  // The original chart/ is back, holds its ORIGINAL value (the regen never
+  // committed), and no backup is left behind.
+  EXPECT_FALSE(fs::exists(store_dir / ".chart_backup"));
+  BathymetryStore runtime(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+  const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, -20.5);
 }
