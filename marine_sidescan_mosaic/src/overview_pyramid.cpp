@@ -206,7 +206,7 @@ ArgStatus parseOverviewArgs(int argc, char ** argv, OverviewOptions & out)
       out.min_level = std::atoi(argv[++i]);
     } else if (arg == "--help" || arg == "-h") {
       return ArgStatus::kHelp;
-    } else if (out.layer_dir.empty() && arg[0] != '-') {
+    } else if (out.layer_dir.empty() && !arg.empty() && arg[0] != '-') {
       out.layer_dir = arg;
     } else {
       return ArgStatus::kError;

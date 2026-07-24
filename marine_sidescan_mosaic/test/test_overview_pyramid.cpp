@@ -154,6 +154,14 @@ TEST(ParseOverviewArgs, HelpRequested)
   EXPECT_EQ(msm::parseOverviewArgs(2, argv, opts), msm::ArgStatus::kHelp);
 }
 
+TEST(ParseOverviewArgs, EmptyStringArgIsErrorNotCrash)
+{
+  char a0[] = "prog", a1[] = "";   // an empty argv token must not be indexed blind
+  char * argv[] = {a0, a1};
+  msm::OverviewOptions opts;
+  EXPECT_EQ(msm::parseOverviewArgs(2, argv, opts), msm::ArgStatus::kError);
+}
+
 TEST(ParseOverviewArgs, MinLevelNotBelowFineIsError)
 {
   char a0[] = "prog", a1[] = "/store/layer", a2[] = "--fine-level", a3[] = "5",
