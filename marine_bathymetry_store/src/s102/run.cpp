@@ -98,6 +98,10 @@ S102ImportSummary runS102Import(const S102ImportOptions & options)
   // Resolve the catalog: explicit path/URL beats discovery; offline uses the
   // copy cached by the last online run.
   std::string catalog = options.catalog;
+  // Provenance name for StoreMetadata.survey: the real catalog filename, not
+  // the "catalog.gpkg" alias we cache discovered catalogs under (below). On a
+  // discovered run the alias would otherwise erase which catalog was used.
+  std::string catalog_name;
   if (catalog.empty()) {
     if (options.offline) {
       if (!fs::exists(cached_catalog)) {
@@ -109,6 +113,7 @@ S102ImportSummary runS102Import(const S102ImportOptions & options)
     } else {
       const std::string url = findNewestCatalog(kDefaultBucket);
       std::cout << "s102: catalog " << url << "\n";
+      catalog_name = fs::path(url).filename().string();
       // Cache the catalog itself so later --offline runs can discover. The
       // S3 listing carries no digest for the catalog (tile payloads stay
       // SHA-verified); a plain streamed copy is enough here.
@@ -120,6 +125,11 @@ S102ImportSummary runS102Import(const S102ImportOptions & options)
         catalog = vsi;
       }
     }
+  }
+  // Explicit --catalog and offline (cached alias) both fall back to the
+  // resolved path's filename; only discovery has a better name (set above).
+  if (catalog_name.empty()) {
+    catalog_name = fs::path(catalog).filename().string();
   }
 
   S102ImportSummary summary;
@@ -187,7 +197,7 @@ S102ImportSummary runS102Import(const S102ImportOptions & options)
     StoreMetadata metadata;
     if (existing_metadata.empty()) {
       metadata.sensor = "NOAA S-102 ed3.0.0";
-      metadata.survey = fs::path(catalog).filename().string();
+      metadata.survey = catalog_name;
       metadata.date = newest_issuance;
       to_write = &metadata;
     } else {
