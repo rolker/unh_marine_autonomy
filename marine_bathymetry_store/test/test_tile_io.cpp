@@ -849,3 +849,53 @@ TEST_F(TileIoTest, ReplaceChartLayerRestoresChartWhenCommitRenameFails)
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, -20.5);
 }
+
+TEST_F(TileIoTest, ReplaceChartLayerRestoresOrphanedBackupThenSurvivesFailedSwap)
+{
+  // Crash recovery: start from a mid-swap crash state — chart/ absent,
+  // .chart_backup/ holding the old layer (the only surviving copy) — then drive a
+  // NEW swap that itself fails at the commit rename. The orphan must be RESTORED
+  // (not discarded), so the old layer stands after the failed swap. With the old
+  // discard behavior the store would be left with NO chart layer at all.
+  if (::geteuid() == 0) {
+    GTEST_SKIP() << "runs as root: directory-permission denial is bypassed";
+  }
+
+  const fs::path store_dir = dir_ / "store";
+  const fs::path backup = store_dir / ".chart_backup";
+  fs::create_directories(store_dir);
+
+  // Plant an orphaned backup (a real saved chart/ renamed into place); chart/ absent.
+  BathymetryStore old_layer(5, false, /*chart_staging_writable=*/true);
+  old_layer.set(SourceLayer::Chart, old_layer.cellIndex(43.0, -70.5), BathyCell{-10.0, 1.0});
+  const fs::path old_src = dir_ / "old";
+  ASSERT_EQ(marine_bathymetry_store::save(old_layer, old_src.string()), 1u);
+  fs::rename(old_src / "chart", backup);
+  ASSERT_FALSE(fs::exists(store_dir / "chart"));
+
+  // A valid new regeneration whose staged chart/ sits under a parent we lock, so
+  // the commit rename fails after recovery has restored the orphan.
+  const fs::path ro_parent = dir_ / "ro_parent";
+  fs::create_directories(ro_parent);
+  BathymetryStore regen(5, false, /*chart_staging_writable=*/true);
+  regen.set(SourceLayer::Chart, regen.cellIndex(44.0, -71.0), BathyCell{-30.0, 1.5});
+  ASSERT_EQ(marine_bathymetry_store::save(regen, ro_parent.string()), 1u);
+  const fs::path staged = ro_parent / "chart";
+  fs::permissions(
+    ro_parent, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
+
+  EXPECT_THROW(
+    marine_bathymetry_store::replaceChartLayer(staged.string(), store_dir.string()),
+    fs::filesystem_error);
+
+  fs::permissions(ro_parent, fs::perms::owner_all, fs::perm_options::replace);
+
+  // The restored old layer stands (the failed regen left no chart/ gap), and no
+  // backup lingers.
+  EXPECT_FALSE(fs::exists(backup));
+  BathymetryStore runtime(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+  const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got.has_value());   // old orphan data restored and surviving
+  EXPECT_DOUBLE_EQ(got->depth, -10.0);
+}

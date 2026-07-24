@@ -195,11 +195,12 @@ std::size_t evictOutside(
 /// fully intact. Always targets `chart/` — deliberately NOT parameterized by
 /// SourceLayer, so no caller can wholesale-replace survey/reference data.
 ///
-/// Sequence: validate the staged dir (exists, contains ≥1 `.tif`); remove any
-/// stale `.chart_backup/` left by a crashed prior run; rename existing
-/// `chart/` → `.chart_backup/`; rename staged → `chart/` (atomic on one
-/// filesystem); on failure restore the backup and rethrow; on success remove
-/// the backup.
+/// Sequence: validate the staged dir (exists, contains ≥1 `.tif`); recover from
+/// an interrupted prior swap (restore `.chart_backup/` → `chart/` when `chart/`
+/// is absent — the crash struck mid-commit — otherwise drop the now-stale
+/// backup); rename existing `chart/` → `.chart_backup/`; rename staged →
+/// `chart/` (atomic on one filesystem); on failure restore the backup and
+/// rethrow; on success remove the backup.
 ///
 /// Caller contract: run only while no consumer holds the store open (D7's
 /// enforced nav-down precondition); the staged dir must be on the same

@@ -497,8 +497,21 @@ void replaceChartLayer(
             "' contains no .tif tiles — refusing to swap in an empty layer");
   }
 
-  // A stale backup from a crashed prior run would make the chart->backup
-  // rename fail (ENOTEMPTY); the old chart/ (still live) supersedes it.
+  // Crash recovery. A `.chart_backup/` left by a crashed prior run marks an
+  // interrupted swap; which repair to apply depends on whether `chart/` exists:
+  //   - chart/ ABSENT, backup present: the crash struck between the
+  //     chart/ -> backup rename and the staged -> chart commit. The backup holds
+  //     the ONLY copy of the old layer, so RESTORE it — discarding it would leave
+  //     the store with no chart layer at all.
+  //   - chart/ PRESENT, backup present: the crash struck after the commit but
+  //     before cleanup, so the backup is truly stale (the live chart/ supersedes
+  //     it) and is dropped below.
+  // After a restore the backup no longer exists, so the remove_all is a no-op;
+  // otherwise it clears a genuinely stale backup that would else make the
+  // chart -> backup rename fail with ENOTEMPTY.
+  if (fs::exists(backup) && !fs::exists(chart)) {
+    fs::rename(backup, chart);
+  }
   fs::remove_all(backup);
 
   const bool had_chart = fs::exists(chart);
