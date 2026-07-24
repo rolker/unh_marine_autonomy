@@ -186,6 +186,31 @@ std::size_t evictOutside(
   const geographic_msgs::msg::GeoPoint & min_pt,
   const geographic_msgs::msg::GeoPoint & max_pt);
 
+/// @brief Atomically replace a store's `chart/` layer with a staged directory
+///        (ADR-0010 D7 wholesale regeneration — never a merge).
+///
+/// The updater builds the new chart layer (tiles + edition registry) into
+/// @p staged_chart_dir, then calls this to swap it in. The rename is the
+/// single commit point: a failure at any step leaves the previous `chart/`
+/// fully intact. Always targets `chart/` — deliberately NOT parameterized by
+/// SourceLayer, so no caller can wholesale-replace survey/reference data.
+///
+/// Sequence: validate the staged dir (exists, contains ≥1 `.tif`); remove any
+/// stale `.chart_backup/` left by a crashed prior run; rename existing
+/// `chart/` → `.chart_backup/`; rename staged → `chart/` (atomic on one
+/// filesystem); on failure restore the backup and rethrow; on success remove
+/// the backup.
+///
+/// Caller contract: run only while no consumer holds the store open (D7's
+/// enforced nav-down precondition); the staged dir must be on the same
+/// filesystem as @p store_dir for rename atomicity.
+///
+/// @throws std::runtime_error on validation failure;
+///         std::filesystem::filesystem_error on rename failure (after backup
+///         restoration).
+void replaceChartLayer(
+  const std::string & staged_chart_dir, const std::string & store_dir);
+
 }  // namespace marine_bathymetry_store
 
 #endif  // MARINE_BATHYMETRY_STORE__TILE_IO_HPP_

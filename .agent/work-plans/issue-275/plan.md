@@ -32,14 +32,15 @@ The D8 draft/processed re-split is **not in scope**: it renames `survey/` and mu
    - Declare in `tile_io.hpp`.
 
 6. **Extend `test_store.cpp`** — add tests:
-   - `ChartLayerIsReadOnlyByDefault` — `set(Chart, ...)` and `importTiles(Chart, ...)` throw on a normal store.
-   - `ChartStagingWritableAllowsSet` — `chart_staging_writable=true` store accepts writes.
-   - `PriorClassOrdering` — a store with all three layers returns `Survey > Reference > Chart` in `bestSource` priority order.
+   - `ChartIsReadOnlyByDefault` + `ImportTilesHonorsChartGate` — `set(Chart, ...)` and `importTiles(Chart, ...)` throw on a normal store.
+   - `ChartStagingWritableStoreAllowsSet` + `FromCellSizePropagatesChartStagingWritable` — `chart_staging_writable=true` store accepts writes (constructor and factory).
+   - `BestSourceFullPriorityOrderSurveyReferenceChart` (in `test_query.cpp`, where `bestSource` tests live) — full `Survey > Reference > Chart` walk-down.
 
 7. **Extend `test_tile_io.cpp`** — add tests:
    - `ChartLayerRoundTrip` — stage → `replaceChartLayer` → `load` → `bestSource` at chart level → correct depth.
-   - `ReplaceChartLayerSwapAtomicity` — call `replaceChartLayer` with a non-existent staged dir → exception → old `chart/` tiles still intact on disk.
-   - `ReplaceChartLayerStaleTileRemoval` — first regeneration writes tiles A and B; second regeneration writes only tile A; after the second swap only tile A is present (B was in the old dir which was replaced wholesale).
+   - `ReplaceChartLayerRejectsMissingOrEmptyStagedDir` — nonexistent AND empty (no .tif) staged dirs both refuse; old `chart/` tiles intact.
+   - `ReplaceChartLayerClearsStaleBackupFromCrashedRun` — stale `.chart_backup/` removed before the swap (plan-review finding).
+   - `ReplaceChartLayerRemovesStaleTilesWholesale` — regen 1 writes tiles A+B; regen 2 writes only A; after the swap only A remains. (Also updated the pre-existing `LoadWarnsOnUnrecognizedStoreLayout` fixture, which had used `chart/` as its unrecognized-dir example.)
 
 ## Files to Change
 

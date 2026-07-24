@@ -98,20 +98,36 @@ public:
   ///   Reference from disk regardless of this flag — the read-only gate is on
   ///   per-cell mutation (`set`), not on loading the prior. Direct tile mutation
   ///   is impossible from outside: `getOrCreateTile` is private (persistence-only).
+  /// @param chart_staging_writable Opt in to writes on the `Chart` layer
+  ///   (ADR-0010 D3/D7). Default `false` — `Chart` is writable only by the
+  ///   wholesale-regeneration workflow: a **staging** store passes `true`,
+  ///   imports the exported chart tiles, saves to a staged directory, and the
+  ///   updater swaps it in via `replaceChartLayer`. Runtime stores never write
+  ///   Chart directly; as with Reference, `load()` may still populate the
+  ///   layer from disk (the gate is on mutation, not loading).
   /// @throws std::out_of_range if the level is invalid (via gggs::Level).
-  explicit BathymetryStore(uint8_t gggs_level, bool reference_writable = false)
-  : level_(gggs_level), reference_writable_(reference_writable) {}
+  explicit BathymetryStore(
+    uint8_t gggs_level, bool reference_writable = false,
+    bool chart_staging_writable = false)
+  : level_(gggs_level), reference_writable_(reference_writable),
+    chart_staging_writable_(chart_staging_writable) {}
 
   /// @brief Construct a store whose **default** level is the coarsest GGGS level
   ///        whose cells are no larger than @p cell_size_m (clamped to level 20).
-  static BathymetryStore fromCellSize(float cell_size_m, bool reference_writable = false)
+  static BathymetryStore fromCellSize(
+    float cell_size_m, bool reference_writable = false,
+    bool chart_staging_writable = false)
   {
     return BathymetryStore(
-      gggs::Level::fromCellSize(cell_size_m).level(), reference_writable);
+      gggs::Level::fromCellSize(cell_size_m).level(), reference_writable,
+      chart_staging_writable);
   }
 
   /// @brief Whether per-cell `set()` may write the read-only `Reference` layer.
   bool referenceWritable() const noexcept {return reference_writable_;}
+
+  /// @brief Whether writes may target the `Chart` layer (staging stores only).
+  bool chartStagingWritable() const noexcept {return chart_staging_writable_;}
 
   /// @brief The store's **default** level (used by `cellIndex(lat,lon)` only).
   ///
@@ -222,6 +238,7 @@ private:
 
   gggs::Level level_;
   bool reference_writable_ = false;
+  bool chart_staging_writable_ = false;
   std::array<std::map<gggs::GridIndex, BathymetryTile>, source_layer_count> layers_;
 };
 

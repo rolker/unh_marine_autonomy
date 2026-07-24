@@ -255,6 +255,7 @@ std::string layerDirName(SourceLayer layer)
   switch (layer) {
     case SourceLayer::Survey: return "survey";
     case SourceLayer::Reference: return "reference";
+    case SourceLayer::Chart: return "chart";
   }
   throw std::runtime_error("layerDirName: unknown SourceLayer");
 }
@@ -461,6 +462,57 @@ std::size_t evictOutside(
     }
   }
   return evicted;
+}
+
+void replaceChartLayer(
+  const std::string & staged_chart_dir, const std::string & store_dir)
+{
+  namespace fs = std::filesystem;
+  const fs::path staged(staged_chart_dir);
+  const fs::path chart = fs::path(store_dir) / layerDirName(SourceLayer::Chart);
+  const fs::path backup = fs::path(store_dir) / ".chart_backup";
+
+  // Validate the staged layer BEFORE touching the live one: it must exist and
+  // hold at least one value tile, so an empty/failed export can never swap in
+  // (ADR-0010 D7 — a corrupt regeneration must leave the old layer standing).
+  if (!fs::is_directory(staged)) {
+    throw std::runtime_error(
+            "replaceChartLayer: staged dir '" + staged_chart_dir +
+            "' does not exist or is not a directory");
+  }
+  bool has_tile = false;
+  for (const auto & entry : fs::directory_iterator(staged)) {
+    if (entry.path().extension() == ".tif") {
+      has_tile = true;
+      break;
+    }
+  }
+  if (!has_tile) {
+    throw std::runtime_error(
+            "replaceChartLayer: staged dir '" + staged_chart_dir +
+            "' contains no .tif tiles — refusing to swap in an empty layer");
+  }
+
+  // A stale backup from a crashed prior run would make the chart->backup
+  // rename fail (ENOTEMPTY); the old chart/ (still live) supersedes it.
+  fs::remove_all(backup);
+
+  const bool had_chart = fs::exists(chart);
+  if (had_chart) {
+    fs::rename(chart, backup);
+  }
+  try {
+    // The commit point: atomic on a single filesystem (rename(2)).
+    fs::rename(staged, chart);
+  } catch (...) {
+    if (had_chart) {
+      fs::rename(backup, chart);   // restore; old layer stands
+    }
+    throw;
+  }
+  if (had_chart) {
+    fs::remove_all(backup);
+  }
 }
 
 }  // namespace marine_bathymetry_store

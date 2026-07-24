@@ -260,3 +260,49 @@ TEST(Store, ImportTilesEmptyIsNoOp)
   EXPECT_EQ(store.importTiles(SourceLayer::Survey, {}), 0u);
   EXPECT_TRUE(store.tiles(SourceLayer::Survey).empty());
 }
+
+TEST(Store, ChartIsReadOnlyByDefault)
+{
+  // Chart is writable only via the regeneration workflow (ADR-0010 D7): both
+  // mutators throw on a normal runtime store.
+  BathymetryStore store(5);
+  EXPECT_FALSE(store.chartStagingWritable());
+  EXPECT_THROW(
+    store.set(SourceLayer::Chart, store.cellIndex(43.0, -70.5), BathyCell{-20.0, 1.5}),
+    std::logic_error);
+}
+
+TEST(Store, ChartStagingWritableStoreAllowsSet)
+{
+  // The staging workflow opts in; a staged chart cell writes and reads back.
+  BathymetryStore store(5, /*reference_writable=*/false, /*chart_staging_writable=*/true);
+  EXPECT_TRUE(store.chartStagingWritable());
+  const auto cell = store.cellIndex(43.0, -70.5);
+  store.set(SourceLayer::Chart, cell, BathyCell{-20.0, 1.5});
+  const auto got = store.get(SourceLayer::Chart, cell);
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, -20.0);
+}
+
+TEST(Store, FromCellSizePropagatesChartStagingWritable)
+{
+  auto store = BathymetryStore::fromCellSize(
+    30.0f, /*reference_writable=*/false, /*chart_staging_writable=*/true);
+  EXPECT_TRUE(store.chartStagingWritable());
+  EXPECT_NO_THROW(
+    store.set(SourceLayer::Chart, store.cellIndex(43.0, -70.5), BathyCell{-20.0, 1.5}));
+}
+
+TEST(Store, ImportTilesHonorsChartGate)
+{
+  // Bulk import must honor the same Chart gate as set(): a runtime store
+  // refuses, a staging store accepts.
+  BathymetryStore runtime_store(5);
+  const auto cell = runtime_store.cellIndex(43.0, -70.5);
+  EXPECT_THROW(
+    runtime_store.importTiles(SourceLayer::Chart, oneTile(cell, BathyCell{-20.0, 1.5})),
+    std::logic_error);
+
+  BathymetryStore staging(5, /*reference_writable=*/false, /*chart_staging_writable=*/true);
+  EXPECT_EQ(staging.importTiles(SourceLayer::Chart, oneTile(cell, BathyCell{-20.0, 1.5})), 1u);
+}

@@ -44,6 +44,12 @@ bool BathymetryStore::set(
             "BathymetryStore::set: Reference is a read-only prior layer; construct "
             "the store with reference_writable=true (importer only) to write it");
   }
+  if (layer == SourceLayer::Chart && !chart_staging_writable_) {
+    throw std::logic_error(
+            "BathymetryStore::set: Chart is writable only via the regeneration "
+            "workflow (ADR-0010 D7); construct a staging store with "
+            "chart_staging_writable=true, then swap via replaceChartLayer");
+  }
   // Last-write-wins per cell: there is no per-day epoch ordering since #221.
   BathymetryTile & tile = getOrCreateTile(layer, cell.grid());
   tile.set(cell.row(), cell.column(), value);
@@ -76,6 +82,15 @@ std::size_t BathymetryStore::importTiles(
     throw std::logic_error(
             "BathymetryStore::importTiles: Reference is a read-only prior layer; "
             "construct the store with reference_writable=true (importer only) to write it");
+  }
+  // Chart mirrors the gate: only a staging store (chart_staging_writable=true)
+  // may bulk-import Chart tiles; runtime stores receive Chart solely via
+  // load() after a replaceChartLayer swap (ADR-0010 D7).
+  if (layer == SourceLayer::Chart && !chart_staging_writable_) {
+    throw std::logic_error(
+            "BathymetryStore::importTiles: Chart is writable only via the regeneration "
+            "workflow (ADR-0010 D7); construct a staging store with "
+            "chart_staging_writable=true, then swap via replaceChartLayer");
   }
   for (const auto & [grid, tile] : tiles) {
     if (!grid.valid()) {

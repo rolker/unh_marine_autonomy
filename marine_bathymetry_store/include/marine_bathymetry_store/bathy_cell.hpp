@@ -54,11 +54,16 @@ enum class SourceLayer : uint8_t
   Reference = 1,  ///< A prior surface imported before the survey (chart-derived
                   ///< contour prior, external processed grid). Broad, coarse,
                   ///< read-only. Ellipsoidal heights converted at import (§D4).
+  Chart = 2,      ///< Official navigation products (S57 exports; ADR-0010 D3/D7).
+                  ///< Lowest priority (D4 placeholder ordering). Writable ONLY via
+                  ///< the wholesale-regeneration path (`replaceChartLayer` swap of
+                  ///< a staged directory) — never by cell-wise ingest; a staging
+                  ///< store opts in with `chart_staging_writable=true`.
 };
 
 /// @brief Source layers in descending priority order — iterate for best-source.
-inline constexpr std::array<SourceLayer, 2> source_layers_by_priority{
-  SourceLayer::Survey, SourceLayer::Reference};
+inline constexpr std::array<SourceLayer, 3> source_layers_by_priority{
+  SourceLayer::Survey, SourceLayer::Reference, SourceLayer::Chart};
 
 /// @brief Number of source layers present in this phase.
 inline constexpr std::size_t source_layer_count = source_layers_by_priority.size();
