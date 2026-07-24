@@ -115,3 +115,23 @@ surfaced by reading the ported source (`chart_datum_node.cpp`,
 - [ ] (suggestion) Rename the include guard `MRU_TRANSFORM__DATUM_CONFIG_HPP_` → `MARINE_VERTICAL_DATUM__DATUM_CONFIG_HPP_` alongside the namespace — `plan.md:36`
 - [ ] (suggestion) Use rosdep key `proj` + `pkg_check_modules(PROJ REQUIRED IMPORTED_TARGET proj)` / link `PkgConfig::PROJ` per mru_transform precedent (not `libproj-dev`) — `plan.md:83`
 - [ ] (suggestion) Preserve `proj_context_set_enable_network(ctx, false)` (`chart_datum_node.cpp:286`) in the library per ADR-0010 D6/D7 offline guarantee — `plan.md:36`
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-24 19:11 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-274 at `7640003`
+**Mode**: pre-push
+**Depth**: Deep (reason: 11 files & 1368 additions exceed 10-file/200-line thresholds; new cross-layer library per ADR-0010 D6)
+**Must-fix**: 0 | **Suggestions**: 6
+**Round**: 1 | **Ship**: recommended — no must-fix; faithful extraction (datum_config byte-identical to battle-tested source), only new-consumer suggestions remain
+
+### Findings
+- [ ] (suggestion) Strengthen thread-safety note: shared `PJ` hazard (not just context) + "one make_vdatum_query per thread" for the parallel per-cell exporter — `marine_vertical_datum/include/marine_vertical_datum/vdatum_query.hpp:60`
+- [ ] (suggestion) Sort `collect_grids` output — unspecified `recursive_directory_iterator` order makes `+grids=` precedence non-deterministic across machines — `marine_vertical_datum/src/vdatum_query.cpp:32`
+- [ ] (suggestion) Coverage gap: real `proj_trans` sign (`-z`), HUGE_VAL/isinf/isnan no-coverage detection, and `proj_torad` ordering are never executed (stubs + setup-failure only); add a gated synthetic-grid integration test — `marine_vertical_datum/test/test_vdatum_query.cpp`
+- [ ] (suggestion) Consider resetting/checking `proj_errno` per call in `query_datum` for the millions-of-cells loop (low-confidence, inherited from production node) — `marine_vertical_datum/src/vdatum_query.cpp:95`
+- [ ] (suggestion) Stale ported comment "acceptance item 5 of issue #25" — should reference #274 — `marine_vertical_datum/test/test_datum_config.cpp:3`
+- [ ] (suggestion) Convention drift: no `ament_lint_auto`/`ament_lint_common`, all 6 C++ files lack copyright headers (cpplint 6×legal/copyright, uncrustify 2 files) — calibrated down: sibling mru_transform's lint is a no-op and ships headerless too, so not a blocker — `marine_vertical_datum/CMakeLists.txt`
