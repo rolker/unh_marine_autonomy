@@ -98,8 +98,10 @@ scratch/offline stores only — never a store a live costmap reads. Targeting
 | `marine_bathymetry_store/README.md` | s102_import docs + #276 guardrail |
 | `.agents/README.md` | inventory line + Known build requirements (marine_vertical_datum) |
 
-**Merge dependency**: this PR does not build until #274 lands in jazzy
-(adapter + package dep). Wire-in-PR was Roland's explicit call 2026-07-24.
+**Merge dependency**: ~~this PR does not build until #274 lands in jazzy~~
+**resolved** — #274 merged to jazzy (PR#279, 2026-07-24) and is merged into
+this branch; the adapter builds against the real library (API unchanged from
+the PR-head version coded against). Wire-in-PR was Roland's explicit call.
 
 ## Principles Self-Check
 
