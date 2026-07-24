@@ -31,6 +31,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -132,7 +133,17 @@ std::string sha256File(const std::string & path)
 TileCache::TileCache(const std::string & cache_dir)
 : cache_dir_(cache_dir)
 {
-  fs::create_directories(fs::path(cache_dir_) / "tiles");
+  const fs::path tiles_dir = fs::path(cache_dir_) / "tiles";
+  fs::create_directories(tiles_dir);
+  // Sweep orphaned ".part" temporaries left by a download killed mid-stream:
+  // each fetch streams to "<name>.part" and only renames a verified payload
+  // into place, so any ".part" here is stale and safe to drop at open.
+  for (const auto & entry : fs::directory_iterator(tiles_dir)) {
+    if (entry.is_regular_file() && entry.path().extension() == ".part") {
+      std::error_code ec;
+      fs::remove(entry.path(), ec);  // best-effort; a leftover is harmless
+    }
+  }
   // Validate an existing registry up front so corruption fails the run at
   // open, not mid-fetch.
   loadRegistry(fs::path(cache_dir_) / kRegistryName);
