@@ -4,6 +4,30 @@ issue: 275
 
 # Issue #275 — marine_bathymetry_store: chart source layer and wholesale regeneration
 
+## Implementation
+**Status**: complete
+**When**: 2026-07-24 22:19 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-275 at `4b5bd34`
+**Addressed**: Local Review (Pre-Push) 2026-07-24 22:06 +00:00 at `8fdd7e7` (verdict changes-requested; 1 must-fix + 5 suggestions)
+**Commits**: c68d083, b73689b, ff9ee96, d7b9dc9, 5f16b91, 4b5bd34
+
+All six open findings addressed (one commit each), `chart/`-layer package rebuilt
+clean, all 31 `TileIoTest` cases pass (incl. 2 new), cpplint clean.
+
+### Actions
+- [x] (must-fix) test `replaceChartLayer` restore branch — new `ReplaceChartLayerRestoresChartWhenCommitRenameFails` forces a mid-swap commit-rename failure (read-only staged parent → EACCES after `chart/`→`.chart_backup/`) and asserts `chart/` is restored with its original value; root-guarded via `GTEST_SKIP` — `test/test_tile_io.cpp` (c68d083)
+- [x] (suggestion) cross-reference #272 nav precondition — added a discoverable code note at the `source_layers_by_priority` walks (Chart participates in nav-affecting depth queries; no mechanical gate before the #272 cost-model rework; precondition = no deployed store carries `chart/` until #272). The PR-body cross-reference is embodied in code since this is `--issue` mode with no PR yet; "confirm no deployed store carries chart/" is an operator/host check outside the worktree, carried forward here — `src/query.cpp:89-106,111` (b73689b)
+- [x] (suggestion) `warnIfUnrecognizedStoreLayout` stale taxonomy — doc + cerr now list `chart/` among recognized layers and drop it from the obsolete set (only `draft/`/`processed` remain, per D8) — `src/tile_io.cpp:156-165,193-199` (ff9ee96)
+- [x] (suggestion) staged-dir `.tif` `is_regular_file()` guard — a directory named `foo.tif` no longer passes validation, mirroring the load path at :343 — `src/tile_io.cpp:485` (d7b9dc9)
+- [x] (suggestion) crash-recovery restores orphaned backup — when `chart/` is absent and `.chart_backup/` present (crash between the backup rename and the commit), the backup is now restored to `chart/` rather than discarded; covered by new `ReplaceChartLayerRestoresOrphanedBackupThenSurvivesFailedSwap` — `src/tile_io.cpp:496-515` (5f16b91)
+- [x] (suggestion) failure-path hardening — cross-device staged dir rejected up front via `st_dev` compare before the live layer is moved (EXDEV); restore rename in the catch uses the `error_code` overload so a double fault can't mask the original exception (logs CRITICAL if restore fails) — `src/tile_io.cpp` (4b5bd34)
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a fresh-context sub-agent:
+`.agent/scripts/dispatch_subagent.sh --mode in-process --issue 275 --skill review-code`
+
 ## Local Review (Pre-Push)
 **Status**: complete
 **When**: 2026-07-24 22:06 +00:00
