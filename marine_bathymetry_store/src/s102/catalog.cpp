@@ -21,8 +21,10 @@
 
 #include "s102/catalog.hpp"
 
+#include <cpl_conv.h>
 #include <cpl_http.h>
 #include <cpl_minixml.h>
+#include <cpl_string.h>
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 
@@ -59,43 +61,67 @@ std::optional<double> parseResolutionMeters(const std::string & text)
 std::string findNewestCatalog(
   const std::string & bucket_url, const std::string & prefix)
 {
-  const std::string list_url =
+  const std::string base_url =
     bucket_url + "?list-type=2&prefix=" + prefix;
-  CPLHTTPResult * result = CPLHTTPFetch(list_url.c_str(), nullptr);
-  if (result == nullptr || result->nStatus != 0 || result->pabyData == nullptr) {
-    const std::string err =
-      (result != nullptr && result->pszErrBuf != nullptr) ? result->pszErrBuf : "no data";
-    CPLHTTPDestroyResult(result);
-    throw std::runtime_error("S3 listing failed for " + list_url + ": " + err);
-  }
-  const std::string xml(reinterpret_cast<const char *>(result->pabyData),
-    result->nDataLen);
-  CPLHTTPDestroyResult(result);
-
-  CPLXMLNode * root = CPLParseXMLString(xml.c_str());
-  if (root == nullptr) {
-    throw std::runtime_error("unparseable S3 listing from " + list_url);
-  }
-  const std::unique_ptr<CPLXMLNode, decltype(& CPLDestroyXMLNode)> root_guard(
-    root, &CPLDestroyXMLNode);
 
   std::string newest;
-  const CPLXMLNode * list = CPLGetXMLNode(root, "=ListBucketResult");
-  for (const CPLXMLNode * node = (list != nullptr) ? list->psChild : nullptr;
-    node != nullptr; node = node->psNext)
-  {
-    if (node->eType != CXT_Element || std::string(node->pszValue) != "Contents") {
-      continue;
+  std::string continuation_token;
+  // S3 ListObjectsV2 caps a response at 1000 keys and signals more with
+  // IsTruncated / NextContinuationToken. Follow the token to the end so a
+  // prefix holding >1000 objects can't hide the newest catalog (which would
+  // silently return a stale one, violating the "newest catalog" contract).
+  do {
+    std::string list_url = base_url;
+    if (!continuation_token.empty()) {
+      char * escaped =
+        CPLEscapeString(continuation_token.c_str(), -1, CPLES_URL);
+      list_url += "&continuation-token=" + std::string(escaped);
+      CPLFree(escaped);
     }
-    const std::string key = CPLGetXMLValue(node, "Key", "");
-    // The tile-scheme names embed YYYYMMDD_HHMMSS, so the lexicographically
-    // greatest matching key is the newest catalog.
-    if (key.find("Navigation_Tile_Scheme_") != std::string::npos &&
-      key.size() >= 5 && key.substr(key.size() - 5) == ".gpkg" && key > newest)
+
+    CPLHTTPResult * result = CPLHTTPFetch(list_url.c_str(), nullptr);
+    if (result == nullptr || result->nStatus != 0 || result->pabyData == nullptr) {
+      const std::string err =
+        (result != nullptr && result->pszErrBuf != nullptr) ? result->pszErrBuf : "no data";
+      CPLHTTPDestroyResult(result);
+      throw std::runtime_error("S3 listing failed for " + list_url + ": " + err);
+    }
+    const std::string xml(reinterpret_cast<const char *>(result->pabyData),
+      result->nDataLen);
+    CPLHTTPDestroyResult(result);
+
+    CPLXMLNode * root = CPLParseXMLString(xml.c_str());
+    if (root == nullptr) {
+      throw std::runtime_error("unparseable S3 listing from " + list_url);
+    }
+    const std::unique_ptr<CPLXMLNode, decltype(& CPLDestroyXMLNode)> root_guard(
+      root, &CPLDestroyXMLNode);
+
+    const CPLXMLNode * list = CPLGetXMLNode(root, "=ListBucketResult");
+    for (const CPLXMLNode * node = (list != nullptr) ? list->psChild : nullptr;
+      node != nullptr; node = node->psNext)
     {
-      newest = key;
+      if (node->eType != CXT_Element || std::string(node->pszValue) != "Contents") {
+        continue;
+      }
+      const std::string key = CPLGetXMLValue(node, "Key", "");
+      // The tile-scheme names embed YYYYMMDD_HHMMSS, so the lexicographically
+      // greatest matching key is the newest catalog.
+      if (key.find("Navigation_Tile_Scheme_") != std::string::npos &&
+        key.size() >= 5 && key.substr(key.size() - 5) == ".gpkg" && key > newest)
+      {
+        newest = key;
+      }
     }
-  }
+
+    // CPLGetXMLValue tolerates a null node (returns the default), so an
+    // unexpected listing shape just ends the loop rather than crashing.
+    const bool truncated =
+      std::string(CPLGetXMLValue(list, "IsTruncated", "false")) == "true";
+    continuation_token =
+      truncated ? CPLGetXMLValue(list, "NextContinuationToken", "") : "";
+  } while (!continuation_token.empty());
+
   if (newest.empty()) {
     throw std::runtime_error(
       "no Navigation_Tile_Scheme_*.gpkg under " + bucket_url + "/" + prefix);
