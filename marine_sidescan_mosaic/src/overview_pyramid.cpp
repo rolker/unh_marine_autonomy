@@ -41,6 +41,7 @@
 #include "marine_sidescan_mosaic/overview_pyramid.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <map>
