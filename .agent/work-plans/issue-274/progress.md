@@ -172,3 +172,20 @@ surfaced by reading the ported source (`chart_datum_node.cpp`,
 - (Copilot R2) proj_context_create nullptr re-raise — the null-check landed in `04dab07` at the flagged location; stale duplicate of the round-1 finding
 - (Copilot R2) mkstemp missing <cstdlib> re-raise — include added in `04dab07` (line 13); stale duplicate
 - (Copilot R2) writeTemp short-write / ssize_t→size_t cast — cannot fail silently: any short or -1 write makes EXPECT_EQ(cast(written), size) fail (−1 → SIZE_MAX ≠ size), marking the test failed; truncated config can never yield a silent pass
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-24 17:12 -0400
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #279 at `94af25d`
+**Sources**: 2 (Copilot R3 @ `94af25d`, Local Review (Pre-Push) @ `7640003`)
+**Cross-source confirmations**: 1
+**CI**: all-pass at prior head; re-running on this round's push
+
+### Findings
+- [x] (valid, Copilot R3) missing repo-standard alias target `${PROJECT_NAME}::${PROJECT_NAME}` (sibling precedent marine_contacts/marine_tiled_raster_store) — added — `marine_vertical_datum/CMakeLists.txt`
+- [x] (cross-confirmed: Copilot R3 + Local Review suggestion 6) missing ament_lint_auto/ament_lint_common wiring — round-1 calibration used the WRONG sibling (mru_transform, platforms_ws); uma siblings all carry it — added to CMakeLists + package.xml, MIT headers added to all 6 C++ files, uncrustify reformat + cpplint include-order/whitespace fixes; full lint suite now green (61 tests 0 failures) — `marine_vertical_datum/`
+
+### False positives
+- (none this round)

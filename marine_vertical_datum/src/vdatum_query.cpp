@@ -1,3 +1,24 @@
+// Copyright 2026 Center for Coastal and Ocean Mapping & NOAA-UNH Joint
+// Hydrographic Center, University of New Hampshire
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
 // vdatum_query.cpp — PROJ pipeline setup + per-point query, extracted from
 // mru_transform's chart_datum_node (ADR-0010 D6). Setup-time problems go to
 // the caller's DiagFn; per-point no-coverage is a plain nullopt.
@@ -181,24 +202,24 @@ VDatumQueryFn make_vdatum_query(const VDatumConfig & config, DiagFn diag)
   }
 
   return [pipelines](double lat, double lon) -> std::optional<VDatumResult> {
-      const double lon_rad = proj_torad(lon);
-      const double lat_rad = proj_torad(lat);
+           const double lon_rad = proj_torad(lon);
+           const double lat_rad = proj_torad(lat);
 
-      double mllw_z;
-      if (!query_datum(pipelines->mllw, lon_rad, lat_rad, mllw_z)) {
-        return std::nullopt;   // normal gap: no MLLW coverage here
-      }
+           double mllw_z;
+           if (!query_datum(pipelines->mllw, lon_rad, lat_rad, mllw_z)) {
+             return std::nullopt;  // normal gap: no MLLW coverage here
+           }
 
-      VDatumResult result;
-      result.mllw_z = mllw_z;
-      if (pipelines->mhhw) {
-        double mhhw_z;
-        if (query_datum(pipelines->mhhw, lon_rad, lat_rad, mhhw_z)) {
-          result.mhhw_z = mhhw_z;
-        }
-      }
-      return result;
-    };
+           VDatumResult result;
+           result.mllw_z = mllw_z;
+           if (pipelines->mhhw) {
+             double mhhw_z;
+             if (query_datum(pipelines->mhhw, lon_rad, lat_rad, mhhw_z)) {
+               result.mhhw_z = mhhw_z;
+             }
+           }
+           return result;
+         };
 }
 
 }  // namespace marine_vertical_datum
