@@ -105,3 +105,16 @@ in `unh_marine_autonomy`.
 - [ ] Plan-task must decide ADR vs. ADR-0002 amendment for the pyramid sidecar contract and document the `overviews/` path layout
 - [ ] Implementation must include unit tests for the fold engine (mean aggregation, empty/nodata/partial tile edge cases, batch builder idempotency)
 - [ ] ADR-0002 and ADR-0006 headers need pointers to whatever ADR captures the pyramid contract (same PR or follow-on — plan should say)
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-07-24 00:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-188/plan.md` at `667938c`
+**Branch**: feature/issue-188 at `667938c`
+**Phases**: single
+
+### Open questions
+- [ ] Level range: should the CLI stop building at a minimum level (e.g. L8) or build until empty? Plan assumes "until empty"; add `--min-level` flag if needed.
+- [ ] Source band=0 in overviews is the settled plan choice (no single attribution at overview level); no blocking action needed — recorded for reviewer awareness.
