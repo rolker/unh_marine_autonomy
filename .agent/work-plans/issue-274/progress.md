@@ -129,9 +129,9 @@ surfaced by reading the ported source (`chart_datum_node.cpp`,
 **Round**: 1 | **Ship**: recommended — no must-fix; faithful extraction (datum_config byte-identical to battle-tested source), only new-consumer suggestions remain
 
 ### Findings
-- [ ] (suggestion) Strengthen thread-safety note: shared `PJ` hazard (not just context) + "one make_vdatum_query per thread" for the parallel per-cell exporter — `marine_vertical_datum/include/marine_vertical_datum/vdatum_query.hpp:60`
-- [ ] (suggestion) Sort `collect_grids` output — unspecified `recursive_directory_iterator` order makes `+grids=` precedence non-deterministic across machines — `marine_vertical_datum/src/vdatum_query.cpp:32`
+- [x] (suggestion) Strengthen thread-safety note: shared `PJ` hazard (not just context) + "one make_vdatum_query per thread" for the parallel per-cell exporter — `marine_vertical_datum/include/marine_vertical_datum/vdatum_query.hpp:60`
+- [x] (suggestion) Sort `collect_grids` output — unspecified `recursive_directory_iterator` order makes `+grids=` precedence non-deterministic across machines — `marine_vertical_datum/src/vdatum_query.cpp:32`
 - [ ] (suggestion) Coverage gap: real `proj_trans` sign (`-z`), HUGE_VAL/isinf/isnan no-coverage detection, and `proj_torad` ordering are never executed (stubs + setup-failure only); add a gated synthetic-grid integration test — `marine_vertical_datum/test/test_vdatum_query.cpp`
 - [ ] (suggestion) Consider resetting/checking `proj_errno` per call in `query_datum` for the millions-of-cells loop (low-confidence, inherited from production node) — `marine_vertical_datum/src/vdatum_query.cpp:95`
-- [ ] (suggestion) Stale ported comment "acceptance item 5 of issue #25" — should reference #274 — `marine_vertical_datum/test/test_datum_config.cpp:3`
+- [x] (suggestion) Stale ported comment "acceptance item 5 of issue #25" — should reference #274 — `marine_vertical_datum/test/test_datum_config.cpp:3`
 - [ ] (suggestion) Convention drift: no `ament_lint_auto`/`ament_lint_common`, all 6 C++ files lack copyright headers (cpplint 6×legal/copyright, uncrustify 2 files) — calibrated down: sibling mru_transform's lint is a no-op and ships headerless too, so not a blocker — `marine_vertical_datum/CMakeLists.txt`

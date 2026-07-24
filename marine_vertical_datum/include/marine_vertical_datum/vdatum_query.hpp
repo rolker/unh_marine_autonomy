@@ -57,8 +57,11 @@ using DiagFn = std::function<void (const std::string &)>;
 // test with `if (query)` before use. A missing/failed MHHW pipeline is not
 // fatal: the query works and mhhw_z stays nullopt (reported via `diag`).
 //
-// The returned callable is copyable; copies share one PROJ context and are
-// NOT safe for concurrent use from multiple threads.
+// The returned callable is copyable; copies share ONE PROJ context and ONE
+// set of PJ pipeline objects, and proj_trans on a shared PJ is not
+// thread-safe — so neither the callable nor its copies may be invoked
+// concurrently. A parallel per-cell consumer must call make_vdatum_query
+// once PER THREAD (each call builds its own context + pipelines).
 VDatumQueryFn make_vdatum_query(const VDatumConfig & config, DiagFn diag = {});
 
 }  // namespace marine_vertical_datum

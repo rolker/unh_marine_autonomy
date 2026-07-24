@@ -6,10 +6,12 @@
 
 #include <proj.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <memory>
 #include <utility>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -27,20 +29,29 @@ void report(const DiagFn & diag, const std::string & message)
 }
 
 // Collect .gtx grid files under `dir` whose stem contains `suffix`
-// (e.g. "_mllw"), comma-joined for a +proj=vgridshift +grids= step.
-// Throws fs::filesystem_error on an unreadable directory.
+// (e.g. "_mllw"), comma-joined for a +proj=vgridshift +grids= step. Sorted
+// so the +grids= precedence (first grid with coverage wins on overlap) is
+// deterministic across machines — recursive_directory_iterator order is
+// filesystem-dependent. Throws fs::filesystem_error on an unreadable
+// directory.
 std::string collect_grids(const std::string & dir, const std::string & suffix)
 {
-  std::string grids;
+  std::vector<std::string> paths;
   for (const auto & entry : fs::recursive_directory_iterator(dir)) {
     if (entry.path().extension() == ".gtx" &&
       entry.path().stem().string().find(suffix) != std::string::npos)
     {
-      if (!grids.empty()) {
-        grids += ",";
-      }
-      grids += entry.path().string();
+      paths.push_back(entry.path().string());
     }
+  }
+  std::sort(paths.begin(), paths.end());
+
+  std::string grids;
+  for (const auto & path : paths) {
+    if (!grids.empty()) {
+      grids += ",";
+    }
+    grids += path;
   }
   return grids;
 }

@@ -1,6 +1,7 @@
 // Tests for the pure datum resolution core (marine_vertical_datum::datum_config).
 //
-// Covers acceptance item 5 of issue #25 in pure code: the precedence matrix
+// Ported from mru_transform for issue #274 (ADR-0010 D6). Covers, in pure
+// code: the precedence matrix
 // (param-first / override-beats-VDatum / fallback-loses-to-VDatum /
 // fallback-fills-gap / nothing→none, plus MHHW present vs absent), the
 // point-in-polygon predicate (inside / outside / boundary / overlap), and
