@@ -92,4 +92,31 @@ XML billion-laughs, TLS-not-verified) and not carried here.
 - [x] (suggestion) Provenance `StoreMetadata.survey` becomes generic `"catalog.gpkg"` on discovered runs (catalog repointed to the cached copy before the filename read); record the real discovered-catalog name — `src/s102/run.cpp:190`
 - [x] (suggestion) Comment the discovery trust boundary (catalog listing is TLS-trusted, not digest-verified, unlike tile payloads) — `src/s102/catalog.cpp:64`
 - [x] (suggestion) Sweep orphaned `<cache>/tiles/*.part` files at cache open (accumulate on mid-download kill) — `src/s102/fetch.cpp:177`
-- [ ] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail is doc-only, not code-enforced — accepted at plan-review as a documented precondition; keep visible until #276 lands
+- [x] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail is doc-only, not code-enforced — accepted at plan-review as a documented precondition; keep visible until #276 lands (deferred: tracking item, not a code change for this PR — code enforcement lands with #276; kept visible in the Implementation deferred list below)
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-24 22:05 +0000
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-278 at `9db4776`
+**Addressed**: `## Local Review (Pre-Push)` (2026-07-24 21:54 +0000, branch `feature/issue-278` at `d1da2a4`)
+**Commits**: `fd92f22`, `16a9974`, `611f0fc`, `a769323`, `9db4776`
+
+Built `marine_bathymetry_store` clean and ran its suite after the fixes:
+286 tests, 0 failures, 38 skipped. cpplint/format ran per-commit via
+pre-commit (no `--no-verify`).
+
+### Actions
+- [x] (must-fix) S3 `ListObjectsV2` pagination in `findNewestCatalog` — now loops on `IsTruncated`/`NextContinuationToken` (URL-encoded token) so a `_CATALOG/` prefix with >1000 objects can't hide the newest catalog — `src/s102/catalog.cpp` (`fd92f22`)
+- [x] (suggestion) Cache basename strips any `?query`/`#fragment` tail before landing on disk (filename() already drops dir components) — `src/s102/fetch.cpp` (`16a9974`)
+- [x] (suggestion) Provenance `StoreMetadata.survey` records the real discovered-catalog filename (captured before the cached-alias repoint), falling back to the resolved path only for explicit/offline runs — `src/s102/run.cpp` (`611f0fc`)
+- [x] (suggestion) Comment added at the catalog listing documenting the discovery trust boundary (TLS-trusted, not digest-verified; integrity begins at the per-tile SHA256) — `src/s102/catalog.cpp` (`a769323`)
+- [x] (suggestion) `TileCache` sweeps orphaned `<cache>/tiles/*.part` temporaries at open (best-effort; only verified payloads are ever renamed into place) — `src/s102/fetch.cpp` (`9db4776`)
+- [x] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail (deferred: tracking item — not a code change for this PR; code enforcement is #276's scope, kept visible in the source review entry until it lands)
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a
+fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill review-code
