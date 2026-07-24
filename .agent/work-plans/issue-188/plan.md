@@ -23,7 +23,22 @@ policy and the depths pyramid wait for the ADR-0010 D8 re-split (#271).
    document the `overviews/` sidecar layout, fold engine interface contract, and
    per-store band policies (imagery mean; depth shallowest-preserving reserved). This
    makes the sidecar a durable, documented contract CAMP and the voyage planner can
-   depend on.
+   depend on. **Folded from plan review:**
+   - (must-fix 1) **ADR-0002 + ADR-0006 header pointers to ADR-0011 land in the
+     SAME PR** (atomic, matching how ADR-0010 landed with its ADR-0002 pointer).
+   - (must-fix 2) **Sidecar path pinned: a single flat `<layer>/overviews/` dir;
+     tiles named `<level>_<row>_<col>.tif`** (level rides in the filename exactly
+     as in the fine layer — consistent with the flat store layout and CAMP's
+     existing value-tile name parsing; no `L<N>/` subdirs). This is the CAMP
+     contract for step 3.
+   - (suggestion) ADR states it **extends ADR-0010 D9's per-layer LOD to the
+     imagery theme** (D9's overview clause names depth layers; imagery keeps its
+     own tiering per D3).
+   - (suggestion) The fold's correctness rests on **`gggs::parent()` /
+     `gggs::children()` (`marine_autonomy/gggs/index_math.h`)** and per-cell
+     geographic accumulation (child cell centre → parent `CellIndex`), which
+     stays correct across the polar `latitudeScaleFactor` bands — named in the
+     ADR as the load-bearing mapping.
 
 2. **Add fold engine to `marine_tiled_raster_store`** —
    `include/marine_tiled_raster_store/overview_builder.hpp` (header-only template):
@@ -60,7 +75,13 @@ policy and the depths pyramid wait for the ADR-0010 D8 re-split (#271).
      re-reading level 13 each time).
    - Idempotent: deletes and recreates `overviews/` at the start of each run
      (regenerable-cache semantics; safe to re-run after ingest).
+   - `--min-level N` (default 0): stop after building level N; the pyramid always
+     reaches the apex by default (a handful of tiles).
    - Progress: `stderr` line per level: tile count in and out.
+   - (plan-review suggestion) The test covers **CLI-level idempotency** by
+     running the builder function twice over the same input and asserting the
+     second run's outputs are identical (delete+recreate makes byte-drift the
+     only failure mode; the test pins value-identity).
 
 6. **Update `marine_sidescan_mosaic/CMakeLists.txt`** —
    add `build_sidescan_overviews` executable, no new ament dependencies (it uses
