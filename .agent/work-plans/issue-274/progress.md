@@ -92,3 +92,26 @@ issue: 274
 
 ### Open questions
 - [ ] No open questions — plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-07-24 18:51 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-274/plan.md` at `f5f2e6b`
+**PR**: PR-less (`--issue` mode)
+**Verdict**: approve-with-suggestions
+
+Independent review (fresh-context #490 sub-agent, Opus; plan authored by the
+Sonnet invocation) — not an author self-review despite the shared commit
+identity. All findings are suggestions; none block implementation. They were
+surfaced by reading the ported source (`chart_datum_node.cpp`,
+`datum_config.hpp`) against the plan. All three review-issue action items
+(mock seam, PROJ dep, README) are addressed.
+
+### Findings
+- [ ] (suggestion) Pin the error/diagnostic seam for the extracted PROJ functions — they use `RCLCPP_ERROR`/`RCLCPP_WARN_THROTTLE` (`chart_datum_node.cpp:253,359`) which a ROS-free lib can't call; decide exceptions vs return-status vs dropping warnings — `plan.md:42`
+- [ ] (suggestion) Make `make_vdatum_query` the primary production entry; standalone `query_vdatum(lat,lon,VDatumConfig)` rebuilds the PROJ pipeline per call (footgun for per-cell S57 exporter) — `plan.md:45`
+- [ ] (suggestion) Rename the include guard `MRU_TRANSFORM__DATUM_CONFIG_HPP_` → `MARINE_VERTICAL_DATUM__DATUM_CONFIG_HPP_` alongside the namespace — `plan.md:36`
+- [ ] (suggestion) Use rosdep key `proj` + `pkg_check_modules(PROJ REQUIRED IMPORTED_TARGET proj)` / link `PkgConfig::PROJ` per mru_transform precedent (not `libproj-dev`) — `plan.md:83`
+- [ ] (suggestion) Preserve `proj_context_set_enable_network(ctx, false)` (`chart_datum_node.cpp:286`) in the library per ADR-0010 D6/D7 offline guarantee — `plan.md:36`
