@@ -43,7 +43,14 @@ pairing).
    **derived and regenerable**: builders delete and recreate it wholesale
    (idempotent; safe after every ingest), it is never merged into the fine
    layer, and it never enters anti-entropy/possession sets. Native coarse
-   data can never be confused with derived overviews.
+   data can never be confused with derived overviews. Regeneration is
+   **atomic**: a builder writes into a sibling `overviews.tmp/` and renames it
+   over `overviews/` only after every level succeeds, so an interrupted or
+   failed run leaves the previous sidecar intact rather than a truncated one a
+   consumer would read as complete. A builder also refuses to wipe `overviews/`
+   unless the layer holds fine tiles at the declared level (an empty or
+   mis-pointed layer never destroys a good sidecar). A stray `overviews.tmp/`
+   is a crashed run's debris and may be deleted.
 
 3. **The fold's load-bearing mapping is `gggs::parent()` / `gggs::children()`
    (`marine_autonomy/gggs/index_math.h`) plus per-cell geographic

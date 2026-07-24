@@ -34,6 +34,7 @@ add_library(${PROJECT_NAME}
   src/normalizer.cpp
   src/tier1.cpp
   src/decode.cpp
+  src/overview_pyramid.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
@@ -108,7 +109,9 @@ ament_target_dependencies(sidescan_tier2_processed
 install(TARGETS sidescan_tier2_processed DESTINATION lib/${PROJECT_NAME})
 
 # Overview-pyramid batch builder: fine tiles -> overviews/ sidecar (#188 / ADR-0011).
+# Thin CLI over the library's overview_pyramid production path.
 add_executable(build_sidescan_overviews src/build_sidescan_overviews.cpp)
+target_link_libraries(build_sidescan_overviews ${PROJECT_NAME})
 ament_target_dependencies(build_sidescan_overviews
   geographic_msgs
   marine_autonomy
@@ -139,6 +142,12 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_tier1 test/test_tier1.cpp)
   target_link_libraries(test_tier1 ${PROJECT_NAME})
+
+  # Exercises the overview-builder production path on real on-disk tiles
+  # (grid reconstruction, per-level fold, level loop, arg parsing) — #188.
+  ament_add_gtest(test_overview_pyramid test/test_overview_pyramid.cpp)
+  target_link_libraries(test_overview_pyramid ${PROJECT_NAME})
+  ament_target_dependencies(test_overview_pyramid marine_autonomy marine_tiled_raster_store)
 endif()
 
 ament_package()
