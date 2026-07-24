@@ -189,3 +189,20 @@ surfaced by reading the ported source (`chart_datum_node.cpp`,
 
 ### False positives
 - (none this round)
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-24 17:35 -0400
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #279 at `87cf44d`
+**Sources**: 2 (Copilot R4 @ `87cf44d`, Local Review (Pre-Push) @ `7640003`)
+**Cross-source confirmations**: 0
+**CI**: all-pass (build 9m28s @ 87cf44d)
+
+### Findings
+- [ ] (none — round closed with no valid findings; SHIP recommended, round 4, finding quality declining per #537 convergence guidance: R1 4 valid → R4 0 valid)
+
+### False positives
+- (Copilot R4) mkdtemp needs `<stdlib.h>` not `<cstdlib>` — platform matrix is pinned by REP-2000/jazzy to Ubuntu 24.04 glibc (CI and field identical), where `<cstdlib>` exposes the POSIX names; no stricter toolchain exists in this system, and Copilot's own R2 comment recommended `<cstdlib>/<stdlib.h>` interchangeably — churn, not signal
+- (Copilot R4) wrong geoid path degrades to silent per-point nullopt — EMPIRICALLY REFUTED: PROJ resolves `+grids=` eagerly at proj_create (probe: nonexistent grid → proj_create fails, errno 1029 "File not found or invalid"), routing through create_pipeline's null-check → DiagFn diagnostic → empty function; the lazy-failure path does not exist
