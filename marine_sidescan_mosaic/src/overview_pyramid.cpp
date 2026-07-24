@@ -92,6 +92,14 @@ bool validIntensity(const Cell & cell) {return cell[0] != kNoData;}
 // centre point maps back through Level::gridIndex. tileFilename round-trip
 // verifies the arithmetic — a mismatch (e.g. a future spec change) skips the
 // file loudly instead of folding it into the wrong parent.
+//
+// NOTE: the column width uses the latitude-based gggs::latitudeScaleFactor(double)
+// overload, which disagrees with the authoritative row-based
+// LevelSpec::latitudeScaleFactor(row) exactly on the 72/80 degree polar band
+// boundaries. The sidescan survey envelope is non-polar (|lat| < 72; see
+// tile_io.hpp), so the two agree here; on a polar tile they could diverge, but
+// the tileFilename round-trip check below would then fail and skip the file
+// rather than mis-place it — so the assumption fails safe.
 gggs::GridIndex gridFromName(
   uint8_t level, uint32_t row, uint32_t col, const std::string & name)
 {
