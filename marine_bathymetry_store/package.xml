@@ -18,6 +18,9 @@
   <depend>geographic_msgs</depend>
   <depend>nlohmann-json-dev</depend>
   <depend>libgdal-dev</depend>
+  <!-- S-102 importer (#278): SHA256 tile verification + per-cell MLLW->ellipsoid -->
+  <depend>libssl-dev</depend>
+  <depend>marine_vertical_datum</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>

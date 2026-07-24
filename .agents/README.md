@@ -12,7 +12,7 @@
 | `joy_to_helm` | Python | Converts joystick input to helm commands for manual piloting |
 | `marine_autonomy` | C++/Python | Meta-package with launch files, geodesic utilities, and system configuration |
 | `marine_autonomy_integration_tests` | Python (CMake) | Cross-package integration tests for mission and navigation flows |
-| `marine_bathymetry_store` | C++ | Persistent multi-source bathymetric data store: GGGS-tiled, priority source layers, best-source / shallowest-reliable queries, per-tile GeoTIFF (ADR-0002 / #86) |
+| `marine_bathymetry_store` | C++ | Persistent multi-source bathymetric data store: GGGS-tiled, priority source layers, best-source / shallowest-reliable queries, per-tile GeoTIFF (ADR-0002 / #86); `s102_import` CLI fetches + converts NOAA S-102 tiles (#278) |
 | `marine_interfaces` | C++ (IDL) | ROS 2 message definitions for helm commands, heartbeats, navigation, perception contacts, and sensor data (46 msg types) |
 | `marine_sidescan_mosaic` | C++ | Live georeferenced sidescan backscatter mosaicker: projects GCV port/stbd RawSonarImage samples to GGGS-tiled uint16 GeoTIFF tiles for CAMP / web display (#173 / #171 / #166) |
 | `marine_survey_index` | C++ | Offline survey indexer + query CLI: bags → per-GGGS-tile pass intervals in a regenerable SQLite sidecar; answers "which bags/time-ranges saw this location" (#258 stage 1 / #259; schema contract in `docs/survey_index_schema.md`) |
@@ -122,6 +122,8 @@ Known build requirements:
   `marine_sidescan_mosaic` (both wrap its `TiledRasterTile` + GeoTIFF I/O)
   (provides the generic `TiledRasterTile<T>` + GeoTIFF persistence it wraps, #172)
 - `mission_manager_interfaces` must build before `mission_manager`
+- `marine_vertical_datum` must build before `marine_bathymetry_store` (#278:
+  the S-102 importer's per-cell MLLW→ellipsoid shift, #274)
 - Integration tests depend on `command_bridge`, `mission_manager`, `marine_interfaces`,
   and `marine_nav_interfaces` (from `unh_marine_navigation`)
 

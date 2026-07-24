@@ -49,25 +49,34 @@ scratch/offline stores only — never a store a live costmap reads. Targeting
    (retained — inspectable, cheap, re-runs skip). Providers:
    `ConstantOffsetProvider` (tests, scratch use) + `MarineVerticalDatumProvider`
    adapter over #274 (`src/s102/vdatum_provider.{hpp,cpp}`).
-4. **Import** — CLI `s102_import` (`src/s102_import_main.cpp`): `--area
-   <minLon,minLat,maxLon,maxLat> --store <dir> --layer <survey|reference>
-   --cache <dir> --datum <vdatum|constant:<m>> [--catalog <url|path>]
-   [--offline] [--cell-size <m>] [--force]`. `--cell-size` mirrors
-   `import_geotiff` (store default level; default 0.5). Per-tile import level =
+4. **Import / orchestration** — `src/s102/run.{hpp,cpp}`
+   (`runS102Import(options)`, a library function so the whole pipeline is
+   testable without spawning the CLI) + thin CLI `s102_import`
+   (`src/s102_import_main.cpp`): `--area <minLon,minLat,maxLon,maxLat>
+   --store <dir> --layer <survey|reference> --cache <dir>
+   --datum <vdatum|constant:<m>> [--catalog <url|path>] [--offline]
+   [--cell-size <m>] [--force]` (+ `--geoid/--vdatum-grids/--datum-config`
+   for the vdatum provider). `--cell-size` mirrors `import_geotiff` (store
+   default level; default 0.5). Per-tile import level =
    `gggs::Level::fromCellSize(parsed resolution)`; `reference_writable` gating
    as in `import_geotiff_main.cpp`. Store-level provenance: StoreMetadata
-   source entry "NOAA S-102 ed3.0.0" + catalog issuance (same coarse ADR-0005
-   mechanism `import_geotiff` uses). **Whole-pipeline idempotency**: store-side
-   sidecar `<store>/s102_imported.json` records `tile_id → issuance` imported;
-   unchanged tiles skip convert+import (per-store, so one cache can feed many
-   stores); `--force` overrides. Matches the issue's "re-run is a no-op"
-   acceptance.
-5. **Tests** (gtest, no network): catalog query + resolution-string→level
-   mapping on a fixture gpkg; fetch idempotency + corrupted-SHA rejection via
-   `file://`; convert: projected-input warp, sign (`depth 5, mllw_z −28 →
-   height −33`), nodata, non-positive σ, non-MLLW hard-fail — on synthetic
-   projected rasters with `ConstantOffsetProvider` (S102 driver not required);
-   CLI end-to-end offline smoke into a temp store incl. no-op re-run.
+   ("NOAA S-102 ed3.0.0" + catalog issuance, ADR-0005 coarse) written only
+   when the store has none — never clobbers an existing survey's metadata.
+   **Whole-pipeline idempotency**: store-side sidecar
+   `<store>/s102_imported.json` records `tile_id → issuance` imported;
+   unchanged tiles skip fetch+convert+import (per-store, so one cache can
+   feed many stores); `--force` overrides. Matches the issue's "re-run is a
+   no-op" acceptance. The catalog itself is cached to `<cache>/catalog.gpkg`
+   so `--offline` re-runs can still discover.
+5. **Tests** (gtest, no network): catalog query + resolution-string parse on
+   a fixture gpkg (incl. skip-unverifiable-rows); fetch idempotency,
+   corrupted-cache refetch, digest-mismatch hard-fail, reissue, offline
+   miss/hit, corrupt-registry surfacing via `file://`/plain paths; convert:
+   projected-input warp to geographic, sign (`depth 5, mllw_z −28 → height
+   −33`), nodata pairing, provider-nullopt→nodata, non-MLLW hard-fail — on
+   synthetic projected rasters with `ConstantOffsetProvider` (S102 driver not
+   required); `runS102Import` end-to-end offline into a temp store incl.
+   no-op re-run, `--force`, and reissue re-import.
 6. **Docs** — README section (fetch-before-deploy workflow, offline re-run,
    datum convention, **the #276 scratch-stores-only guardrail**); update
    `.agents/README.md` package-inventory line **and "Known build requirements"**
@@ -81,7 +90,8 @@ scratch/offline stores only — never a store a live costmap reads. Targeting
 | `marine_bathymetry_store/src/s102/fetch.{hpp,cpp}` | new — fetch + `tiles.json` cache registry |
 | `marine_bathymetry_store/src/s102/convert.{hpp,cpp}` | new — warp + per-cell datum + GeoTIFF out |
 | `marine_bathymetry_store/src/s102/vdatum_provider.{hpp,cpp}` | new — adapter over marine_vertical_datum (#274) |
-| `marine_bathymetry_store/src/s102_import_main.cpp` | new — CLI orchestrator + store-side import sidecar |
+| `marine_bathymetry_store/src/s102/run.{hpp,cpp}` | new — pipeline orchestration + store-side import sidecar (library, CLI-independent for tests) |
+| `marine_bathymetry_store/src/s102_import_main.cpp` | new — thin CLI over runS102Import |
 | `marine_bathymetry_store/CMakeLists.txt` | new internal static lib `s102_import_core` (headers under `src/s102/`, not installed; OpenSSL + marine_vertical_datum PRIVATE) linked by CLI + tests; keeps deps out of the exported store lib |
 | `marine_bathymetry_store/package.xml` | `libssl-dev` rosdep dep; `<depend>marine_vertical_datum</depend>` |
 | `marine_bathymetry_store/test/test_s102_*.cpp` + fixtures | new tests (catalog, fetch, convert, CLI smoke) |

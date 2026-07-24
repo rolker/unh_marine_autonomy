@@ -81,8 +81,50 @@ priority precedence, no-data handling, the height-aware shallowest-reliable
 semantics, persistence round-trip (depth + uncertainty), incremental (dirty-only)
 save, level-mismatch rejection, and the coarse `StoreMetadata` round-trip.
 
+## S-102 importer (`s102_import`, #278)
+
+Fetches NOAA S-102 gridded bathymetry (depth + 1σ uncertainty, HDF5, MLLW,
+ed3.0.0) for a geographic area and imports it into a store layer:
+
+```bash
+ros2 run marine_bathymetry_store s102_import \
+  --area -70.75,42.90,-70.55,43.05 \
+  --store /path/to/scratch_store --cache ~/data/world/charts/s102 \
+  --datum vdatum --geoid <geoid.tif> --vdatum-grids <gtx_dir>
+```
+
+> **SCRATCH STORES ONLY until uma#276 lands** (ADR-0010 D7 precondition): the
+> current `bathymetry_layer` treats high-uncertainty cells as reject → LETHAL
+> under `unsurveyed_is_lethal`, so chart-grade σ (CATZOC/S-102) under a live
+> costmap would render charted regions wholesale keepout. Never point
+> `--store` at a store a live costmap reads until the worst-case-clearance
+> cost model (uma#276) is deployed.
+
+Pipeline (all stages fail loud; see `src/s102/`):
+
+1. **Discover** — finds the newest `Navigation_Tile_Scheme_*.gpkg` catalog in
+   the `noaa-s102-pds` bucket (or takes `--catalog <url|path>`) and queries it
+   for tiles intersecting `--area`. Downloads key off catalog URLs only.
+2. **Fetch** — SHA256-verified downloads into `--cache` (`tiles/` +
+   `tiles.json` registry; the catalog is cached too). Idempotent: unchanged
+   issuances are cache hits, and payloads are re-hashed on every access.
+   **Fetch before deploying** — with a warm cache every later stage works
+   `--offline` (ADR-0010 boat-as-offline-tooling).
+3. **Convert** — warps each tile to geographic WGS84 (the store rejects
+   projected rasters) and applies the per-cell MLLW→ellipsoid shift
+   (`height = mllw_z(lat,lon) − depth`, up-positive, NaN nodata) via
+   `marine_vertical_datum` (`--datum vdatum`) or a fixed offset
+   (`--datum constant:<m>`, scratch use). Non-MLLW tiles (e.g. Great Lakes
+   LWD) are refused, never silently shifted.
+4. **Import** — through `importGeoTiff` at the GGGS level matching each
+   tile's native resolution (4m/16m from the catalog). Whole-pipeline
+   idempotency via `<store>/s102_imported.json` (`tile_id → issuance`);
+   re-runs are no-ops until a tile is reissued (`--force` overrides).
+
 ## Dependencies
 
 - `marine_autonomy` — the GGGS spatial index (`gggs::Level`/`GridIndex`/`CellIndex`).
 - `geographic_msgs` — `GeoPoint` for the region query API.
-- GDAL — GeoTIFF persistence.
+- GDAL — GeoTIFF persistence; S102/GPKG drivers + warping for `s102_import`.
+- `marine_vertical_datum` (#274) — per-cell MLLW→ellipsoid for `s102_import`.
+- OpenSSL (`libssl-dev`) — SHA256 tile verification for `s102_import`.
