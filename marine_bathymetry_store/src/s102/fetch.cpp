@@ -143,7 +143,11 @@ FetchResult TileCache::fetch(const TileRecord & record, bool offline)
   const fs::path registry_path = fs::path(cache_dir_) / kRegistryName;
   nlohmann::json registry = loadRegistry(registry_path);
 
-  const std::string basename = fs::path(record.url).filename().string();
+  // filename() already drops any directory components (so no "../" can survive
+  // into the on-disk name), but a URL may still carry a "?query"/"#fragment"
+  // tail — strip it so it can't leak into the cache filename.
+  std::string basename = fs::path(record.url).filename().string();
+  basename = basename.substr(0, basename.find_first_of("?#"));
   if (basename.empty()) {
     throw std::runtime_error("catalog URL has no filename: " + record.url);
   }
