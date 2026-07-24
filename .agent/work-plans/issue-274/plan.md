@@ -42,16 +42,26 @@ The issue review flagged two design points to nail before coding:
    `query_datum` / `query_vdatum` out of `ChartDatumNode` and into
    `src/vdatum_query.cpp` with public header
    `include/marine_vertical_datum/vdatum_query.hpp`.
-   Public API: one `query_vdatum(double lat, double lon, const VDatumConfig&)
-   → std::optional<VDatumResult>`, plus a `VDatumConfig` struct holding
-   geoid-grid path and vdatum-grid-dir path (plain `std::string`). Expose a
-   seam for testing:
+   Public API (revised per plan-review suggestions): `VDatumConfig` struct
+   (geoid-grid path + vdatum-grid-dir path, plain `std::string`), the seam
+
    ```cpp
    using VDatumQueryFn =
      std::function<std::optional<VDatumResult>(double lat, double lon)>;
    ```
-   The library ships `make_vdatum_query(const VDatumConfig&) → VDatumQueryFn`
-   as the production factory; tests inject a stub directly.
+
+   and **`make_vdatum_query(const VDatumConfig&, DiagFn) → VDatumQueryFn` as
+   the sole production entry** — the originally planned standalone
+   per-call `query_vdatum(lat, lon, config)` is dropped (review finding:
+   it rebuilds the PROJ pipeline per call, a footgun for the per-cell S57
+   exporter). The factory caches context+pipelines in a shared RAII holder.
+   Error/diagnostic seam (review finding): setup-time problems report
+   through an optional ROS-free `DiagFn` callback (default discards);
+   setup failure returns an empty `std::function`; per-point no-coverage
+   is a plain `nullopt` with no diagnostic (normal gap condition — the
+   node's 30s-throttled RCLCPP_WARN has no place in a per-cell library).
+   `proj_context_set_enable_network(ctx, false)` is preserved (offline
+   guarantee, ADR-0010 D6/D7). Include guards renamed with the namespace.
 
 4. **Port and adapt `test_datum_config`** — copy `mru_transform`'s
    `test/test_datum_config.cpp` → `test/test_datum_config.cpp`, updating
@@ -69,9 +79,13 @@ The issue review flagged two design points to nail before coding:
      as offline tooling per ADR-0010 D6/D7 — grids never in the runtime stack).
    - How to point `VDatumConfig` at the grids.
 
-7. **Wire up CMakeLists.txt** — two libraries (`datum_config` and
-   `vdatum_query`); one combined install target `marine_vertical_datum`;
-   `ament_export_targets` so downstream packages can `find_package` and link.
+7. **Wire up CMakeLists.txt** — one shared library `marine_vertical_datum`
+   containing both translation units (simpler than the originally planned
+   two-libs-one-target split; PROJ and yaml-cpp link PRIVATE since the
+   public headers expose neither — rosdep key `proj` +
+   `pkg_check_modules(PROJ REQUIRED IMPORTED_TARGET proj)` per the
+   mru_transform precedent). `ament_export_targets` so downstream packages
+   can `find_package` and link.
    Grid download/install logic (mirrors `mru_transform`'s CMake block) is
    **not** included in this package — the consumer (`mru_transform`, or the
    future `chart_datum_node` wrapper) owns that. The library only links PROJ.
