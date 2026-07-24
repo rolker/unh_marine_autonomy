@@ -4,6 +4,21 @@ issue: 275
 
 # Issue #275 — marine_bathymetry_store: chart source layer and wholesale regeneration
 
+## Plan Review
+**Status**: complete
+**When**: 2026-07-24 21:42 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-275/plan.md` at `3c67e62`
+**PR**: PR-less (--issue mode)
+**Verdict**: approve-with-suggestions
+
+### Findings
+- [ ] (suggestion) `source_layer_count` is derived from `source_layers_by_priority.size()`, not a separate literal — the concrete edits are the enum `Chart = 2`, adding `Chart` to the initializer, **and** bumping the array arity `std::array<SourceLayer, 2>` → `<..., 3>`. A 3-element initializer into a `,2>` array won't compile; reword step 1 / Files table so the implementer changes the template arity. — `plan.md:17`, `plan.md:48`
+- [ ] (suggestion) `replaceChartLayer` robustness: a stale non-empty `.chart_backup/` left by a crashed prior run makes the `chart/`→`.chart_backup/` rename fail with `ENOTEMPTY`, breaking the next regeneration. Remove any pre-existing `.chart_backup/` before the swap. — `plan.md:28`
+- [ ] (suggestion) review-issue action #3 (cross-reference the cost-model rework issue #272 in the PR description) is not reflected in the plan — carry it into the PR body so the safety precondition is discoverable without re-reading ADR-0010 D7. — `plan.md:62`
+- [ ] (note) The two-step backup-then-rename swap has a brief window where `chart/` is absent; acceptable under D7's enforced nav-down precondition (regeneration only while navigation is down). No action at this scope. — `plan.md:26`
+
 ## Plan Authored
 **Status**: complete
 **When**: 2026-07-24 17:45 +00:00
