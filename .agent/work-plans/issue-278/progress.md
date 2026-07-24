@@ -14,6 +14,6 @@ issue: 278
 **Phases**: single
 
 ### Open questions
-- [ ] OpenSSL (rosdep `libssl-dev`) as the SHA256 dep, vs vendored sha256
-- [ ] Wire marine_vertical_datum provider in this PR if #274 lands in time, else fast-follow
-- [ ] `--cache` stays required-explicit until ~/data/stores→~/data/world migration lands
+- [x] OpenSSL (rosdep `libssl-dev`) as the SHA256 dep, vs vendored sha256 — **rosdep OpenSSL** (Roland 2026-07-24)
+- [x] Wire marine_vertical_datum provider in this PR if #274 lands in time, else fast-follow — **wire in this PR** (Roland 2026-07-24; PR now depends on #274)
+- [x] `--cache` stays required-explicit until ~/data/stores→~/data/world migration lands — **confirmed** (Roland 2026-07-24)

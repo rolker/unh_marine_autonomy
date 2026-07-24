@@ -89,13 +89,14 @@ receives already-store-convention GeoTIFFs. Chart layer doesn't exist until #275
 
 ## Open Questions
 
-- [ ] OpenSSL as the SHA256 dep (rosdep `libssl-dev`) — acceptable, or prefer a
-      vendored sha256 to avoid the link dep?
-- [ ] If #274 lands before this PR merges: wire the `marine_vertical_datum`
-      provider in this PR, or keep it a fast-follow commit? (Interface seam is
-      identical either way.)
-- [ ] Default `--cache` location: leave required-explicit until the
-      `~/data/stores` → `~/data/world` migration lands? (Plan assumes yes.)
+None — all three resolved by Roland 2026-07-24:
+
+- SHA256 via OpenSSL, rosdep `libssl-dev`.
+- Wire the real `marine_vertical_datum` provider **in this PR** (its
+  `--datum vdatum` path depends on #274 landing first; `ConstantOffsetProvider`
+  keeps tests and scratch use independent of it).
+- `--cache` stays required-explicit until the `~/data/stores` → `~/data/world`
+  migration lands.
 
 ## Estimated Scope
 
