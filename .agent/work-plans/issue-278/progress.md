@@ -67,3 +67,29 @@ via store-side `s102_imported.json` + `--force`; `--cell-size` + StoreMetadata
 provenance decided. **Declined**: PR split (suggestion 12) — #274 in progress, in-PR
 wiring was Roland's explicit call; rationale recorded in plan. (note) review-issue
 gap acknowledged, not retrofitted.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-24 21:54 +0000
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-278 at `d1da2a4`
+**Mode**: pre-push
+**Depth**: Deep (reason: ~2.5k new lines, network fetch + GDAL warp/subprocess + cross-layer vdatum wiring + costmap-feeding safety surface)
+**Must-fix**: 1 | **Suggestions**: 4
+**Round**: 1 | **Ship**: continue — one must-fix (S3 pagination), a cheap mechanical fix; batch with suggestions in one address-findings pass, then re-review
+
+Specialists: static analysis (cpplint clean; cppcheck 3 sub-threshold nits dropped);
+Claude Adversarial 2 passes (Lens A logic, Lens B systemic/safety); Local Adversarial
+skipped (no Ollama server). Both adversarial passes also produced 5 plausible-but-wrong
+findings — all refuted in the report (size_t-cast "overflow" ×2, GDALWarp double-close,
+XML billion-laughs, TLS-not-verified) and not carried here.
+
+### Findings
+- [ ] (must-fix) `findNewestCatalog` ignores S3 `ListObjectsV2` pagination (no `IsTruncated`/`NextContinuationToken` loop) — silently returns a stale/old catalog if >1000 objects exist under the prefix; violates the "newest catalog" contract. Cross-confirmed (lead + Lens A) — `src/s102/catalog.cpp:59`
+- [ ] (suggestion) Cache basename from `fs::path(record.url).filename()` doesn't strip `?query` or validate the tail (dir-escape already prevented); key on `tile_id` or sanitize — `src/s102/fetch.cpp:146`
+- [ ] (suggestion) Provenance `StoreMetadata.survey` becomes generic `"catalog.gpkg"` on discovered runs (catalog repointed to the cached copy before the filename read); record the real discovered-catalog name — `src/s102/run.cpp:190`
+- [ ] (suggestion) Comment the discovery trust boundary (catalog listing is TLS-trusted, not digest-verified, unlike tile payloads) — `src/s102/catalog.cpp:64`
+- [ ] (suggestion) Sweep orphaned `<cache>/tiles/*.part` files at cache open (accumulate on mid-download kill) — `src/s102/fetch.cpp:177`
+- [ ] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail is doc-only, not code-enforced — accepted at plan-review as a documented precondition; keep visible until #276 lands
