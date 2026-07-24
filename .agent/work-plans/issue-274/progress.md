@@ -154,3 +154,21 @@ surfaced by reading the ported source (`chart_datum_node.cpp`,
 
 ### False positives
 - (none — Copilot's C1 *mechanism* ("dereference null and crash") is wrong per PROJ's NULL-ctx-means-default convention, but the underlying unchecked-allocation concern is real, so it is classified valid with corrected rationale rather than dismissed)
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-24 16:58 -0400
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #279 at `04dab07`
+**Sources**: 2 (Copilot R2 @ `04dab07`, Local Review (Pre-Push) @ `7640003`)
+**Cross-source confirmations**: 1
+**CI**: all-pass (build 9m4s @ 04dab07)
+
+### Findings
+- [ ] (cross-confirmed: Copilot R2 + Local Review deferred suggestion — DEFERRED with rationale) real proj_trans query path never executed by unit tests; deferred because s57_tools#27's acceptance includes a real-NOAA-cell round-trip exercising the full PROJ path against real grids — higher fidelity than a synthetic .gtx unit test — `marine_vertical_datum/src/vdatum_query.cpp:119`
+
+### False positives
+- (Copilot R2) proj_context_create nullptr re-raise — the null-check landed in `04dab07` at the flagged location; stale duplicate of the round-1 finding
+- (Copilot R2) mkstemp missing <cstdlib> re-raise — include added in `04dab07` (line 13); stale duplicate
+- (Copilot R2) writeTemp short-write / ssize_t→size_t cast — cannot fail silently: any short or -1 write makes EXPECT_EQ(cast(written), size) fail (−1 → SIZE_MAX ≠ size), marking the test failed; truncated config can never yield a silent pass
