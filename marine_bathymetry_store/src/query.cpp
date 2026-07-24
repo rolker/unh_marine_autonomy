@@ -90,6 +90,13 @@ std::optional<DepthSample> bestSource(
   const BathymetryStore & store, const gggs::CellIndex & cell)
 {
   const auto center = cellCenter(cell);
+  // Nav-safety precondition (#272 / ADR-0010 D7): source_layers_by_priority now
+  // includes SourceLayer::Chart, so a loaded chart/ layer participates in these
+  // depth queries — which feed navigation. load() populates Chart regardless of
+  // the write-gate (the gate only blocks runtime writes, not reads), so there is
+  // NO mechanical block on chart data driving navigation before the #272
+  // cost-model rework lands. The standing precondition is that no deployed store
+  // carries a chart/ layer until #272 is done; it is tracked there, not here.
   for (const SourceLayer layer : source_layers_by_priority) {
     if (auto sample = sampleFor(store, layer, cell, center)) {
       return sample;
@@ -107,7 +114,8 @@ std::optional<DepthSample> shallowestReliable(
   // depth is ellipsoidal height (up-positive): shallower == greater height. With
   // one fused surface per layer (#221), there is no newest-epoch-first walk —
   // examine every level present in every layer and keep the shallowest reliable
-  // value across all of them.
+  // value across all of them. Chart participates here too once loaded — see the
+  // #272 nav-safety precondition note in bestSource above.
   for (const SourceLayer layer : source_layers_by_priority) {
     const auto & tiles = store.tiles(layer);
     // Within a layer, examine EVERY level so a coarse-but-reliable value can win
