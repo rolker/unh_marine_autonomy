@@ -24,7 +24,7 @@ transport).
 ## Context
 
 The August 2026 Isles of Shoals survey returns operations to ENC-covered
-coastal waters after a season on an unchartered lake. Bringing charts back
+coastal waters after a season on an uncharted lake. Bringing charts back
 exposed three structural facts, and the Massabesic season surfaced a fourth:
 
 1. **Cross-layer override is impossible in the costmap.** `bathymetry_layer`
