@@ -52,6 +52,19 @@ per-cell source-index intern table to a coarse store-level `StoreMetadata` sidec
 and the `bathymetry_layer` **per-cell staleness gate is retired** (it read the now-
 dropped per-cell time). See **Amendment A2** below.
 
+**Amended 2026-07-24 ([#272](https://github.com/rolker/unh_marine_autonomy/issues/272),
+[ADR-0010](0010-geospatial-world-model.md)):** the store is situated in the
+**geospatial world model** and the source-layer taxonomy is revised by ADR-0010:
+a **`chart` layer is re-introduced** (S57 depths flow through the store — the
+"later phase" D7 flagged; regenerated from the ENC corpus, never merged) and the
+**draft/processed quality axis is restored** (Amendment A2's collapse to a single
+`survey` layer is partially superseded on new evidence: the live and offline CUBE
+paths produce different-quality surfaces, and last-write-wins degrades the store
+under a multi-day campaign loop). Depth layers are now
+`chart | reference | draft | processed`. See ADR-0010 D3/D7/D8 for the decisions
+and rationale; A2's remaining simplifications (single value tile, coarse
+`StoreMetadata`, no per-cell staleness gate) stand.
+
 The full design is in the issue body; this ADR records the load-bearing
 architecture decisions and their rationale so they survive the issue. It is a
 **cross-cutting** decision in the sense ADR-0001 establishes for this repo's
