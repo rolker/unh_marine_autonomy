@@ -484,7 +484,9 @@ void replaceChartLayer(
   }
   bool has_tile = false;
   for (const auto & entry : fs::directory_iterator(staged)) {
-    if (entry.path().extension() == ".tif") {
+    // Mirror the load path (:343): a directory named `foo.tif` is not a value
+    // tile, so gate on is_regular_file() before accepting the staged layer.
+    if (entry.is_regular_file() && entry.path().extension() == ".tif") {
       has_tile = true;
       break;
     }
