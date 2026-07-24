@@ -152,6 +152,13 @@ VDatumQueryFn make_vdatum_query(const VDatumConfig & config, DiagFn diag)
 
   auto pipelines = std::make_shared<ProjPipelines>();
   pipelines->context = proj_context_create();
+  if (!pipelines->context) {
+    // PROJ treats a NULL ctx as "the default context" rather than crashing,
+    // so proceeding here would silently configure and build pipelines on the
+    // process-global default context — un-owned by this holder. Refuse.
+    report(diag, "VDatum setup: proj_context_create failed");
+    return {};
+  }
   // Strictly offline (ADR-0010 D6/D7): never fetch grids over the network —
   // resolution must behave identically on a disconnected boat.
   proj_context_set_enable_network(pipelines->context, false);

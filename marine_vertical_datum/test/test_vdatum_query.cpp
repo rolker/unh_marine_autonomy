@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -101,12 +102,14 @@ TEST(MakeVDatumQuery, MissingGridDirFailsWithDiagnostic)
 }
 
 // An existing directory with no *_mllw.gtx grids fails setup with the
-// no-grids diagnostic.
+// no-grids diagnostic. Unique per-run directory (mkdtemp) so concurrent
+// test runs on one host (multi-worktree CI) can't collide.
 TEST(MakeVDatumQuery, EmptyGridDirFailsWithDiagnostic)
 {
-  const fs::path dir =
-    fs::temp_directory_path() / "mvd_test_empty_grid_dir";
-  fs::create_directories(dir);
+  std::string tmpl =
+    (fs::temp_directory_path() / "mvd_test_empty_grid_dir.XXXXXX").string();
+  ASSERT_NE(mkdtemp(tmpl.data()), nullptr) << "mkdtemp failed";
+  const fs::path dir(tmpl);
 
   std::vector<std::string> messages;
   const auto query = mvd::make_vdatum_query(

@@ -25,11 +25,15 @@ add_library(${PROJECT_NAME} SHARED
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-  "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>"
+  "$<INSTALL_INTERFACE:include>"
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::PROJ ${YAML_CPP_TARGET})
 
-install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
+# Headers install to plain include/ (not include/${PROJECT_NAME}), matching
+# the sibling store packages and avoiding the doubled
+# include/${PROJECT_NAME}/${PROJECT_NAME}/ path; the INSTALL_INTERFACE above
+# is kept consistent with this.
+install(DIRECTORY include/ DESTINATION include)
 install(
   TARGETS ${PROJECT_NAME}
   EXPORT export_${PROJECT_NAME}

@@ -147,10 +147,10 @@ surfaced by reading the ported source (`chart_datum_node.cpp`,
 **CI**: all-pass (build 9m15s)
 
 ### Findings
-- [ ] (valid, Copilot — mechanism corrected) unchecked `proj_context_create()` failure: NOT a null-deref crash (PROJ treats NULL ctx as the default context), but alloc failure would silently fall back to the process-global default context — un-owned by the RAII holder, networking flag applied globally; add a null check → diag + empty return — `marine_vertical_datum/src/vdatum_query.cpp:158`
-- [ ] (valid, Copilot) fixed temp-dir name `mvd_test_empty_grid_dir` can collide across concurrent multi-worktree test runs on one host; use a unique (mkdtemp) directory — `marine_vertical_datum/test/test_vdatum_query.cpp:110`
-- [ ] (valid, Copilot) `mkstemp` used with only `<unistd.h>`/`<cstdio>` — compiles via transitive gtest includes on glibc only; add `<cstdlib>` (latent in mru_transform's copy too; rides the follow-on migration there) — `marine_vertical_datum/test/test_datum_config.cpp:53`
-- [ ] (valid-by-convention, Copilot) install path `include/${PROJECT_NAME}` + matching INSTALL_INTERFACE is internally consistent (no breakage) but 2 of 3 sibling store packages use plain `include` with explicit comments rejecting the doubled path; align with the sibling convention — `marine_vertical_datum/CMakeLists.txt:32`
+- [x] (valid, Copilot — mechanism corrected) unchecked `proj_context_create()` failure: NOT a null-deref crash (PROJ treats NULL ctx as the default context), but alloc failure would silently fall back to the process-global default context — un-owned by the RAII holder, networking flag applied globally; add a null check → diag + empty return — `marine_vertical_datum/src/vdatum_query.cpp:158`
+- [x] (valid, Copilot) fixed temp-dir name `mvd_test_empty_grid_dir` can collide across concurrent multi-worktree test runs on one host; use a unique (mkdtemp) directory — `marine_vertical_datum/test/test_vdatum_query.cpp:110`
+- [x] (valid, Copilot) `mkstemp` used with only `<unistd.h>`/`<cstdio>` — compiles via transitive gtest includes on glibc only; add `<cstdlib>` (latent in mru_transform's copy too; rides the follow-on migration there) — `marine_vertical_datum/test/test_datum_config.cpp:53`
+- [x] (valid-by-convention, Copilot) install path `include/${PROJECT_NAME}` + matching INSTALL_INTERFACE is internally consistent (no breakage) but 2 of 3 sibling store packages use plain `include` with explicit comments rejecting the doubled path; align with the sibling convention — `marine_vertical_datum/CMakeLists.txt:32`
 
 ### False positives
 - (none — Copilot's C1 *mechanism* ("dereference null and crash") is wrong per PROJ's NULL-ctx-means-default convention, but the underlying unchecked-allocation concern is real, so it is classified valid with corrected rationale rather than dismissed)
