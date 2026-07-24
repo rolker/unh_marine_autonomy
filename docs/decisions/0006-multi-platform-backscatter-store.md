@@ -7,6 +7,11 @@ Proposed (2026-06-20). Tracked by
 Part of the sidescan-mosaic umbrella
 [#171](https://github.com/rolker/unh_marine_autonomy/issues/171).
 
+**Derived overviews (2026-07-24, [#188](https://github.com/rolker/unh_marine_autonomy/issues/188)):**
+the processed layer gains a regenerable `overviews/` sidecar for LOD — layout +
+fold-policy contract in **[ADR-0011](0011-overview-pyramid.md)** (imagery fold:
+mean; source band 0 in overviews; fine-tile format unchanged).
+
 **Amended 2026-06-20 ([#190](https://github.com/rolker/unh_marine_autonomy/issues/190)):
 this ADR is the *sidescan* backscatter store only.** It originally framed itself as
 the single backscatter store for *all* sensors (Garmin side-scan first, EM2040 / M3

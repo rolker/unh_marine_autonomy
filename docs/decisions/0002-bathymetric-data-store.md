@@ -5,6 +5,11 @@
 Proposed (2026-06-10). Tracked by
 [rolker/unh_marine_autonomy#86](https://github.com/rolker/unh_marine_autonomy/issues/86).
 
+**Derived overviews (2026-07-24, [#188](https://github.com/rolker/unh_marine_autonomy/issues/188)):**
+this store's survey-born layers gain a regenerable `overviews/` sidecar for LOD —
+layout + fold-policy contract in **[ADR-0011](0011-overview-pyramid.md)** (depth
+fold: shallowest-preserving; fine-tile formats unchanged).
+
 **Amended 2026-06-13 ([#151](https://github.com/rolker/unh_marine_autonomy/issues/151)):**
 the store holds **heterogeneous GGGS levels**, not a single fixed level — see D2. The
 single-level Phase-1 implementation ([#143](https://github.com/rolker/unh_marine_autonomy/issues/143))

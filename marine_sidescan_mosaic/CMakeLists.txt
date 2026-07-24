@@ -107,6 +107,15 @@ ament_target_dependencies(sidescan_tier2_processed
 )
 install(TARGETS sidescan_tier2_processed DESTINATION lib/${PROJECT_NAME})
 
+# Overview-pyramid batch builder: fine tiles -> overviews/ sidecar (#188 / ADR-0011).
+add_executable(build_sidescan_overviews src/build_sidescan_overviews.cpp)
+ament_target_dependencies(build_sidescan_overviews
+  geographic_msgs
+  marine_autonomy
+  marine_tiled_raster_store
+)
+install(TARGETS build_sidescan_overviews DESTINATION lib/${PROJECT_NAME})
+
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)

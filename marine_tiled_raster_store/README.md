@@ -75,6 +75,18 @@ missing/stale tiles, prune-on-absence with the timestamp gate (fresh tile
 survives a stale catalog), and convergence under simulated loss/reorder + boat
 reset.
 
+## Overview builder (#188 / ADR-0011)
+
+`overview_builder.hpp` folds finer-level tiles into coarser-level parents for
+LOD pyramids: `buildParentTile()` (4-ish children -> 1 parent via per-cell
+geographic accumulation, `gggs::parent()`/`CellIndex`) and
+`buildOverviewLevel()` (group a level by parent and fold it). Fold policies are
+per-store closures over whole cells (all bands of a contributor together), so
+cross-band-coherent folds — e.g. the depth shallowest-preserving {depth, σ}
+pair — are expressible alongside simple per-band means (imagery). Overviews
+are a derived, regenerable `overviews/` sidecar per layer; see ADR-0011 for
+the layout contract.
+
 ## Dependencies
 
 - `marine_autonomy` — the GGGS spatial index (`gggs::Level` / `GridIndex`).
