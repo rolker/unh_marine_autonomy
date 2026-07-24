@@ -204,11 +204,14 @@ std::size_t evictOutside(
 ///
 /// Caller contract: run only while no consumer holds the store open (D7's
 /// enforced nav-down precondition); the staged dir must be on the same
-/// filesystem as @p store_dir for rename atomicity.
+/// filesystem as @p store_dir for rename atomicity — this is now enforced up
+/// front (a cross-device staged dir is rejected before the live layer is
+/// touched) rather than left to fail mid-swap.
 ///
-/// @throws std::runtime_error on validation failure;
-///         std::filesystem::filesystem_error on rename failure (after backup
-///         restoration).
+/// @throws std::runtime_error on validation failure (missing/empty staged dir,
+///         or a cross-device staged dir detected before any swap);
+///         std::filesystem::filesystem_error on rename failure (after a
+///         best-effort backup restoration that never masks the original error).
 void replaceChartLayer(
   const std::string & staged_chart_dir, const std::string & store_dir);
 

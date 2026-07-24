@@ -21,6 +21,8 @@
 
 #include "marine_bathymetry_store/tile_io.hpp"
 
+#include <sys/stat.h>
+
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
@@ -28,6 +30,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "geographic_msgs/msg/geo_point.hpp"
@@ -497,6 +500,29 @@ void replaceChartLayer(
             "' contains no .tif tiles — refusing to swap in an empty layer");
   }
 
+  // Fail fast on a cross-device staged dir. rename(2) across filesystems returns
+  // EXDEV, so a staged dir on another mount cannot atomically commit. Detecting
+  // it here — BEFORE the live chart/ is moved aside — means such a caller-contract
+  // breach is refused without ever disturbing the old layer (D7).
+  {
+    struct stat staged_st{};
+    struct stat store_st{};
+    if (::stat(staged.c_str(), &staged_st) != 0 ||
+      ::stat(store_dir.c_str(), &store_st) != 0)
+    {
+      throw std::runtime_error(
+              "replaceChartLayer: cannot stat staged dir or store dir to verify "
+              "same-filesystem placement");
+    }
+    if (staged_st.st_dev != store_st.st_dev) {
+      throw std::runtime_error(
+              "replaceChartLayer: staged dir '" + staged_chart_dir +
+              "' is on a different filesystem than store dir '" + store_dir +
+              "' — a cross-device rename cannot atomically commit (EXDEV); stage "
+              "on the same filesystem as the store");
+    }
+  }
+
   // Crash recovery. A `.chart_backup/` left by a crashed prior run marks an
   // interrupted swap; which repair to apply depends on whether `chart/` exists:
   //   - chart/ ABSENT, backup present: the crash struck between the
@@ -523,7 +549,19 @@ void replaceChartLayer(
     fs::rename(staged, chart);
   } catch (...) {
     if (had_chart) {
-      fs::rename(backup, chart);   // restore; old layer stands
+      // Best-effort restore via the error_code overload: if the restore rename
+      // ALSO fails (double fault) it must not throw over and mask the original
+      // swap failure — that original is what we rethrow. The old layer then
+      // survives under the backup path for manual recovery.
+      std::error_code restore_ec;
+      fs::rename(backup, chart, restore_ec);
+      if (restore_ec) {
+        std::cerr << "[marine_bathymetry_store] CRITICAL: replaceChartLayer could "
+                  << "not restore chart/ from '" << backup.string()
+                  << "' after a failed swap: " << restore_ec.message()
+                  << " — the previous layer survives under that backup path; "
+                  << "manual recovery required.\n";
+      }
     }
     throw;
   }
