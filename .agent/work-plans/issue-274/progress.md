@@ -135,3 +135,22 @@ surfaced by reading the ported source (`chart_datum_node.cpp`,
 - [ ] (suggestion) Consider resetting/checking `proj_errno` per call in `query_datum` for the millions-of-cells loop (low-confidence, inherited from production node) — `marine_vertical_datum/src/vdatum_query.cpp:95`
 - [x] (suggestion) Stale ported comment "acceptance item 5 of issue #25" — should reference #274 — `marine_vertical_datum/test/test_datum_config.cpp:3`
 - [ ] (suggestion) Convention drift: no `ament_lint_auto`/`ament_lint_common`, all 6 C++ files lack copyright headers (cpplint 6×legal/copyright, uncrustify 2 files) — calibrated down: sibling mru_transform's lint is a no-op and ships headerless too, so not a blocker — `marine_vertical_datum/CMakeLists.txt`
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-24 16:40 -0400
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #279 at `a3c0b7d`
+**Sources**: 2 (Copilot R1 @ `a3c0b7d`, Local Review (Pre-Push) @ `7640003`)
+**Cross-source confirmations**: 0
+**CI**: all-pass (build 9m15s)
+
+### Findings
+- [ ] (valid, Copilot — mechanism corrected) unchecked `proj_context_create()` failure: NOT a null-deref crash (PROJ treats NULL ctx as the default context), but alloc failure would silently fall back to the process-global default context — un-owned by the RAII holder, networking flag applied globally; add a null check → diag + empty return — `marine_vertical_datum/src/vdatum_query.cpp:158`
+- [ ] (valid, Copilot) fixed temp-dir name `mvd_test_empty_grid_dir` can collide across concurrent multi-worktree test runs on one host; use a unique (mkdtemp) directory — `marine_vertical_datum/test/test_vdatum_query.cpp:110`
+- [ ] (valid, Copilot) `mkstemp` used with only `<unistd.h>`/`<cstdio>` — compiles via transitive gtest includes on glibc only; add `<cstdlib>` (latent in mru_transform's copy too; rides the follow-on migration there) — `marine_vertical_datum/test/test_datum_config.cpp:53`
+- [ ] (valid-by-convention, Copilot) install path `include/${PROJECT_NAME}` + matching INSTALL_INTERFACE is internally consistent (no breakage) but 2 of 3 sibling store packages use plain `include` with explicit comments rejecting the doubled path; align with the sibling convention — `marine_vertical_datum/CMakeLists.txt:32`
+
+### False positives
+- (none — Copilot's C1 *mechanism* ("dereference null and crash") is wrong per PROJ's NULL-ctx-means-default convention, but the underlying unchecked-allocation concern is real, so it is classified valid with corrected rationale rather than dismissed)
