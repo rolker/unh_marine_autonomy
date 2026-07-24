@@ -201,6 +201,9 @@ and the **sidescan track** ([#171]/[#185]: live mosaic + offline EGN). See
 
 ## Related
 
+- [sonar_reference.md](sonar_reference.md) — durable hardware/protocol facts
+  (M3 identity & interfaces, backscatter characteristics, QINSy real-time
+  route rationale) and data-of-record locations
 - [interfaces.md](interfaces.md) — ROS message/topic/service definitions
 - [data_flows.md](data_flows.md) — system-level data flow diagrams
 - [decisions/](decisions/) — Architecture Decision Records
