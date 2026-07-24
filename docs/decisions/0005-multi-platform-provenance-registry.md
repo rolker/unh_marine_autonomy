@@ -11,6 +11,13 @@ backscatter stores — **sidescan** (ADR-0006) and **MBES** (ADR-0007), both und
 #180 — and defines the provenance contract all three share. It is foundational to
 those store ADRs rather than owned by any one of them.
 
+**Amended 2026-07-24 ([#272](https://github.com/rolker/unh_marine_autonomy/issues/272),
+[ADR-0010](0010-geospatial-world-model.md)):** prose references in this ADR to
+the bathy store's quality/maturity layers read through ADR-0010 D3 — the
+taxonomy is now `chart | reference | draft | processed` (it was
+`chart/draft/processed` when this ADR was written, and `survey/reference`
+after #248). This ADR's per-cell provenance contract is unchanged.
+
 **Amended 2026-07-01 ([#248](https://github.com/rolker/unh_marine_autonomy/issues/248)):**
 for the current **single-platform** deployment the per-cell source-index axis (D2)
 is **dropped** from the bathy and MBES stores, and their `registry.json` sidecar is

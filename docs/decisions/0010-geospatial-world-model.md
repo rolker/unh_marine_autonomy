@@ -13,7 +13,8 @@ Cross-cutting per the ADR-0001 convention: spans `marine_bathymetry_store`,
 source layer (D3, D7) and restores the draft/processed quality axis that
 Amendment A2 ([#248](https://github.com/rolker/unh_marine_autonomy/issues/248))
 collapsed (D8) — both on new evidence recorded below, not a re-litigation of
-A2's reasoning. ADR-0002 receives a header pointer to this ADR in the same PR.
+A2's reasoning. ADR-0002 and ADR-0005 receive header pointers to this ADR in
+the same PR.
 
 **Builds on (unchanged):** ADR-0004 (unified Contact), ADR-0005 (provenance
 registry — dormant per its #248 amendment, retained as the multi-platform
@@ -38,9 +39,14 @@ exposed three structural facts, and the Massabesic season surfaced a fourth:
 
 2. **Chart data has a lifecycle unlike anything the store holds.** ENC editions
    are authoritative supersessions: a hazard removed in a new edition must
-   vanish. The store's importer merges cell-wise (lower uncertainty wins,
-   no delete-by-source — verified in `geotiff_import.cpp`), so repeated ENC
-   imports accumulate stale cells. Charts also arrive with their own
+   vanish. The import path handles repeat imports badly in both directions
+   (verified in `geotiff_import.cpp` / `bathymetry_store.cpp`): the
+   lowest-uncertainty-wins merge resolves only *within-import* pixel
+   contention into a local tile set, which `importTiles` then
+   `insert_or_assign`s **whole-tile** into the layer — so a re-import
+   silently replaces every prior same-layer cell in the tiles it touches,
+   while tiles outside the new import's footprint linger stale forever
+   (no delete-by-source). Charts also arrive with their own
    level-of-detail structure (the harbor/approach/coastal scale ladder) and
    their own quality metadata (CATZOC), neither of which the current layer
    model expresses.
@@ -117,15 +123,26 @@ Provenance layers for the depth theme, replacing ADR-0002 A2's
 |---|---|---|
 | `chart` | Official navigation products (S57 → S-100 later) | Regenerated wholesale from the corpus on edition change (D7) |
 | `reference` | Third-party priors (contour models, external grids/BAGs) | One-shot bespoke imports, σ per source |
-| `draft` | Live on-boat CUBE output | Streaming append, synced (ADR-0008), evictable, disposable (D8) |
+| `draft` | Live on-boat CUBE output | Streaming append; live view via the ADR-0008 display transport (store-level sync remains ADR-0002 D6, deferred); evictable, disposable (D8) |
 | `processed` | Off-boat deterministic re-run (`import_bag`) | Authoritative product, distributed back; clears overlapped draft (D8) |
 
 The **imagery theme keeps its own tiering**: the sidescan and MBES backscatter
 stores are deliberate siblings with cross-store arbitration at the query layer
 (ADR-0006 D8); their layer names are not force-renamed to match the depth
-theme. The existing `~/data/stores/` content maps directly: the NH GRANIT
-prior is already in `reference/` (correctly, post-A2); survey data splits per
-D8; path changes are config migration only.
+theme.
+
+**Write gates**: both prior layers are closed to normal ingest — `reference`
+keeps A2's construction-time read-only-prior gate (explicit importer opt-in,
+mechanism unchanged), and `chart` is writable **only** by the D7 regeneration
+path. Live and replay ingest write `draft`/`processed` exclusively.
+
+**Migration of existing stores**: the NH GRANIT prior is already in
+`reference/` (correctly, post-A2). The existing fused `survey/` layer carries
+no per-cell live-vs-re-run provenance (A2 dropped it), so there is nothing to
+split — it is **re-classified wholesale to `processed/`**, which is accurate:
+the current Massabesic stores were regenerated via `import_bag` (the
+authoritative path). `draft/` starts empty. Beyond that, path changes are
+config migration.
 
 ### D4 — Layers encode process; σ encodes trust
 
@@ -221,10 +238,30 @@ Export rules (`s57_to_geotiff`, new tool in `s57_tools`, feeding the existing
   shallowest-reliable walk from letting a coarse band's midpoint shadow a
   confident harbor-chart depth.
 
-First cut regenerates **only while navigation is down** (dockside/pre-mission).
+**Chart ingestion is gated on the cost-model rework.** `bathymetry_layer`'s
+current `max_uncertainty` gate treats over-uncertain cells as
+not-reliable → LETHAL, so CATZOC-grade σ entering the store would render
+chart-only regions wholesale keepout (or force a global gate relaxation that
+also weakens it for noisy draft data). The worst-case-clearance /
+confidence-gate cost model (design settled 2026-06-25: high-σ ⇒ go-slow,
+keepout only on trusted data) must land **with or before** the first chart
+cells — it is a precondition, not a parallel track.
+
+First cut regenerates **only while navigation is down** — an *enforced*
+precondition, not an assumption: the updater checks a navigation-liveness
+signal (lock/heartbeat) and refuses to swap while nav is active, cron or not.
 Live regeneration under a running consumer is deferred until atomic tile
 writes ([uma#189](https://github.com/rolker/unh_marine_autonomy/issues/189)/[#256](https://github.com/rolker/unh_marine_autonomy/issues/256))
-and a store-change invalidation in `bathymetry_layer` exist.
+and a store-change invalidation in `bathymetry_layer` exist. Two robustness
+rules for the updater: (a) the edition registry is written **inside** the
+staged layer directory so the atomic swap is the single commit point — a
+half-failed run leaves the old layer + old registry fully intact, never a
+current-registry/stale-layer split; (b) the updater surfaces chart-layer
+age/health (last successful regeneration, last download attempt) so repeated
+download failures age the layer loudly, not silently. Downloaded ENC data is
+validated before the swap — catalog checksums where NOAA provides them, plus
+a sanity check on the exported rasters (nonzero cell counts, plausible depth
+range) — so a corrupt or truncated download can never swap in.
 
 ### D8 — Quality axis restored: `draft` (live) vs `processed` (offline re-run)
 
@@ -238,13 +275,29 @@ surfaces** (Context §3), so they are different quality classes:
   distributed back to boat and operator stores.
 - Best-source priority `processed > draft` (D4), so a fresh live pass adds
   data where the re-run has none but never degrades re-run cells.
-- **Regeneration clears overlapped draft**: when a new processed import lands,
-  draft cells within its coverage are removed, so stale gap-striping never
+- **Regeneration clears overlapped draft, cell-wise**: when a new processed
+  import lands, draft cells are removed **only where the processed import has
+  data** (not the whole import footprint). Draft cells in the re-run's small
+  gated-drop holes survive — harmless under `processed > draft` and strictly
+  more data than clearing by footprint — while stale gap-striping never
   accumulates under the authoritative surface.
 
 A2's collapse was correct for its context (single platform, single coverage,
-processed once); the day-to-day campaign loop is the new workflow A2's own
-supersession note said would justify re-introducing an axis. Follow-ups, not
+processed once). ADR-0002's **A1** supersession note (#221) already recorded
+the discipline this amendment follows: an axis removed as speculative must be
+re-introduced when a workflow actually needs one (it named the
+revisit-and-compare workflow and an epoch/versioning axis; the day-to-day
+campaign loop is the workflow that arrived, and the quality axis is the
+minimal form it needs — neither note pre-authorized D8, but the reversal
+pattern is the recorded, intended one).
+
+The same live-vs-re-run degradation applies in principle to the **MBES
+backscatter store** (ADR-0007, CUBE-coupled, likewise collapsed to a single
+layer by #248). It is **accepted there for now**: backscatter is a
+display/QC product, not a navigation-safety input, so last-write-wins
+striping costs image quality, not safety. Revisit ADR-0007 (with a header
+pointer) if/when backscatter becomes a decision input or the striping
+measurably hurts mosaic QC. Follow-ups, not
 gating this ADR: quantify the live-vs-re-run delta (A/B diff of the two stores
 for one Massabesic day), and characterize/mitigate live-node backpressure in
 `cube_bathymetry` (shrinks the gap; cannot close it — determinism and
@@ -273,11 +326,13 @@ This fills the "refinement policy — staged" gap ADR-0002 D2/#151 left open.
   its depth ramp, retaining land, `restricted`, `overhead`, `caution`,
   `unsurveyed`, and point hazards — a late-rasterizing feature consumer (D2).
   Its `chart_datum`/tide machinery becomes dead code in this mode (D5).
-- **Voyage planner** (future consumer, no new query machinery): plans
+- **Voyage planner** (future consumer, no data-model change): plans
   corridors at coastal/approach levels — cheap and conservative by D9 — and
-  drops to harbor level at route endpoints, via the existing
-  target-resolution-bounded query. Our own survey data joins coarse-level
-  planning only once D9 pyramids exist.
+  drops to harbor level at route endpoints. The level-aware walk exists in
+  the query today; the **optional target-resolution bound is specified in
+  ADR-0002 D2 but not yet implemented** — a small query-API addition the
+  planner will need, not new store machinery. Our own survey data joins
+  coarse-level planning only once D9 pyramids exist.
 - **Overhead ceilings**: deferred. The end-state is an ellipsoidal-ceiling
   field (charted clearance converted at import; runtime check symmetric with
   the seafloor). Until then `s57_layer`'s raw high-water-referenced
@@ -312,8 +367,10 @@ scope.
 - **Costs**: a new library (D6), a new exporter + updater (D7), the layer
   re-split touching store, importers, and `cube_bathymetry` write paths (D8),
   the `s57_layer` split (D10), and config migration (`~/data/stores` →
-  `~/data/world`, nav2 `store_path`s, launch files). Each lands as its own
-  issue/PR.
+  `~/data/world`: nav2 `store_path`s and launch files on the boat, CAMP /
+  operator-station store paths, and dev-tooling defaults keyed to the old
+  root such as the survey index at `~/data/stores/survey_index.db`). Each
+  lands as its own issue/PR.
 - **Supersessions / housekeeping**: ADR-0002 header pointer (same PR);
   [uma#163](https://github.com/rolker/unh_marine_autonomy/issues/163)
   (chart-source layer) closed or repurposed toward D7;
