@@ -19,7 +19,7 @@ issue: 275
 ### Findings
 - [x] (must-fix) `replaceChartLayer` restore branch (rename backup→chart after a failed commit) is untested — the "failure leaves chart/ intact" guarantee is only verified for pre-validation refusals; force a mid-swap rename failure (e.g. read-only store dir) and assert restore — `src/tile_io.cpp:496-512` / `test/test_tile_io.cpp`
 - [x] (suggestion) No mechanical gate stops a loaded Chart layer driving nav before the #272 cost-model rework (load bypasses the write-gate); out of scope but cross-reference #272 in the PR body and confirm no deployed store carries `chart/` yet — `src/query.cpp:93,111`
-- [ ] (suggestion) `warnIfUnrecognizedStoreLayout` doc comment + cerr message still list `chart/` as obsolete taxonomy and omit it from recognized layers — stale now that chart is real — `src/tile_io.cpp:156-165,193-198`
+- [x] (suggestion) `warnIfUnrecognizedStoreLayout` doc comment + cerr message still list `chart/` as obsolete taxonomy and omit it from recognized layers — stale now that chart is real — `src/tile_io.cpp:156-165,193-198`
 - [ ] (suggestion) staged-dir `.tif` check lacks an `is_regular_file()` guard (load path at :343 has one); a dir named `foo.tif` would pass — `src/tile_io.cpp:485`
 - [ ] (suggestion) crash-recovery incomplete: an orphaned `.chart_backup/` from a mid-swap crash is discarded by the next run rather than restored to `chart/` — `src/tile_io.cpp:496-516`
 - [ ] (suggestion) failure-path hardening (minor): detect EXDEV up front before renaming the live layer away; document/test the double-fault case where the restore rename itself throws (original exception lost) — `src/tile_io.cpp:500-512`

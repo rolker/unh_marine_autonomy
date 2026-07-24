@@ -154,12 +154,14 @@ bool tileOverlapsBox(
 }
 
 /// @brief Warn when a store directory holds content but exposes no recognized
-/// `survey/`/`reference/` layer subdirectory — an old-layout (or foreign) store
-/// from which NOTHING loads.
+/// `survey/`/`reference/`/`chart/` layer subdirectory — an old-layout (or
+/// foreign) store from which NOTHING loads.
 ///
 /// This is a navigation-safety *observability* guard: `load()`/`loadWindow()`
-/// skip a layer whose subdir is absent, so a store written in the pre-#248
-/// taxonomy (`chart/`, `draft/`, `processed/`) loads as **empty** without error.
+/// skip a layer whose subdir is absent, so a store written only in the still-
+/// obsolete taxonomy (`draft/`, `processed/` — D8, not yet implemented) loads as
+/// **empty** without error. (`chart/` is a real layer since #275, so it is
+/// recognized here and no longer part of the obsolete set.)
 /// With `BathymetryLayer`'s `unsurveyed_is_lethal_ == false` default, an empty
 /// bathy prior reads as *navigable*, so a silently-empty load must not pass
 /// unnoticed. Matches the store's existing stale-subdir WARNING idiom.
@@ -191,11 +193,11 @@ void warnIfUnrecognizedStoreLayout(const std::string & dir, bool any_layer_dir_p
     return;   // empty store, or metadata-only sidecar — legitimately nothing loaded
   }
   std::cerr << "[marine_bathymetry_store] WARNING: store directory '" << dir
-            << "' has content but no recognized 'survey/' or 'reference/' layer "
-            << "subdirectory — NOTHING was loaded. A pre-#248 old-layout store "
-            << "(chart/draft/processed) is not migrated (#221/#248); regenerate "
-            << "it. An empty bathy prior reads as unsurveyed (navigable unless "
-            << "unsurveyed_is_lethal is set).\n";
+            << "' has content but no recognized 'survey/', 'reference/', or "
+            << "'chart/' layer subdirectory — NOTHING was loaded. A pre-#248 "
+            << "old-layout store (draft/processed) is not migrated (#221/#248); "
+            << "regenerate it. An empty bathy prior reads as unsurveyed (navigable "
+            << "unless unsurveyed_is_lethal is set).\n";
 }
 
 /// @brief True if @p filename is a dropped pre-#248 companion raster
