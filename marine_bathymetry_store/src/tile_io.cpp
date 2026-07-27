@@ -477,6 +477,15 @@ void replaceChartLayer(
   const fs::path chart = fs::path(store_dir) / layerDirName(SourceLayer::Chart);
   const fs::path backup = fs::path(store_dir) / ".chart_backup";
 
+  // Validate the store dir up front: a non-directory store path would otherwise
+  // surface as an opaque ENOTDIR mid-swap once the renames start. Fail clearly
+  // before the live layer is ever touched.
+  if (!fs::is_directory(store_dir)) {
+    throw std::runtime_error(
+            "replaceChartLayer: store dir '" + store_dir +
+            "' does not exist or is not a directory");
+  }
+
   // Validate the staged layer BEFORE touching the live one: it must exist and
   // hold at least one value tile, so an empty/failed export can never swap in
   // (ADR-0010 D7 — a corrupt regeneration must leave the old layer standing).
@@ -484,6 +493,31 @@ void replaceChartLayer(
     throw std::runtime_error(
             "replaceChartLayer: staged dir '" + staged_chart_dir +
             "' does not exist or is not a directory");
+  }
+  // is_directory() follows symlinks, so a symlink-to-directory passes the check
+  // above; rename(staged, chart) would then move the SYMLINK into the store,
+  // leaving chart/ a link to an out-of-store tree (silently breakable, and
+  // remove_all(backup) semantics murky). Reject a symlinked staged dir outright.
+  if (fs::is_symlink(staged)) {
+    throw std::runtime_error(
+            "replaceChartLayer: staged dir '" + staged_chart_dir +
+            "' is a symlink — refusing to move a symlink into the store");
+  }
+  // Reject staged aliasing the live chart/ or its backup: were staged the same
+  // file as chart/ (or .chart_backup/), the chart -> backup rename and the
+  // remove_all(backup) recovery step would operate on the very tree we mean to
+  // swap in. equivalent() requires both paths to exist, so guard on existence
+  // (the error_code overload returns false without throwing for a missing side).
+  std::error_code eq_ec;
+  if (fs::exists(chart) && fs::equivalent(staged, chart, eq_ec)) {
+    throw std::runtime_error(
+            "replaceChartLayer: staged dir '" + staged_chart_dir +
+            "' is the live chart/ layer — nothing to swap in");
+  }
+  if (fs::exists(backup) && fs::equivalent(staged, backup, eq_ec)) {
+    throw std::runtime_error(
+            "replaceChartLayer: staged dir '" + staged_chart_dir +
+            "' is the .chart_backup/ recovery path — refusing to swap");
   }
   bool has_tile = false;
   for (const auto & entry : fs::directory_iterator(staged)) {

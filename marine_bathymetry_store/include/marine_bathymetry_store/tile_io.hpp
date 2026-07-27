@@ -195,7 +195,9 @@ std::size_t evictOutside(
 /// fully intact. Always targets `chart/` — deliberately NOT parameterized by
 /// SourceLayer, so no caller can wholesale-replace survey/reference data.
 ///
-/// Sequence: validate the staged dir (exists, contains ≥1 `.tif`); recover from
+/// Sequence: validate the store dir and staged dir (staged exists as a real
+/// directory — not a symlink — does not alias the live `chart/` or its backup,
+/// and holds ≥1 `.tif`); recover from
 /// an interrupted prior swap (restore `.chart_backup/` → `chart/` when `chart/`
 /// is absent — the crash struck mid-commit — otherwise drop the now-stale
 /// backup); rename existing `chart/` → `.chart_backup/`; rename staged →
@@ -209,7 +211,9 @@ std::size_t evictOutside(
 /// touched) rather than left to fail mid-swap.
 ///
 /// @throws std::runtime_error on validation failure (missing/empty staged dir,
-///         or a cross-device staged dir detected before any swap);
+///         a symlinked staged dir, a staged dir aliasing the live `chart/` or its
+///         backup, a non-directory store dir, or a cross-device staged dir — all
+///         detected before any swap);
 ///         std::filesystem::filesystem_error on any filesystem operation
 ///         failing — this covers not only the commit-point rename (after a
 ///         best-effort backup restoration that never masks the original error)
