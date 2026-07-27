@@ -256,7 +256,9 @@ TEST(BuildOverviewPyramid, MeanFoldRunsEndToEnd)
   const auto tile = mtrs::loadTile<std::uint16_t>(
     path.string(), gggs::Level(kFineLevel - 1), 3);
 
-  // Four uniform children tile the whole parent: every cell folds to the mean.
+  // Four uniform children tile the WHOLE parent, so every parent cell must be
+  // folded — counting only the non-zero cells would pass a fold that covered a
+  // single quadrant and left the rest at no-data.
   std::size_t folded = 0;
   for (uint16_t r = 0; r < tile.edge; ++r) {
     for (uint16_t c = 0; c < tile.edge; ++c) {
@@ -267,7 +269,8 @@ TEST(BuildOverviewPyramid, MeanFoldRunsEndToEnd)
       EXPECT_EQ(tile.get(r, c, 2), 0);     // source band 0 in overviews
     }
   }
-  EXPECT_GT(folded, 0u);
+  EXPECT_EQ(folded, static_cast<std::size_t>(tile.edge) * tile.edge) <<
+    "four full children must fold into a fully-covered parent";
 }
 
 // Regression: the no-data sentinel is the QUALITY band, not intensity. An
