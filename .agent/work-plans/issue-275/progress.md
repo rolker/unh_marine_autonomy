@@ -4,6 +4,34 @@ issue: 275
 
 # Issue #275 — marine_bathymetry_store: chart source layer and wholesale regeneration
 
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-27 18:57 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-275 at `c078f79`
+**Mode**: pre-push
+**Depth**: Deep (reason: navigation-safety data store + filesystem failure-recovery swap)
+**Must-fix**: 0 | **Suggestions**: 4
+**Round**: 2 | **Ship**: recommended — round-1's 1 must-fix + 5 suggestions all addressed; no must-fix survives; static analysis clean; both Claude adversarial passes confirm the atomic-swap crash-recovery is correct under every failure ordering. Remaining items are optional hardening or tracked follow-on (#272).
+
+Static analysis (ament_cpplint + cppcheck) clean. Local Adversarial skipped (Ollama
+server unavailable). Copilot off (default). Independently verified: no hardcoded
+2-layer assumption anywhere — `layerDirName` is the only exhaustive `SourceLayer`
+switch (extended correctly); `layers_` auto-widens via `source_layer_count`;
+`bathymetry_layer` + store I/O iterate `source_layers_by_priority` generically.
+
+### Findings
+- [ ] (suggestion) `replaceChartLayer` doesn't guard against `staged` aliasing the live `chart/` or `.chart_backup/`; an up-front `fs::equivalent` check would harden the `remove_all(backup)` recovery step — `src/tile_io.cpp:514-541`
+- [ ] (suggestion) `@throws` doc understates the surface: pre-swap recovery `rename`/`remove_all` (throwing overloads, before the documented commit point) can emit `filesystem_error` during recovery — `include/marine_bathymetry_store/tile_io.hpp:108-113`
+- [ ] (suggestion) `ReplaceChartLayerRestoresChartWhenCommitRenameFails` asserts only the exception type, not that the commit rename produced it; assert `.chart_backup/` was created to keep it non-vacuous — `test/test_tile_io.cpp:653`
+- [ ] (suggestion, follow-on) Nav-safety + swap-window preconditions are prose-only; in #272 / the updater issue consider a load-time WARN on a populated pre-#272 `chart/` and a `store_dir` lockfile honored by updater and node's `loadWindow` — `src/query.cpp:96-120` (consciously scoped out here — tracked at #272, not a blocker)
+
+### Next step
+Lifecycle: **Local Review** (approved) → push / open PR → **triage-reviews**. Hand off to a fresh-context sub-agent after push:
+`.agent/scripts/dispatch_subagent.sh --mode in-process --issue 275 --skill triage-reviews`
+
 ## Implementation
 **Status**: complete
 **When**: 2026-07-24 22:19 +00:00
