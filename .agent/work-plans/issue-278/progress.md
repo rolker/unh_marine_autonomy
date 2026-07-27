@@ -262,3 +262,55 @@ Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand of
 to a fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-27 19:34 +0000
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-278 at `d887822` (code state `dcded4e`; HEAD is progress-only)
+**Mode**: pre-push
+**Depth**: Deep (reason: ~2.6k new lines, network fetch + GDAL warp/subprocess +
+cross-layer vdatum wiring + costmap-feeding safety surface)
+**Must-fix**: 1 | **Suggestions**: 1
+**Round**: 3 | **Ship**: recommended — the single must-fix is a mechanical
+try/catch wrap (verified against the sibling `constant:`/`--cell-size` paths in
+the same file) and the one suggestion is narrow robustness. Must-fix count flat
+across rounds (1→1→1), no design questions remain; address in one pass, then a
+light confirm suffices.
+
+Specialists: static analysis (ament_cpplint + ament_uncrustify "No problems
+found" across all 15 changed C++ files; ament_cppcheck 2.13.0 self-skipped as a
+known-slow version, not run); Claude Adversarial 2 passes (Lens A logic/edge,
+Lens B systemic/safety); Local Adversarial skipped (no Ollama server on :11434);
+Copilot off (default). Round-2's must-fix (vdatum ctor empty-query hard-fail) and
+all eight Round-2 suggestions are confirmed correctly applied; Lens B verified no
+regressions from those fixes (GDALWarp handle ownership, RAII cleanup on all
+error paths, atomic registry/sidecar writes intact). Lens B produced no findings.
+
+### Findings
+- [ ] (must-fix) `MarineVerticalDatumProvider` is constructed outside any try
+  block (main's `try` starts at :194), but its ctor throws on grid-setup failure
+  (`vdatum_provider.cpp:46`) and `load_datum_config` can throw (`:51`) — a
+  mistyped/missing `--geoid`/`--vdatum-grids`/`--datum-config` aborts via
+  `std::terminate` (exit 134) instead of the clean stderr + `return 1` the
+  sibling `--cell-size` (:114) and `constant:` (:172) paths already emit. Wrap it
+  in the same try/catch — `src/s102_import_main.cpp:186`
+- [ ] (suggestion) `parseResolutionMeters` rejects `"nanm"` but accepts `"infm"`
+  (`std::stod` → +inf passes the `'m'`/length/`>0` checks and would flow into
+  `gggs::Level::fromCellSize`); add an `std::isfinite(value)` guard. Narrow —
+  only a malformed catalog Resolution string (NOAA values trusted) —
+  `src/s102/catalog.cpp:55`
+- [ ] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail remains
+  doc-only, not code-enforced (`reference_writable` gates the layer, not
+  costmap-liveness) — accepted at plan-review; code enforcement lands with #276.
+  Carried, not a new code change for this PR.
+
+### Next step
+Lifecycle: **Local Review** → (verdict changes-requested) → **address-findings**
+→ re-review. One must-fix + one suggestion are open above; the diff is not pushed
+until a pre-push review returns **approved**. Hand off to a fresh-context
+sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill address-findings
