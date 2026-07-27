@@ -203,6 +203,14 @@ TiledRasterTile<T> buildParentTile(
 /// @return The parent tiles (level = fine level - 1), keyed by grid — ready to
 ///   save AND to feed the next-coarser fold (each level builds from the one
 ///   below it, not from the finest data).
+///
+/// @warning **Whole level in memory — no production caller today.** This holds
+///   every fine tile of the level plus every parent it produces: a 1000-tile
+///   L13 sidescan level is ~5.6 GB, which is precisely why
+///   `build_sidescan_overviews` does NOT use it. Use it for tests and small
+///   levels. The next adopter (the ADR-0010 D8 depth pyramid) should instead
+///   follow `marine_sidescan_mosaic/src/overview_pyramid.cpp`: group by parent
+///   from filenames and stream ≤4 children at a time.
 template<typename T>
 std::map<gggs::GridIndex, TiledRasterTile<T>> buildOverviewLevel(
   const std::map<gggs::GridIndex, TiledRasterTile<T>> & fine_tiles,
