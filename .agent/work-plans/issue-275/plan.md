@@ -60,7 +60,7 @@ No changes to `query.cpp`, `geotiff_import.cpp`, or `CMakeLists.txt` are needed.
 
 | Principle | Consideration |
 |---|---|
-| Safety First | Chart layer is blocked from driving navigation by a precondition (cost-model rework); this PR adds no cost-model wiring — only the store-side layer and the regeneration API. The write gate ensures no chart data enters a normal-runtime store via accident. |
+| Safety First | Chart layer is blocked from driving navigation by a precondition (cost-model rework, tracked at #276); this PR adds no cost-model wiring — only the store-side layer and the regeneration API. The write gate ensures no chart data enters a normal-runtime store via accident. |
 | Enforcement over documentation | Write-gate is mechanical (throws), not advisory. Atomicity is structural (rename semantics). The `chart_staging_writable` flag keeps the "staging only" contract at the type/constructor level. |
 | Only what's needed | D8 (draft/processed) is explicitly excluded. The `replaceChartLayer` API targets only `chart/` by design — no general `replaceLayer(SourceLayer, ...)` that could be misused. |
 | Test what breaks | Seven acceptance-criterion scenarios drive dedicated tests across two test files. |
