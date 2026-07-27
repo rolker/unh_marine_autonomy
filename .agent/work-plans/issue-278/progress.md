@@ -120,3 +120,85 @@ Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand of
 fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-27 19:04 +0000
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-278 at `4a7faf5`
+**Mode**: pre-push
+**Depth**: Deep (reason: ~2.6k new lines, network fetch + GDAL warp/subprocess +
+cross-layer vdatum wiring + costmap-feeding safety surface)
+**Must-fix**: 1 | **Suggestions**: 8
+**Round**: 2 | **Ship**: recommended — the one must-fix is a mechanical ctor
+guard (verified against the marine_vertical_datum API contract) and the eight
+suggestions are minor/robustness; address in one pass, then a light confirm
+suffices. No design questions remain and must-fix is not rising (Round 1 also
+had 1, since fixed).
+
+Specialists: static analysis (ament_cpplint clean, "No problems found" across
+all 15 changed C++ files); Claude Adversarial 2 passes (Lens A logic/edge cases,
+Lens B systemic/safety); Local Adversarial skipped (no Ollama server on :11434).
+Round-1's must-fix (S3 pagination) is confirmed correctly fixed, as are the four
+Round-1 suggestions (basename query-strip, real discovered-catalog provenance,
+trust-boundary comment, `.part` sweep). The `.part` sweep fix itself introduces
+a minor concurrency suggestion (#8 below). Both adversarial passes also produced
+several plausible-but-refuted findings — path-traversal via catalog filename,
+EVP/CPLHTTPResult/CPLXMLNode/VSILFILE leaks, GDALWarp double-free, XML
+billion-laughs (CPL minixml is non-validating), OpenSSL/vdatum leaking into the
+package export — all traced and refuted, not carried here.
+
+### Findings
+- [ ] (must-fix) `MarineVerticalDatumProvider` ctor stores `make_vdatum_query()`
+  without the `if (query)` check the API contract mandates — on grid-setup
+  failure (missing/typo'd `--geoid`/`--vdatum-grids`) the factory returns an
+  empty `std::function`, so `mllwHeight` returns nullopt for every cell and the
+  whole import silently becomes all-nodata while exiting 0. Hard-fail in the ctor
+  (fail-loud; no-silent-failure) — `src/s102/vdatum_provider.cpp:35`
+- [ ] (suggestion) Warp `-srcnodata` is computed from the depth band only and
+  broadcast to both bands; assumes `depth.nodata == uncertainty.nodata` (true for
+  S-102's 1e6, but the code reads each band's nodata at :118 only to warn, then
+  discards uncertainty's). Assert equal or pass per-band — `src/s102/convert.cpp:130`
+- [ ] (suggestion) Cache on-disk path is keyed by URL basename while the registry
+  is keyed by `tile_id`; two tile_ids sharing a basename collide on one file
+  (self-healing via the on-access SHA check, but forces needless refetch). Key the
+  local path by `tile_id` — `src/s102/fetch.cpp:160`
+- [ ] (suggestion) `mllwHeight` returns `resolve_datum(...).chart_datum_z`, which
+  a non-MLLW `--datum-config` polygon override could make non-MLLW — shifting an
+  MLLW tile past the `VERTICAL_DATUM_ABBREV=MLLW` gate the converter enforces.
+  Narrow (operator config) but the gate and provider check different datums;
+  add a guard or doc note — `src/s102/vdatum_provider.cpp:47`
+- [ ] (suggestion) `--area` parsing accepts NaN/inf (a NaN slips through the
+  `min<max` guard into `SetSpatialFilterRect`) and ignores trailing garbage after
+  `max_lat`. Reject non-finite and require the stream be exhausted —
+  `src/s102_import_main.cpp:127`
+- [ ] (suggestion) `--cell-size std::stod(...)` sits outside the `main` try block
+  (unlike the wrapped `constant:` datum parse), so `--cell-size abc` throws
+  uncaught → `std::terminate`/abort instead of a clean usage error. Wrap it —
+  `src/s102_import_main.cpp:112`
+- [ ] (suggestion) Output GeoTIFF flush occurs in the `DatasetPtr` destructor,
+  which cannot report failure; a disk-full during the deferred DEFLATE flush
+  yields a truncated tif that `importGeoTiff` reopens. Add an explicit
+  flush + error check before returning — `src/s102/convert.cpp:207`
+- [ ] (suggestion) The `.part` sweep in `TileCache`'s ctor unconditionally removes
+  every `*.part`; two concurrent runs sharing one `--cache` (run.hpp advertises
+  one cache feeding many stores) would delete each other's in-flight download.
+  Make `.part` names unique per-process, or document the cache as single-writer —
+  `src/s102/fetch.cpp:141`
+- [ ] (suggestion) `run.hpp`'s "a partial run leaves the store consistent" claim
+  holds only if the throw precedes `save()`; `save()` writes tiles incrementally
+  with no rollback. Minor doc correction — `src/s102/run.hpp:83`
+- [ ] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail remains
+  doc-only, not code-enforced (`reference_writable` gates the layer, not
+  costmap-liveness) — accepted at plan-review as a documented precondition; code
+  enforcement lands with #276. Carried, not a new code change for this PR.
+
+### Next step
+Lifecycle: **Local Review** → (verdict changes-requested) → **address-findings**
+→ re-review. One must-fix + eight suggestions are open above; the diff is not
+pushed until a pre-push review returns **approved**. Hand off to a fresh-context
+sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill address-findings
