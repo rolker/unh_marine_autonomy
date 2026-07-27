@@ -31,6 +31,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 
 #include "marine_bathymetry_store/bathymetry_store.hpp"
@@ -833,9 +834,20 @@ TEST_F(TileIoTest, ReplaceChartLayerRestoresChartWhenCommitRenameFails)
   fs::permissions(
     ro_parent, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
 
-  EXPECT_THROW(
-    marine_bathymetry_store::replaceChartLayer(staged.string(), store_dir.string()),
-    fs::filesystem_error);
+  // Pin the throw to the COMMIT rename (staged -> chart) rather than accept any
+  // filesystem_error: assert EACCES (permission_denied) and that path1() is the
+  // staged source. Pre-commit validation refusals throw std::runtime_error (not
+  // an fs::filesystem_error), so catching only the latter also keeps this
+  // non-vacuous — the sole filesystem_error reachable here is the commit rename.
+  bool threw = false;
+  try {
+    marine_bathymetry_store::replaceChartLayer(staged.string(), store_dir.string());
+  } catch (const fs::filesystem_error & e) {
+    threw = true;
+    EXPECT_EQ(e.code(), std::errc::permission_denied);
+    EXPECT_EQ(e.path1(), staged);
+  }
+  EXPECT_TRUE(threw) << "expected replaceChartLayer to throw fs::filesystem_error";
 
   // Unlock so TearDown's remove_all can clean up regardless of assertions below.
   fs::permissions(ro_parent, fs::perms::owner_all, fs::perm_options::replace);
