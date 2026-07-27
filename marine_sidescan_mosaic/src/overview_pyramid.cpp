@@ -252,10 +252,21 @@ OverviewBuildResult buildOverviewPyramid(
   // least one fine tile at the declared level before touching overviews/ — a
   // wrong --fine-level or a path typo must not destroy a previously-good build.
   std::size_t guard_skipped = 0;
-  if (gridsInDir(layer_dir, static_cast<uint8_t>(opts.fine_level), guard_skipped).empty()) {
+  const std::vector<gggs::GridIndex> fine_grids =
+    gridsInDir(layer_dir, static_cast<uint8_t>(opts.fine_level), guard_skipped);
+  if (fine_grids.empty()) {
+    // Distinguish "nothing there" (a path or --fine-level typo) from "tiles are
+    // there but none could be reconstructed" — the same message for both sends
+    // the operator hunting a typo that does not exist.
     throw std::runtime_error(
-      "no fine tiles at level " + std::to_string(opts.fine_level) + " under " +
-      opts.layer_dir + " (refusing to wipe overviews/)");
+      "no usable fine tiles at level " + std::to_string(opts.fine_level) +
+      " under " + opts.layer_dir +
+      (guard_skipped > 0 ?
+      " (" + std::to_string(guard_skipped) + " tile name(s) matched that level "
+      "but failed grid reconstruction — see the warnings above; not a path or "
+      "--fine-level typo)" :
+      " (no tile matched that level — check the path and --fine-level)") +
+      "; refusing to replace overviews/");
   }
 
   const fs::path overviews = layer_dir / "overviews";
