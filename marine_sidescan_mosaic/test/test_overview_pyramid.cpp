@@ -84,6 +84,26 @@ void writeFineTile(
     tile, path, {std::nullopt, std::nullopt, std::nullopt});
 }
 
+// As writeFineTile, but the intensity alternates @p even / @p odd in a
+// checkerboard so each parent cell's 2x2 contributor block holds two of each —
+// a mean of exactly (even + odd) / 2, i.e. a half count when they differ by 1.
+void writeCheckerFineTile(
+  const fs::path & dir, const gggs::GridIndex & grid,
+  std::uint16_t even, std::uint16_t odd, std::uint16_t quality)
+{
+  mtrs::TiledRasterTile<std::uint16_t> tile(grid, 3, 0);
+  for (uint16_t r = 0; r < tile.edge; ++r) {
+    for (uint16_t c = 0; c < tile.edge; ++c) {
+      tile.set(r, c, 0, ((r + c) % 2) ? odd : even);
+      tile.set(r, c, 1, quality);
+      tile.set(r, c, 2, 0);
+    }
+  }
+  mtrs::saveTile<std::uint16_t>(
+    tile, (dir / mtrs::tileFilename(grid)).string(),
+    {std::nullopt, std::nullopt, std::nullopt});
+}
+
 // The four fine L13 siblings that tile one L12 parent at the test site.
 std::vector<gggs::GridIndex> fineSiblings()
 {
@@ -285,6 +305,33 @@ TEST(BuildOverviewPyramid, ShadowCellsWithZeroIntensityStillFold)
   }
   EXPECT_EQ(covered, static_cast<std::size_t>(tile.edge) * tile.edge) <<
     "every shadow cell must survive the fold";
+}
+
+// The mean rounds; it must not truncate. Truncation loses up to one count per
+// level and the pyramid chains 13 levels by default, so the bias compounds.
+TEST(BuildOverviewPyramid, MeanRoundsRatherThanTruncating)
+{
+  ScratchDir dir("rounding");
+  for (const auto & g : fineSiblings()) {
+    writeCheckerFineTile(dir.path(), g, 100, 101, 200);   // every block mean = 100.5
+  }
+
+  msm::OverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.fine_level = kFineLevel;
+  opts.min_level = kFineLevel - 1;
+  msm::buildOverviewPyramid(opts);
+
+  const gggs::GridIndex parent12 = gggs::parent(fineSiblings().front());
+  const auto tile = mtrs::loadTile<std::uint16_t>(
+    (dir.path() / "overviews" / mtrs::tileFilename(parent12)).string(),
+    gggs::Level(kFineLevel - 1), 3);
+
+  for (uint16_t r = 0; r < tile.edge; ++r) {
+    for (uint16_t c = 0; c < tile.edge; ++c) {
+      ASSERT_EQ(tile.get(r, c, 0), 101) << "cell (" << r << "," << c << ")";
+    }
+  }
 }
 
 TEST(BuildOverviewPyramid, IsValueIdempotent)

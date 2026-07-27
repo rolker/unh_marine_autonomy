@@ -78,6 +78,14 @@ constexpr std::size_t kQualityBand = 1;   // the no-data sentinel band (see vali
 constexpr std::uint16_t kNoData = 0;
 
 // Mean intensity + mean quality over the contributors; source = 0 (composite).
+// ROUNDED, not truncated: integer truncation loses up to 1 count per level and
+// the pyramid chains 13 levels by default, so the darkening bias compounds all
+// the way to the apex.
+std::uint16_t roundedMean(std::uint64_t sum, std::size_t n)
+{
+  return static_cast<std::uint16_t>((sum + n / 2) / n);
+}
+
 Cell imageryMeanFold(const std::vector<Cell> & contributors)
 {
   std::uint64_t sum_intensity = 0;
@@ -87,8 +95,8 @@ Cell imageryMeanFold(const std::vector<Cell> & contributors)
     sum_quality += c[1];
   }
   return Cell{
-    static_cast<std::uint16_t>(sum_intensity / contributors.size()),
-    static_cast<std::uint16_t>(sum_quality / contributors.size()),
+    roundedMean(sum_intensity, contributors.size()),
+    roundedMean(sum_quality, contributors.size()),
     0};
 }
 
