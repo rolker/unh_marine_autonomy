@@ -27,6 +27,7 @@
 /// SCRATCH STORES ONLY until uma#276 lands (ADR-0010 D7 precondition) — see
 /// s102/run.hpp. Never point --store at a store a live costmap reads.
 
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -109,7 +110,15 @@ int main(int argc, char * argv[])
     } else if (std::strcmp(argv[i], "--datum-config") == 0) {
       vdatum_config.datum_config_path = need_arg(i);
     } else if (std::strcmp(argv[i], "--cell-size") == 0) {
-      options.cell_size = std::stod(need_arg(i));
+      const char * val = need_arg(i);
+      try {
+        options.cell_size = std::stod(val);
+      } catch (const std::exception &) {
+        // std::stod throws on non-numeric input; this parse sits outside the
+        // main try block below, so catch here rather than abort via terminate.
+        std::cerr << "bad --cell-size '" << val << "'\n";
+        return 1;
+      }
     } else if (std::strcmp(argv[i], "--offline") == 0) {
       options.offline = true;
     } else if (std::strcmp(argv[i], "--force") == 0) {
@@ -126,15 +135,24 @@ int main(int argc, char * argv[])
 
   {
     std::istringstream in(area_text);
-    char c1 = 0, c2 = 0, c3 = 0;
+    char c1 = 0, c2 = 0, c3 = 0, trailing = 0;
     in >> options.area.min_lon >> c1 >> options.area.min_lat >> c2 >>
     options.area.max_lon >> c3 >> options.area.max_lat;
-    if (!in || c1 != ',' || c2 != ',' || c3 != ',' ||
+    const bool parsed = static_cast<bool>(in);
+    // Any non-whitespace after max_lat is garbage (e.g. a stray 5th field).
+    const bool has_trailing = static_cast<bool>(in >> trailing);
+    if (!parsed || has_trailing || c1 != ',' || c2 != ',' || c3 != ',' ||
+      !std::isfinite(options.area.min_lon) ||
+      !std::isfinite(options.area.min_lat) ||
+      !std::isfinite(options.area.max_lon) ||
+      !std::isfinite(options.area.max_lat) ||
       options.area.min_lon >= options.area.max_lon ||
       options.area.min_lat >= options.area.max_lat)
     {
+      // Reject NaN/inf too: a NaN would slip through the min<max guard (all
+      // comparisons false) into the spatial filter as an unbounded query.
       std::cerr << "bad --area '" << area_text <<
-        "' (want minLon,minLat,maxLon,maxLat with min < max)\n";
+        "' (want minLon,minLat,maxLon,maxLat, finite, min < max)\n";
       return 1;
     }
   }

@@ -170,11 +170,11 @@ package export — all traced and refuted, not carried here.
   MLLW tile past the `VERTICAL_DATUM_ABBREV=MLLW` gate the converter enforces.
   Narrow (operator config) but the gate and provider check different datums;
   add a guard or doc note — `src/s102/vdatum_provider.cpp:47`
-- [ ] (suggestion) `--area` parsing accepts NaN/inf (a NaN slips through the
+- [x] (suggestion) `--area` parsing accepts NaN/inf (a NaN slips through the
   `min<max` guard into `SetSpatialFilterRect`) and ignores trailing garbage after
   `max_lat`. Reject non-finite and require the stream be exhausted —
   `src/s102_import_main.cpp:127`
-- [ ] (suggestion) `--cell-size std::stod(...)` sits outside the `main` try block
+- [x] (suggestion) `--cell-size std::stod(...)` sits outside the `main` try block
   (unlike the wrapped `constant:` datum parse), so `--cell-size abc` throws
   uncaught → `std::terminate`/abort instead of a clean usage error. Wrap it —
   `src/s102_import_main.cpp:112`
