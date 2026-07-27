@@ -203,3 +203,44 @@ are out of scope for #188).
 - [x] Missing `#include <cstdlib>` for `std::atoi` — added — `marine_sidescan_mosaic/src/overview_pyramid.cpp` (`6fe2c8f`)
 - [x] `gridFromName` latitude-based `latitudeScaleFactor` polar disagreement — documented non-polar assumption + fail-safe round-trip note — `marine_sidescan_mosaic/src/overview_pyramid.cpp` (`7464338`)
 - [x] Empty-string argv `arg[0]` — added `!arg.empty()` guard + test — `marine_sidescan_mosaic/src/overview_pyramid.cpp`, `marine_sidescan_mosaic/test/test_overview_pyramid.cpp` (`a38369a`)
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-27 15:26 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-188 at `60a293d`
+**Mode**: pre-push
+**Depth**: Deep (reason: 1657 lines / 14 files / new ADR-0011 — three independent Deep triggers)
+**Must-fix**: 5 | **Suggestions**: 14
+**Round**: 2 | **Ship**: continue — all 8 round-1 findings verified genuinely fixed, but a new correctness bug (wrong no-data sentinel) plus a cross-model-confirmed atomicity/publish-partial gap warrant another read after the fix
+
+Round-2 verification: all 8 round-1 findings confirmed complete against current source
+(plan-drift specialist checked each with file:line evidence). Build clean; `test_overview_pyramid`
+11/11 and `test_overview_builder` 4/4 green; ament_cpplint + ament_uncrustify + ament_cppcheck
+clean on all six new files (the 8 `colcon test` lint failures are pre-existing in untouched
+files). New findings come from the wider Deep horizon: Lens A caught the sentinel bug by
+reading the tile *producer*; Lens B and the local model independently confirmed the staging /
+partial-publish gaps.
+
+### Findings
+- [ ] (must-fix) `validIntensity` gates the fold on intensity != 0, but the processed store's no-data sentinel is **quality** (band 1): `ProcessedAccumulator` documents "a cell starts at quality 0 (no-data)", `grazingQuality` floors to 1 "so a real return is never mistaken for the no-data 0", and intensity is an unfloored `clamp(samples[j], 0, 65535)`. Every acoustic-shadow cell is dropped from the fold, biasing overviews bright and erasing shadows — gate on `cell[1]` and add a shadow-cell test — `marine_sidescan_mosaic/src/overview_pyramid.cpp:87`
+- [ ] (must-fix) Atomicity contract overstated in three places: the swap is `remove_all(overviews)` then `rename` (a crash in that window leaves *no* sidecar, and a `rename` throw escapes the `catch(...)`), and `overviews.tmp` is a fixed unlocked path two concurrent runs will trample. Either rename-aside (`overviews`→`overviews.old`, rename in, then delete) + claim the staging dir with a failing `create_directory`, or soften the docs — `marine_sidescan_mosaic/src/overview_pyramid.cpp:253,279-293`, `docs/decisions/0011-overview-pyramid.md:46-53`, `marine_sidescan_mosaic/include/marine_sidescan_mosaic/overview_pyramid.hpp:84-86`, `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:39`
+- [ ] (must-fix) `tiles_skipped` gates nothing: a run where most fine tiles fail grid reconstruction still swaps a truncated sidecar over a previously-complete one and exits 0. Refuse the swap (or exit non-zero) when `tiles_skipped > 0` — `marine_sidescan_mosaic/src/overview_pyramid.cpp:284-293`, `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:63-78`
+- [ ] (must-fix) `marine_sidescan_mosaic/README.md` never updated: the new operator-facing `build_sidescan_overviews` CLI and `test_overview_pyramid` are absent from `## Run` and `## Build & test`, while the sibling package's README did get its section — the post-ingest rebuild ADR-0011 mandates has no in-package command — `marine_sidescan_mosaic/README.md:78-99`
+- [ ] (must-fix) Work plan not kept in sync with the implementation (AGENTS.md plan-first workflow): the three `overview_pyramid.*` files and the two ADR-pointer files are missing from "Files to Change"; "Estimated Scope: six files" vs 14 actual; and the `buildOverviewLevel` signature, `band_policy(band, values)` shape, delete-and-recreate semantics and "build until a level is empty" stopping rule are all now dead text — `.agent/work-plans/issue-188/plan.md:43-100,141-144`
+- [ ] (suggestion) Wipe guard is filename-only — never opens a tile, so another store's layer holding level-13-named 3-band tiles passes it and gets wiped + rebuilt with the sidescan policy; sample one tile's raster count first — `marine_sidescan_mosaic/src/overview_pyramid.cpp:236-244`
+- [ ] (suggestion) Input-parsing hardening: `std::stoul` on an overlong filename field and `Level::gridIndex`'s ±90 `out_of_range` both abort the whole run instead of skipping one file (contradicting the documented "skips loudly"); `std::atoi` silently reads a non-numeric `--min-level` as 0 — `marine_sidescan_mosaic/src/overview_pyramid.cpp:103-119,138,142,204-206`
+- [ ] (suggestion) `guard_skipped` is computed then discarded, so a layer whose tiles all fail reconstruction reports "no fine tiles at level N" and points the operator at a path/level typo — `marine_sidescan_mosaic/src/overview_pyramid.cpp:239-243`
+- [ ] (suggestion) `buildParentTile` silently truncates a policy that returns fewer values than `band_fills.size()`, and silently skips mis-grouped children with no count — throw / surface both — `marine_tiled_raster_store/include/marine_tiled_raster_store/overview_builder.hpp:128,158`
+- [ ] (suggestion) Integer mean truncates toward zero and the fold chains 13 levels by default, so the darkening bias compounds; use `(sum + n/2) / n` — `marine_sidescan_mosaic/src/overview_pyramid.cpp:80-84`
+- [ ] (suggestion) Memory-footprint comments are 2–3× low: `buckets` is 921,600 vectors plus one heap allocation per contributor cell (~250 MB worst case, not "~100 MB") — fix the numbers or flatten the bucket store — `marine_tiled_raster_store/include/marine_tiled_raster_store/overview_builder.hpp:118-120`, `marine_sidescan_mosaic/src/overview_pyramid.cpp:36-39`
+- [ ] (suggestion) `overview_builder.hpp` uses `std::invalid_argument`, `std::size_t`, `uint16_t` but includes none of `<stdexcept>`/`<cstddef>`/`<cstdint>` — compiles only via `tiled_raster_tile.hpp` — `marine_tiled_raster_store/include/marine_tiled_raster_store/overview_builder.hpp:25-33`
+- [ ] (suggestion) `MeanFoldRunsEndToEnd` `continue`s past every zero-intensity cell before asserting, so a fold covering only part of the parent still passes — assert `folded == edge*edge` for four uniform children — `marine_sidescan_mosaic/test/test_overview_pyramid.cpp:223-232`
+- [ ] (suggestion) `buildOverviewLevel` has no production caller and is exactly the whole-level in-memory fold the CLI avoids as "~5.6 GB"; warn the next adopter (the D8 depth pyramid) in its doc comment or drop it — `marine_tiled_raster_store/include/marine_tiled_raster_store/overview_builder.hpp:172-192`
+- [ ] (suggestion) The regex's `.tiff` branch is dead (`tileFilename` only emits `.tif`), so such a file is always reported as a "grid reconstruction mismatch" — misleading diagnostic — `marine_sidescan_mosaic/src/overview_pyramid.cpp:127`
+- [ ] (suggestion) Record the deferred consequence that `marine_bathymetry_store`'s loader WARNs on any layer subdirectory, so the reserved depth `overviews/` sidecar will trip it — `docs/decisions/0011-overview-pyramid.md` Consequences, `marine_bathymetry_store/src/tile_io.cpp:334-340,385-391`
+- [ ] (suggestion) Usage text says "Regenerates" but the run unconditionally destroys the existing sidecar; say so, and consider `--dry-run` for a mistyped path — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:38-41`
+- [ ] (suggestion) ADR-0011 §4 names MBES backscatter under the imagery MEAN policy but no pointer was added to ADR-0007 — add one or narrow the wording — `docs/decisions/0011-overview-pyramid.md`
+- [ ] (suggestion) Per-level progress prints only the out-count; the plan promised "tile count in and out" and the in-count is the diagnostic one for a partial store — `marine_sidescan_mosaic/src/overview_pyramid.cpp:264-267`
