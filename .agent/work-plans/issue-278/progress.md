@@ -165,7 +165,7 @@ package export — all traced and refuted, not carried here.
   is keyed by `tile_id`; two tile_ids sharing a basename collide on one file
   (self-healing via the on-access SHA check, but forces needless refetch). Key the
   local path by `tile_id` — `src/s102/fetch.cpp:160`
-- [ ] (suggestion) `mllwHeight` returns `resolve_datum(...).chart_datum_z`, which
+- [x] (suggestion) `mllwHeight` returns `resolve_datum(...).chart_datum_z`, which
   a non-MLLW `--datum-config` polygon override could make non-MLLW — shifting an
   MLLW tile past the `VERTICAL_DATUM_ABBREV=MLLW` gate the converter enforces.
   Narrow (operator config) but the gate and provider check different datums;

@@ -44,6 +44,8 @@ struct VDatumProviderConfig
   std::string geoid_grid;          ///< geoid grid path (see #274 README)
   std::string vdatum_grid_dir;     ///< regional VDatum .gtx directory
   std::string datum_config_path;   ///< optional polygon config ("" = none)
+                                   ///< CAUTION: entries here are trusted to be
+                                   ///< MLLW — see mllwHeight().
 };
 
 /// @brief `VerticalDatumProvider` backed by marine_vertical_datum.
@@ -60,6 +62,15 @@ public:
   /// The importer intentionally passes no lake-datum override — a lake
   /// import is not an S-102 use case; polygon overrides come from
   /// @p datum_config_path.
+  ///
+  /// @warning Returns `resolve_datum(...).chart_datum_z`. For VDatum-sourced
+  /// points that is MLLW by construction, but a polygon entry from
+  /// `datum_config_path` contributes whatever height its author encoded —
+  /// `DatumEntry` carries no datum label to validate against. The converter's
+  /// `VERTICAL_DATUM_ABBREV == MLLW` gate checks the *source tile*, not these
+  /// operator-supplied polygons, so a non-MLLW polygon override would shift an
+  /// MLLW tile past that gate. Operators must keep `datum_config_path` polygons
+  /// expressed as MLLW ellipsoidal heights.
   std::optional<double> mllwHeight(double lat, double lon) const override;
 
 private:
