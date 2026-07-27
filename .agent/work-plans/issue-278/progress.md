@@ -290,22 +290,23 @@ regressions from those fixes (GDALWarp handle ownership, RAII cleanup on all
 error paths, atomic registry/sidecar writes intact). Lens B produced no findings.
 
 ### Findings
-- [ ] (must-fix) `MarineVerticalDatumProvider` is constructed outside any try
+- [x] (must-fix) `MarineVerticalDatumProvider` is constructed outside any try
   block (main's `try` starts at :194), but its ctor throws on grid-setup failure
   (`vdatum_provider.cpp:46`) and `load_datum_config` can throw (`:51`) — a
   mistyped/missing `--geoid`/`--vdatum-grids`/`--datum-config` aborts via
   `std::terminate` (exit 134) instead of the clean stderr + `return 1` the
   sibling `--cell-size` (:114) and `constant:` (:172) paths already emit. Wrap it
   in the same try/catch — `src/s102_import_main.cpp:186`
-- [ ] (suggestion) `parseResolutionMeters` rejects `"nanm"` but accepts `"infm"`
+- [x] (suggestion) `parseResolutionMeters` rejects `"nanm"` but accepts `"infm"`
   (`std::stod` → +inf passes the `'m'`/length/`>0` checks and would flow into
   `gggs::Level::fromCellSize`); add an `std::isfinite(value)` guard. Narrow —
   only a malformed catalog Resolution string (NOAA values trusted) —
   `src/s102/catalog.cpp:55`
-- [ ] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail remains
+- [x] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail remains
   doc-only, not code-enforced (`reference_writable` gates the layer, not
   costmap-liveness) — accepted at plan-review; code enforcement lands with #276.
-  Carried, not a new code change for this PR.
+  Carried, not a new code change for this PR. (deferred: tracking item, not a
+  code change for this PR — code enforcement lands with #276)
 
 ### Next step
 Lifecycle: **Local Review** → (verdict changes-requested) → **address-findings**
@@ -314,3 +315,33 @@ until a pre-push review returns **approved**. Hand off to a fresh-context
 sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill address-findings
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-27 19:40 +0000
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-278 at `04b2c84`
+**Addressed**: Local Review (Pre-Push) from 2026-07-27 19:34 +0000 (code state `d887822`)
+**Commits**: e2f815f, 04b2c84
+
+### Actions
+- [x] (must-fix) Wrapped `MarineVerticalDatumProvider` construction in try/catch so
+  a missing/mistyped `--geoid`/`--vdatum-grids`/`--datum-config` yields a clean
+  stderr + `return 1` instead of `std::terminate` (exit 134), matching the sibling
+  `--cell-size` and `constant:` paths — `marine_bathymetry_store/src/s102_import_main.cpp:186` (commit e2f815f)
+- [x] (suggestion) Added `std::isfinite(value)` guard (plus `<cmath>`) in
+  `parseResolutionMeters` so `"infm"` is rejected like `"nanm"` — `marine_bathymetry_store/src/s102/catalog.cpp:55` (commit 04b2c84)
+- [x] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail (deferred: tracking
+  item, not a code change for this PR — code enforcement lands with #276)
+
+### Verification
+ament_cpplint + ament_uncrustify clean ("No problems found") on both changed files.
+Pre-commit hooks passed on each fix commit. No self-review — the next `review-code`
+pass is the quality gate.
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a
+fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill review-code
