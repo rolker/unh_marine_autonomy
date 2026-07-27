@@ -227,6 +227,17 @@ void convertTile(
   {
     throw std::runtime_error("raster write failed for " + out_path);
   }
+
+  // Flush explicitly and check: RasterIO above only buffers, and the DEFLATE
+  // write is deferred to close. The DatasetPtr destructor (GDALClose) cannot
+  // report a failure, so a disk-full during the deferred flush would silently
+  // leave a truncated GeoTIFF that importGeoTiff later reopens. Force the
+  // write here and fail loud instead.
+  if (out->FlushCache(false) != CE_None) {
+    throw std::runtime_error(
+            "flush of " + out_path + " failed (disk full?) — output may be "
+            "truncated");
+  }
 }
 
 }  // namespace marine_bathymetry_store::s102

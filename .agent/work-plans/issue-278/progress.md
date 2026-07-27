@@ -178,7 +178,7 @@ package export — all traced and refuted, not carried here.
   (unlike the wrapped `constant:` datum parse), so `--cell-size abc` throws
   uncaught → `std::terminate`/abort instead of a clean usage error. Wrap it —
   `src/s102_import_main.cpp:112`
-- [ ] (suggestion) Output GeoTIFF flush occurs in the `DatasetPtr` destructor,
+- [x] (suggestion) Output GeoTIFF flush occurs in the `DatasetPtr` destructor,
   which cannot report failure; a disk-full during the deferred DEFLATE flush
   yields a truncated tif that `importGeoTiff` reopens. Add an explicit
   flush + error check before returning — `src/s102/convert.cpp:207`
