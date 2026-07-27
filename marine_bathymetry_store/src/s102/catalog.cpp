@@ -29,6 +29,7 @@
 #include <ogrsf_frmts.h>
 
 #include <cctype>
+#include <cmath>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -51,8 +52,11 @@ std::optional<double> parseResolutionMeters(const std::string & text)
   } catch (const std::exception &) {
     return std::nullopt;
   }
-  // Exactly `<number>m`, nothing trailing; resolutions are strictly positive.
-  if (pos + 1 != text.size() || text[pos] != 'm' || !(value > 0.)) {
+  // Exactly `<number>m`, nothing trailing; resolutions are strictly positive
+  // and finite ("infm" parses to +inf and would slip past `value > 0.`).
+  if (pos + 1 != text.size() || text[pos] != 'm' ||
+    !std::isfinite(value) || !(value > 0.))
+  {
     return std::nullopt;
   }
   return value;
