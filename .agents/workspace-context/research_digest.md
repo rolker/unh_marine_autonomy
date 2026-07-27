@@ -1,6 +1,6 @@
 # Research Digest: Marine Robotics
 
-<!-- Last updated: 2026-06-02 -->
+<!-- Last updated: 2026-07-27 -->
 <!-- If older than 30 days, consider running /research --refresh; entries older than 90 days should be flagged for review -->
 
 ## ROS 2 Autonomous Surface Vehicles (ASVs)
@@ -237,3 +237,44 @@ host-time. Marine dynamics are slow, so a fixed tens-of-ms offset is cm-level on
 the perception projection — usually tolerable, and a *constant* offset is nearly
 free to correct. Most relevant to the `unh_marine_perception` pipeline and any
 future visual-inertial work on the EchoBoat platform.
+
+---
+
+## SparkFun RTK Express as RTK Base Station → RTCM into ROS 2
+
+**Added**: 2026-07-27 | **Sources**: [RTK Firmware Base Menu](https://docs.sparkfun.com/SparkFun_RTK_Firmware/menu_base/), [Creating a Permanent Base](https://docs.sparkfun.com/SparkFun_RTK_Firmware/permanent_base/), [RTK Express Hookup Guide](https://learn.sparkfun.com/tutorials/sparkfun-rtk-express-hookup-guide/all), [ntrip_client (ros2 branch)](https://github.com/LORD-MicroStrain/ntrip_client/tree/ros2), [mavros gps_rtk plugin](https://github.com/mavlink/mavros/blob/ros2/mavros_extras/src/plugins/gps_rtk.cpp)
+
+Key takeaways:
+- **Base modes** (SETUP button → Base): *Survey-in* — temporary base, needs ≥60 s
+  and mean 3D σ ≤5 m (auto-restarts after 10 min if not met); *Fixed* — enter
+  known ECEF or geodetic coordinates, starts casting immediately. For a
+  semi-permanent base: log 6–24 h of RAWX/SFRBX to SD in rover mode, convert
+  UBX→RINEX with RTKLIB, submit to CSRS-PPP (preferred) or OPUS for cm-level
+  coordinates, then enter them as Fixed.
+- In base mode the fix rate locks to 1 Hz; RTCM3 messages emit at 1 Hz with a
+  per-message rate menu for bandwidth-limited radio links.
+- **Correction outputs** (Express runs classic *SparkFun RTK Firmware*, not RTK
+  Everywhere): (a) **RADIO port** — raw RTCM3 serial for a telemetry-radio pair
+  straight to the rover, no ROS involved; (b) **NTRIP Server** — casts over WiFi
+  to a caster (free: rtk2go.com or caster.emlid.com, port 2101, mountpoint
+  registration required); while casting, WiFi is on and Bluetooth is off;
+  (c) **USB serial** — the CONFIG U-BLOX USB-C is wired to the ZED-F9P
+  (CDC-ACM, `/dev/ttyACM0`), and base mode enables RTCM3 on UART2 *and USB*
+  (`Base.ino`), so a tethered computer gets the stream with no extra config.
+- **ROS 2 ingest**: from a caster, the `ntrip_client` node publishes `/rtcm`;
+  from USB serial, the same package's `ntrip_serial_device` node does
+  serial→`/rtcm`. Both use `rtcm_message_package` to select `mavros_msgs/msg/RTCM`
+  (default) or `rtcm_msgs/msg/Message` (u-blox driver flavor); `ntrip_client`
+  subscribes `/nmea` or `/fix` for casters that want a GGA position (not needed
+  for a fixed own-base mountpoint).
+- **ArduPilot injection**: remap `/rtcm` → mavros `gps_rtk` plugin
+  `~/send_rtcm`; it fragments into MAVLink `GPS_RTCM_DATA` (payloads >4×180 B
+  discarded) and the FCU forwards corrections to its GNSS receiver — no
+  receiver-specific ROS driver needed.
+
+**Relevance**: Gives an own-base correction source independent of public NTRIP
+coverage — useful for Isles of Shoals ops (base at a shore vantage casting via
+internet, boat pulls over cell) or as a Massabesic backup. Rover side is the
+existing C-RTK 2HP (see entry above): corrections arrive over the already-present
+cell/WiFi link via ntrip_client → mavros, so no extra radio hardware on the boat;
+the RADIO-port telemetry-pair path remains a ROS-free fallback.
