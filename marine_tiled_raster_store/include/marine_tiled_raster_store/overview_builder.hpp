@@ -22,8 +22,12 @@
 #ifndef MARINE_TILED_RASTER_STORE__OVERVIEW_BUILDER_HPP_
 #define MARINE_TILED_RASTER_STORE__OVERVIEW_BUILDER_HPP_
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -61,6 +65,15 @@
 namespace marine_tiled_raster_store
 {
 
+/// @brief `<level>_<row>_<column>` — a grid's identity in an error message
+///        (matches the tile-filename stem without pulling in the GDAL I/O
+///        header).
+inline std::string gridLabel(const gggs::GridIndex & grid)
+{
+  return std::to_string(static_cast<int>(grid.level())) + "_" +
+         std::to_string(grid.row()) + "_" + std::to_string(grid.column());
+}
+
 /// @brief One child cell's values, all bands, in band order.
 template<typename T>
 using CellValues = std::vector<T>;
@@ -87,17 +100,20 @@ using CellValidPolicy = std::function<bool (const CellValues<T> &)>;
 /// geographic centre; @p fold reduces each parent cell's contributors. Parent
 /// cells with no valid contributor keep @p band_fills (the no-data fills).
 ///
-/// @param parent_grid The parent grid (level = children's level - 1). Children
-///   whose `gggs::parent()` is not @p parent_grid are skipped (caller grouping
-///   error — skipping keeps the fold safe rather than corrupting a neighbour).
+/// @param parent_grid The parent grid (level = children's level - 1). A child
+///   whose `gggs::parent()` is not @p parent_grid is a caller grouping error and
+///   throws — silently skipping it would drop that child's coverage from the
+///   pyramid with no count anywhere.
 /// @param children Child tiles; all must share one level and band count.
 /// @param band_fills Per-band no-data fill for unset parent cells (also fixes
 ///   the band count).
 /// @param valid Contributor gate (see CellValidPolicy).
-/// @param fold Per-cell reduction (see CellFoldPolicy).
+/// @param fold Per-cell reduction (see CellFoldPolicy). Must return exactly one
+///   value per band.
 /// @return The folded parent tile (dirty, ready for saveTile).
-/// @throws std::invalid_argument on empty @p band_fills, no children, or a
-///   child band count differing from @p band_fills.
+/// @throws std::invalid_argument on empty @p band_fills, no children, a child
+///   band count differing from @p band_fills, a child that is not a child of
+///   @p parent_grid, or a @p fold result whose size is not the band count.
 template<typename T>
 TiledRasterTile<T> buildParentTile(
   const gggs::GridIndex & parent_grid,
@@ -125,7 +141,12 @@ TiledRasterTile<T> buildParentTile(
       throw std::invalid_argument("buildParentTile: child band count mismatch");
     }
     if (gggs::parent(child->index()) != parent_grid) {
-      continue;   // caller grouping error — skip rather than corrupt a neighbour
+      // A caller grouping bug: silently skipping it would quietly drop the
+      // child's coverage from the pyramid with no count anywhere. Refuse.
+      throw std::invalid_argument(
+        "buildParentTile: child " + gridLabel(child->index()) +
+        " is not a child of parent " + gridLabel(parent_grid) +
+        " (caller grouping error)");
     }
     const gggs::GridIndex & cg = child->index();
     const double lat_span = cg.latitudinalSpan();
@@ -155,7 +176,16 @@ TiledRasterTile<T> buildParentTile(
       const auto & contributors = buckets[TiledRasterTile<T>::offset(row, col)];
       if (contributors.empty()) {continue;}
       const CellValues<T> folded = fold(contributors);
-      for (std::size_t b = 0; b < bands && b < folded.size(); ++b) {
+      if (folded.size() != bands) {
+        // Truncating a short result would leave the missing bands at their
+        // no-data fill — a silently half-written cell. A policy that does not
+        // return one value per band is a bug in the policy.
+        throw std::invalid_argument(
+          "buildParentTile: fold policy returned " +
+          std::to_string(folded.size()) + " value(s) for " +
+          std::to_string(bands) + " band(s)");
+      }
+      for (std::size_t b = 0; b < bands; ++b) {
         parent_tile.set(row, col, b, folded[b]);
       }
     }

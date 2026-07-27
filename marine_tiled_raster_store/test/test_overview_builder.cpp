@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <numeric>
+#include <stdexcept>
 #include <vector>
 
 #include "marine_tiled_raster_store/overview_builder.hpp"
@@ -158,6 +159,39 @@ TEST(OverviewBuilder, PairCoherentSelectionPolicyIsExpressible)
         << "selected pair must stay coherent";
     }
   }
+}
+
+TEST(OverviewBuilder, MisgroupedChildThrowsRatherThanBeingDroppedSilently)
+{
+  // A child belonging to a different parent used to be skipped with no count —
+  // its coverage would vanish from the pyramid unnoticed.
+  const gggs::GridIndex fine = fineGrid();
+  const gggs::GridIndex parent_grid = gggs::parent(fine);
+  const std::vector<gggs::GridIndex> cousins =
+    gggs::children(gggs::parent(parent_grid));
+  gggs::GridIndex other_parent;
+  for (const auto & g : cousins) {
+    if (g != parent_grid) {other_parent = g;}
+  }
+  ASSERT_TRUE(other_parent.valid());
+  const TiledRasterTile<std::uint16_t> stranger(gggs::children(other_parent).front(), 1, 5);
+
+  EXPECT_THROW(
+    buildParentTile<std::uint16_t>(
+      parent_grid, {&stranger}, {0}, nonZeroBand0, meanFold),
+    std::invalid_argument);
+}
+
+TEST(OverviewBuilder, ShortFoldResultThrowsRatherThanHalfWritingTheCell)
+{
+  const gggs::GridIndex fine = fineGrid();
+  const TiledRasterTile<std::uint16_t> child(fine, 2, 42);
+  const auto shortFold = [](const std::vector<Cell> &) {return Cell{1};};   // 1 of 2
+
+  EXPECT_THROW(
+    buildParentTile<std::uint16_t>(
+      gggs::parent(fine), {&child}, {0, 0}, nonZeroBand0, shortFold),
+    std::invalid_argument);
 }
 
 TEST(OverviewBuilder, LevelBuildGroupsByParentAndIsValueIdempotent)
