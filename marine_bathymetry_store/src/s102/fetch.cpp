@@ -46,6 +46,20 @@ namespace
 
 constexpr const char * kRegistryName = "tiles.json";
 
+/// Reduce an identifier to a single filesystem-safe path component: keep
+/// [A-Za-z0-9._-], map anything else (including any stray separators) to '_'.
+std::string sanitizeComponent(const std::string & id)
+{
+  std::string out;
+  out.reserve(id.size());
+  for (const char ch : id) {
+    const bool safe = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+      (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' || ch == '-';
+    out.push_back(safe ? ch : '_');
+  }
+  return out;
+}
+
 /// Map a catalog URL / test path to something VSIFOpenL can read.
 std::string vsiReadablePath(const std::string & url)
 {
@@ -156,13 +170,20 @@ FetchResult TileCache::fetch(const TileRecord & record, bool offline)
 
   // filename() already drops any directory components (so no "../" can survive
   // into the on-disk name), but a URL may still carry a "?query"/"#fragment"
-  // tail — strip it so it can't leak into the cache filename.
+  // tail — strip it before we read the extension.
   std::string basename = fs::path(record.url).filename().string();
   basename = basename.substr(0, basename.find_first_of("?#"));
   if (basename.empty()) {
     throw std::runtime_error("catalog URL has no filename: " + record.url);
   }
-  const fs::path local = fs::path(cache_dir_) / "tiles" / basename;
+  // Key the on-disk file by tile_id (unique per tile), NOT the URL basename:
+  // two distinct tile_ids whose URLs happen to share a filename would otherwise
+  // collide on one cache file (self-healing via the SHA check below, but it
+  // forces a needless refetch every access). Preserve the URL's extension so
+  // GDAL's driver sniff still recognizes the payload.
+  const std::string cache_name =
+    sanitizeComponent(record.tile_id) + fs::path(basename).extension().string();
+  const fs::path local = fs::path(cache_dir_) / "tiles" / cache_name;
 
   // Cache hit requires the registry entry at the same issuance AND a payload
   // that still hashes to the catalog digest — corruption is caught on every
@@ -222,7 +243,7 @@ FetchResult TileCache::fetch(const TileRecord & record, bool offline)
   registry[record.tile_id] = {
     {"issuance", record.issuance},
     {"sha256", record.sha256},
-    {"filename", basename},
+    {"filename", cache_name},
   };
   saveRegistryAtomic(registry_path, registry);
   return {local.string(), true};

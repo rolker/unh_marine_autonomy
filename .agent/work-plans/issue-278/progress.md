@@ -161,7 +161,7 @@ package export — all traced and refuted, not carried here.
   broadcast to both bands; assumes `depth.nodata == uncertainty.nodata` (true for
   S-102's 1e6, but the code reads each band's nodata at :118 only to warn, then
   discards uncertainty's). Assert equal or pass per-band — `src/s102/convert.cpp:130`
-- [ ] (suggestion) Cache on-disk path is keyed by URL basename while the registry
+- [x] (suggestion) Cache on-disk path is keyed by URL basename while the registry
   is keyed by `tile_id`; two tile_ids sharing a basename collide on one file
   (self-healing via the on-access SHA check, but forces needless refetch). Key the
   local path by `tile_id` — `src/s102/fetch.cpp:160`
