@@ -183,7 +183,16 @@ int main(int argc, char * argv[])
       std::cerr << "--datum vdatum needs --geoid and --vdatum-grids\n";
       return 1;
     }
-    datum = std::make_unique<s102::MarineVerticalDatumProvider>(vdatum_config);
+    try {
+      datum = std::make_unique<s102::MarineVerticalDatumProvider>(vdatum_config);
+    } catch (const std::exception & e) {
+      // The vdatum ctor throws on grid-setup failure and load_datum_config can
+      // throw on a missing/mistyped --geoid/--vdatum-grids/--datum-config; this
+      // sits outside the main try below, so catch here (matching the --cell-size
+      // and constant: paths) rather than abort via std::terminate.
+      std::cerr << "bad --datum vdatum: " << e.what() << "\n";
+      return 1;
+    }
   } else {
     std::cerr << "unknown --datum '" << datum_text <<
       "' (expected constant:<m> or vdatum)\n";
