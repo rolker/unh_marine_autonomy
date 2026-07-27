@@ -151,3 +151,27 @@ Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand of
 - [ ] Ensure `replaceLayer` API design guards against accidental non-regeneration-path writes; document the caller contract at the API boundary
 - [ ] Cross-reference the cost-model rework issue in the PR description so reviewers and future agents can find the safety precondition without re-reading ADR-0010 D7
 - [ ] Confirm the D8 non-interference guarantee: implementation must not introduce assumptions (e.g., hardcoded two-layer count) that break when `draft`/`processed` are added
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-27 15:20 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**PR**: #280 at `53e361c`
+**Sources**: 3 (Copilot R1 @ `53e361c`, Local Review (Pre-Push) @ `c078f79` — same tree, `53e361c` is the progress-only commit on top, CI rollup)
+**Cross-source confirmations**: 1
+**CI**: all-pass (`build` success, `copilot-pull-request-reviewer` success)
+
+### Findings
+- [ ] (cross-confirmed: Copilot R1 + Local Review @ `c078f79`) `@throws` contract understates the exception surface — the pre-swap crash-recovery steps (`fs::rename(backup, chart)` and `fs::remove_all(backup)`, both throwing overloads) can emit `std::filesystem_error` *before* the documented commit-point rename. Fix: extend the `@throws` clause to cover recovery/cleanup failures — `marine_bathymetry_store/include/marine_bathymetry_store/tile_io.hpp:211-214`
+- [ ] (must-fix, Copilot R1) Wrong issue number in the nav-safety precondition notes: they cite **#272**, which is the (closed) ADR-0010 taxonomy issue. The actual chart-ingestion precondition is **#276** (`bathymetry_layer`: worst-case-clearance cost model + confidence gate). A closed issue as the tracked precondition makes the operational dependency untrackable — exactly the failure the note exists to prevent. Fix: cite #276 (keep the ADR-0010 D7 reference) at both sites — `marine_bathymetry_store/src/query.cpp:93,97,99` and `:118`; also update the backlog line in `.agent/work-plans/issue-275/plan.md` ("cost-model rework (#272 …)") so the follow-up is filed against the right issue
+- [ ] (suggestion, Copilot R1 + Local Review @ `c078f79`) Staged-path hardening in `replaceChartLayer`: `fs::is_directory(staged)` follows symlinks, so a symlink-to-directory passes validation and `fs::rename(staged, chart)` then moves the *symlink* into the store (leaving `chart/` a symlink to an out-of-store tree — silently breakable, and `remove_all(backup)` semantics get murky). Local review independently flagged the neighbouring alias case (`staged` equal to the live `chart/` or `.chart_backup/`). Fix together: reject `fs::is_symlink(staged)`, reject `fs::equivalent(staged, chart)` / `fs::equivalent(staged, backup)`, and validate `fs::is_directory(store_dir)` up front so a non-directory store path fails with a clear message instead of an opaque mid-swap `ENOTDIR` — `marine_bathymetry_store/src/tile_io.cpp:483-524`
+- [ ] (optional, Local Review @ `c078f79`) `ReplaceChartLayerRestoresChartWhenCommitRenameFails` could assert the thrown `filesystem_error`'s `code() == std::errc::permission_denied` and `path1() == staged` to pin the failure to the commit rename. Partly self-satisfied already: validation failures throw `std::runtime_error` (not caught by `EXPECT_THROW(..., fs::filesystem_error)`), and no other pre-commit throwing call can fire in this fixture — so the test is not vacuous, only imprecise — `marine_bathymetry_store/test/test_tile_io.cpp:836-838`
+- [ ] (follow-on, Local Review @ `c078f79`) Nav-safety + swap-window preconditions remain prose-only: consider a load-time WARN on a populated pre-precondition `chart/` layer and a `store_dir` lockfile honored by the updater and the node's `loadWindow`. Consciously scoped out of #275 — track on **#276** (not #272) — `marine_bathymetry_store/src/query.cpp:93-118`
+
+### False positives
+- None. All three Copilot inline comments were verified against the local code at `53e361c` and hold; the low-confidence suppressed comment (query.cpp:118 issue number) is the same valid finding as the #272→#276 item above.
+
+### Notes
+- Copilot's review `commit_id` equals `head_sha` (`53e361c`) — reviewed against current code. The Local Review entry sits at `c078f79`; `53e361c` adds only `progress.md`, so both sources describe the identical tree and their overlapping findings are true cross-source confirmations.
+- Governance: the #272→#276 fix is a "Capture decisions, not just implementations" / documentation-accuracy item (AGENTS.md § Documentation Accuracy — verified against `gh issue view`, not assumed). The symlink/alias hardening is a "Test what breaks" item; per the Quality Standard it is not dismissible as a nit — a caller passing a symlinked staging path is a plausible field/ops mistake, not pathological input.
