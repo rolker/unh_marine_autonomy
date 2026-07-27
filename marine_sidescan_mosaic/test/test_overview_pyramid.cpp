@@ -232,6 +232,43 @@ TEST(BuildOverviewPyramid, MeanFoldRunsEndToEnd)
   EXPECT_GT(folded, 0u);
 }
 
+// Regression: the no-data sentinel is the QUALITY band, not intensity. An
+// acoustic-shadow cell (intensity 0, quality >= 1) is real surveyed data; a fold
+// gated on intensity would drop every such cell, leaving an empty parent and
+// biasing overviews bright.
+TEST(BuildOverviewPyramid, ShadowCellsWithZeroIntensityStillFold)
+{
+  ScratchDir dir("shadow");
+  for (const auto & g : fineSiblings()) {
+    writeFineTile(dir.path(), g, 0, 500);   // dark but surveyed: quality floors >= 1
+  }
+
+  msm::OverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.fine_level = kFineLevel;
+  opts.min_level = kFineLevel - 1;
+
+  const msm::OverviewBuildResult r = msm::buildOverviewPyramid(opts);
+  EXPECT_EQ(r.tiles_skipped, 0u);
+
+  const gggs::GridIndex parent12 = gggs::parent(fineSiblings().front());
+  const auto tile = mtrs::loadTile<std::uint16_t>(
+    (dir.path() / "overviews" / mtrs::tileFilename(parent12)).string(),
+    gggs::Level(kFineLevel - 1), 3);
+
+  // Four uniform shadow children tile the whole parent: every cell must carry
+  // the folded quality, and intensity must stay 0 (a dark cell, not no-data).
+  std::size_t covered = 0;
+  for (uint16_t r2 = 0; r2 < tile.edge; ++r2) {
+    for (uint16_t c = 0; c < tile.edge; ++c) {
+      EXPECT_EQ(tile.get(r2, c, 0), 0);
+      if (tile.get(r2, c, 1) == 500) {++covered;}
+    }
+  }
+  EXPECT_EQ(covered, static_cast<std::size_t>(tile.edge) * tile.edge) <<
+    "every shadow cell must survive the fold";
+}
+
 TEST(BuildOverviewPyramid, IsValueIdempotent)
 {
   ScratchDir dir("idempotent");

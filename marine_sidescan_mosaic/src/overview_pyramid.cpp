@@ -30,8 +30,15 @@
 // (idempotent; safe to re-run after every ingest).
 //
 // Fold policy (imagery, ADR-0011): intensity + quality fold by MEAN over valid
-// (non-zero-intensity) contributors; the source band is 0 in every overview —
-// a composite has no single source; provenance readers must use fine tiles.
+// contributors, where VALID means the QUALITY band (band 1) is non-zero — that
+// is the processed store's no-data sentinel (marine_backscatter's
+// ProcessedAccumulator starts a cell at quality 0 and grazingQuality() floors a
+// real return to 1 "so a real return is never mistaken for the no-data 0").
+// Intensity is an unfloored clamp of the sample, so a zero-intensity cell is a
+// legitimate acoustic-shadow return — gating on intensity would drop every
+// shadow cell and bias the overviews bright. The source band is 0 in every
+// overview — a composite has no single source; provenance readers must use
+// fine tiles.
 //
 // Memory: tiles are grouped by parent FROM FILENAMES and loaded <=4 children
 // at a time (a whole-level in-memory fold of a 1000-tile store would be
@@ -67,6 +74,7 @@ using marine_tiled_raster_store::TiledRasterTile;
 using Cell = marine_tiled_raster_store::CellValues<std::uint16_t>;
 
 constexpr std::size_t kBands = 3;        // intensity, quality, source
+constexpr std::size_t kQualityBand = 1;   // the no-data sentinel band (see validCell)
 constexpr std::uint16_t kNoData = 0;
 
 // Mean intensity + mean quality over the contributors; source = 0 (composite).
@@ -84,7 +92,13 @@ Cell imageryMeanFold(const std::vector<Cell> & contributors)
     0};
 }
 
-bool validIntensity(const Cell & cell) {return cell[0] != kNoData;}
+// Contributor gate. The processed store's no-data sentinel is the QUALITY band,
+// NOT intensity: a cell starts at quality 0 and a real return's quality is
+// floored to >=1 (marine_backscatter::grazingQuality), while intensity is an
+// unfloored clamp(sample, 0, 65535). A zero-intensity, non-zero-quality cell is
+// an acoustic shadow — surveyed, real, and dark — and must participate in the
+// fold, or every shadow is erased and the overview biases bright.
+bool validCell(const Cell & cell) {return cell[kQualityBand] != kNoData;}
 
 // Reconstruct the GridIndex named `<level>_<row>_<col>` through the public
 // geographic lookup (the (level,row,col) ctor is Level-private by design): the
@@ -183,7 +197,7 @@ std::size_t buildLevel(
       marine_tiled_raster_store::buildParentTile<std::uint16_t>(
       group.first, child_ptrs,
       std::vector<std::uint16_t>(kBands, kNoData),
-      validIntensity, imageryMeanFold);
+      validCell, imageryMeanFold);
     marine_tiled_raster_store::saveTile<std::uint16_t>(
       parent_tile,
       (out_dir / marine_tiled_raster_store::tileFilename(group.first)).string(),

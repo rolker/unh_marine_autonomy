@@ -65,7 +65,13 @@ pairing).
    - **Imagery (sidescan, MBES backscatter): MEAN** of valid contributors per
      band. In the sidescan 3-band tile, intensity and quality fold by mean;
      the **source band is 0 in every overview** — a composite has no single
-     source; provenance readers must use fine tiles.
+     source; provenance readers must use fine tiles. **Validity is the
+     quality band, not intensity**: the processed store's no-data sentinel is
+     `quality == 0` (a cell starts there; a real return's quality is floored to
+     ≥1 by `marine_backscatter::grazingQuality`), whereas intensity is an
+     unfloored clamp of the sample. A zero-intensity, non-zero-quality cell is
+     an **acoustic shadow** — surveyed, real, dark — and must fold; gating on
+     intensity would erase every shadow and bias overviews bright.
    - **Depths: SHALLOWEST-PRESERVING, never mean** (ADR-0010 D9): the coarse
      cell carries its shoalest-reliable child's whole {depth, σ} pair, kept
      coherent. A mean would let a coarse corridor query plan over a rock.
