@@ -152,6 +152,12 @@ TileCache::TileCache(const std::string & cache_dir)
   // Sweep orphaned ".part" temporaries left by a download killed mid-stream:
   // each fetch streams to "<name>.part" and only renames a verified payload
   // into place, so any ".part" here is stale and safe to drop at open.
+  //
+  // Single-writer contract: a given --cache directory is owned by ONE import
+  // run at a time (it may feed many stores across sequential runs, see
+  // run.hpp). This sweep removes every ".part" unconditionally, so two runs
+  // sharing one --cache concurrently would delete each other's in-flight
+  // downloads — don't share a --cache between simultaneous runs.
   for (const auto & entry : fs::directory_iterator(tiles_dir)) {
     if (entry.is_regular_file() && entry.path().extension() == ".part") {
       std::error_code ec;

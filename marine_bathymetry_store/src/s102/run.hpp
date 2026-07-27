@@ -52,7 +52,8 @@ struct S102ImportOptions
   BBox area;                   ///< required: geographic query area
   std::string store_dir;       ///< required: target store directory
   SourceLayer layer = SourceLayer::Reference;
-  std::string cache_dir;       ///< required: tile corpus cache
+  std::string cache_dir;       ///< required: tile corpus cache (single-writer:
+                               ///< one run per cache at a time; see fetch.cpp)
   /// Catalog GeoPackage URL or local path. Empty → discover the newest from
   /// `kDefaultBucket` (cached to `<cache>/catalog.gpkg` for offline re-runs).
   std::string catalog;

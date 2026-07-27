@@ -182,7 +182,7 @@ package export — all traced and refuted, not carried here.
   which cannot report failure; a disk-full during the deferred DEFLATE flush
   yields a truncated tif that `importGeoTiff` reopens. Add an explicit
   flush + error check before returning — `src/s102/convert.cpp:207`
-- [ ] (suggestion) The `.part` sweep in `TileCache`'s ctor unconditionally removes
+- [x] (suggestion) The `.part` sweep in `TileCache`'s ctor unconditionally removes
   every `*.part`; two concurrent runs sharing one `--cache` (run.hpp advertises
   one cache feeding many stores) would delete each other's in-flight download.
   Make `.part` names unique per-process, or document the cache as single-writer —
