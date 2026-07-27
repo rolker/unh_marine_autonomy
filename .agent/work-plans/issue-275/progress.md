@@ -199,3 +199,26 @@ Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand of
 ### Next step
 Lifecycle: **Implementation → review-code** (re-review the fixes). Hand off to a fresh-context sub-agent:
 `.agent/scripts/dispatch_subagent.sh --mode in-process --issue 275 --skill review-code`. No auto-chaining — the host orchestrator drives.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-27 19:45 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-275 at `b4fa3a0`
+**Mode**: pre-push
+**Depth**: Deep (reason: navigation-safety data store + filesystem failure-recovery atomic swap)
+**Must-fix**: 0 | **Suggestions**: 3
+**Round**: 3 | **Ship**: recommended — re-review of the four fix commits (`96800c3`, `646dbd2`, `8e70921`, `2335057`) that addressed the post-PR Integrated Review of #280; all four Integrated-Review findings verified fully resolved, no must-fix survives.
+
+Static analysis (`ament_cpplint`) clean on all 9 changed C++ files; `#272→#276` correction complete (no residual `#272` in package source). Both Claude adversarial passes (Lens A logic + Lens B systemic) ran; their "must-fix" claims (symlinked `.tif` inside staged; throwing recovery `rename` at `tile_io.cpp:573`) verified as **false positives** — the `:573` restore is state-preserving (leaves the recoverable backup, identical to entry state) and is documented in `@throws`. Local Adversarial skipped (Ollama unavailable). Copilot off (default). Independently traced every failure ordering (validation refusal, cross-device, orphaned-backup restore, commit-rename failure, double-fault): the live `chart/` layer is never destroyed without a recoverable copy.
+
+### Findings
+- [ ] (suggestion) New hardening guards from `8e70921` — symlinked staged dir (`tile_io.cpp:501`), staged aliasing live `chart/`/`.chart_backup/` (`:512,517`), non-directory `store_dir` (`:483`) — have no dedicated refusal tests; add for coverage consistency with the issue's established test bar — `test/test_tile_io.cpp`
+- [ ] (suggestion) `replaceChartLayer` `has_tile` scan uses `is_regular_file()` (follows symlinks) so a symlinked `.tif` inside staged rides into `chart/`; low priority — intentionally mirrors the load path at `:343` — `src/tile_io.cpp:522-530`
+- [ ] (suggestion) Post-commit `fs::remove_all(backup)` uses the throwing overload, so a successful swap can still surface as an exception on terminal cleanup failure (self-heals next run; `@throws`-documented); consider the `error_code` overload for symmetry with the restore at `:590-591` — `src/tile_io.cpp:602-604`
+
+### Next step
+Lifecycle: **Local Review** (approved) → push / open PR (branch already tracked as #280; push the four fix commits) → **triage-reviews**. Hand off to a fresh-context sub-agent after push:
+`.agent/scripts/dispatch_subagent.sh --mode in-process --issue 275 --skill triage-reviews`
