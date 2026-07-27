@@ -345,3 +345,56 @@ Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand of
 fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-27 19:52 +0000
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-278 at `8e45917` (code state `04b2c84`; HEAD is progress-only)
+**Mode**: pre-push
+**Depth**: Deep (reason: ~2.6k new lines, network fetch + GDAL warp/subprocess +
+cross-layer vdatum wiring + costmap-feeding safety surface)
+**Must-fix**: 0 | **Suggestions**: 2
+**Round**: 4 | **Ship**: recommended — zero must-fix; both Round-3 fixes (vdatum
+ctor try/catch in main, `isfinite` guard in parseResolutionMeters) verified
+applied. Must-fix count 1→1→1→0 across rounds; the loop has converged. The two
+remaining suggestions are low-value robustness (apply in a quick pass or track
+and push).
+
+Specialists: static analysis (ament_cpplint + ament_uncrustify "No problems
+found" across all 15 changed C++ files; ament_cppcheck 2.13 not run — known-slow
+self-skip, per prior rounds); Claude Adversarial 2 passes (Lens A logic/edge,
+Lens B systemic/safety); Local Adversarial skipped (no Ollama server on :11434);
+Copilot off (default). Both lenses independently found zero must-fix. Lens B
+re-verified the prior-round fixes hold with no regressions (GDAL handle
+ownership, RAII on all error paths, atomic writes, PRIVATE dep isolation).
+Cross-pass confirmation: both lenses flagged the deferred-flush gap on the JSON
+writers (suggestion 2). Several tempting-but-wrong issues considered and refuted
+(path traversal via tile_id/URL — sanitizeComponent maps `/`→`_`; GDALWarp
+double-free; CPLHTTPResult/CPLXMLNode/EVP_MD_CTX/VSILFILE leaks; PRIVATE dep
+export leak; unescaped `prefix`/unbounded download — both unreachable behind the
+documented S3-listing trust boundary and fixed compile-time constants) — not
+carried here.
+
+### Findings
+- [ ] (suggestion) `queryCatalog` doesn't guard empty `TILE_ID` — collapses the
+  fetch cache-key to just the extension and the idempotency sidecar key to `""`,
+  colliding two such rows (NOAA always populates it; low likelihood) — `src/s102/catalog.cpp:167`
+- [ ] (suggestion) `saveRegistryAtomic` / `saveImportedSidecarAtomic` check the
+  open-stream failbit but not the deferred close-time flush before `fs::rename`;
+  a disk-full at close could promote a truncated JSON (small writes, self-healing;
+  `convert.cpp:236` does the explicit-flush opposite) — `src/s102/fetch.cpp:97`, `src/s102/run.cpp:69`
+- [ ] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail remains
+  doc-only, not code-enforced — accepted at plan-review; code enforcement lands
+  with #276. Carried, not a new code change for this PR.
+
+### Next step
+Lifecycle: **Local Review** (verdict approved) → push / open PR → **triage-reviews**
+
+The verdict is **approved** (zero must-fix). The two open suggestions are optional
+robustness — apply them in a quick `address-findings` pass or track and push. Once
+pushed / a PR is opened, hand off to a fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill triage-reviews
