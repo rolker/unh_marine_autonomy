@@ -131,8 +131,12 @@ TiledRasterTile<T> buildParentTile(
   const std::size_t bands = band_fills.size();
 
   // Per-parent-cell contributor buckets. ~4 contributors per cell in temperate
-  // bands; transient (~a hundred MB for a 960x960 3-band uint16 fold) — an
-  // offline batch path, freed per parent tile.
+  // bands. Transient (freed per parent tile) but NOT small: a 960x960 3-band
+  // uint16 fold means 921,600 bucket vectors (~22 MB of headers alone) plus
+  // ~3.7M contributor cells, each a std::vector with its own small heap
+  // allocation — roughly 250 MB peak, not the ~100 MB a first estimate
+  // suggests. Flattening the buckets into one contiguous array would cut that
+  // several-fold; acceptable as-is only because this is an offline batch path.
   std::vector<std::vector<CellValues<T>>> buckets(TiledRasterTile<T>::cell_count);
 
   for (const TiledRasterTile<T> * child : children) {

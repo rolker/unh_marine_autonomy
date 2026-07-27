@@ -42,8 +42,10 @@
 //
 // Memory: tiles are grouped by parent FROM FILENAMES and loaded <=4 children
 // at a time (a whole-level in-memory fold of a 1000-tile store would be
-// ~5.6 GB; this path stays ~100 MB). Each level is built from the level below
-// it (already in the sidecar), not by re-reading the fine data.
+// ~5.6 GB; this path peaks around ~250 MB per parent tile — dominated by the
+// fold engine's per-cell contributor buckets, see overview_builder.hpp — and
+// that peak does not grow with store size). Each level is built from the level
+// below it (already in the sidecar), not by re-reading the fine data.
 
 #include "marine_sidescan_mosaic/overview_pyramid.hpp"
 
