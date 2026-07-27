@@ -48,7 +48,6 @@
 #include "marine_sidescan_mosaic/overview_pyramid.hpp"
 
 #include <cstdint>
-#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <map>
@@ -124,7 +123,17 @@ gggs::GridIndex gridFromName(
   const double lon_span = span * gggs::latitudeScaleFactor(lat);
   const double west = -180.0 + col * lon_span;
   const double lon = west + lon_span / 2.0;
-  const gggs::GridIndex grid = gggs::Level(level).gridIndex(lat, lon);
+  gggs::GridIndex grid;
+  try {
+    // A row/column field far out of range puts `lat`/`lon` outside the geodetic
+    // domain and gggs::Level::gridIndex throws — one malformed filename must
+    // skip its own file, not abort the whole run.
+    grid = gggs::Level(level).gridIndex(lat, lon);
+  } catch (const std::exception & e) {
+    std::cerr << "warning: skipping " << name <<
+      " (grid reconstruction failed: " << e.what() << ")\n";
+    return gggs::GridIndex();
+  }
   if (marine_tiled_raster_store::tileFilename(grid) != name) {
     std::cerr << "warning: skipping " << name <<
       " (grid reconstruction mismatch)\n";
@@ -150,11 +159,30 @@ std::vector<gggs::GridIndex> gridsInDir(
     if (!entry.is_regular_file() || !std::regex_match(name, m, kName)) {
       continue;
     }
-    if (std::stoul(m[1]) != level) {
+    // The regex only proves the fields are digits — an overlong one still
+    // overflows std::stoul. A malformed name must skip its own file loudly, as
+    // documented, not abort the whole run with an uncaught out_of_range.
+    unsigned long parts[3] = {0, 0, 0};   // NOLINT(runtime/int) — stoul's type
+    bool parsed = true;
+    for (std::size_t p = 0; p < 3 && parsed; ++p) {
+      try {
+        parts[p] = std::stoul(m[p + 1]);
+      } catch (const std::exception &) {
+        parsed = false;
+      }
+    }
+    constexpr unsigned long kMaxIndex = 0xFFFFFFFFUL;   // NOLINT(runtime/int)
+    if (!parsed || parts[1] > kMaxIndex || parts[2] > kMaxIndex) {
+      std::cerr << "warning: skipping " << name <<
+        " (level/row/column out of representable range)\n";
+      ++skipped;
       continue;
     }
-    const gggs::GridIndex grid =
-      gridFromName(level, std::stoul(m[2]), std::stoul(m[3]), name);
+    if (parts[0] != level) {
+      continue;
+    }
+    const gggs::GridIndex grid = gridFromName(
+      level, static_cast<uint32_t>(parts[1]), static_cast<uint32_t>(parts[2]), name);
     if (grid.valid()) {
       grids.push_back(grid);
     } else {
@@ -208,6 +236,27 @@ std::size_t buildLevel(
   return written;
 }
 
+// Strict integer parse: rejects an empty, non-numeric or trailing-garbage value
+// that std::atoi would silently read as 0 (`--min-level abc` must be a usage
+// error, not a silent "build to the apex").
+bool parseInt(const char * text, int & out)
+{
+  if (text == nullptr || text[0] == '\0') {
+    return false;
+  }
+  try {
+    std::size_t used = 0;
+    const int value = std::stoi(text, &used);
+    if (text[used] != '\0') {
+      return false;
+    }
+    out = value;
+    return true;
+  } catch (const std::exception &) {
+    return false;
+  }
+}
+
 }  // namespace
 
 ArgStatus parseOverviewArgs(int argc, char ** argv, OverviewOptions & out)
@@ -216,9 +265,13 @@ ArgStatus parseOverviewArgs(int argc, char ** argv, OverviewOptions & out)
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--fine-level" && i + 1 < argc) {
-      out.fine_level = std::atoi(argv[++i]);
+      if (!parseInt(argv[++i], out.fine_level)) {
+        return ArgStatus::kError;
+      }
     } else if (arg == "--min-level" && i + 1 < argc) {
-      out.min_level = std::atoi(argv[++i]);
+      if (!parseInt(argv[++i], out.min_level)) {
+        return ArgStatus::kError;
+      }
     } else if (arg == "--help" || arg == "-h") {
       return ArgStatus::kHelp;
     } else if (out.layer_dir.empty() && !arg.empty() && arg[0] != '-') {

@@ -61,8 +61,8 @@ enum class ArgStatus
 /// @brief Parse @p argv into @p out. Pure (no I/O); validates the level range.
 ///
 /// Returns `kError` — never crashes — on an unknown flag, a flag missing its
-/// value, an out-of-range level, or an empty-string argument. Returns `kHelp`
-/// on `--help`/`-h`.
+/// value, a non-numeric or trailing-garbage level value, an out-of-range level,
+/// or an empty-string argument. Returns `kHelp` on `--help`/`-h`.
 ArgStatus parseOverviewArgs(int argc, char ** argv, OverviewOptions & out);
 
 /// @brief Aggregate result of a pyramid build (for logging and exit codes).

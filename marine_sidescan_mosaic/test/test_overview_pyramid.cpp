@@ -162,6 +162,23 @@ TEST(ParseOverviewArgs, EmptyStringArgIsErrorNotCrash)
   EXPECT_EQ(msm::parseOverviewArgs(2, argv, opts), msm::ArgStatus::kError);
 }
 
+TEST(ParseOverviewArgs, NonNumericLevelIsErrorNotSilentZero)
+{
+  char a0[] = "prog", a1[] = "/store/layer", a2[] = "--min-level", a3[] = "abc";
+  char * argv[] = {a0, a1, a2, a3};
+  msm::OverviewOptions opts;
+  // std::atoi would have read this as 0 — a silent "build to the apex".
+  EXPECT_EQ(msm::parseOverviewArgs(4, argv, opts), msm::ArgStatus::kError);
+}
+
+TEST(ParseOverviewArgs, TrailingGarbageLevelIsError)
+{
+  char a0[] = "prog", a1[] = "/store/layer", a2[] = "--fine-level", a3[] = "12x";
+  char * argv[] = {a0, a1, a2, a3};
+  msm::OverviewOptions opts;
+  EXPECT_EQ(msm::parseOverviewArgs(4, argv, opts), msm::ArgStatus::kError);
+}
+
 TEST(ParseOverviewArgs, MinLevelNotBelowFineIsError)
 {
   char a0[] = "prog", a1[] = "/store/layer", a2[] = "--fine-level", a3[] = "5",
@@ -371,6 +388,29 @@ TEST(BuildOverviewPyramid, RefusesToReplaceSidecarWhenAnyTileWasSkipped)
   EXPECT_FALSE(r.sidecar_replaced);
   EXPECT_TRUE(fs::exists(sentinel)) << "a partial pyramid must not be swapped in";
   EXPECT_FALSE(fs::exists(dir.path() / "overviews.tmp"));
+}
+
+// A filename whose digit fields overflow std::stoul, or whose row places the
+// tile outside the geodetic domain, must skip that one file loudly — not abort
+// the run with an uncaught out_of_range.
+TEST(BuildOverviewPyramid, MalformedTileNameSkipsInsteadOfAborting)
+{
+  ScratchDir dir("malformed");
+  for (const auto & g : fineSiblings()) {
+    writeFineTile(dir.path(), g, 100, 200);
+  }
+  std::ofstream(dir.path() / "13_99999999999999999999_1.tif") << "overflow";
+  std::ofstream(dir.path() / "13_99999999_1.tif") << "off the globe";
+
+  msm::OverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.fine_level = kFineLevel;
+  opts.min_level = kFineLevel - 1;
+
+  msm::OverviewBuildResult r;
+  ASSERT_NO_THROW(r = msm::buildOverviewPyramid(opts));
+  EXPECT_EQ(r.tiles_skipped, 2u);
+  EXPECT_FALSE(r.sidecar_replaced);
 }
 
 // `overviews.tmp/` is the per-layer run lock: a second build over the same layer
