@@ -81,8 +81,12 @@ struct S102ImportSummary
 /// Store-level StoreMetadata provenance is written only when the store has
 /// none yet — an S-102 import must not clobber an existing survey's metadata.
 ///
-/// @throws std::runtime_error on any stage failure (fail-loud; a partial run
-/// leaves the cache consistent — the store is saved only after all tiles).
+/// @throws std::runtime_error on any stage failure (fail-loud). A failure
+/// *before* the final save leaves the store on disk untouched — fetch/convert
+/// work only in the cache (atomic renames) and the in-memory store. The final
+/// `save()` is not itself transactional: it writes tiles incrementally with no
+/// rollback, so a failure *during* save (e.g. disk full) can leave the store
+/// partially written. The sidecar is committed only after a successful save.
 S102ImportSummary runS102Import(const S102ImportOptions & options);
 
 }  // namespace marine_bathymetry_store::s102

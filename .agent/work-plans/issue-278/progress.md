@@ -187,7 +187,7 @@ package export — all traced and refuted, not carried here.
   one cache feeding many stores) would delete each other's in-flight download.
   Make `.part` names unique per-process, or document the cache as single-writer —
   `src/s102/fetch.cpp:141`
-- [ ] (suggestion) `run.hpp`'s "a partial run leaves the store consistent" claim
+- [x] (suggestion) `run.hpp`'s "a partial run leaves the store consistent" claim
   holds only if the throw precedes `save()`; `save()` writes tiles incrementally
   with no rollback. Minor doc correction — `src/s102/run.hpp:83`
 - [ ] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail remains
