@@ -257,11 +257,16 @@ Key takeaways:
   Everywhere): (a) **RADIO port** — raw RTCM3 serial for a telemetry-radio pair
   straight to the rover, no ROS involved; (b) **NTRIP Server** — casts over WiFi
   to a caster (free: rtk2go.com or caster.emlid.com, port 2101, mountpoint
-  registration required). While casting, WiFi is on and Bluetooth is off.
-- **ROS 2 ingest**: `ntrip_client` node connects to the caster and publishes
-  `/rtcm`; `rtcm_message_package` selects `mavros_msgs/RTCM` (default) or
-  `rtcm_msgs/Message` (u-blox driver flavor); subscribes `/nmea` or `/fix` for
-  casters that want a GGA position (not needed for a fixed own-base mountpoint).
+  registration required); while casting, WiFi is on and Bluetooth is off;
+  (c) **USB serial** — the CONFIG U-BLOX USB-C is wired to the ZED-F9P
+  (CDC-ACM, `/dev/ttyACM0`), and base mode enables RTCM3 on UART2 *and USB*
+  (`Base.ino`), so a tethered computer gets the stream with no extra config.
+- **ROS 2 ingest**: from a caster, the `ntrip_client` node publishes `/rtcm`;
+  from USB serial, the same package's `ntrip_serial_device` node does
+  serial→`/rtcm`. Both use `rtcm_message_package` to select `mavros_msgs/msg/RTCM`
+  (default) or `rtcm_msgs/msg/Message` (u-blox driver flavor); `ntrip_client`
+  subscribes `/nmea` or `/fix` for casters that want a GGA position (not needed
+  for a fixed own-base mountpoint).
 - **ArduPilot injection**: remap `/rtcm` → mavros `gps_rtk` plugin
   `~/send_rtcm`; it fragments into MAVLink `GPS_RTCM_DATA` (payloads >4×180 B
   discarded) and the FCU forwards corrections to its GNSS receiver — no
