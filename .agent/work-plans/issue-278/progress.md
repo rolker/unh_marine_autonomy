@@ -151,7 +151,7 @@ billion-laughs (CPL minixml is non-validating), OpenSSL/vdatum leaking into the
 package export — all traced and refuted, not carried here.
 
 ### Findings
-- [ ] (must-fix) `MarineVerticalDatumProvider` ctor stores `make_vdatum_query()`
+- [x] (must-fix) `MarineVerticalDatumProvider` ctor stores `make_vdatum_query()`
   without the `if (query)` check the API contract mandates — on grid-setup
   failure (missing/typo'd `--geoid`/`--vdatum-grids`) the factory returns an
   empty `std::function`, so `mllwHeight` returns nullopt for every cell and the

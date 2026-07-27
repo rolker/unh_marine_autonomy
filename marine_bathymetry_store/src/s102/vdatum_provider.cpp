@@ -22,6 +22,7 @@
 #include "s102/vdatum_provider.hpp"
 
 #include <iostream>
+#include <stdexcept>
 
 namespace marine_bathymetry_store::s102
 {
@@ -35,6 +36,17 @@ MarineVerticalDatumProvider::MarineVerticalDatumProvider(
   query_ = marine_vertical_datum::make_vdatum_query(
     vdatum_config,
     [](const std::string & msg) {std::cerr << "s102: vdatum: " << msg << "\n";});
+  // make_vdatum_query returns an EMPTY std::function on grid-setup failure
+  // (missing/unreadable grids, PROJ pipeline error — see the reason on stderr
+  // above). Left unchecked, mllwHeight would return nullopt for every cell and
+  // the whole import would silently become all-nodata while exiting 0. Fail
+  // loud instead (no-silent-failure): a bad --geoid/--vdatum-grids is an
+  // operator error, not a per-cell coverage gap.
+  if (!query_) {
+    throw std::runtime_error(
+            "s102: vertical-datum grid setup failed (check --geoid / "
+            "--vdatum-grids; see 's102: vdatum:' diagnostics above)");
+  }
   if (!config.datum_config_path.empty()) {
     entries_ = marine_vertical_datum::load_datum_config(config.datum_config_path);
   }

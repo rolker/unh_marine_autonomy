@@ -50,8 +50,9 @@ struct VDatumProviderConfig
 class MarineVerticalDatumProvider : public VerticalDatumProvider
 {
 public:
-  /// @throws std::runtime_error if @p config.datum_config_path is non-empty
-  /// but unloadable.
+  /// @throws std::runtime_error if the vertical-datum grid setup fails
+  /// (empty query from make_vdatum_query — bad `geoid_grid`/`vdatum_grid_dir`),
+  /// or if @p config.datum_config_path is non-empty but unloadable.
   explicit MarineVerticalDatumProvider(const VDatumProviderConfig & config);
 
   /// @brief MLLW ellipsoidal height via the library's precedence chain.
