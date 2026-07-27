@@ -75,6 +75,13 @@ int main(int argc, char ** argv)
         "unchanged\n";
       return 3;
     }
+    if (result.tiles_skipped > 0) {
+      std::cerr << "error: " << result.tiles_skipped <<
+        " input tile(s) failed grid reconstruction, so the pyramid is missing "
+        "their coverage — refusing to replace overviews/ with a partial "
+        "pyramid; overviews/ left unchanged\n";
+      return 4;
+    }
     return 0;
   } catch (const std::exception & e) {
     std::cerr << "error: " << e.what() << "\n";

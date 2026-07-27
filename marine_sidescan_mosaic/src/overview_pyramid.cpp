@@ -309,7 +309,11 @@ OverviewBuildResult buildOverviewPyramid(
     throw;
   }
 
-  if (result.early_empty) {
+  // Refuse the swap unless the pyramid is complete: a partial one must never
+  // displace a previously-complete sidecar. `early_empty` means the fine-tile
+  // chain broke; `tiles_skipped` means one or more fine tiles failed grid
+  // reconstruction, so their coverage is simply missing from every level built.
+  if (result.early_empty || result.tiles_skipped > 0) {
     fs::remove_all(staging);
     return result;
   }
@@ -338,6 +342,7 @@ OverviewBuildResult buildOverviewPyramid(
     throw;
   }
   fs::remove_all(retired);
+  result.sidecar_replaced = true;
   return result;
 }
 

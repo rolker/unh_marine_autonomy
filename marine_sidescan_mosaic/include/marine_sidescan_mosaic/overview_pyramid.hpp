@@ -69,9 +69,16 @@ ArgStatus parseOverviewArgs(int argc, char ** argv, OverviewOptions & out);
 struct OverviewBuildResult
 {
   std::size_t tiles_written = 0;   ///< total overview tiles written
-  std::size_t tiles_skipped = 0;   ///< tiles skipped (grid reconstruction mismatch)
+  /// Input tiles skipped for a grid-reconstruction mismatch. **Any skip refuses
+  /// the swap** — the pyramid is missing that tile's coverage, so it must not
+  /// displace a previously-complete sidecar. The caller should exit non-zero.
+  std::size_t tiles_skipped = 0;
   int coarsest_level = -1;         ///< coarsest level produced (-1 = none built)
   bool early_empty = false;        ///< a level above @c min_level produced nothing
+  /// Whether the freshly-built pyramid actually replaced `overviews/`. False when
+  /// the build was refused (@c early_empty or @c tiles_skipped > 0), in which
+  /// case the previous sidecar is untouched and the staging dir is cleaned up.
+  bool sidecar_replaced = false;
 };
 
 /// @brief Regenerate `<layer_dir>/overviews/` from the layer's fine tiles.
@@ -92,9 +99,11 @@ struct OverviewBuildResult
 /// over the same layer refuses rather than trampling the first.
 ///
 /// @param progress Optional stream for per-level progress lines (nullptr = quiet).
-/// @return Counts plus an @c early_empty flag set when a level above
-///   @c min_level yields no tiles (a broken fine-tile chain — the caller should
-///   surface it loudly and exit non-zero).
+/// @return Counts, an @c early_empty flag set when a level above @c min_level
+///   yields no tiles (a broken fine-tile chain), and @c sidecar_replaced telling
+///   whether the swap happened. The build is **refused** (previous sidecar left
+///   in place, staging cleaned up) when @c early_empty or @c tiles_skipped > 0;
+///   the caller should surface either loudly and exit non-zero.
 /// @throws std::invalid_argument if @p opts holds an out-of-range level.
 /// @throws std::runtime_error if @c layer_dir is not a directory, holds no fine
 ///   tiles at @c fine_level (refuses to replace a good sidecar for an empty or

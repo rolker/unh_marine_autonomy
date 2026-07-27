@@ -188,6 +188,7 @@ TEST(BuildOverviewPyramid, WritesLevelDistinguishedSidecar)
   const msm::OverviewBuildResult r = msm::buildOverviewPyramid(opts);
   EXPECT_GT(r.tiles_written, 0u);
   EXPECT_FALSE(r.early_empty);
+  EXPECT_TRUE(r.sidecar_replaced);
 
   const fs::path overviews = dir.path() / "overviews";
   ASSERT_TRUE(fs::is_directory(overviews));
@@ -313,6 +314,36 @@ TEST(BuildOverviewPyramid, RefusesEmptyLayerAndPreservesExistingSidecar)
   EXPECT_THROW(msm::buildOverviewPyramid(opts), std::runtime_error);
   // The guard must not have wiped the existing sidecar.
   EXPECT_TRUE(fs::exists(sentinel));
+}
+
+// A skipped fine tile means the pyramid is missing that tile's coverage, so the
+// swap must be refused rather than displacing a previously-complete sidecar with
+// a truncated one. (A zero-padded filename reconstructs to a different name, so
+// it is the cheapest real reconstruction mismatch to stage.)
+TEST(BuildOverviewPyramid, RefusesToReplaceSidecarWhenAnyTileWasSkipped)
+{
+  ScratchDir dir("skipped");
+  for (const auto & g : fineSiblings()) {
+    writeFineTile(dir.path(), g, 100, 200);
+  }
+  std::ofstream(dir.path() / "13_0123_0456.tif") << "unreconstructable";
+
+  // A previously-complete sidecar that must survive the refused build.
+  const fs::path overviews = dir.path() / "overviews";
+  fs::create_directories(overviews);
+  const fs::path sentinel = overviews / "12_1_1.tif";
+  std::ofstream(sentinel) << "keep";
+
+  msm::OverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.fine_level = kFineLevel;
+  opts.min_level = kFineLevel - 1;
+
+  const msm::OverviewBuildResult r = msm::buildOverviewPyramid(opts);
+  EXPECT_EQ(r.tiles_skipped, 1u);
+  EXPECT_FALSE(r.sidecar_replaced);
+  EXPECT_TRUE(fs::exists(sentinel)) << "a partial pyramid must not be swapped in";
+  EXPECT_FALSE(fs::exists(dir.path() / "overviews.tmp"));
 }
 
 // `overviews.tmp/` is the per-layer run lock: a second build over the same layer
