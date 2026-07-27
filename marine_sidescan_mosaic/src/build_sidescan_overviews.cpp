@@ -36,9 +36,14 @@ void usage()
 {
   std::cerr <<
     "usage: build_sidescan_overviews <layer_dir> [--fine-level N] [--min-level N]\n"
-    "  Regenerates <layer_dir>/overviews/ (idempotent; crash-safe swap).\n"
+    "                                 [--dry-run]\n"
+    "  Rebuilds <layer_dir>/overviews/ from the layer's fine tiles. The rebuild\n"
+    "  is WHOLESALE: on success the existing sidecar is DISCARDED, not merged\n"
+    "  (overviews are a derived, regenerable cache). Crash-safe — the previous\n"
+    "  sidecar is only dropped once the new one is complete and in place.\n"
     "  --fine-level N  the layer's native GGGS level (default 13)\n"
-    "  --min-level N   coarsest level to build, 0 = apex (default 0)\n";
+    "  --min-level N   coarsest level to build, 0 = apex (default 0)\n"
+    "  --dry-run       run the layer checks and report; write nothing\n";
 }
 
 }  // namespace
@@ -62,6 +67,16 @@ int main(int argc, char ** argv)
   try {
     const msm::OverviewBuildResult result =
       msm::buildOverviewPyramid(opts, &std::cerr);
+    if (opts.dry_run) {
+      if (result.tiles_skipped > 0) {
+        std::cerr << "dry run: " << result.tiles_skipped <<
+          " tile(s) would fail grid reconstruction, so the rebuild would be "
+          "refused; fix them first\n";
+        return 4;
+      }
+      std::cerr << "dry run: nothing written\n";
+      return 0;
+    }
     std::cerr << "overview pyramid complete: " << result.tiles_written <<
       " tile(s) written";
     if (result.tiles_skipped > 0) {

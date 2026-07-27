@@ -295,6 +295,8 @@ ArgStatus parseOverviewArgs(int argc, char ** argv, OverviewOptions & out)
       if (!parseInt(argv[++i], out.min_level)) {
         return ArgStatus::kError;
       }
+    } else if (arg == "--dry-run") {
+      out.dry_run = true;
     } else if (arg == "--help" || arg == "-h") {
       return ArgStatus::kHelp;
     } else if (out.layer_dir.empty() && !arg.empty() && arg[0] != '-') {
@@ -358,6 +360,22 @@ OverviewBuildResult buildOverviewPyramid(
       std::to_string(probe_bands) + " band(s), expected " +
       std::to_string(kBands) + " (intensity, quality, source); refusing to "
       "replace overviews/ with a sidescan-policy pyramid");
+  }
+
+  // --dry-run stops here: the guards above are exactly the checks that catch a
+  // mistyped path or wrong layer, and nothing below this point is reached
+  // without writing. Report what the run would do and touch nothing.
+  if (opts.dry_run) {
+    OverviewBuildResult preview;
+    preview.tiles_skipped = guard_skipped;
+    if (progress != nullptr) {
+      *progress << "dry run: " << fine_grids.size() << " usable fine tile(s) at "
+        "level " << opts.fine_level << " under " << opts.layer_dir <<
+        " (" << guard_skipped << " unreconstructable); would build levels " <<
+        (opts.fine_level - 1) << "..." << opts.min_level <<
+        " and replace " << (layer_dir / "overviews").string() << "\n";
+    }
+    return preview;
   }
 
   const fs::path overviews = layer_dir / "overviews";

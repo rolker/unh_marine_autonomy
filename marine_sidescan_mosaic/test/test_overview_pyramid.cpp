@@ -383,6 +383,42 @@ TEST(BuildOverviewPyramid, RefusesEmptyLayerAndPreservesExistingSidecar)
   EXPECT_TRUE(fs::exists(sentinel));
 }
 
+TEST(ParseOverviewArgs, DryRunFlagIsParsed)
+{
+  char a0[] = "prog", a1[] = "/store/layer", a2[] = "--dry-run";
+  char * argv[] = {a0, a1, a2};
+  msm::OverviewOptions opts;
+  EXPECT_EQ(msm::parseOverviewArgs(3, argv, opts), msm::ArgStatus::kOk);
+  EXPECT_TRUE(opts.dry_run);
+}
+
+// --dry-run must run the layer checks and write nothing at all — no sidecar, no
+// staging dir, and the existing sidecar untouched.
+TEST(BuildOverviewPyramid, DryRunWritesNothing)
+{
+  ScratchDir dir("dryrun");
+  for (const auto & g : fineSiblings()) {
+    writeFineTile(dir.path(), g, 100, 200);
+  }
+  const fs::path overviews = dir.path() / "overviews";
+  fs::create_directories(overviews);
+  const fs::path sentinel = overviews / "12_1_1.tif";
+  std::ofstream(sentinel) << "keep";
+
+  msm::OverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.fine_level = kFineLevel;
+  opts.min_level = kFineLevel - 1;
+  opts.dry_run = true;
+
+  const msm::OverviewBuildResult r = msm::buildOverviewPyramid(opts);
+  EXPECT_EQ(r.tiles_written, 0u);
+  EXPECT_FALSE(r.sidecar_replaced);
+  EXPECT_TRUE(fs::exists(sentinel));
+  EXPECT_EQ(countLevelFiles(overviews, kFineLevel - 1), 1u);   // only the sentinel
+  EXPECT_FALSE(fs::exists(dir.path() / "overviews.tmp"));
+}
+
 // The layer guard is filename-only unless it opens a tile: another store's layer
 // whose tiles happen to carry level-13 names must not be wiped and rebuilt with
 // the sidescan 3-band policy.

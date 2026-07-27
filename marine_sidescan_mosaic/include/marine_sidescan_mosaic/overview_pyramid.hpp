@@ -46,6 +46,9 @@ struct OverviewOptions
   std::string layer_dir;   ///< the store layer directory (holds the fine tiles)
   int fine_level = 13;     ///< the layer's native GGGS level
   int min_level = 0;       ///< coarsest level to build (0 = apex)
+  /// Run the guards and report what would be built, writing nothing — the check
+  /// before pointing a destructive rebuild at a mistyped path.
+  bool dry_run = false;
 };
 
 /// @brief Outcome of `parseOverviewArgs` — distinguishes a clean parse, an
@@ -81,7 +84,11 @@ struct OverviewBuildResult
   bool sidecar_replaced = false;
 };
 
-/// @brief Regenerate `<layer_dir>/overviews/` from the layer's fine tiles.
+/// @brief Rebuild `<layer_dir>/overviews/` from the layer's fine tiles.
+///
+/// The rebuild is **wholesale**: on success the previous sidecar is discarded,
+/// never merged (overviews are a derived, regenerable cache — ADR-0011). With
+/// @c OverviewOptions::dry_run the guards run and nothing is written.
 ///
 /// Each level is folded from the level below it (the finest from the fine
 /// layer, every coarser one from the sidecar just written), down to
