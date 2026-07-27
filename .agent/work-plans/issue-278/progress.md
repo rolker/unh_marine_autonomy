@@ -157,7 +157,7 @@ package export — all traced and refuted, not carried here.
   empty `std::function`, so `mllwHeight` returns nullopt for every cell and the
   whole import silently becomes all-nodata while exiting 0. Hard-fail in the ctor
   (fail-loud; no-silent-failure) — `src/s102/vdatum_provider.cpp:35`
-- [ ] (suggestion) Warp `-srcnodata` is computed from the depth band only and
+- [x] (suggestion) Warp `-srcnodata` is computed from the depth band only and
   broadcast to both bands; assumes `depth.nodata == uncertainty.nodata` (true for
   S-102's 1e6, but the code reads each band's nodata at :118 only to warn, then
   discards uncertainty's). Assert equal or pass per-band — `src/s102/convert.cpp:130`

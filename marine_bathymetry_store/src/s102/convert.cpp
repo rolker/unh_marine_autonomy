@@ -113,27 +113,29 @@ void convertTile(
   int uncertainty_band = 0;
   locateBands(*src, depth_band, uncertainty_band);
 
-  // Make the source nodata explicit for the warper. The S102 driver declares
-  // 1e6; synthetic fixtures may rely on the fallback.
-  for (const int b : {depth_band, uncertainty_band}) {
+  // Make the source nodata explicit for the warper, PER BAND — depth and
+  // uncertainty are not guaranteed to share a nodata value (they do for
+  // S-102's 1e6, but don't assume it). `-srcnodata` takes a space-separated
+  // value per source band in band order; read each band's own (S102 declares
+  // 1e6; synthetic fixtures may rely on the fallback).
+  std::string src_nodata_str;
+  for (int b = 1; b <= src->GetRasterCount(); ++b) {
     int has_nodata = 0;
-    src->GetRasterBand(b)->GetNoDataValue(&has_nodata);
+    const double declared = src->GetRasterBand(b)->GetNoDataValue(&has_nodata);
+    const double nodata = has_nodata != 0 ? declared : kS102NoData;
     if (has_nodata == 0) {
       std::cerr << "s102: band " << b << " declares no nodata; assuming " <<
         kS102NoData << "\n";
     }
+    if (!src_nodata_str.empty()) {
+      src_nodata_str += " ";
+    }
+    src_nodata_str += std::to_string(nodata);
   }
 
   // Warp to geographic WGS84. Nearest resampling: value-preserving, keeps
   // each depth/σ pair coherent, and (being non-blending) cannot smear nodata
   // — declared srcnodata still propagates to NaN in the Float64 output.
-  const double src_nodata = [&] {
-      int has_nodata = 0;
-      const double declared =
-        src->GetRasterBand(depth_band)->GetNoDataValue(&has_nodata);
-      return has_nodata != 0 ? declared : kS102NoData;
-    }();
-  const std::string src_nodata_str = std::to_string(src_nodata);
   const char * warp_argv[] = {
     "-of", "MEM",
     "-t_srs", "EPSG:4326",
