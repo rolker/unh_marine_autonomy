@@ -81,18 +81,25 @@ struct OverviewBuildResult
 /// @c min_level. The fold policy is imagery mean (intensity + quality; source
 /// band 0), ADR-0011.
 ///
-/// **Atomic**: the pyramid is built into a sibling `overviews.tmp/` and renamed
-/// over the live `overviews/` only on success, so an interrupted or failing run
-/// never leaves a truncated sidecar that reads as complete.
+/// **Crash-safe** (not atomic — POSIX has no atomic directory swap): the pyramid
+/// is built into a sibling `overviews.tmp/` and swapped in only on success, so an
+/// interrupted or failing run never leaves a truncated sidecar that reads as
+/// complete. The swap is rename-aside — `overviews/` → `overviews.old/`, staging
+/// → `overviews/`, then `overviews.old/` is dropped — so the previous sidecar
+/// exists at every instant; a crash mid-swap leaves it as `overviews.old/`,
+/// recoverable by hand. `overviews.tmp/` also acts as the per-layer run lock: it
+/// is claimed with a failing `create_directory`, so a second concurrent build
+/// over the same layer refuses rather than trampling the first.
 ///
 /// @param progress Optional stream for per-level progress lines (nullptr = quiet).
 /// @return Counts plus an @c early_empty flag set when a level above
 ///   @c min_level yields no tiles (a broken fine-tile chain — the caller should
 ///   surface it loudly and exit non-zero).
 /// @throws std::invalid_argument if @p opts holds an out-of-range level.
-/// @throws std::runtime_error if @c layer_dir is not a directory or holds no
-///   fine tiles at @c fine_level (refuses to wipe a good sidecar for an empty
-///   or mis-pointed layer), or on any tile I/O failure.
+/// @throws std::runtime_error if @c layer_dir is not a directory, holds no fine
+///   tiles at @c fine_level (refuses to replace a good sidecar for an empty or
+///   mis-pointed layer), or already has an `overviews.tmp/` staging directory
+///   (concurrent run or crashed-run debris); also on any tile I/O failure.
 OverviewBuildResult buildOverviewPyramid(
   const OverviewOptions & opts, std::ostream * progress = nullptr);
 

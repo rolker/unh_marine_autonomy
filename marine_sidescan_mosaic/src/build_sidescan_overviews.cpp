@@ -36,7 +36,7 @@ void usage()
 {
   std::cerr <<
     "usage: build_sidescan_overviews <layer_dir> [--fine-level N] [--min-level N]\n"
-    "  Regenerates <layer_dir>/overviews/ (idempotent; atomic swap).\n"
+    "  Regenerates <layer_dir>/overviews/ (idempotent; crash-safe swap).\n"
     "  --fine-level N  the layer's native GGGS level (default 13)\n"
     "  --min-level N   coarsest level to build, 0 = apex (default 0)\n";
 }

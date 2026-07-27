@@ -44,13 +44,23 @@ pairing).
    (idempotent; safe after every ingest), it is never merged into the fine
    layer, and it never enters anti-entropy/possession sets. Native coarse
    data can never be confused with derived overviews. Regeneration is
-   **atomic**: a builder writes into a sibling `overviews.tmp/` and renames it
-   over `overviews/` only after every level succeeds, so an interrupted or
-   failed run leaves the previous sidecar intact rather than a truncated one a
-   consumer would read as complete. A builder also refuses to wipe `overviews/`
-   unless the layer holds fine tiles at the declared level (an empty or
-   mis-pointed layer never destroys a good sidecar). A stray `overviews.tmp/`
-   is a crashed run's debris and may be deleted.
+   **crash-safe** — not atomic, since POSIX offers no atomic directory swap: a
+   builder writes into a sibling `overviews.tmp/` and swaps it in only after
+   every level succeeds, so an interrupted or failed run leaves the previous
+   sidecar intact rather than a truncated one a consumer would read as
+   complete. The swap is **rename-aside**: `overviews/` → `overviews.old/`,
+   staging → `overviews/`, then `overviews.old/` is deleted. The previous
+   sidecar therefore exists at every instant; a crash between the two renames
+   leaves it as `overviews.old/`, recoverable by hand, and a failing second
+   rename is rolled back. A builder also refuses to replace `overviews/` unless
+   the layer holds fine tiles at the declared level (an empty or mis-pointed
+   layer never destroys a good sidecar), and refuses when any fine tile was
+   skipped (a partial pyramid must not displace a complete one).
+   `overviews.tmp/` doubles as the **per-layer run lock**: it is claimed with a
+   failing `create_directory`, so two concurrent builds cannot trample one
+   staging directory. A stray `overviews.tmp/` (or `overviews.old/`) is a
+   crashed run's debris; it must be removed by hand before the next build,
+   which is deliberate — silently deleting it would defeat the lock.
 
 3. **The fold's load-bearing mapping is `gggs::parent()` / `gggs::children()`
    (`marine_autonomy/gggs/index_math.h`) plus per-cell geographic

@@ -315,6 +315,30 @@ TEST(BuildOverviewPyramid, RefusesEmptyLayerAndPreservesExistingSidecar)
   EXPECT_TRUE(fs::exists(sentinel));
 }
 
+// `overviews.tmp/` is the per-layer run lock: a second build over the same layer
+// must refuse rather than interleave its tiles with the first run's staging dir,
+// and must leave both the live sidecar and the staging dir untouched.
+TEST(BuildOverviewPyramid, RefusesWhenStagingDirectoryAlreadyExists)
+{
+  ScratchDir dir("staging_lock");
+  for (const auto & g : fineSiblings()) {
+    writeFineTile(dir.path(), g, 100, 200);
+  }
+  const fs::path staging = dir.path() / "overviews.tmp";
+  fs::create_directories(staging);
+  const fs::path debris = staging / "12_1_1.tif";
+  std::ofstream(debris) << "in-flight";
+
+  msm::OverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.fine_level = kFineLevel;
+  opts.min_level = kFineLevel - 1;
+
+  EXPECT_THROW(msm::buildOverviewPyramid(opts), std::runtime_error);
+  EXPECT_TRUE(fs::exists(debris)) << "the other run's staging dir must survive";
+  EXPECT_FALSE(fs::exists(dir.path() / "overviews"));
+}
+
 int main(int argc, char ** argv)
 {
   ::testing::InitGoogleTest(&argc, argv);

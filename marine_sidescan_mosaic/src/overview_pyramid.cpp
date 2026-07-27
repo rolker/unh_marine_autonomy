@@ -56,6 +56,7 @@
 #include <regex>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "marine_autonomy/gggs.h"
@@ -259,13 +260,26 @@ OverviewBuildResult buildOverviewPyramid(
 
   const fs::path overviews = layer_dir / "overviews";
   const fs::path staging = layer_dir / "overviews.tmp";
+  const fs::path retired = layer_dir / "overviews.old";
 
-  // Atomic regeneration: build into a staging sibling and swap it over the live
-  // sidecar only after every level succeeds. An interrupted or throwing run
-  // leaves the previous overviews/ intact rather than a truncated one that a
+  // Crash-safe regeneration: build into a staging sibling and swap it over the
+  // live sidecar only after every level succeeds, so an interrupted or throwing
+  // run leaves the previous overviews/ intact rather than a truncated one a
   // consumer would read as complete.
-  fs::remove_all(staging);
-  fs::create_directories(staging);
+  //
+  // The staging directory doubles as the run lock: create_directory fails when
+  // it already exists, so a second concurrent run over the same layer refuses
+  // instead of interleaving its tiles with the first run's. A crashed run leaves
+  // the directory behind as debris — the message says how to clear it.
+  std::error_code create_ec;
+  if (!fs::create_directory(staging, create_ec)) {
+    throw std::runtime_error(
+      "cannot claim staging directory " + staging.string() +
+      (create_ec ?
+      ": " + create_ec.message() :
+      " (it already exists — another build is running over this layer, or a "
+      "crashed run left it behind; remove it to retry)"));
+  }
 
   OverviewBuildResult result;
   try {
@@ -300,11 +314,30 @@ OverviewBuildResult buildOverviewPyramid(
     return result;
   }
 
-  // Swap staging over the live sidecar. remove_all first: rename onto a
-  // non-empty directory fails; the window between remove and rename is the
-  // price of a plain-filesystem atomic (no cross-dir hardlink swap here).
-  fs::remove_all(overviews);
-  fs::rename(staging, overviews);
+  // Swap staging over the live sidecar, rename-aside rather than
+  // remove-then-rename so the previous sidecar exists at every instant:
+  // overviews/ -> overviews.old/, staging -> overviews/, then drop
+  // overviews.old/. If the second rename fails, the first is undone and the run
+  // leaves the previous sidecar exactly where it was. A crash in the (two
+  // same-directory renames) window leaves the previous sidecar as
+  // overviews.old/ — recoverable by hand; it is never destroyed before the new
+  // one is in place. This is crash-SAFE, not atomic: POSIX offers no atomic
+  // directory swap on a plain filesystem.
+  const bool had_previous = fs::exists(overviews);
+  if (had_previous) {
+    fs::remove_all(retired);
+    fs::rename(overviews, retired);
+  }
+  try {
+    fs::rename(staging, overviews);
+  } catch (...) {
+    if (had_previous) {
+      fs::rename(retired, overviews);   // restore the previous sidecar
+    }
+    fs::remove_all(staging);
+    throw;
+  }
+  fs::remove_all(retired);
   return result;
 }
 
