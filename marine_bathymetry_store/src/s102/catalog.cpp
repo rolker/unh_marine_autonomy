@@ -164,11 +164,15 @@ std::vector<TileRecord> queryCatalog(
     rec.issuance = feature->GetFieldAsString("ISSUANCE");
     const std::string resolution = feature->GetFieldAsString("Resolution");
     const auto parsed = parseResolutionMeters(resolution);
-    if (rec.url.empty() || rec.sha256.empty() || !parsed.has_value()) {
-      // Never fetch or import a row we can't verify or place.
+    if (rec.tile_id.empty() || rec.url.empty() || rec.sha256.empty() ||
+      !parsed.has_value())
+    {
+      // Never fetch or import a row we can't verify, place, or key: an empty
+      // TILE_ID would collapse the fetch cache-name to just the extension and
+      // the idempotency sidecar key to "", colliding distinct rows.
       std::cerr << "s102: skipping catalog row '" << rec.tile_id <<
-        "' (url/sha256 missing or unparseable Resolution '" << resolution <<
-        "')\n";
+        "' (tile_id/url/sha256 missing or unparseable Resolution '" <<
+        resolution << "')\n";
       continue;
     }
     // Digests are compared case-insensitively downstream; normalize here.
