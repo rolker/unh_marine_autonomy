@@ -190,10 +190,12 @@ package export — all traced and refuted, not carried here.
 - [x] (suggestion) `run.hpp`'s "a partial run leaves the store consistent" claim
   holds only if the throw precedes `save()`; `save()` writes tiles incrementally
   with no rollback. Minor doc correction — `src/s102/run.hpp:83`
-- [ ] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail remains
+- [x] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail remains
   doc-only, not code-enforced (`reference_writable` gates the layer, not
   costmap-liveness) — accepted at plan-review as a documented precondition; code
   enforcement lands with #276. Carried, not a new code change for this PR.
+  (deferred: tracking item — code enforcement is #276's scope; the scratch-only
+  precondition stays documented in run.hpp / s102_import_main.cpp until it lands.)
 
 ### Next step
 Lifecycle: **Local Review** → (verdict changes-requested) → **address-findings**
@@ -202,3 +204,61 @@ pushed until a pre-push review returns **approved**. Hand off to a fresh-context
 sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill address-findings
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-27 19:24 +0000
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-278 at `dcded4e`
+**Addressed**: `## Local Review (Pre-Push)` (2026-07-27 19:04 +0000, branch `feature/issue-278` at `4a7faf5`) — Round 2
+**Commits**: `f5b4ad0`, `79b0bbe`, `2761f78`, `dc2244c`, `c09f068`, `f8b33e1`, `e649684`, `dcded4e`
+
+Built `marine_bathymetry_store` clean and re-ran its suite after the fixes:
+286 tests, 0 failures, 38 skipped (unchanged baseline). ament_cpplint and
+ament_uncrustify both "No problems found" across all six changed C++ files.
+No pre-commit hook is installed in this worktree, so linters were run manually;
+no `--no-verify` was used (nothing to bypass).
+
+### Actions
+- [x] (must-fix) `MarineVerticalDatumProvider` ctor now hard-fails when
+  `make_vdatum_query()` returns an empty `std::function` (grid-setup failure) —
+  no more silent all-nodata import exiting 0. Header `@throws` updated —
+  `src/s102/vdatum_provider.cpp:38` (`f5b4ad0`)
+- [x] (suggestion) Warp `-srcnodata` now built per source band (each band's own
+  `GetNoDataValue`, fallback 1e6) instead of broadcasting the depth band's value
+  — drops the `depth.nodata == uncertainty.nodata` assumption —
+  `src/s102/convert.cpp` (`79b0bbe`)
+- [x] (suggestion) Output GeoTIFF is now `FlushCache(false)`-flushed with an
+  error check before return, so a disk-full during the deferred DEFLATE write is
+  caught (fail-loud) rather than leaving a truncated tif for `importGeoTiff` —
+  `src/s102/convert.cpp:207` (`2761f78`)
+- [x] (suggestion) Cache on-disk file now keyed by a sanitized `tile_id`
+  (+ URL extension), not the URL basename, so two tile_ids sharing a basename
+  no longer collide; registry `filename` records the real on-disk name —
+  `src/s102/fetch.cpp:160` (`dc2244c`)
+- [x] (suggestion) Documented the tile cache as single-writer (one run per
+  `--cache` at a time) at the `.part` sweep and on `S102ImportOptions.cache_dir`,
+  since the sweep removes every `*.part` unconditionally —
+  `src/s102/fetch.cpp:141`, `src/s102/run.hpp` (`c09f068`)
+- [x] (suggestion) Corrected `run.hpp`'s partial-run consistency claim: `save()`
+  is not transactional (incremental, no rollback), so a failure *during* save can
+  leave the store partially written; only failures *before* save leave it
+  untouched — `src/s102/run.hpp:83` (`f8b33e1`)
+- [x] (suggestion) Documented that `--datum-config` polygon entries are trusted
+  to be MLLW — `DatumEntry` carries no datum label, and the converter's MLLW gate
+  validates the source tile, not operator polygons (no feasible code guard
+  without a datum label on the entry) — `src/s102/vdatum_provider.hpp` (`e649684`)
+- [x] (suggestion) Hardened CLI parsing: `--area` now rejects non-finite
+  (NaN/inf) values and trailing garbage after `max_lat`; `--cell-size std::stod`
+  wrapped in try/catch so bad input is a clean usage error, not `std::terminate`
+  — `src/s102_import_main.cpp:112,127` (`dcded4e`)
+- [x] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail (deferred:
+  tracking item — code enforcement is #276's scope; the scratch-only precondition
+  stays documented in run.hpp / s102_import_main.cpp until #276 lands)
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off
+to a fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill review-code
