@@ -210,8 +210,12 @@ std::size_t evictOutside(
 ///
 /// @throws std::runtime_error on validation failure (missing/empty staged dir,
 ///         or a cross-device staged dir detected before any swap);
-///         std::filesystem::filesystem_error on rename failure (after a
-///         best-effort backup restoration that never masks the original error).
+///         std::filesystem::filesystem_error on any filesystem operation
+///         failing — this covers not only the commit-point rename (after a
+///         best-effort backup restoration that never masks the original error)
+///         but also the pre-swap crash-recovery steps that run *before* it:
+///         restoring an orphaned `.chart_backup/` (`fs::rename`) and clearing a
+///         stale one (`fs::remove_all`) both use throwing overloads.
 void replaceChartLayer(
   const std::string & staged_chart_dir, const std::string & store_dir);
 
