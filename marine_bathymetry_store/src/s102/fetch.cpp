@@ -100,6 +100,10 @@ void saveRegistryAtomic(const fs::path & path, const nlohmann::json & registry)
   {
     std::ofstream out(tmp);
     out << registry.dump(2) << "\n";
+    // Close explicitly and re-check: the stream defers its final flush to
+    // close, and a disk-full there sets failbit only then. Catch it before
+    // rename so we never promote a truncated registry over the good one.
+    out.close();
     if (!out) {
       throw std::runtime_error("cannot write " + tmp.string());
     }
