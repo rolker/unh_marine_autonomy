@@ -158,7 +158,10 @@ gggs::GridIndex gridFromName(
 std::vector<gggs::GridIndex> gridsInDir(
   const fs::path & dir, uint8_t level, std::size_t & skipped)
 {
-  static const std::regex kName(R"((\d+)_(\d+)_(\d+)\.tiff?)");
+  // `.tif` only: tileFilename() emits nothing else, so a `.tiff` here is not one
+  // of our tiles — matching it would only produce a misleading "grid
+  // reconstruction mismatch" for a file we never wrote.
+  static const std::regex kName(R"((\d+)_(\d+)_(\d+)\.tif)");
   std::vector<gggs::GridIndex> grids;
   if (!fs::is_directory(dir)) {
     return grids;
