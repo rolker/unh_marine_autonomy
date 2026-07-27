@@ -379,16 +379,18 @@ documented S3-listing trust boundary and fixed compile-time constants) — not
 carried here.
 
 ### Findings
-- [ ] (suggestion) `queryCatalog` doesn't guard empty `TILE_ID` — collapses the
+- [x] (suggestion) `queryCatalog` doesn't guard empty `TILE_ID` — collapses the
   fetch cache-key to just the extension and the idempotency sidecar key to `""`,
   colliding two such rows (NOAA always populates it; low likelihood) — `src/s102/catalog.cpp:167`
-- [ ] (suggestion) `saveRegistryAtomic` / `saveImportedSidecarAtomic` check the
+- [x] (suggestion) `saveRegistryAtomic` / `saveImportedSidecarAtomic` check the
   open-stream failbit but not the deferred close-time flush before `fs::rename`;
   a disk-full at close could promote a truncated JSON (small writes, self-healing;
   `convert.cpp:236` does the explicit-flush opposite) — `src/s102/fetch.cpp:97`, `src/s102/run.cpp:69`
-- [ ] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail remains
+- [x] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail remains
   doc-only, not code-enforced — accepted at plan-review; code enforcement lands
-  with #276. Carried, not a new code change for this PR.
+  with #276. Carried, not a new code change for this PR. (deferred: tracking
+  item — code enforcement is #276's scope; the scratch-only precondition stays
+  documented in run.hpp / s102_import_main.cpp until it lands.)
 
 ### Next step
 Lifecycle: **Local Review** (verdict approved) → push / open PR → **triage-reviews**
@@ -398,3 +400,40 @@ robustness — apply them in a quick `address-findings` pass or track and push. 
 pushed / a PR is opened, hand off to a fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill triage-reviews
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-27 20:20 +0000
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-278 at `805f649`
+**Addressed**: `## Local Review (Pre-Push)` (2026-07-27 19:52 +0000, branch `feature/issue-278` at `8e45917`) — Round 4 (approved)
+**Commits**: `234d00d`, `805f649`
+
+Round 4 returned **approved** (zero must-fix); its two open suggestions were the
+optional robustness the review flagged as "apply in a quick pass or track and
+push." Applied both here so nothing carries into the push. Built
+`marine_bathymetry_store` clean and re-ran its suite after the fixes: 225 tests,
+0 failures, 32 skipped. ament_cpplint + ament_uncrustify "No problems found"
+across all three changed files. No pre-commit hook is installed in this worktree,
+so linters were run manually; no `--no-verify` was used (nothing to bypass).
+
+### Actions
+- [x] (suggestion) `queryCatalog` now skips catalog rows with an empty `TILE_ID`
+  (added to the existing url/sha256/Resolution guard), so a blank tile_id can no
+  longer collapse the fetch cache-name to just the extension or the idempotency
+  sidecar key to `""` and collide distinct rows — `marine_bathymetry_store/src/s102/catalog.cpp:167` (`234d00d`)
+- [x] (suggestion) `saveRegistryAtomic` and `saveImportedSidecarAtomic` now
+  `close()` the temp stream explicitly and re-check failbit before `fs::rename`,
+  so a disk-full during the deferred close-time flush fails loud instead of
+  promoting a truncated JSON over the good file (matching `convert.cpp:236`'s
+  explicit-flush pattern) — `marine_bathymetry_store/src/s102/fetch.cpp:97`, `marine_bathymetry_store/src/s102/run.cpp:69` (`805f649`)
+- [x] (governance-watch) ADR-0010 D7 scratch-stores-only guardrail (deferred:
+  tracking item — code enforcement is #276's scope; the scratch-only precondition
+  stays documented in run.hpp / s102_import_main.cpp until #276 lands)
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off
+to a fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill review-code
