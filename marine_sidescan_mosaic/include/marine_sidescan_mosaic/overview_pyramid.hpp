@@ -106,8 +106,9 @@ struct OverviewBuildResult
 ///   the caller should surface either loudly and exit non-zero.
 /// @throws std::invalid_argument if @p opts holds an out-of-range level.
 /// @throws std::runtime_error if @c layer_dir is not a directory, holds no fine
-///   tiles at @c fine_level (refuses to replace a good sidecar for an empty or
-///   mis-pointed layer), or already has an `overviews.tmp/` staging directory
+///   tiles at @c fine_level, holds tiles that are not the 3-band sidescan shape
+///   (both refuse to replace a good sidecar for an empty, mis-pointed, or
+///   wrong-store layer), or already has an `overviews.tmp/` staging directory
 ///   (concurrent run or crashed-run debris); also on any tile I/O failure.
 OverviewBuildResult buildOverviewPyramid(
   const OverviewOptions & opts, std::ostream * progress = nullptr);

@@ -316,6 +316,33 @@ TEST(BuildOverviewPyramid, RefusesEmptyLayerAndPreservesExistingSidecar)
   EXPECT_TRUE(fs::exists(sentinel));
 }
 
+// The layer guard is filename-only unless it opens a tile: another store's layer
+// whose tiles happen to carry level-13 names must not be wiped and rebuilt with
+// the sidescan 3-band policy.
+TEST(BuildOverviewPyramid, RefusesLayerWhoseTilesAreNotTheSidescanBandShape)
+{
+  ScratchDir dir("wrongstore");
+  for (const auto & g : fineSiblings()) {
+    mtrs::TiledRasterTile<std::uint16_t> tile(g, 2, 7);   // not the 3-band shape
+    mtrs::saveTile<std::uint16_t>(
+      tile, (dir.path() / mtrs::tileFilename(g)).string(),
+      {std::nullopt, std::nullopt});
+  }
+  const fs::path overviews = dir.path() / "overviews";
+  fs::create_directories(overviews);
+  const fs::path sentinel = overviews / "12_1_1.tif";
+  std::ofstream(sentinel) << "keep";
+
+  msm::OverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.fine_level = kFineLevel;
+  opts.min_level = kFineLevel - 1;
+
+  EXPECT_THROW(msm::buildOverviewPyramid(opts), std::runtime_error);
+  EXPECT_TRUE(fs::exists(sentinel));
+  EXPECT_FALSE(fs::exists(dir.path() / "overviews.tmp"));
+}
+
 // A skipped fine tile means the pyramid is missing that tile's coverage, so the
 // swap must be refused rather than displacing a previously-complete sidecar with
 // a truncated one. (A zero-padded filename reconstructs to a different name, so

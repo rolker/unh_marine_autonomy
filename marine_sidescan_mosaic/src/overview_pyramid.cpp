@@ -269,6 +269,21 @@ OverviewBuildResult buildOverviewPyramid(
       "; refusing to replace overviews/");
   }
 
+  // The enumeration above is filename-only. Another store's layer whose tiles
+  // happen to be named <fine_level>_<row>_<col>.tif would pass it and be
+  // rebuilt with the sidescan imagery policy (and its band semantics). Open one
+  // tile and require the 3-band sidescan shape before touching anything.
+  const std::string probe_path =
+    (layer_dir / marine_tiled_raster_store::tileFilename(fine_grids.front())).string();
+  const int probe_bands = marine_tiled_raster_store::tileRasterCount(probe_path);
+  if (probe_bands != static_cast<int>(kBands)) {
+    throw std::runtime_error(
+      "not a sidescan layer: " + probe_path + " has " +
+      std::to_string(probe_bands) + " band(s), expected " +
+      std::to_string(kBands) + " (intensity, quality, source); refusing to "
+      "replace overviews/ with a sidescan-policy pyramid");
+  }
+
   const fs::path overviews = layer_dir / "overviews";
   const fs::path staging = layer_dir / "overviews.tmp";
   const fs::path retired = layer_dir / "overviews.old";
