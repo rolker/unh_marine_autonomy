@@ -205,15 +205,26 @@ std::vector<gggs::GridIndex> gridsInDir(
   return grids;
 }
 
+// One level's tile counts: how many child tiles were read, how many parents were
+// written. The IN count is the diagnostic one for a partial store — an operator
+// seeing "40 in" for a 1000-tile layer knows immediately what is wrong.
+struct LevelCounts
+{
+  std::size_t in = 0;
+  std::size_t out = 0;
+};
+
 // Build one coarser level: children at @p child_level read from @p src_dir,
-// parents written to @p out_dir. Returns the number of parent tiles written;
-// grid-reconstruction skips accumulate into @p skipped.
-std::size_t buildLevel(
+// parents written to @p out_dir. Grid-reconstruction skips accumulate into
+// @p skipped (and are not counted in @c LevelCounts::in).
+LevelCounts buildLevel(
   const fs::path & src_dir, const fs::path & out_dir, uint8_t child_level,
   std::size_t & skipped)
 {
+  LevelCounts counts;
   std::map<gggs::GridIndex, std::vector<gggs::GridIndex>> by_parent;
   for (const gggs::GridIndex & child : gridsInDir(src_dir, child_level, skipped)) {
+    ++counts.in;
     const gggs::GridIndex parent_grid = gggs::parent(child);
     if (parent_grid.valid()) {
       by_parent[parent_grid].push_back(child);
@@ -222,7 +233,6 @@ std::size_t buildLevel(
 
   const std::vector<std::optional<std::uint16_t>> nodata(
     kBands, std::optional<std::uint16_t>(kNoData));
-  std::size_t written = 0;
   for (const auto & group : by_parent) {
     std::vector<TiledRasterTile<std::uint16_t>> children;
     children.reserve(group.second.size());
@@ -244,9 +254,9 @@ std::size_t buildLevel(
       parent_tile,
       (out_dir / marine_tiled_raster_store::tileFilename(group.first)).string(),
       nodata);
-    ++written;
+    ++counts.out;
   }
-  return written;
+  return counts;
 }
 
 // Strict integer parse: rejects an empty, non-numeric or trailing-garbage value
@@ -379,13 +389,13 @@ OverviewBuildResult buildOverviewPyramid(
     // level folds the staging level just written.
     for (int level = opts.fine_level; level > opts.min_level; --level) {
       const fs::path src = (level == opts.fine_level) ? layer_dir : staging;
-      const std::size_t written = buildLevel(
+      const LevelCounts counts = buildLevel(
         src, staging, static_cast<uint8_t>(level), result.tiles_skipped);
       if (progress != nullptr) {
         *progress << "level " << level << " -> " << (level - 1) << ": " <<
-          written << " overview tile(s)\n";
+          counts.in << " tile(s) in, " << counts.out << " overview tile(s) out\n";
       }
-      if (written == 0) {
+      if (counts.out == 0) {
         // A level above min_level produced nothing: the fine-tile chain broke
         // (a healthy store folds down to min_level without an empty level, since
         // gggs::parent stays valid to level 0). Surface it; do not swap in a
@@ -393,7 +403,7 @@ OverviewBuildResult buildOverviewPyramid(
         result.early_empty = true;
         break;
       }
-      result.tiles_written += written;
+      result.tiles_written += counts.out;
       result.coarsest_level = level - 1;
     }
   } catch (...) {
