@@ -222,3 +222,29 @@ Static analysis (`ament_cpplint`) clean on all 9 changed C++ files; `#272→#276
 ### Next step
 Lifecycle: **Local Review** (approved) → push / open PR (branch already tracked as #280; push the four fix commits) → **triage-reviews**. Hand off to a fresh-context sub-agent after push:
 `.agent/scripts/dispatch_subagent.sh --mode in-process --issue 275 --skill triage-reviews`
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-28 08:25 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**PR**: #280 at `5523625`
+**Sources**: 3 (Copilot R2 @ `5523625`, Local Review (Pre-Push) @ `b4fa3a0` — same code tree as head, CI rollup @ `5523625`)
+**Cross-source confirmations**: 0
+**CI**: all-pass (`build` success, `copilot-pull-request-reviewer` success)
+
+Round 2 of triage on #280. Copilot R1's three inline comments (`53e361c`, 2026-07-27T19:10Z) were triaged in the prior `## Integrated Review` and are fully addressed by `96800c3` (`@throws` recovery/cleanup surface), `646dbd2` (#272 → #276 precondition citation), `8e70921` (symlink / alias / non-dir-store guards) and `2335057` (pin commit-rename failure to EACCES on the staged path) — re-verified against the current tree; no residual concern. The new GitHub-side item is Copilot's single R2 comment on `test/test_tile_io.cpp:853`. The unresolved half of the timeline is the three open suggestions from the Local Review at `b4fa3a0` (the tree of head `5523625` differs only by that review's own progress.md commit, so those findings describe current code and are integrated here rather than carried forward untriaged).
+
+### Findings
+- [ ] (valid-minor, Copilot R2) `ReplaceChartLayerRestoresChartWhenCommitRenameFails` restores `ro_parent`'s permissions only after a `catch (const fs::filesystem_error &)`; any other escaping exception type skips the `fs::permissions(..., owner_all)` at `:853`, leaving a `r-x` directory that makes `TearDown()`'s `fs::remove_all(dir_)` — and the *next* run's `SetUp()` `remove_all` — throw, masking the original failure and wedging the test until `/tmp` is cleaned by hand. Fix: restore permissions from an RAII scope guard (destructor calls the `error_code` overload of `fs::permissions`) so unlocking is unconditional; apply the same guard to `ReplaceChartLayerRestoresOrphanedBackupThenSurvivesFailedSwap` (`:896-903`) for symmetry — that one is currently safe only because `EXPECT_THROW` swallows non-matching types — `marine_bathymetry_store/test/test_tile_io.cpp:834-853,896-903`
+- [ ] (valid, Local Review @ `b4fa3a0`) The three hardening guards added by `8e70921` — symlinked staged dir (`tile_io.cpp:501`), staged aliasing live `chart/` / `.chart_backup/` (`:512,517`), non-directory `store_dir` (`:483`) — have no dedicated refusal tests; verified absent (`grep symlink|equivalent` finds no such assertion in the chart-layer test block). Every other refusal path in this PR is covered, so this is a coverage inconsistency against the issue's own bar. Fix: extend `ReplaceChartLayerRejectsMissingOrEmptyStagedDir` (or add a sibling) asserting `std::runtime_error` for a symlink-to-staged, for `staged == chart/`, for `staged == .chart_backup/`, and for a regular-file `store_dir`, each with the live layer intact afterwards — `marine_bathymetry_store/test/test_tile_io.cpp`
+- [ ] (valid-minor, Local Review @ `b4fa3a0`) `has_tile` scan gates on `entry.is_regular_file()`, which follows symlinks, so a symlinked `.tif` inside an otherwise-real staged dir rides into `chart/` — the same out-of-store-link hazard the `:501` symlinked-staged-dir guard exists to prevent, one level down, in a layer that feeds navigation. "Mirrors the load path at `:343`" explains the shape but not the risk: load only reads, `replaceChartLayer` commits the tree permanently. Fix (cheap, complete): reject `entry.is_symlink()` inside the staged scan with a clear `std::runtime_error`, and extend the `@throws` validation clause — `marine_bathymetry_store/src/tile_io.cpp:522-530`
+- [ ] (valid-minor, Local Review @ `b4fa3a0`) Post-commit `fs::remove_all(backup)` uses the throwing overload, so a swap that has *already committed* can still surface to the caller as an exception on terminal cleanup failure — the caller cannot distinguish "swap failed, old layer stands" from "swap succeeded, stale backup left behind" and may wrongly retry or abort the regeneration run. The restore path at `:590-591` already models the right idiom. Fix: switch to the `error_code` overload plus a `std::cerr` warning naming the leftover backup path, and narrow the `@throws` clause accordingly — `marine_bathymetry_store/src/tile_io.cpp:602-604`
+
+### False positives
+- (none this round) Copilot R2's single comment is valid as written; the three carried-forward local-review items were re-verified against current code rather than dismissed. Note for the record: the R1 items already dispositioned in the prior `## Integrated Review` stay dispositioned — no re-litigation.
+
+### Next step
+Lifecycle: **Integrated Review** → `address-findings` (4 open findings, all fix-now sized; none block on external work)
+`.agent/scripts/dispatch_subagent.sh --mode in-process --issue 275 --skill address-findings`
+After the fixes land: re-run `review-code`, then merge via `merge_pr.sh --issue 275` (user content-review gate still applies).
