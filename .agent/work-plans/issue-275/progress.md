@@ -401,3 +401,54 @@ non-blockers and are checked with a `(deferred: …)` annotation — none was im
 Lifecycle: **Implementation** → **review-code** (re-review the fixes)
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 275 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: partial
+**When**: 2026-07-28 16:07 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: not-reached (review aborted before any specialist ran)
+
+**Branch**: feature/issue-275 at `7f662eb`
+**Mode**: pre-push
+**Depth**: Deep (classified; reason: navigation-safety data store + filesystem failure-recovery atomic swap)
+**Must-fix**: n/a | **Suggestions**: n/a
+**Round**: 5 (NOT completed) | **Ship**: continue — no review was performed.
+
+**This entry does not constitute a review round.** The operator shut the session
+down during setup, before any specialist was dispatched. The resumed run should
+still be **Round 5**, and Round 4's specialist-coverage caveat (findings were
+single-reader; the dispatched specialists never returned and their attributions
+were withdrawn) therefore still stands unresolved — genuine cross-source
+confirmation of the post-`5523625` delta is still owed.
+
+### Work completed before shutdown
+- Skill procedure read; mode = pre-push, base = `origin/jazzy` (resolved via
+  `git symbolic-ref refs/remotes/origin/HEAD`), issue 275 from branch name.
+- Diff context gathered: full branch `origin/jazzy...HEAD` = 12 files,
+  +1530/-37; unpushed delta `5523625..HEAD` = 6 files, +669/-49
+  (`README.md`, `tile_io.hpp`, `tile_io.cpp`, `test_tile_io.cpp`, `plan.md`,
+  `progress.md`).
+- Diffs staged for specialists at
+  `<scratchpad>/full_diff.patch` and `<scratchpad>/delta_diff.patch`
+  (session scratchpad — regenerate on resume; do not rely on them persisting).
+- Prior timeline read in full (rounds 1-4 + two Integrated Reviews).
+
+### Not run (no findings exist for these lenses)
+- [ ] 5a Static Analysis — not run
+- [ ] 5b Governance — not run
+- [ ] 5c Plan Drift — not run
+- [ ] 5d Claude Adversarial Lens A — not run
+- [ ] 5d Claude Adversarial Lens B — not run
+- [ ] 5f Local Model Adversarial (`qwen3.5:35b`) — not run (invocation was the
+      command the session stopped on)
+
+### Findings
+- [ ] (none) No review was performed; no findings may be inferred from this entry.
+
+### Next step
+Re-dispatch `review-code` (pre-push, no `--copilot`) as **Round 5**. Priority
+targets unchanged: the behavior-changing commits `b928dca` (tolerant pre-swap
+stale-backup drop + rename-aside to `.chart_backup.stale.<n>/`), `6a8610c`
+(fail-closed alias guard), `c27aea6` (symlinked-entry rejection), `c790432`
+(post-commit `error_code` cleanup), and the README's accuracy against source.
+`.agent/scripts/dispatch_subagent.sh --mode in-process --issue 275 --skill review-code`
