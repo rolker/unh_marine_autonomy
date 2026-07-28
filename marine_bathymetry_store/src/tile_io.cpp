@@ -508,17 +508,34 @@ void replaceChartLayer(
   // remove_all(backup) recovery step would operate on the very tree we mean to
   // swap in. equivalent() requires both paths to exist, so guard on existence
   // (the error_code overload returns false without throwing for a missing side).
-  std::error_code eq_ec;
-  if (fs::exists(chart) && fs::equivalent(staged, chart, eq_ec)) {
-    throw std::runtime_error(
-            "replaceChartLayer: staged dir '" + staged_chart_dir +
-            "' is the live chart/ layer — nothing to swap in");
-  }
-  if (fs::exists(backup) && fs::equivalent(staged, backup, eq_ec)) {
-    throw std::runtime_error(
-            "replaceChartLayer: staged dir '" + staged_chart_dir +
-            "' is the .chart_backup/ recovery path — refusing to swap");
-  }
+  // Fail CLOSED if the equivalence check itself errors. The error_code overload
+  // returns false on failure, so an unreadable path or a race would silently
+  // degrade the guard to "no check" — precisely when the filesystem is already
+  // misbehaving. An indeterminate answer is treated as a refusal; the swap is
+  // destructive and a caller can always retry. (Not unit-tested: with both sides'
+  // existence already established just above, only a genuine race can make
+  // equivalent() fail, which a test cannot deterministically stage.)
+  const auto refuseIfAliases =
+    [&staged, &staged_chart_dir](const fs::path & other, const std::string & what) {
+      if (!fs::exists(other)) {
+        return;
+      }
+      std::error_code eq_ec;
+      const bool same = fs::equivalent(staged, other, eq_ec);
+      if (eq_ec) {
+        throw std::runtime_error(
+                "replaceChartLayer: cannot determine whether staged dir '" +
+                staged_chart_dir + "' is " + what + " ('" + other.string() + "'): " +
+                eq_ec.message() + " — refusing the swap rather than assuming it is not");
+      }
+      if (same) {
+        throw std::runtime_error(
+                "replaceChartLayer: staged dir '" + staged_chart_dir + "' is " + what +
+                " — refusing to swap");
+      }
+    };
+  refuseIfAliases(chart, "the live chart/ layer");
+  refuseIfAliases(backup, "the .chart_backup/ recovery path");
   bool has_tile = false;
   for (const auto & entry : fs::directory_iterator(staged)) {
     // A symlinked entry inside staged is the same out-of-store-link hazard the
