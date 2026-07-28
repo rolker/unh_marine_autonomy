@@ -521,11 +521,24 @@ void replaceChartLayer(
   }
   bool has_tile = false;
   for (const auto & entry : fs::directory_iterator(staged)) {
+    // A symlinked entry inside staged is the same out-of-store-link hazard the
+    // symlinked-staged-dir guard above prevents, one level down: is_regular_file()
+    // follows symlinks, so a symlinked `foo.tif` would satisfy the value-tile check
+    // and then ride into chart/ on the commit rename, leaving the live navigation
+    // layer dependent on a tree outside the store. The load path can tolerate that
+    // (it only reads); replaceChartLayer commits it permanently, so refuse. Scan
+    // every entry rather than stopping at the first tile so the refusal does not
+    // depend on directory iteration order.
+    if (entry.is_symlink()) {
+      throw std::runtime_error(
+              "replaceChartLayer: staged dir '" + staged_chart_dir +
+              "' contains a symlinked entry '" + entry.path().filename().string() +
+              "' — refusing to commit a link into the store");
+    }
     // Mirror the load path (:343): a directory named `foo.tif` is not a value
     // tile, so gate on is_regular_file() before accepting the staged layer.
     if (entry.is_regular_file() && entry.path().extension() == ".tif") {
       has_tile = true;
-      break;
     }
   }
   if (!has_tile) {

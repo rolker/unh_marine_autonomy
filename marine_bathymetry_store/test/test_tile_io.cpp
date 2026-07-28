@@ -808,7 +808,25 @@ TEST_F(TileIoTest, ReplaceChartLayerRejectsSymlinkedAliasedAndNonDirectoryPaths)
   EXPECT_TRUE(fs::exists(backup / "tile.tif"));   // refused before any removal
   fs::remove_all(backup);   // planted by this case only; clear it for the check below
 
-  // 4. store dir that exists but is a regular file, not a directory.
+  // 4. A real staged dir whose only `.tif` is a SYMLINK to a tile outside the
+  //    store: is_regular_file() follows the link, so the value-tile check alone
+  //    would accept it and commit a link into the live navigation layer.
+  fs::path real_tile;
+  for (const auto & entry : fs::directory_iterator(real_staged)) {
+    if (entry.is_regular_file() && entry.path().extension() == ".tif") {
+      real_tile = entry.path();
+      break;
+    }
+  }
+  ASSERT_FALSE(real_tile.empty()) << "expected a .tif in the staged layer";
+  const fs::path linked_staged = dir_ / "linked_staged";
+  fs::create_directories(linked_staged);
+  // A live (non-dangling) link, so is_regular_file() really does say "yes".
+  fs::create_symlink(real_tile, linked_staged / real_tile.filename());
+  ASSERT_TRUE(fs::is_regular_file(linked_staged / real_tile.filename()));
+  expectChartRefusal(linked_staged, store_dir, "contains a symlinked entry");
+
+  // 5. store dir that exists but is a regular file, not a directory.
   const fs::path file_store = dir_ / "not_a_dir";
   {
     std::ofstream f(file_store);
