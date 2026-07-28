@@ -596,13 +596,53 @@ void replaceChartLayer(
   //   - chart/ PRESENT, backup present: the crash struck after the commit but
   //     before cleanup, so the backup is truly stale (the live chart/ supersedes
   //     it) and is dropped below.
-  // After a restore the backup no longer exists, so the remove_all is a no-op;
+  // After a restore the backup no longer exists, so the drop below is a no-op;
   // otherwise it clears a genuinely stale backup that would else make the
   // chart -> backup rename fail with ENOTEMPTY.
   if (fs::exists(backup) && !fs::exists(chart)) {
     fs::rename(backup, chart);
   }
-  fs::remove_all(backup);
+  // Drop the stale backup TOLERANTLY. This is the step the post-commit cleanup
+  // warning below delegates to ("cleared by the next regeneration run"), so it
+  // must not itself be the thing that wedges regeneration: every realistic cause
+  // of a failed cleanup (EACCES on the backup dir, EROFS, EBUSY) is persistent,
+  // and a throwing remove_all here would make every subsequent run fail at the
+  // same point until a human intervened. Two-stage: try to delete it, and if the
+  // deletion fails while the backup still stands, rename it aside to
+  // `.chart_backup.stale.<n>/` — a rename needs only store-dir write permission
+  // (not permission to unlink the backup's contents), so a stubborn backup is
+  // moved out of the swap's way instead of blocking it. Aside dirs are not layer
+  // dirs, so `load()` (which reads only survey/reference/chart) ignores them;
+  // they are inert until a human clears them.
+  {
+    std::error_code drop_ec;
+    fs::remove_all(backup, drop_ec);
+    if (drop_ec && fs::exists(backup)) {
+      fs::path aside;
+      for (int n = 0; ; ++n) {
+        aside = fs::path(store_dir) / (".chart_backup.stale." + std::to_string(n));
+        if (!fs::exists(aside)) {
+          break;
+        }
+      }
+      std::error_code aside_ec;
+      fs::rename(backup, aside, aside_ec);
+      if (aside_ec) {
+        // Neither removable nor movable: the chart -> backup rename would fail
+        // with ENOTEMPTY mid-swap, so refuse now, before the live layer is
+        // touched (D7 — a failed regeneration leaves the old layer standing).
+        throw std::runtime_error(
+                "replaceChartLayer: a stale '" + backup.string() +
+                "' could not be removed (" + drop_ec.message() +
+                ") nor renamed aside (" + aside_ec.message() +
+                ") — clear it by hand before regenerating the chart layer");
+      }
+      std::cerr << "[marine_bathymetry_store] WARNING: replaceChartLayer could not remove "
+                << "the stale backup at '" << backup.string() << "': " << drop_ec.message()
+                << " — it was renamed aside to '" << aside.string()
+                << "' so the swap can proceed; remove that directory by hand.\n";
+    }
+  }
 
   const bool had_chart = fs::exists(chart);
   if (had_chart) {
@@ -635,16 +675,18 @@ void replaceChartLayer(
     // failure — the caller could not tell "swap failed, old layer stands" from
     // "swap succeeded, stale backup left behind" and might wrongly retry or abort
     // the regeneration run. Use the error_code overload (same idiom as the restore
-    // path above) and warn instead; the next run's crash-recovery step drops the
-    // leftover backup (chart/ is present, so it is treated as stale).
+    // path above) and warn instead; the next run's crash-recovery step clears the
+    // leftover backup (chart/ is present, so it is treated as stale) — and clears
+    // it *tolerantly* (rename-aside fallback), so a persistent cause of this
+    // failure cannot wedge later regenerations.
     std::error_code cleanup_ec;
     fs::remove_all(backup, cleanup_ec);
     if (cleanup_ec) {
       std::cerr << "[marine_bathymetry_store] WARNING: replaceChartLayer committed the "
                 << "new chart/ layer but could not remove the backup at '"
                 << backup.string() << "': " << cleanup_ec.message()
-                << " — the swap succeeded; the stale backup is cleared by the next "
-                << "regeneration run.\n";
+                << " — the swap succeeded; the next regeneration run clears the stale "
+                << "backup, renaming it aside if it still cannot be removed.\n";
     }
   }
 }

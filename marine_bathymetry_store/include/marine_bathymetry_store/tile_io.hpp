@@ -200,7 +200,8 @@ std::size_t evictOutside(
 /// contains no symlinked entries, and holds ≥1 `.tif`); recover from
 /// an interrupted prior swap (restore `.chart_backup/` → `chart/` when `chart/`
 /// is absent — the crash struck mid-commit — otherwise drop the now-stale
-/// backup); rename existing `chart/` → `.chart_backup/`; rename staged →
+/// backup, renaming it aside to `.chart_backup.stale.<n>/` if it cannot be
+/// removed); rename existing `chart/` → `.chart_backup/`; rename staged →
 /// `chart/` (atomic on one filesystem); on failure restore the backup and
 /// rethrow; on success remove the backup (best-effort — see @throws).
 ///
@@ -212,18 +213,25 @@ std::size_t evictOutside(
 ///
 /// @throws std::runtime_error on validation failure (missing/empty staged dir,
 ///         a symlinked staged dir, a symlinked entry inside the staged dir, a
-///         staged dir aliasing the live `chart/` or its backup, a non-directory
-///         store dir, or a cross-device staged dir — all detected before any swap);
+///         staged dir aliasing the live `chart/` or its backup — or an alias
+///         check that cannot be resolved, which fails closed — a non-directory
+///         store dir, or a cross-device staged dir), and on a stale
+///         `.chart_backup/` that can be neither removed nor renamed aside (it
+///         would make the `chart/` → backup rename fail with ENOTEMPTY mid-swap)
+///         — all detected before any swap;
 ///         std::filesystem::filesystem_error on a filesystem operation up to and
 ///         including the commit point failing — the commit-point rename (after a
 ///         best-effort backup restoration that never masks the original error)
-///         and the pre-swap crash-recovery steps that run *before* it: restoring
-///         an orphaned `.chart_backup/` (`fs::rename`) and clearing a stale one
-///         (`fs::remove_all`) both use throwing overloads. Nothing *after* the
-///         commit throws: the post-commit backup cleanup uses the `error_code`
-///         overload and only warns on `std::cerr`, so a committed swap is never
-///         reported to the caller as a failure (a leftover backup is dropped by
-///         the next run's crash-recovery step).
+///         and the pre-swap crash-recovery *restore* of an orphaned
+///         `.chart_backup/` (`fs::rename`, throwing overload). The pre-swap drop
+///         of a *stale* backup is deliberately tolerant: it uses the `error_code`
+///         `fs::remove_all` and, if the backup survives, renames it aside to
+///         `.chart_backup.stale.<n>/` and warns, so a persistent cause
+///         (EACCES/EROFS/EBUSY) cannot wedge every subsequent regeneration.
+///         Nothing *after* the commit throws: the post-commit backup cleanup uses
+///         the `error_code` overload and only warns on `std::cerr`, so a committed
+///         swap is never reported to the caller as a failure — and the leftover
+///         backup really is cleared (removed, or moved aside) by the next run.
 void replaceChartLayer(
   const std::string & staged_chart_dir, const std::string & store_dir);
 
