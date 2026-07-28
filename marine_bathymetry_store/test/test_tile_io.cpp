@@ -46,6 +46,34 @@ using marine_bathymetry_store::StoreMetadata;
 
 namespace fs = std::filesystem;
 
+/// RAII guard that restores a directory's permissions on scope exit.
+///
+/// Tests that lock a directory to force an EACCES must unlock it again no matter
+/// how the scope is left — an escaping exception of an unexpected type, or a
+/// fatal assertion, would otherwise leave an `r-x` directory behind that makes
+/// `TearDown()`'s `remove_all` (and the NEXT run's `SetUp()` `remove_all`) throw,
+/// masking the original failure and wedging the test until /tmp is cleaned by
+/// hand. The destructor uses the `error_code` overload so it can never throw.
+class ScopedPermissions
+{
+public:
+  explicit ScopedPermissions(fs::path dir, fs::perms restore = fs::perms::owner_all)
+  : dir_(std::move(dir)), restore_(restore) {}
+
+  ScopedPermissions(const ScopedPermissions &) = delete;
+  ScopedPermissions & operator=(const ScopedPermissions &) = delete;
+
+  ~ScopedPermissions()
+  {
+    std::error_code ec;
+    fs::permissions(dir_, restore_, fs::perm_options::replace, ec);
+  }
+
+private:
+  fs::path dir_;
+  fs::perms restore_;
+};
+
 
 class TileIoTest : public ::testing::Test
 {
@@ -830,7 +858,10 @@ TEST_F(TileIoTest, ReplaceChartLayerRestoresChartWhenCommitRenameFails)
 
   // Lock the staged dir's parent: rename(staged, chart) must remove `chart` from
   // ro_parent, which now lacks write permission -> EACCES mid-swap. (Keep read +
-  // exec so the pre-swap validation walk of staged still works.)
+  // exec so the pre-swap validation walk of staged still works.) The guard
+  // restores owner_all on scope exit — unconditionally, so no escaping exception
+  // type or fatal assertion can leave a locked dir for TearDown to trip over.
+  const ScopedPermissions unlock_ro_parent(ro_parent);
   fs::permissions(
     ro_parent, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
 
@@ -849,8 +880,7 @@ TEST_F(TileIoTest, ReplaceChartLayerRestoresChartWhenCommitRenameFails)
   }
   EXPECT_TRUE(threw) << "expected replaceChartLayer to throw fs::filesystem_error";
 
-  // Unlock so TearDown's remove_all can clean up regardless of assertions below.
-  fs::permissions(ro_parent, fs::perms::owner_all, fs::perm_options::replace);
+  // (ro_parent is unlocked by `unlock_ro_parent` on scope exit — before TearDown.)
 
   // The original chart/ is back, holds its ORIGINAL value (the regen never
   // committed), and no backup is left behind.
@@ -893,14 +923,15 @@ TEST_F(TileIoTest, ReplaceChartLayerRestoresOrphanedBackupThenSurvivesFailedSwap
   regen.set(SourceLayer::Chart, regen.cellIndex(44.0, -71.0), BathyCell{-30.0, 1.5});
   ASSERT_EQ(marine_bathymetry_store::save(regen, ro_parent.string()), 1u);
   const fs::path staged = ro_parent / "chart";
+  // Same unconditional-unlock guard as the sibling test: EXPECT_THROW swallowing a
+  // non-matching exception type is not a reason to leave the unlock conditional.
+  const ScopedPermissions unlock_ro_parent(ro_parent);
   fs::permissions(
     ro_parent, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
 
   EXPECT_THROW(
     marine_bathymetry_store::replaceChartLayer(staged.string(), store_dir.string()),
     fs::filesystem_error);
-
-  fs::permissions(ro_parent, fs::perms::owner_all, fs::perm_options::replace);
 
   // The restored old layer stands (the failed regen left no chart/ gap), and no
   // backup lingers.
