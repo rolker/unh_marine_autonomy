@@ -745,6 +745,86 @@ TEST_F(TileIoTest, ReplaceChartLayerRejectsMissingOrEmptyStagedDir)
     runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5)).has_value());
 }
 
+/// Assert `replaceChartLayer` refuses with a `std::runtime_error` whose message
+/// names the expected guard. Matching the message (not merely the type) keeps each
+/// refusal case pinned to the check it is meant to exercise — an earlier guard
+/// firing first would otherwise make the case silently vacuous.
+static void expectChartRefusal(
+  const fs::path & staged, const fs::path & store_dir, const std::string & needle)
+{
+  try {
+    marine_bathymetry_store::replaceChartLayer(staged.string(), store_dir.string());
+    ADD_FAILURE() << "expected replaceChartLayer to refuse (" << needle << ")";
+  } catch (const std::runtime_error & e) {
+    EXPECT_NE(std::string(e.what()).find(needle), std::string::npos)
+      << "refusal did not come from the expected guard (" << needle << "): " << e.what();
+  }
+}
+
+TEST_F(TileIoTest, ReplaceChartLayerRejectsSymlinkedAliasedAndNonDirectoryPaths)
+{
+  // Dedicated refusal coverage for the pre-swap hardening guards: a SYMLINKED
+  // staged dir (is_directory() follows the link, so only the explicit
+  // is_symlink() check catches it), a staged dir ALIASING the live chart/ or its
+  // .chart_backup/ recovery path, and a NON-DIRECTORY store dir. Every refusal
+  // must land before anything is moved, leaving the live layer untouched.
+  const fs::path store_dir = dir_ / "store";
+  fs::create_directories(store_dir);
+
+  // Seed the live chart/ layer whose survival each refusal must preserve.
+  BathymetryStore seed(5, false, /*chart_staging_writable=*/true);
+  seed.set(SourceLayer::Chart, seed.cellIndex(43.0, -70.5), BathyCell{-20.5, 1.5});
+  const fs::path seed_staged = dir_ / "seed";
+  ASSERT_EQ(marine_bathymetry_store::save(seed, seed_staged.string()), 1u);
+  marine_bathymetry_store::replaceChartLayer(
+    (seed_staged / "chart").string(), store_dir.string());
+
+  // A perfectly valid staged layer — only the path it is reached by is wrong.
+  BathymetryStore regen(5, false, /*chart_staging_writable=*/true);
+  regen.set(SourceLayer::Chart, regen.cellIndex(43.0, -70.5), BathyCell{-99.0, 2.0});
+  const fs::path regen_root = dir_ / "regen";
+  ASSERT_EQ(marine_bathymetry_store::save(regen, regen_root.string()), 1u);
+  const fs::path real_staged = regen_root / "chart";
+
+  // 1. Symlink to a real staged dir: renaming it in would leave chart/ a link to
+  //    an out-of-store tree.
+  const fs::path staged_link = dir_ / "staged_link";
+  fs::create_directory_symlink(real_staged, staged_link);
+  expectChartRefusal(staged_link, store_dir, "is a symlink");
+  EXPECT_TRUE(fs::exists(real_staged));   // the link target was not moved
+
+  // 2. staged IS the live chart/ layer (equivalent()) — nothing to swap in.
+  expectChartRefusal(store_dir / "chart", store_dir, "is the live chart/ layer");
+
+  // 3. staged IS the .chart_backup/ recovery path — the swap would rename the
+  //    live chart/ onto the very tree it is being asked to commit.
+  const fs::path backup = store_dir / ".chart_backup";
+  fs::create_directories(backup);
+  {
+    std::ofstream tile(backup / "tile.tif");
+    tile << "x";
+  }
+  expectChartRefusal(backup, store_dir, "is the .chart_backup/ recovery path");
+  EXPECT_TRUE(fs::exists(backup / "tile.tif"));   // refused before any removal
+  fs::remove_all(backup);   // planted by this case only; clear it for the check below
+
+  // 4. store dir that exists but is a regular file, not a directory.
+  const fs::path file_store = dir_ / "not_a_dir";
+  {
+    std::ofstream f(file_store);
+    f << "x";
+  }
+  expectChartRefusal(real_staged, file_store, "store dir '");
+
+  // The live layer stands after every refusal, still holding the seeded value.
+  EXPECT_FALSE(fs::exists(store_dir / ".chart_backup"));
+  BathymetryStore runtime(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+  const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, -20.5);
+}
+
 TEST_F(TileIoTest, ReplaceChartLayerRemovesStaleTilesWholesale)
 {
   // Regeneration 1 covers two cells in different grids; regeneration 2 covers
