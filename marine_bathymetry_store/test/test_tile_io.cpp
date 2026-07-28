@@ -963,11 +963,41 @@ TEST_F(TileIoTest, ReplaceChartLayerSurvivesFailedPostCommitBackupCleanup)
   // The commit stands: the new layer is live, and the backup that could not be
   // cleaned is merely left behind (the next run drops it as stale).
   EXPECT_TRUE(fs::exists(backup));
-  BathymetryStore runtime(5);
-  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
-  const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
-  ASSERT_TRUE(got.has_value());
-  EXPECT_DOUBLE_EQ(got->depth, -42.0);
+  {
+    BathymetryStore runtime(5);
+    EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+    const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+    ASSERT_TRUE(got.has_value());
+    EXPECT_DOUBLE_EQ(got->depth, -42.0);
+  }
+
+  // The recovery half of the premise: the docs promise the leftover backup "is
+  // cleared by the next regeneration run", so a SECOND swap over the same store
+  // must succeed. The cause of the cleanup failure is persistent (the backup dir
+  // is still r-x), so this only holds because the pre-swap stale-backup drop is
+  // tolerant — remove_all via error_code, then rename aside. A throwing
+  // remove_all there would wedge every regeneration from here on.
+  const fs::path aside = store_dir / ".chart_backup.stale.0";
+  const ScopedPermissions unlock_aside(aside);
+
+  BathymetryStore regen2(5, false, /*chart_staging_writable=*/true);
+  regen2.set(SourceLayer::Chart, regen2.cellIndex(43.0, -70.5), BathyCell{-7.5, 0.9});
+  const fs::path regen2_root = dir_ / "regen2";
+  ASSERT_EQ(marine_bathymetry_store::save(regen2, regen2_root.string()), 1u);
+  EXPECT_NO_THROW(
+    marine_bathymetry_store::replaceChartLayer(
+      (regen2_root / "chart").string(), store_dir.string()));
+
+  // The stubborn backup was moved out of the way, not deleted (its contents are
+  // still unlinkable), and this swap's own backup was cleaned normally.
+  EXPECT_TRUE(fs::exists(aside));
+  EXPECT_FALSE(fs::exists(backup));
+
+  BathymetryStore runtime2(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime2, store_dir.string()), 1u);
+  const auto got2 = runtime2.get(SourceLayer::Chart, runtime2.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got2.has_value());
+  EXPECT_DOUBLE_EQ(got2->depth, -7.5);   // the second regeneration is live
 }
 
 TEST_F(TileIoTest, ReplaceChartLayerRestoresChartWhenCommitRenameFails)
