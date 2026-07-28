@@ -31,6 +31,31 @@ The D8 draft/processed re-split is **not in scope**: it renames `survey/` and mu
    - Remove `store_dir/.chart_backup/` on success.
    - Declare in `tile_io.hpp`.
 
+   **Hardening added during implementation and review** (rounds 1–4; all of it
+   sits in front of the commit point so a refusal leaves the old layer standing,
+   ADR-0010 D7). The plan's original five bullets are the skeleton; the shipped
+   function also:
+   - Refuses a **non-directory store dir** (an opaque `ENOTDIR` mid-swap otherwise).
+   - Refuses a **symlinked staged dir**, and any **symlinked top-level entry**
+     inside it — `is_directory()`/`is_regular_file()` follow links, so without
+     these checks a link into an out-of-store tree rides into the live layer.
+   - Refuses a staged dir **aliasing** the live `chart/` or its `.chart_backup/`,
+     and **fails closed** when the `fs::equivalent` check itself errors.
+   - Refuses a **cross-device** staged dir up front (`stat(2)` `st_dev` compare):
+     `rename(2)` would return `EXDEV` mid-swap.
+   - Requires a staged **regular-file** `.tif` (mirrors the load path, which
+     ignores a directory named `foo.tif`), scanning every entry so the refusal
+     does not depend on iteration order.
+   - Performs **crash recovery** on a leftover `.chart_backup/`: restore it when
+     `chart/` is absent (the backup is then the only copy), else drop it as stale —
+     *tolerantly*, via the `error_code` `remove_all` with a rename-aside to
+     `.chart_backup.stale.<n>/`, so a persistent failure cause
+     (`EACCES`/`EROFS`/`EBUSY`) cannot wedge every later regeneration. Only a
+     backup that can be neither removed nor moved refuses the run.
+   - Never fails a **committed** swap: the post-commit backup cleanup uses the
+     `error_code` overload and warns on `std::cerr`; the failed-commit restore
+     likewise, so a double fault cannot mask the original error.
+
 6. **Extend `test_store.cpp`** — add tests:
    - `ChartIsReadOnlyByDefault` + `ImportTilesHonorsChartGate` — `set(Chart, ...)` and `importTiles(Chart, ...)` throw on a normal store.
    - `ChartStagingWritableStoreAllowsSet` + `FromCellSizePropagatesChartStagingWritable` — `chart_staging_writable=true` store accepts writes (constructor and factory).
@@ -41,6 +66,22 @@ The D8 draft/processed re-split is **not in scope**: it renames `survey/` and mu
    - `ReplaceChartLayerRejectsMissingOrEmptyStagedDir` — nonexistent AND empty (no .tif) staged dirs both refuse; old `chart/` tiles intact.
    - `ReplaceChartLayerClearsStaleBackupFromCrashedRun` — stale `.chart_backup/` removed before the swap (plan-review finding).
    - `ReplaceChartLayerRemovesStaleTilesWholesale` — regen 1 writes tiles A+B; regen 2 writes only A; after the swap only A remains. (Also updated the pre-existing `LoadWarnsOnUnrecognizedStoreLayout` fixture, which had used `chart/` as its unrecognized-dir example.)
+
+   Added during implementation and review, alongside the hardening in step 5:
+   - `ReplaceChartLayerRejectsSymlinkedAliasedAndNonDirectoryPaths` — every
+     pre-swap refusal, each pinned to its own guard by matching the message
+     (via the `expectChartRefusal` helper) so no case can go vacuous.
+   - `ReplaceChartLayerRestoresChartWhenCommitRenameFails` — forces the commit
+     rename to fail (read-only staged parent ⇒ `EACCES`) after `chart/` has moved
+     aside, and asserts the old layer is restored with its original value.
+   - `ReplaceChartLayerRestoresOrphanedBackupThenSurvivesFailedSwap` — the
+     `chart/`-absent recovery branch, followed by a failed swap.
+   - `ReplaceChartLayerSurvivesFailedPostCommitBackupCleanup` — a committed swap
+     does not throw when cleanup fails, **and** a second `replaceChartLayer` over
+     the leftover backup still succeeds (the rename-aside path).
+   - `ScopedPermissions`, an RAII guard restoring directory permissions, so a
+     locked test dir can never escape and wedge `TearDown`. The
+     permission-dependent cases `GTEST_SKIP` under root.
 
 ## Files to Change
 
@@ -53,8 +94,12 @@ The D8 draft/processed re-split is **not in scope**: it renames `survey/` and mu
 | `src/tile_io.cpp` | Add `"chart"` case to `layerDirName`; implement `replaceChartLayer` |
 | `test/test_store.cpp` | Add Chart write-gate and priority ordering tests |
 | `test/test_tile_io.cpp` | Add round-trip, atomicity, and stale-tile-removal tests for `replaceChartLayer` |
+| `src/query.cpp` | *(added in round 1)* Nav-safety comment in `bestSource` / `shallowestReliable`: `Chart` now participates in the priority walk, and `load()` populates it regardless of the write gate, so there is no mechanical block on chart data reaching navigation before #276 |
+| `README.md` | *(added in round 4)* Three-layer taxonomy, the write-gate table, the priority walk, and the `replaceChartLayer` swap / backup semantics |
 
-No changes to `query.cpp`, `geotiff_import.cpp`, or `CMakeLists.txt` are needed.
+No changes to `geotiff_import.cpp` or `CMakeLists.txt` are needed. (The plan
+originally said the same of `query.cpp`; round 1 added the nav-safety comment
+above — no behavior change, but the file is touched.)
 
 ## Principles Self-Check
 
@@ -63,7 +108,7 @@ No changes to `query.cpp`, `geotiff_import.cpp`, or `CMakeLists.txt` are needed.
 | Safety First | Chart layer is blocked from driving navigation by a precondition (cost-model rework, tracked at #276); this PR adds no cost-model wiring — only the store-side layer and the regeneration API. The write gate ensures no chart data enters a normal-runtime store via accident. |
 | Enforcement over documentation | Write-gate is mechanical (throws), not advisory. Atomicity is structural (rename semantics). The `chart_staging_writable` flag keeps the "staging only" contract at the type/constructor level. |
 | Only what's needed | D8 (draft/processed) is explicitly excluded. The `replaceChartLayer` API targets only `chart/` by design — no general `replaceLayer(SourceLayer, ...)` that could be misused. |
-| Test what breaks | Seven acceptance-criterion scenarios drive dedicated tests across two test files. |
+| Test what breaks | Seven acceptance-criterion scenarios drive dedicated tests across three test files (`test_store`, `test_query`, `test_tile_io`); review rounds added coverage for every refusal guard, both crash-recovery branches, the failed-commit restore, and the failed-cleanup + second-swap recovery. |
 | Improve incrementally | Single focused PR; updater/exporter are follow-on issues. |
 | A change includes its consequences | `source_layers_by_priority` extension propagates to all query and I/O iteration paths automatically. `layerDirName` switch gets the new case. No other callers have exhaustive switches on `SourceLayer`. |
 
@@ -92,4 +137,7 @@ No changes to `query.cpp`, `geotiff_import.cpp`, or `CMakeLists.txt` are needed.
 
 ## Estimated Scope
 
-Single PR. Seven source/test files, all in `marine_bathymetry_store`. No cross-package changes.
+Single PR, all within `marine_bathymetry_store` — no cross-package changes. The
+plan estimated seven source/test files; the shipped branch touches nine (the
+`query.cpp` nav-safety comment and `README.md` were added during implementation
+and review), plus this plan and `progress.md`.
