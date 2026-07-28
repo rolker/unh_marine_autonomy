@@ -202,7 +202,7 @@ std::size_t evictOutside(
 /// is absent — the crash struck mid-commit — otherwise drop the now-stale
 /// backup); rename existing `chart/` → `.chart_backup/`; rename staged →
 /// `chart/` (atomic on one filesystem); on failure restore the backup and
-/// rethrow; on success remove the backup.
+/// rethrow; on success remove the backup (best-effort — see @throws).
 ///
 /// Caller contract: run only while no consumer holds the store open (D7's
 /// enforced nav-down precondition); the staged dir must be on the same
@@ -214,12 +214,16 @@ std::size_t evictOutside(
 ///         a symlinked staged dir, a symlinked entry inside the staged dir, a
 ///         staged dir aliasing the live `chart/` or its backup, a non-directory
 ///         store dir, or a cross-device staged dir — all detected before any swap);
-///         std::filesystem::filesystem_error on any filesystem operation
-///         failing — this covers not only the commit-point rename (after a
+///         std::filesystem::filesystem_error on a filesystem operation up to and
+///         including the commit point failing — the commit-point rename (after a
 ///         best-effort backup restoration that never masks the original error)
-///         but also the pre-swap crash-recovery steps that run *before* it:
-///         restoring an orphaned `.chart_backup/` (`fs::rename`) and clearing a
-///         stale one (`fs::remove_all`) both use throwing overloads.
+///         and the pre-swap crash-recovery steps that run *before* it: restoring
+///         an orphaned `.chart_backup/` (`fs::rename`) and clearing a stale one
+///         (`fs::remove_all`) both use throwing overloads. Nothing *after* the
+///         commit throws: the post-commit backup cleanup uses the `error_code`
+///         overload and only warns on `std::cerr`, so a committed swap is never
+///         reported to the caller as a failure (a leftover backup is dropped by
+///         the next run's crash-recovery step).
 void replaceChartLayer(
   const std::string & staged_chart_dir, const std::string & store_dir);
 

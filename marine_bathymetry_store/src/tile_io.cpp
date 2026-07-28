@@ -613,7 +613,22 @@ void replaceChartLayer(
     throw;
   }
   if (had_chart) {
-    fs::remove_all(backup);
+    // The swap has ALREADY committed; clearing the backup is terminal cleanup, not
+    // part of the guarantee. Throwing here would report a successful swap as a
+    // failure — the caller could not tell "swap failed, old layer stands" from
+    // "swap succeeded, stale backup left behind" and might wrongly retry or abort
+    // the regeneration run. Use the error_code overload (same idiom as the restore
+    // path above) and warn instead; the next run's crash-recovery step drops the
+    // leftover backup (chart/ is present, so it is treated as stale).
+    std::error_code cleanup_ec;
+    fs::remove_all(backup, cleanup_ec);
+    if (cleanup_ec) {
+      std::cerr << "[marine_bathymetry_store] WARNING: replaceChartLayer committed the "
+                << "new chart/ layer but could not remove the backup at '"
+                << backup.string() << "': " << cleanup_ec.message()
+                << " — the swap succeeded; the stale backup is cleared by the next "
+                << "regeneration run.\n";
+    }
   }
 }
 

@@ -921,6 +921,55 @@ TEST_F(TileIoTest, ReplaceChartLayerClearsStaleBackupFromCrashedRun)
   EXPECT_DOUBLE_EQ(got->depth, -22.0);
 }
 
+TEST_F(TileIoTest, ReplaceChartLayerSurvivesFailedPostCommitBackupCleanup)
+{
+  // A swap that has already COMMITTED must not surface as an exception just
+  // because terminal cleanup of .chart_backup/ fails — the caller could not then
+  // tell "swap failed, old layer stands" from "swap succeeded, stale backup left"
+  // and might wrongly retry or abort the regeneration run. Force the cleanup to
+  // fail by making the old chart/ dir non-writable: renaming it to .chart_backup/
+  // needs only store_dir write permission, but unlinking its contents does not.
+  if (::geteuid() == 0) {
+    GTEST_SKIP() << "runs as root: directory-permission denial is bypassed";
+  }
+
+  const fs::path store_dir = dir_ / "store";
+  const fs::path chart = store_dir / "chart";
+  const fs::path backup = store_dir / ".chart_backup";
+  fs::create_directories(store_dir);
+
+  BathymetryStore seed(5, false, /*chart_staging_writable=*/true);
+  seed.set(SourceLayer::Chart, seed.cellIndex(43.0, -70.5), BathyCell{-20.5, 1.5});
+  const fs::path seed_staged = dir_ / "seed";
+  ASSERT_EQ(marine_bathymetry_store::save(seed, seed_staged.string()), 1u);
+  marine_bathymetry_store::replaceChartLayer((seed_staged / "chart").string(), store_dir.string());
+
+  BathymetryStore regen(5, false, /*chart_staging_writable=*/true);
+  regen.set(SourceLayer::Chart, regen.cellIndex(43.0, -70.5), BathyCell{-42.0, 1.0});
+  const fs::path regen_root = dir_ / "regen";
+  ASSERT_EQ(marine_bathymetry_store::save(regen, regen_root.string()), 1u);
+
+  // Guard both paths the locked directory can occupy (chart/ before the swap,
+  // .chart_backup/ after it) so TearDown's remove_all always has permission.
+  const ScopedPermissions unlock_chart(chart);
+  const ScopedPermissions unlock_backup(backup);
+  fs::permissions(
+    chart, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
+
+  EXPECT_NO_THROW(
+    marine_bathymetry_store::replaceChartLayer(
+      (regen_root / "chart").string(), store_dir.string()));
+
+  // The commit stands: the new layer is live, and the backup that could not be
+  // cleaned is merely left behind (the next run drops it as stale).
+  EXPECT_TRUE(fs::exists(backup));
+  BathymetryStore runtime(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+  const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, -42.0);
+}
+
 TEST_F(TileIoTest, ReplaceChartLayerRestoresChartWhenCommitRenameFails)
 {
   // The must-fix: exercise the restore branch (rename backup -> chart after a
