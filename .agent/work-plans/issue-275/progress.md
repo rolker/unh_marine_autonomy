@@ -236,10 +236,10 @@ Lifecycle: **Local Review** (approved) → push / open PR (branch already tracke
 Round 2 of triage on #280. Copilot R1's three inline comments (`53e361c`, 2026-07-27T19:10Z) were triaged in the prior `## Integrated Review` and are fully addressed by `96800c3` (`@throws` recovery/cleanup surface), `646dbd2` (#272 → #276 precondition citation), `8e70921` (symlink / alias / non-dir-store guards) and `2335057` (pin commit-rename failure to EACCES on the staged path) — re-verified against the current tree; no residual concern. The new GitHub-side item is Copilot's single R2 comment on `test/test_tile_io.cpp:853`. The unresolved half of the timeline is the three open suggestions from the Local Review at `b4fa3a0` (the tree of head `5523625` differs only by that review's own progress.md commit, so those findings describe current code and are integrated here rather than carried forward untriaged).
 
 ### Findings
-- [ ] (valid-minor, Copilot R2) `ReplaceChartLayerRestoresChartWhenCommitRenameFails` restores `ro_parent`'s permissions only after a `catch (const fs::filesystem_error &)`; any other escaping exception type skips the `fs::permissions(..., owner_all)` at `:853`, leaving a `r-x` directory that makes `TearDown()`'s `fs::remove_all(dir_)` — and the *next* run's `SetUp()` `remove_all` — throw, masking the original failure and wedging the test until `/tmp` is cleaned by hand. Fix: restore permissions from an RAII scope guard (destructor calls the `error_code` overload of `fs::permissions`) so unlocking is unconditional; apply the same guard to `ReplaceChartLayerRestoresOrphanedBackupThenSurvivesFailedSwap` (`:896-903`) for symmetry — that one is currently safe only because `EXPECT_THROW` swallows non-matching types — `marine_bathymetry_store/test/test_tile_io.cpp:834-853,896-903`
-- [ ] (valid, Local Review @ `b4fa3a0`) The three hardening guards added by `8e70921` — symlinked staged dir (`tile_io.cpp:501`), staged aliasing live `chart/` / `.chart_backup/` (`:512,517`), non-directory `store_dir` (`:483`) — have no dedicated refusal tests; verified absent (`grep symlink|equivalent` finds no such assertion in the chart-layer test block). Every other refusal path in this PR is covered, so this is a coverage inconsistency against the issue's own bar. Fix: extend `ReplaceChartLayerRejectsMissingOrEmptyStagedDir` (or add a sibling) asserting `std::runtime_error` for a symlink-to-staged, for `staged == chart/`, for `staged == .chart_backup/`, and for a regular-file `store_dir`, each with the live layer intact afterwards — `marine_bathymetry_store/test/test_tile_io.cpp`
-- [ ] (valid-minor, Local Review @ `b4fa3a0`) `has_tile` scan gates on `entry.is_regular_file()`, which follows symlinks, so a symlinked `.tif` inside an otherwise-real staged dir rides into `chart/` — the same out-of-store-link hazard the `:501` symlinked-staged-dir guard exists to prevent, one level down, in a layer that feeds navigation. "Mirrors the load path at `:343`" explains the shape but not the risk: load only reads, `replaceChartLayer` commits the tree permanently. Fix (cheap, complete): reject `entry.is_symlink()` inside the staged scan with a clear `std::runtime_error`, and extend the `@throws` validation clause — `marine_bathymetry_store/src/tile_io.cpp:522-530`
-- [ ] (valid-minor, Local Review @ `b4fa3a0`) Post-commit `fs::remove_all(backup)` uses the throwing overload, so a swap that has *already committed* can still surface to the caller as an exception on terminal cleanup failure — the caller cannot distinguish "swap failed, old layer stands" from "swap succeeded, stale backup left behind" and may wrongly retry or abort the regeneration run. The restore path at `:590-591` already models the right idiom. Fix: switch to the `error_code` overload plus a `std::cerr` warning naming the leftover backup path, and narrow the `@throws` clause accordingly — `marine_bathymetry_store/src/tile_io.cpp:602-604`
+- [x] (valid-minor, Copilot R2) `ReplaceChartLayerRestoresChartWhenCommitRenameFails` restores `ro_parent`'s permissions only after a `catch (const fs::filesystem_error &)`; any other escaping exception type skips the `fs::permissions(..., owner_all)` at `:853`, leaving a `r-x` directory that makes `TearDown()`'s `fs::remove_all(dir_)` — and the *next* run's `SetUp()` `remove_all` — throw, masking the original failure and wedging the test until `/tmp` is cleaned by hand. Fix: restore permissions from an RAII scope guard (destructor calls the `error_code` overload of `fs::permissions`) so unlocking is unconditional; apply the same guard to `ReplaceChartLayerRestoresOrphanedBackupThenSurvivesFailedSwap` (`:896-903`) for symmetry — that one is currently safe only because `EXPECT_THROW` swallows non-matching types — `marine_bathymetry_store/test/test_tile_io.cpp:834-853,896-903`
+- [x] (valid, Local Review @ `b4fa3a0`) The three hardening guards added by `8e70921` — symlinked staged dir (`tile_io.cpp:501`), staged aliasing live `chart/` / `.chart_backup/` (`:512,517`), non-directory `store_dir` (`:483`) — have no dedicated refusal tests; verified absent (`grep symlink|equivalent` finds no such assertion in the chart-layer test block). Every other refusal path in this PR is covered, so this is a coverage inconsistency against the issue's own bar. Fix: extend `ReplaceChartLayerRejectsMissingOrEmptyStagedDir` (or add a sibling) asserting `std::runtime_error` for a symlink-to-staged, for `staged == chart/`, for `staged == .chart_backup/`, and for a regular-file `store_dir`, each with the live layer intact afterwards — `marine_bathymetry_store/test/test_tile_io.cpp`
+- [x] (valid-minor, Local Review @ `b4fa3a0`) `has_tile` scan gates on `entry.is_regular_file()`, which follows symlinks, so a symlinked `.tif` inside an otherwise-real staged dir rides into `chart/` — the same out-of-store-link hazard the `:501` symlinked-staged-dir guard exists to prevent, one level down, in a layer that feeds navigation. "Mirrors the load path at `:343`" explains the shape but not the risk: load only reads, `replaceChartLayer` commits the tree permanently. Fix (cheap, complete): reject `entry.is_symlink()` inside the staged scan with a clear `std::runtime_error`, and extend the `@throws` validation clause — `marine_bathymetry_store/src/tile_io.cpp:522-530`
+- [x] (valid-minor, Local Review @ `b4fa3a0`) Post-commit `fs::remove_all(backup)` uses the throwing overload, so a swap that has *already committed* can still surface to the caller as an exception on terminal cleanup failure — the caller cannot distinguish "swap failed, old layer stands" from "swap succeeded, stale backup left behind" and may wrongly retry or abort the regeneration run. The restore path at `:590-591` already models the right idiom. Fix: switch to the `error_code` overload plus a `std::cerr` warning naming the leftover backup path, and narrow the `@throws` clause accordingly — `marine_bathymetry_store/src/tile_io.cpp:602-604`
 
 ### False positives
 - (none this round) Copilot R2's single comment is valid as written; the three carried-forward local-review items were re-verified against current code rather than dismissed. Note for the record: the R1 items already dispositioned in the prior `## Integrated Review` stay dispositioned — no re-litigation.
@@ -248,3 +248,69 @@ Round 2 of triage on #280. Copilot R1's three inline comments (`53e361c`, 2026-0
 Lifecycle: **Integrated Review** → `address-findings` (4 open findings, all fix-now sized; none block on external work)
 `.agent/scripts/dispatch_subagent.sh --mode in-process --issue 275 --skill address-findings`
 After the fixes land: re-run `review-code`, then merge via `merge_pr.sh --issue 275` (user content-review gate still applies).
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-28 09:48 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**PR**: #280 at `c790432` (branch `feature/issue-275`; fix commits not yet pushed)
+**Addressed**: `## Integrated Review` (2026-07-28 08:25 -04:00, PR #280 @ `5523625`) — all 4 open findings
+**Commits**: `6d2af3a`, `74116fc`, `c27aea6`, `c790432`
+
+All four findings were verified against current source before acting; none was stale.
+Package rebuilt and `marine_bathymetry_store` tests run after each fix — final run
+**156 tests, 0 errors, 0 failures** (2 new tests, 1 new refusal case), with
+`uncrustify` / `cpplint` / `cppcheck` / `copyright` / `lint_cmake` / `xmllint` all
+at 0 failures.
+
+### Actions
+- [x] RAII permission-restore guard for locked test dirs — new `ScopedPermissions`
+  helper (destructor calls the `error_code` overload of `fs::permissions`, copy
+  deleted) applied to both `ReplaceChartLayerRestoresChartWhenCommitRenameFails`
+  and `ReplaceChartLayerRestoresOrphanedBackupThenSurvivesFailedSwap`; the
+  conditional post-`catch` / post-`EXPECT_THROW` unlocks are gone, so no escaping
+  exception type or fatal assertion can leave an `r-x` dir for `TearDown()` —
+  `marine_bathymetry_store/test/test_tile_io.cpp` (`6d2af3a`)
+- [x] Dedicated refusal tests for the `8e70921` guards — new
+  `ReplaceChartLayerRejectsSymlinkedAliasedAndNonDirectoryPaths` covers a
+  symlink-to-staged, `staged == chart/`, `staged == .chart_backup/`, and a
+  regular-file `store_dir`, asserting the seeded live layer (and its value) is
+  intact after every refusal. Each case goes through a new `expectChartRefusal`
+  helper that matches the guard's own message text, not just `std::runtime_error`,
+  so an earlier guard firing first cannot make a case silently vacuous —
+  `marine_bathymetry_store/test/test_tile_io.cpp` (`74116fc`)
+- [x] Staged-dir scan now rejects symlinked entries — `entry.is_symlink()` throws
+  `std::runtime_error` naming the offending entry; the scan no longer breaks at the
+  first `.tif`, so the refusal does not depend on directory iteration order. Header
+  `Sequence:` and `@throws` validation clause extended; covered by case 4 of the new
+  refusal test (a live, non-dangling link to a real tile, asserted
+  `is_regular_file()` before the call) — `marine_bathymetry_store/src/tile_io.cpp`,
+  `include/marine_bathymetry_store/tile_io.hpp`,
+  `test/test_tile_io.cpp` (`c27aea6`)
+- [x] Post-commit backup cleanup switched to the `error_code` overload of
+  `fs::remove_all` plus a `std::cerr` warning naming the leftover backup path,
+  matching the restore idiom at `:590-591`; `@throws` narrowed to state that nothing
+  after the commit point throws. New `ReplaceChartLayerSurvivesFailedPostCommitBackupCleanup`
+  forces the cleanup to fail (old `chart/` made `r-x` — the rename to
+  `.chart_backup/` still succeeds, unlinking its contents does not) and asserts
+  `EXPECT_NO_THROW`, the new layer live with its new value, and the un-removable
+  backup merely left behind; root-guarded via `GTEST_SKIP` and using the same
+  `ScopedPermissions` guard on both paths the locked dir can occupy —
+  `marine_bathymetry_store/src/tile_io.cpp`,
+  `include/marine_bathymetry_store/tile_io.hpp`,
+  `test/test_tile_io.cpp` (`c790432`)
+
+### Deferred actions
+- (none) All four findings were actionable and are fixed.
+
+### Notes
+- No caller outside `marine_bathymetry_store` invokes `replaceChartLayer`
+  (grep over the repo finds only the package itself and this issue's plan/progress
+  docs), so the new symlinked-entry refusal cannot break an existing staging
+  workflow — `save()` never writes symlinks.
+- No push performed (sub-agent contract); the host pushes the four fix commits.
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes)
+`.agent/scripts/dispatch_subagent.sh --mode in-process --issue 275 --skill review-code`
