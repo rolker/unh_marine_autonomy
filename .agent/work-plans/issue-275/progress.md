@@ -314,3 +314,57 @@ at 0 failures.
 ### Next step
 Lifecycle: **Implementation** → **review-code** (re-review the fixes)
 `.agent/scripts/dispatch_subagent.sh --mode in-process --issue 275 --skill review-code`
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-28 13:40 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-275 at `803f388`
+**Mode**: pre-push
+**Depth**: Deep (reason: navigation-safety data store + filesystem failure-recovery atomic swap)
+**Must-fix**: 2 | **Suggestions**: 8
+**Round**: 4 | **Ship**: recommended (conditional) — address the 2 must-fixes and ship without a 5th full round; both are documentation-accuracy corrections with an obvious form, not new code defects or design questions. The 0 → 2 rise versus round 3 comes from a lens prior rounds never applied (full-branch documentation *consequences*, not delta hunks), so it is not a regression signal.
+
+Scope: the unpushed delta `5523625..HEAD` (`6d2af3a`, `74116fc`, `c27aea6`, `c790432`
++ 2 progress commits) reviewed against rounds 1-3 context; consequences checked against
+the full branch. Static analysis run: `ament_cpplint` + `ament_uncrustify` clean on all
+3 changed C++ files (`ament_cppcheck` self-skipped on its 2.13.0 slow-version guard; the
+`## Implementation` entry's `colcon test` run covers it — 156 tests / 0 failures at
+`c790432`, and `803f388` is progress-only). Local Adversarial ran (`qwen3.5:35b`) —
+5 of its 8 findings discarded as speculative or already-refuted (its cross-device
+claim ignores the existing `st_dev` guard at `:554-571`), 1 corroborated the
+`std::cerr`-only signalling suggestion.
+Copilot off (default, standing quota decision).
+
+**Specialist-coverage caveat (accuracy correction).** Two Claude adversarial passes
+(Lens A / Lens B) and a Governance + Plan Drift pass were dispatched but had **not
+returned** when this review was written; their output was never read. An earlier draft
+of this entry labelled several findings "cross-pass confirmed (Lens A + Lens B)" and
+"cross-source confirmed (Governance)" — those labels were unfounded and have been
+removed. **Every finding below is the lead reviewer's own read**, each re-verified
+against current source (file and line refs checked individually). The findings stand
+on that basis; what does *not* exist for this round is independent cross-source
+confirmation. Treat the Round-4 signal as single-reader accordingly — a genuine
+second read of the two must-fixes is still owed if that independence is wanted before
+merge. All four findings addressed by the
+`address-findings` pass verified fully resolved against current source; the delta's
+`@throws` rewrite is accurate to the new code and breaks nothing the earlier approved
+rounds relied on. No `review-context.yaml` exists in the project repo.
+
+### Findings
+- [ ] (must-fix, lead review — traced to source) The new post-commit cleanup warning and `@throws` promise the leftover backup "is cleared by the next regeneration run", but the next run's pre-swap stale-backup drop still uses the **throwing** `fs::remove_all(backup)`; every realistic cause of the cleanup failure (EACCES, EROFS, EBUSY) is persistent, so the next call throws before the swap and chart regeneration is wedged pending manual cleanup. Fails safe but the claim is untrue. Fix: make `:588` tolerant (`error_code` + warn, or rename aside to `.chart_backup.stale.<n>/`) so the documented behavior holds, or correct comment + `cerr` text + `@throws` — `marine_bathymetry_store/src/tile_io.cpp:588,621-622` / `include/marine_bathymetry_store/tile_io.hpp:222-226`
+- [ ] (must-fix, lead review — read against current README) `marine_bathymetry_store/README.md` is untouched anywhere on this branch and now asserts the opposite of the shipped code — it states `SourceLayer` is two values and that the `chart` taxonomy "collapsed … and `chart` generalized to `reference`", while the branch adds `SourceLayer::Chart = 2` and an on-disk `chart/` layer. §Persistence omits `replaceChartLayer`, the staged-dir/atomic-rename workflow, `.chart_backup/` and its refusal/crash-recovery contract; the test-coverage list omits the chart suite. Full-branch gap missed by rounds 1-3; AGENTS.md § Documentation Accuracy — fix in this PR — `marine_bathymetry_store/README.md:24-28,59-68,80-83`
+- [ ] (suggestion) Header states the staged dir "contains no symlinked entries" unqualified, but the scan is top-level only; nav impact is nil (flat-layout `load()` skips subdirectories) so the depth is right — say *top-level*. Fold into the must-fix doc pass — `include/marine_bathymetry_store/tile_io.hpp:200`
+- [ ] (suggestion) `ReplaceChartLayerSurvivesFailedPostCommitBackupCleanup` never exercises the recovery half of its own premise — a second `replaceChartLayer` against the same store. That call is what pins (today, refutes) the "cleared by the next run" claim and would have surfaced must-fix 1 — `test/test_tile_io.cpp:921-971`
+- [ ] (suggestion) `eq_ec` is shared by both `fs::equivalent` calls and never inspected: on error the alias guard silently passes, degrading to "no check" rather than to a refusal. Fail closed — `src/tile_io.cpp:511-521`
+- [ ] (suggestion) `expectChartRefusal` records a non-fatal `ADD_FAILURE` and returns, so execution continues after a call that already succeeded and mutated the store; for the alias cases a regression would cascade into every later case and bury the cause. Return an `AssertionResult` the caller `ASSERT`s on — `test/test_tile_io.cpp:752-760`
+- [ ] (suggestion, cross-model confirmed: lead + local `qwen3.5:35b`) `std::cerr` is now the only signal for both the CRITICAL failed-restore and the new stale-backup warning — no return value, no exception, nothing on `/rosout`. Consider a status return so a ROS-side caller can log through `rclcpp` and refuse to bring nav back up in the CRITICAL case — `src/tile_io.cpp:606-611,626-631`
+- [ ] (suggestion) The entry guard covers symlinks but not hardlinks; with same-filesystem placement *enforced* at `:554-571` a hardlinked `.tif` always rides into the live `chart/`, leaving the other link holder able to rewrite nav tile bytes in place post-commit. Add `hard_link_count() > 1` or state the narrower intent in the comment — `src/tile_io.cpp:532-537`
+- [ ] (suggestion) `plan.md` stopped tracking the implementation from `8e70921` on: `:57` states "No changes to `query.cpp`, `geotiff_import.cpp`, or `CMakeLists.txt` are needed" (round 1 changed `query.cpp`), `:25-33` omits the whole hardening surface the branch ships, `:55` predates four tests now on the branch. One consolidated edit; bundle with the README fix in a single `docs:` commit — `.agent/work-plans/issue-275/plan.md:25-33,55,57`
+- [ ] (suggestion) Fixture path `temp_directory_path() / ("marine_bathy_store_" + name)` is not process-unique, so concurrent `colcon test` runs collide and `SetUp()`'s throwing `remove_all` aborts the fixture. Pre-existing, but the new permission-locking tests raise the stakes. Use the pid or `mkdtemp` — `test/test_tile_io.cpp:86`
+
+### Next step
+Lifecycle: **Local Review** (changes-requested) → **`address-findings`** (2 must-fix + 8 suggestions; all local, none blocks on external work), then ship — no 5th full review round is warranted per the Ship verdict above.
+`.agent/scripts/dispatch_subagent.sh --mode in-process --issue 275 --skill address-findings`
