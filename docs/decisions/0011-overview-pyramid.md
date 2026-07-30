@@ -9,9 +9,12 @@ Implements the overview half of [ADR-0010](0010-geospatial-world-model.md) D9
 (per-layer LOD) and **extends it to the imagery theme**: D9's overview clause
 names the depth layers; imagery keeps its own tiering per D3, and this ADR
 gives its survey-born layers the same derived-overview mechanism. Referenced
-by header pointers from [ADR-0002](0002-bathymetric-data-store.md) and
-[ADR-0006](0006-multi-platform-backscatter-store.md) (their layers gain a derived
-sidecar, no change to their fine-tile formats).
+by header pointers from [ADR-0002](0002-bathymetric-data-store.md),
+[ADR-0006](0006-multi-platform-backscatter-store.md), and
+[ADR-0007](0007-mbes-backscatter-store.md) (their layers gain a derived
+sidecar, no change to their fine-tile formats). The **MBES backscatter** layer
+named under the imagery MEAN policy in §4 lives in ADR-0007; sidescan is the
+first batch adopter, an MBES builder a later one.
 
 ## Context
 

@@ -6,6 +6,13 @@ Accepted (2026-06-20). Tracked by
 [rolker/unh_marine_autonomy#190](https://github.com/rolker/unh_marine_autonomy/issues/190),
 Part of [#180](https://github.com/rolker/unh_marine_autonomy/issues/180).
 
+**Derived overviews (2026-07-24, [#188](https://github.com/rolker/unh_marine_autonomy/issues/188)):**
+this store's backscatter layer is eligible for a regenerable `overviews/` sidecar
+for LOD under the **imagery MEAN** fold policy — layout + fold-policy contract in
+**[ADR-0011](0011-overview-pyramid.md)** (fine-tile format unchanged; the
+sidescan `build_sidescan_overviews` batch builder is the first adopter, an MBES
+builder is a later one).
+
 Sibling to **ADR-0006** (sidescan backscatter store). Builds on **ADR-0002**
 (bathymetric store — tiling, layer-as-subdirectory, content-hash sync), **ADR-0005**
 (cross-store provenance/registry), and the **CUBE** depth estimator in
