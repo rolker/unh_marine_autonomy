@@ -554,3 +554,37 @@ specific confirming read of the MF1 staged-validation gate — it changes the D7
 commit path)
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 275 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-30 19:44 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-275 at `54b19b6`
+**Mode**: pre-push
+**Depth**: targeted single-lead confirming read (delta `382def3..HEAD` only — no specialist fan-out; the four verified Round 5 specialist reports at `.agent/scratchpad/r5-issue275/` stand for the non-delta surface)
+**Must-fix**: 0 | **Suggestions**: 0
+**Round**: 6 (targeted, delta-only per Round 5 Ship verdict) | **Ship**: recommended — the two code fixes are correct and independently test-verified; all doc claims check against source; nothing new at must-fix
+
+Confirming re-review of the MF1 staged-validation gate fix (which changes the D7
+commit path), per the Round 5 Next step. Lens coverage is honestly partial: this
+was a single-lead correctness + doc-accuracy read of the delta, not a full
+multi-specialist round.
+
+### Findings
+- [ ] No issues found. LGTM.
+
+### Verified (delta `382def3..HEAD`)
+- [x] (MF1, `00f1530`) Staged-tile gate mirrors the load path **exactly** — `!is_regular_file()||ext!=".tif" → continue`, `isDroppedCompanionTile → continue`, `levelFromTileFilename(name)` throws — the same two helpers `load()`/`loadWindow()` call at `tile_io.cpp:348-362`. Companion handling and level-range check are literally the same functions; the gate adds only `levelFromTileFilename`, which load also runs, so it is exactly as strict, not over-strict (no false refusal of a layer load would accept). Refusal is pre-swap: the validation loop `:539-585` throws before ANY store mutation (crash-recovery rename `:622`, swap `:691-697` all follow) — old `chart/` stands (D7). Premise confirmed: `source_layers_by_priority = {Survey, Reference, Chart}` (`bathy_cell.hpp:70-71`), Chart last — `src/tile_io.cpp:555-579`
+- [x] (MF1 test) `ReplaceChartLayerRejectsMisnamedStagedTile` is non-vacuous — old code accepted any `.tif` by extension and would have swapped `chart.tif` into the live layer; the test asserts refusal + no `.chart_backup` + seeded `-20.5` intact, all of which fail against the old code. Ran the built binary: **PASSED** — `test/test_tile_io.cpp:846-889`
+- [x] (S1, `f944b19`) Tolerant-drop rewrite: `error_code` `fs::exists` overloads, fail-closed on indeterminate (`fs::exists(backup,ec)||ec`; slot free only if `!exists&&!ec`), aside search capped at 1000 with a clean pre-swap refusal on exhaustion (`:664-671`) and on rename-aside failure (`:678-683`). No regression — normal path skips the block, rename-aside path (`n=0`) unchanged; full `test_tile_io` (34 tests incl. second-swap/orphan-restore) **PASSED** — `src/tile_io.cpp:637-688`
+- [x] (docs `dbf3aed`) `layerDirName` lists `survey/reference/chart` (matches `layerDirName()`); false "edition registry" claim dropped — `registry.json` is a store-root sidecar (`registry.hpp:60-68`), not in a layer dir
+- [x] (docs `d3366b5`) "Survey 0 > Reference 1 > Chart 2" matches the enum; "Chart lowest / D4 placeholder pending #276" matches the priority array — `bathy_cell.hpp:37-67`
+- [x] (docs `6f3163f`) `set()`/`importTiles()` `@throws` for the Chart gate matches `bathymetry_store.cpp:47-51,89-93` (`logic_error` when `!chart_staging_writable_`); class-doc priority prose `survey > reference > chart`
+- [x] (docs `8a6db39`) `import_geotiff` rejects `chart` (only `survey|reference`, `import_geotiff_main.cpp:71-82`); `replaceChartLayer` has zero non-test callers (grep-verified); `test_geotiff_import` added to the README test list
+- [x] (plan `4d5ff29`) plan.md re-sync spot-checked — no code impact
+
+### Next step
+Lifecycle: **Local Review** (approved) → push / open PR → **triage-reviews**
+The delta is shippable; the host performs the push with its own credentials.
