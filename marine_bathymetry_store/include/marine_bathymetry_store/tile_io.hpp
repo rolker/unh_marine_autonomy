@@ -47,10 +47,13 @@
 /// cache, the per-cell time band's only reader (the costmap staleness gate) was
 /// retired, and per-cell source provenance is a constant for a single platform.
 ///
-/// The quality/maturity axis (Survey / Reference) is encoded as the on-disk
-/// subdirectory (`survey/`, `reference/`); each holds **one fused** set of value
-/// tiles directly (no per-day epoch subdirectory since #221). Coarse provenance
-/// moves to the store-wide `registry.json` `StoreMetadata` (ADR-0005 #248).
+/// The quality/maturity axis (Survey / Reference / Chart) is encoded as the
+/// on-disk subdirectory (`survey/`, `reference/`, `chart/`); each holds **one
+/// fused** set of value tiles directly (no per-day epoch subdirectory since
+/// #221). `chart/` (official navigation products, #275/ADR-0010 D3/D7) is written
+/// only via the wholesale atomic swap (`replaceChartLayer`), never incrementally.
+/// Coarse provenance moves to the store-wide `registry.json` `StoreMetadata`
+/// (ADR-0005 #248) — it lives at the store root, not inside any layer dir.
 ///
 /// @note Round-trip persistence is validated for **non-polar** latitudes
 /// (|lat| < 72°), the intended lake/coastal survey envelope. Near GGGS's polar
@@ -67,8 +70,9 @@ namespace marine_bathymetry_store
 ///        `<level>_<row>_<col>.tif`.
 std::string tileFilename(const gggs::GridIndex & grid);
 
-/// @brief Subdirectory name for a source layer (`"survey"` / `"reference"`).
-///        Each holds one fused set of value tiles directly (#221).
+/// @brief Subdirectory name for a source layer
+///        (`"survey"` / `"reference"` / `"chart"`). Each holds one fused set of
+///        value tiles directly (#221).
 std::string layerDirName(SourceLayer layer);
 
 /// @brief Write one tile as a single value GeoTIFF at @p path (`<grid>.tif`).
@@ -189,7 +193,7 @@ std::size_t evictOutside(
 /// @brief Atomically replace a store's `chart/` layer with a staged directory
 ///        (ADR-0010 D7 wholesale regeneration — never a merge).
 ///
-/// The updater builds the new chart layer (tiles + edition registry) into
+/// The updater builds the new chart layer (its value tiles) into
 /// @p staged_chart_dir, then calls this to swap it in. The rename is the
 /// single commit point: a failure at any step leaves the previous `chart/`
 /// fully intact. Always targets `chart/` — deliberately NOT parameterized by
