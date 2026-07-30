@@ -62,7 +62,7 @@ The D8 draft/processed re-split is **not in scope**: it renames `survey/` and mu
    - `BestSourceFullPriorityOrderSurveyReferenceChart` (in `test_query.cpp`, where `bestSource` tests live) — full `Survey > Reference > Chart` walk-down.
 
 7. **Extend `test_tile_io.cpp`** — add tests:
-   - `ChartLayerRoundTrip` — stage → `replaceChartLayer` → `load` → `bestSource` at chart level → correct depth.
+   - `ChartLayerRoundTripViaReplaceChartLayer` — stage → `replaceChartLayer` → `load` → `bestSource` at chart level → correct depth.
    - `ReplaceChartLayerRejectsMissingOrEmptyStagedDir` — nonexistent AND empty (no .tif) staged dirs both refuse; old `chart/` tiles intact.
    - `ReplaceChartLayerClearsStaleBackupFromCrashedRun` — stale `.chart_backup/` removed before the swap (plan-review finding).
    - `ReplaceChartLayerRemovesStaleTilesWholesale` — regen 1 writes tiles A+B; regen 2 writes only A; after the swap only A remains. (Also updated the pre-existing `LoadWarnsOnUnrecognizedStoreLayout` fixture, which had used `chart/` as its unrecognized-dir example.)
@@ -91,8 +91,9 @@ The D8 draft/processed re-split is **not in scope**: it renames `survey/` and mu
 | `include/marine_bathymetry_store/bathymetry_store.hpp` | Add `chart_staging_writable_` field; update constructor and `fromCellSize`; add `chartStagingWritable()` accessor |
 | `src/bathymetry_store.cpp` | Add Chart write-gate in `set()` and `importTiles()` |
 | `include/marine_bathymetry_store/tile_io.hpp` | Declare `replaceChartLayer(staged_chart_dir, store_dir)` |
-| `src/tile_io.cpp` | Add `"chart"` case to `layerDirName`; implement `replaceChartLayer` |
-| `test/test_store.cpp` | Add Chart write-gate and priority ordering tests |
+| `src/tile_io.cpp` | Add `"chart"` case to `layerDirName`; implement `replaceChartLayer`; rewrite the `warnIfUnrecognizedStoreLayout` doc + WARNING to recognize `chart/` as a real layer (no longer obsolete taxonomy) |
+| `test/test_store.cpp` | Add Chart write-gate tests |
+| `test/test_query.cpp` | *(added in round 1)* Add the full `Survey > Reference > Chart` best-source walk-down test (`BestSourceFullPriorityOrderSurveyReferenceChart`) |
 | `test/test_tile_io.cpp` | Add round-trip, atomicity, and stale-tile-removal tests for `replaceChartLayer` |
 | `src/query.cpp` | *(added in round 1)* Nav-safety comment in `bestSource` / `shallowestReliable`: `Chart` now participates in the priority walk, and `load()` populates it regardless of the write gate, so there is no mechanical block on chart data reaching navigation before #276 |
 | `README.md` | *(added in round 4)* Three-layer taxonomy, the write-gate table, the priority walk, and the `replaceChartLayer` swap / backup semantics |
@@ -108,7 +109,7 @@ above — no behavior change, but the file is touched.)
 | Safety First | Chart layer is blocked from driving navigation by a precondition (cost-model rework, tracked at #276); this PR adds no cost-model wiring — only the store-side layer and the regeneration API. The write gate ensures no chart data enters a normal-runtime store via accident. |
 | Enforcement over documentation | Write-gate is mechanical (throws), not advisory. Atomicity is structural (rename semantics). The `chart_staging_writable` flag keeps the "staging only" contract at the type/constructor level. |
 | Only what's needed | D8 (draft/processed) is explicitly excluded. The `replaceChartLayer` API targets only `chart/` by design — no general `replaceLayer(SourceLayer, ...)` that could be misused. |
-| Test what breaks | Seven acceptance-criterion scenarios drive dedicated tests across three test files (`test_store`, `test_query`, `test_tile_io`); review rounds added coverage for every refusal guard, both crash-recovery branches, the failed-commit restore, and the failed-cleanup + second-swap recovery. |
+| Test what breaks | The issue's five acceptance-criterion scenarios drive dedicated tests across three test files (`test_store`, `test_query`, `test_tile_io`); review rounds added coverage for every refusal guard (including the mis-named-staged-tile gate), both crash-recovery branches, the failed-commit restore, and the failed-cleanup + second-swap recovery. |
 | Improve incrementally | Single focused PR; updater/exporter are follow-on issues. |
 | A change includes its consequences | `source_layers_by_priority` extension propagates to all query and I/O iteration paths automatically. `layerDirName` switch gets the new case. No other callers have exhaustive switches on `SourceLayer`. |
 
@@ -138,6 +139,7 @@ above — no behavior change, but the file is touched.)
 ## Estimated Scope
 
 Single PR, all within `marine_bathymetry_store` — no cross-package changes. The
-plan estimated seven source/test files; the shipped branch touches nine (the
-`query.cpp` nav-safety comment and `README.md` were added during implementation
-and review), plus this plan and `progress.md`.
+plan estimated seven source/test files; the shipped branch touches ten (the
+`query.cpp` nav-safety comment, the `test_query.cpp` priority-walk test, and
+`README.md` were added during implementation and review), plus this plan and
+`progress.md`.
