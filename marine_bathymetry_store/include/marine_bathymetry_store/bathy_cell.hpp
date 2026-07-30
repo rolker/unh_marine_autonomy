@@ -37,15 +37,20 @@ namespace marine_bathymetry_store
 /// deliberate, cleaner realization of ADR-0002 §D3's "each cell stores a
 /// source layer": the layer is the map it lives in.
 ///
-/// The taxonomy was simplified to **two** layers in #248 (ADR-0002 Amendment
-/// A2.1): the old `chart`/`draft`/`processed` collapse to `survey` (highest
-/// priority) and `reference` (the read-only prior). The numeric value is the
-/// priority rank (0 = highest). `Reference` (any prior surface imported before
-/// the survey — a chart-derived contour prior, an external processed grid) is
-/// lowest priority: best-source falls through to it where no CUBE data exists.
-/// The store treats `Reference` as a **read-only prior** so live CUBE ingest can
-/// never clobber it — see `BathymetryStore::set` and the `reference_writable`
-/// construction flag the importer opts into.
+/// #248 (ADR-0002 Amendment A2.1) collapsed the old `chart`/`draft`/`processed`
+/// classes into **two** layers — `Survey` (highest priority) and `Reference`
+/// (the read-only prior). #275 then reintroduced `Chart` as a **third**, distinct
+/// layer for official navigation products (S57 exports; ADR-0010 D3/D7) — not the
+/// pre-#248 `chart` class, and not a generalization of `reference`. The numeric
+/// value is the priority rank (0 = highest), so the taxonomy is now three layers
+/// ordered `Survey 0 > Reference 1 > Chart 2`. `Chart` is **lowest** priority — a
+/// D4 placeholder ordering pending the #276 cost-model rework — so best-source
+/// falls through Survey, then Reference, then Chart where no higher layer holds
+/// data. Both `Reference` and `Chart` are write-gated priors that live CUBE
+/// ingest can never clobber: `Reference` is read-only (see `BathymetryStore::set`
+/// and the `reference_writable` flag the importer opts into); `Chart` is writable
+/// only via the wholesale-regeneration swap (`replaceChartLayer`), gated by
+/// `chart_staging_writable`.
 enum class SourceLayer : uint8_t
 {
   Survey = 0,         ///< The CUBE product (live on-boat or off-boat re-run). Highest
