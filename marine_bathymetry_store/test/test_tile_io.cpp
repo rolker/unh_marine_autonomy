@@ -21,6 +21,8 @@
 
 #include <gtest/gtest.h>
 
+#include <unistd.h>
+
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -29,6 +31,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 
 #include "marine_bathymetry_store/bathymetry_store.hpp"
@@ -42,6 +45,34 @@ using marine_bathymetry_store::SourceLayer;
 using marine_bathymetry_store::StoreMetadata;
 
 namespace fs = std::filesystem;
+
+/// RAII guard that restores a directory's permissions on scope exit.
+///
+/// Tests that lock a directory to force an EACCES must unlock it again no matter
+/// how the scope is left — an escaping exception of an unexpected type, or a
+/// fatal assertion, would otherwise leave an `r-x` directory behind that makes
+/// `TearDown()`'s `remove_all` (and the NEXT run's `SetUp()` `remove_all`) throw,
+/// masking the original failure and wedging the test until /tmp is cleaned by
+/// hand. The destructor uses the `error_code` overload so it can never throw.
+class ScopedPermissions
+{
+public:
+  explicit ScopedPermissions(fs::path dir, fs::perms restore = fs::perms::owner_all)
+  : dir_(std::move(dir)), restore_(restore) {}
+
+  ScopedPermissions(const ScopedPermissions &) = delete;
+  ScopedPermissions & operator=(const ScopedPermissions &) = delete;
+
+  ~ScopedPermissions()
+  {
+    std::error_code ec;
+    fs::permissions(dir_, restore_, fs::perm_options::replace, ec);
+  }
+
+private:
+  fs::path dir_;
+  fs::perms restore_;
+};
 
 
 class TileIoTest : public ::testing::Test
@@ -325,12 +356,14 @@ TEST_F(TileIoTest, LoadIgnoresEpochSubdirectories)
 
 TEST_F(TileIoTest, LoadWarnsOnUnrecognizedStoreLayout)
 {
-  // A store dir written in the pre-#248 taxonomy (chart/draft/processed) has no
-  // survey/ or reference/ subdir, so load() reaches no tiles and returns empty.
-  // Because an empty bathy prior reads as navigable (unsurveyed_is_lethal default
-  // false), that silent-empty load must warn — matching the stale-subdir idiom.
-  fs::create_directories(dir_ / "chart");
-  {std::ofstream(dir_ / "chart" / "5_0_0.tif") << "old-layout tile";}
+  // A store dir written in an obsolete taxonomy has no recognized layer
+  // subdir, so load() reaches no tiles and returns empty. Because an empty
+  // bathy prior reads as navigable (unsurveyed_is_lethal default false), that
+  // silent-empty load must warn — matching the stale-subdir idiom. (The
+  // fixture used `chart/` as its old-layout example until #275 made chart a
+  // real layer; `old_unknown_layer/` is taxonomy-proof.)
+  fs::create_directories(dir_ / "old_unknown_layer");
+  {std::ofstream(dir_ / "old_unknown_layer" / "5_0_0.tif") << "old-layout tile";}
 
   BathymetryStore reloaded(5);
   std::ostringstream captured;
@@ -654,4 +687,480 @@ TEST_F(TileIoTest, EvictOutsideDirtyTileNotEvicted)
   EXPECT_EQ(evicted, 0u);
   // Tile must still be present.
   EXPECT_TRUE(store.get(SourceLayer::Survey, cell_out).has_value());
+}
+
+// --- Chart layer wholesale regeneration (ADR-0010 D7, #275) ---
+
+TEST_F(TileIoTest, ChartLayerRoundTripViaReplaceChartLayer)
+{
+  // Stage a chart layer in a staging store, swap it into a fresh store dir,
+  // and read it back through a normal (non-staging) runtime store.
+  BathymetryStore staging(
+    5, /*reference_writable=*/false, /*chart_staging_writable=*/true);
+  staging.set(SourceLayer::Chart, staging.cellIndex(43.0, -70.5), BathyCell{-20.5, 1.5});
+  const fs::path staged_store = dir_ / "staged";
+  ASSERT_EQ(marine_bathymetry_store::save(staging, staged_store.string()), 1u);
+
+  const fs::path store_dir = dir_ / "store";
+  fs::create_directories(store_dir);
+  marine_bathymetry_store::replaceChartLayer(
+    (staged_store / "chart").string(), store_dir.string());
+
+  BathymetryStore runtime(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+  const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, -20.5);
+}
+
+TEST_F(TileIoTest, ReplaceChartLayerRejectsMissingOrEmptyStagedDir)
+{
+  // Neither a nonexistent staged dir nor one with no .tif tiles may swap in;
+  // the existing chart layer stands untouched either way.
+  BathymetryStore staging(5, false, /*chart_staging_writable=*/true);
+  staging.set(SourceLayer::Chart, staging.cellIndex(43.0, -70.5), BathyCell{-20.5, 1.5});
+  const fs::path staged_store = dir_ / "staged";
+  ASSERT_EQ(marine_bathymetry_store::save(staging, staged_store.string()), 1u);
+  const fs::path store_dir = dir_ / "store";
+  fs::create_directories(store_dir);
+  marine_bathymetry_store::replaceChartLayer(
+    (staged_store / "chart").string(), store_dir.string());
+
+  EXPECT_THROW(
+    marine_bathymetry_store::replaceChartLayer(
+      (dir_ / "nonexistent").string(), store_dir.string()),
+    std::runtime_error);
+
+  const fs::path empty_staged = dir_ / "empty_staged";
+  fs::create_directories(empty_staged);
+  EXPECT_THROW(
+    marine_bathymetry_store::replaceChartLayer(
+      empty_staged.string(), store_dir.string()),
+    std::runtime_error);
+
+  // Old layer intact after both refusals.
+  BathymetryStore runtime(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+  EXPECT_TRUE(
+    runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5)).has_value());
+}
+
+/// Assert `replaceChartLayer` refuses with a `std::runtime_error` whose message
+/// names the expected guard. Matching the message (not merely the type) keeps each
+/// refusal case pinned to the check it is meant to exercise — an earlier guard
+/// firing first would otherwise make the case silently vacuous.
+static void expectChartRefusal(
+  const fs::path & staged, const fs::path & store_dir, const std::string & needle)
+{
+  try {
+    marine_bathymetry_store::replaceChartLayer(staged.string(), store_dir.string());
+    ADD_FAILURE() << "expected replaceChartLayer to refuse (" << needle << ")";
+  } catch (const std::runtime_error & e) {
+    EXPECT_NE(std::string(e.what()).find(needle), std::string::npos)
+      << "refusal did not come from the expected guard (" << needle << "): " << e.what();
+  }
+}
+
+TEST_F(TileIoTest, ReplaceChartLayerRejectsSymlinkedAliasedAndNonDirectoryPaths)
+{
+  // Dedicated refusal coverage for the pre-swap hardening guards: a SYMLINKED
+  // staged dir (is_directory() follows the link, so only the explicit
+  // is_symlink() check catches it), a staged dir ALIASING the live chart/ or its
+  // .chart_backup/ recovery path, and a NON-DIRECTORY store dir. Every refusal
+  // must land before anything is moved, leaving the live layer untouched.
+  const fs::path store_dir = dir_ / "store";
+  fs::create_directories(store_dir);
+
+  // Seed the live chart/ layer whose survival each refusal must preserve.
+  BathymetryStore seed(5, false, /*chart_staging_writable=*/true);
+  seed.set(SourceLayer::Chart, seed.cellIndex(43.0, -70.5), BathyCell{-20.5, 1.5});
+  const fs::path seed_staged = dir_ / "seed";
+  ASSERT_EQ(marine_bathymetry_store::save(seed, seed_staged.string()), 1u);
+  marine_bathymetry_store::replaceChartLayer(
+    (seed_staged / "chart").string(), store_dir.string());
+
+  // A perfectly valid staged layer — only the path it is reached by is wrong.
+  BathymetryStore regen(5, false, /*chart_staging_writable=*/true);
+  regen.set(SourceLayer::Chart, regen.cellIndex(43.0, -70.5), BathyCell{-99.0, 2.0});
+  const fs::path regen_root = dir_ / "regen";
+  ASSERT_EQ(marine_bathymetry_store::save(regen, regen_root.string()), 1u);
+  const fs::path real_staged = regen_root / "chart";
+
+  // 1. Symlink to a real staged dir: renaming it in would leave chart/ a link to
+  //    an out-of-store tree.
+  const fs::path staged_link = dir_ / "staged_link";
+  fs::create_directory_symlink(real_staged, staged_link);
+  expectChartRefusal(staged_link, store_dir, "is a symlink");
+  EXPECT_TRUE(fs::exists(real_staged));   // the link target was not moved
+
+  // 2. staged IS the live chart/ layer (equivalent()) — nothing to swap in.
+  expectChartRefusal(store_dir / "chart", store_dir, "is the live chart/ layer");
+
+  // 3. staged IS the .chart_backup/ recovery path — the swap would rename the
+  //    live chart/ onto the very tree it is being asked to commit.
+  const fs::path backup = store_dir / ".chart_backup";
+  fs::create_directories(backup);
+  {
+    std::ofstream tile(backup / "tile.tif");
+    tile << "x";
+  }
+  expectChartRefusal(backup, store_dir, "is the .chart_backup/ recovery path");
+  EXPECT_TRUE(fs::exists(backup / "tile.tif"));   // refused before any removal
+  fs::remove_all(backup);   // planted by this case only; clear it for the check below
+
+  // 4. A real staged dir whose only `.tif` is a SYMLINK to a tile outside the
+  //    store: is_regular_file() follows the link, so the value-tile check alone
+  //    would accept it and commit a link into the live navigation layer.
+  fs::path real_tile;
+  for (const auto & entry : fs::directory_iterator(real_staged)) {
+    if (entry.is_regular_file() && entry.path().extension() == ".tif") {
+      real_tile = entry.path();
+      break;
+    }
+  }
+  ASSERT_FALSE(real_tile.empty()) << "expected a .tif in the staged layer";
+  const fs::path linked_staged = dir_ / "linked_staged";
+  fs::create_directories(linked_staged);
+  // A live (non-dangling) link, so is_regular_file() really does say "yes".
+  fs::create_symlink(real_tile, linked_staged / real_tile.filename());
+  ASSERT_TRUE(fs::is_regular_file(linked_staged / real_tile.filename()));
+  expectChartRefusal(linked_staged, store_dir, "contains a symlinked entry");
+
+  // 5. store dir that exists but is a regular file, not a directory.
+  const fs::path file_store = dir_ / "not_a_dir";
+  {
+    std::ofstream f(file_store);
+    f << "x";
+  }
+  expectChartRefusal(real_staged, file_store, "store dir '");
+
+  // The live layer stands after every refusal, still holding the seeded value.
+  EXPECT_FALSE(fs::exists(store_dir / ".chart_backup"));
+  BathymetryStore runtime(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+  const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, -20.5);
+}
+
+TEST_F(TileIoTest, ReplaceChartLayerRejectsMisnamedStagedTile)
+{
+  // A staged `.tif` whose name has no parseable GGGS level prefix is rejected
+  // BEFORE the swap. `load()`/`loadWindow()` call levelFromTileFilename() on every
+  // non-companion `.tif` and it throws on such a name; because `Chart` is last in
+  // source_layers_by_priority, that throw at load time aborts the whole load after
+  // survey/reference were read and blacks out the bathymetry layer for the run.
+  // The gate must therefore be at least as strict as the load path so the
+  // mis-named tile never commits into the live navigation layer — the old chart/
+  // must stand untouched, with no backup left behind.
+  const fs::path store_dir = dir_ / "store";
+  fs::create_directories(store_dir);
+
+  // Seed the live chart/ layer whose survival the refusal must preserve.
+  BathymetryStore seed(5, false, /*chart_staging_writable=*/true);
+  seed.set(SourceLayer::Chart, seed.cellIndex(43.0, -70.5), BathyCell{-20.5, 1.5});
+  const fs::path seed_staged = dir_ / "seed";
+  ASSERT_EQ(marine_bathymetry_store::save(seed, seed_staged.string()), 1u);
+  marine_bathymetry_store::replaceChartLayer(
+    (seed_staged / "chart").string(), store_dir.string());
+
+  // A staged layer holding a real value tile AND a mis-named one. The scan reaches
+  // the bad name and refuses even though a valid tile is present (it scans every
+  // entry), so the outcome does not depend on directory iteration order.
+  BathymetryStore regen(5, false, /*chart_staging_writable=*/true);
+  regen.set(SourceLayer::Chart, regen.cellIndex(43.0, -70.5), BathyCell{-99.0, 2.0});
+  const fs::path regen_root = dir_ / "regen";
+  ASSERT_EQ(marine_bathymetry_store::save(regen, regen_root.string()), 1u);
+  const fs::path staged = regen_root / "chart";
+  {
+    std::ofstream bad(staged / "chart.tif");   // non-numeric: no level prefix
+    bad << "x";
+  }
+
+  expectChartRefusal(staged, store_dir, "level prefix");
+
+  // No backup was made and the old layer stands, still holding the seeded value.
+  EXPECT_FALSE(fs::exists(store_dir / ".chart_backup"));
+  BathymetryStore runtime(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+  const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, -20.5);
+}
+
+TEST_F(TileIoTest, ReplaceChartLayerRemovesStaleTilesWholesale)
+{
+  // Regeneration 1 covers two cells in different grids; regeneration 2 covers
+  // only one. After the second swap the dropped tile is GONE (supersession,
+  // never merge — ADR-0010 D7 / Context: importTiles clobber semantics).
+  const fs::path store_dir = dir_ / "store";
+  fs::create_directories(store_dir);
+
+  BathymetryStore regen1(5, false, /*chart_staging_writable=*/true);
+  regen1.set(SourceLayer::Chart, regen1.cellIndex(43.0, -70.5), BathyCell{-20.0, 1.5});
+  regen1.set(SourceLayer::Chart, regen1.cellIndex(44.0, -71.0), BathyCell{-30.0, 1.5});
+  const fs::path staged1 = dir_ / "staged1";
+  ASSERT_EQ(marine_bathymetry_store::save(regen1, staged1.string()), 2u);
+  marine_bathymetry_store::replaceChartLayer(
+    (staged1 / "chart").string(), store_dir.string());
+
+  BathymetryStore regen2(5, false, /*chart_staging_writable=*/true);
+  regen2.set(SourceLayer::Chart, regen2.cellIndex(43.0, -70.5), BathyCell{-21.0, 1.4});
+  const fs::path staged2 = dir_ / "staged2";
+  ASSERT_EQ(marine_bathymetry_store::save(regen2, staged2.string()), 1u);
+  marine_bathymetry_store::replaceChartLayer(
+    (staged2 / "chart").string(), store_dir.string());
+
+  BathymetryStore runtime(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+  const auto kept = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(kept.has_value());
+  EXPECT_DOUBLE_EQ(kept->depth, -21.0);   // updated value from regen 2
+  EXPECT_FALSE(
+    runtime.get(SourceLayer::Chart, runtime.cellIndex(44.0, -71.0)).has_value());
+  EXPECT_FALSE(fs::exists(store_dir / ".chart_backup"));   // backup cleaned up
+}
+
+TEST_F(TileIoTest, ReplaceChartLayerClearsStaleBackupFromCrashedRun)
+{
+  // A leftover .chart_backup/ from a crashed prior run must not wedge the
+  // next regeneration (plan-review finding: ENOTEMPTY on the backup rename).
+  const fs::path store_dir = dir_ / "store";
+  const fs::path stale_backup = store_dir / ".chart_backup";
+  fs::create_directories(stale_backup);
+  {
+    std::ofstream junk(stale_backup / "junk.tif");
+    junk << "stale";
+  }
+
+  BathymetryStore staging(5, false, /*chart_staging_writable=*/true);
+  staging.set(SourceLayer::Chart, staging.cellIndex(43.0, -70.5), BathyCell{-20.5, 1.5});
+  const fs::path staged_store = dir_ / "staged";
+  ASSERT_EQ(marine_bathymetry_store::save(staging, staged_store.string()), 1u);
+
+  // First swap: no existing chart/, stale backup present -> must succeed.
+  EXPECT_NO_THROW(
+    marine_bathymetry_store::replaceChartLayer(
+      (staged_store / "chart").string(), store_dir.string()));
+  EXPECT_FALSE(fs::exists(stale_backup));
+
+  // Second swap over the existing chart/ with another stale backup planted.
+  fs::create_directories(stale_backup);
+  {
+    std::ofstream junk(stale_backup / "junk.tif");
+    junk << "stale";
+  }
+  BathymetryStore staging2(5, false, /*chart_staging_writable=*/true);
+  staging2.set(SourceLayer::Chart, staging2.cellIndex(43.0, -70.5), BathyCell{-22.0, 1.2});
+  const fs::path staged2 = dir_ / "staged2";
+  ASSERT_EQ(marine_bathymetry_store::save(staging2, staged2.string()), 1u);
+  EXPECT_NO_THROW(
+    marine_bathymetry_store::replaceChartLayer(
+      (staged2 / "chart").string(), store_dir.string()));
+  EXPECT_FALSE(fs::exists(stale_backup));
+
+  BathymetryStore runtime(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+  const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, -22.0);
+}
+
+TEST_F(TileIoTest, ReplaceChartLayerSurvivesFailedPostCommitBackupCleanup)
+{
+  // A swap that has already COMMITTED must not surface as an exception just
+  // because terminal cleanup of .chart_backup/ fails — the caller could not then
+  // tell "swap failed, old layer stands" from "swap succeeded, stale backup left"
+  // and might wrongly retry or abort the regeneration run. Force the cleanup to
+  // fail by making the old chart/ dir non-writable: renaming it to .chart_backup/
+  // needs only store_dir write permission, but unlinking its contents does not.
+  if (::geteuid() == 0) {
+    GTEST_SKIP() << "runs as root: directory-permission denial is bypassed";
+  }
+
+  const fs::path store_dir = dir_ / "store";
+  const fs::path chart = store_dir / "chart";
+  const fs::path backup = store_dir / ".chart_backup";
+  fs::create_directories(store_dir);
+
+  BathymetryStore seed(5, false, /*chart_staging_writable=*/true);
+  seed.set(SourceLayer::Chart, seed.cellIndex(43.0, -70.5), BathyCell{-20.5, 1.5});
+  const fs::path seed_staged = dir_ / "seed";
+  ASSERT_EQ(marine_bathymetry_store::save(seed, seed_staged.string()), 1u);
+  marine_bathymetry_store::replaceChartLayer((seed_staged / "chart").string(), store_dir.string());
+
+  BathymetryStore regen(5, false, /*chart_staging_writable=*/true);
+  regen.set(SourceLayer::Chart, regen.cellIndex(43.0, -70.5), BathyCell{-42.0, 1.0});
+  const fs::path regen_root = dir_ / "regen";
+  ASSERT_EQ(marine_bathymetry_store::save(regen, regen_root.string()), 1u);
+
+  // Guard both paths the locked directory can occupy (chart/ before the swap,
+  // .chart_backup/ after it) so TearDown's remove_all always has permission.
+  const ScopedPermissions unlock_chart(chart);
+  const ScopedPermissions unlock_backup(backup);
+  fs::permissions(
+    chart, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
+
+  EXPECT_NO_THROW(
+    marine_bathymetry_store::replaceChartLayer(
+      (regen_root / "chart").string(), store_dir.string()));
+
+  // The commit stands: the new layer is live, and the backup that could not be
+  // cleaned is merely left behind (the next run drops it as stale).
+  EXPECT_TRUE(fs::exists(backup));
+  {
+    BathymetryStore runtime(5);
+    EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+    const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+    ASSERT_TRUE(got.has_value());
+    EXPECT_DOUBLE_EQ(got->depth, -42.0);
+  }
+
+  // The recovery half of the premise: the docs promise the leftover backup "is
+  // cleared by the next regeneration run", so a SECOND swap over the same store
+  // must succeed. The cause of the cleanup failure is persistent (the backup dir
+  // is still r-x), so this only holds because the pre-swap stale-backup drop is
+  // tolerant — remove_all via error_code, then rename aside. A throwing
+  // remove_all there would wedge every regeneration from here on.
+  const fs::path aside = store_dir / ".chart_backup.stale.0";
+  const ScopedPermissions unlock_aside(aside);
+
+  BathymetryStore regen2(5, false, /*chart_staging_writable=*/true);
+  regen2.set(SourceLayer::Chart, regen2.cellIndex(43.0, -70.5), BathyCell{-7.5, 0.9});
+  const fs::path regen2_root = dir_ / "regen2";
+  ASSERT_EQ(marine_bathymetry_store::save(regen2, regen2_root.string()), 1u);
+  EXPECT_NO_THROW(
+    marine_bathymetry_store::replaceChartLayer(
+      (regen2_root / "chart").string(), store_dir.string()));
+
+  // The stubborn backup was moved out of the way, not deleted (its contents are
+  // still unlinkable), and this swap's own backup was cleaned normally.
+  EXPECT_TRUE(fs::exists(aside));
+  EXPECT_FALSE(fs::exists(backup));
+
+  BathymetryStore runtime2(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime2, store_dir.string()), 1u);
+  const auto got2 = runtime2.get(SourceLayer::Chart, runtime2.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got2.has_value());
+  EXPECT_DOUBLE_EQ(got2->depth, -7.5);   // the second regeneration is live
+}
+
+TEST_F(TileIoTest, ReplaceChartLayerRestoresChartWhenCommitRenameFails)
+{
+  // The must-fix: exercise the restore branch (rename backup -> chart after a
+  // failed commit). We force the commit rename (staged -> chart) to fail AFTER
+  // the live chart/ has already moved to .chart_backup/, and assert chart/ is put
+  // back intact with its ORIGINAL value (ADR-0010 D7: a failed swap leaves the
+  // old layer standing). The trick: make the STAGED dir's parent read-only so
+  // removing the staged entry — part of rename(2) — fails with EACCES, while the
+  // chart/ -> .chart_backup/ rename inside the writable store dir still succeeds.
+  if (::geteuid() == 0) {
+    GTEST_SKIP() << "runs as root: directory-permission denial is bypassed";
+  }
+
+  const fs::path store_dir = dir_ / "store";
+  fs::create_directories(store_dir);
+
+  // Seed an existing chart/ layer with a known value — the layer whose survival
+  // through a failed swap we verify below.
+  BathymetryStore seed(5, false, /*chart_staging_writable=*/true);
+  seed.set(SourceLayer::Chart, seed.cellIndex(43.0, -70.5), BathyCell{-20.5, 1.5});
+  const fs::path seed_staged = dir_ / "seed";
+  ASSERT_EQ(marine_bathymetry_store::save(seed, seed_staged.string()), 1u);
+  marine_bathymetry_store::replaceChartLayer(
+    (seed_staged / "chart").string(), store_dir.string());
+
+  // Build a valid replacement whose staged chart/ lives under a parent we lock.
+  const fs::path ro_parent = dir_ / "ro_parent";
+  fs::create_directories(ro_parent);
+  BathymetryStore regen(5, false, /*chart_staging_writable=*/true);
+  regen.set(SourceLayer::Chart, regen.cellIndex(43.0, -70.5), BathyCell{-99.0, 2.0});
+  ASSERT_EQ(marine_bathymetry_store::save(regen, ro_parent.string()), 1u);
+  const fs::path staged = ro_parent / "chart";   // save() wrote chart/ under ro_parent
+
+  // Lock the staged dir's parent: rename(staged, chart) must remove `chart` from
+  // ro_parent, which now lacks write permission -> EACCES mid-swap. (Keep read +
+  // exec so the pre-swap validation walk of staged still works.) The guard
+  // restores owner_all on scope exit — unconditionally, so no escaping exception
+  // type or fatal assertion can leave a locked dir for TearDown to trip over.
+  const ScopedPermissions unlock_ro_parent(ro_parent);
+  fs::permissions(
+    ro_parent, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
+
+  // Pin the throw to the COMMIT rename (staged -> chart) rather than accept any
+  // filesystem_error: assert EACCES (permission_denied) and that path1() is the
+  // staged source. Pre-commit validation refusals throw std::runtime_error (not
+  // an fs::filesystem_error), so catching only the latter also keeps this
+  // non-vacuous — the sole filesystem_error reachable here is the commit rename.
+  bool threw = false;
+  try {
+    marine_bathymetry_store::replaceChartLayer(staged.string(), store_dir.string());
+  } catch (const fs::filesystem_error & e) {
+    threw = true;
+    EXPECT_EQ(e.code(), std::errc::permission_denied);
+    EXPECT_EQ(e.path1(), staged);
+  }
+  EXPECT_TRUE(threw) << "expected replaceChartLayer to throw fs::filesystem_error";
+
+  // (ro_parent is unlocked by `unlock_ro_parent` on scope exit — before TearDown.)
+
+  // The original chart/ is back, holds its ORIGINAL value (the regen never
+  // committed), and no backup is left behind.
+  EXPECT_FALSE(fs::exists(store_dir / ".chart_backup"));
+  BathymetryStore runtime(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+  const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, -20.5);
+}
+
+TEST_F(TileIoTest, ReplaceChartLayerRestoresOrphanedBackupThenSurvivesFailedSwap)
+{
+  // Crash recovery: start from a mid-swap crash state — chart/ absent,
+  // .chart_backup/ holding the old layer (the only surviving copy) — then drive a
+  // NEW swap that itself fails at the commit rename. The orphan must be RESTORED
+  // (not discarded), so the old layer stands after the failed swap. With the old
+  // discard behavior the store would be left with NO chart layer at all.
+  if (::geteuid() == 0) {
+    GTEST_SKIP() << "runs as root: directory-permission denial is bypassed";
+  }
+
+  const fs::path store_dir = dir_ / "store";
+  const fs::path backup = store_dir / ".chart_backup";
+  fs::create_directories(store_dir);
+
+  // Plant an orphaned backup (a real saved chart/ renamed into place); chart/ absent.
+  BathymetryStore old_layer(5, false, /*chart_staging_writable=*/true);
+  old_layer.set(SourceLayer::Chart, old_layer.cellIndex(43.0, -70.5), BathyCell{-10.0, 1.0});
+  const fs::path old_src = dir_ / "old";
+  ASSERT_EQ(marine_bathymetry_store::save(old_layer, old_src.string()), 1u);
+  fs::rename(old_src / "chart", backup);
+  ASSERT_FALSE(fs::exists(store_dir / "chart"));
+
+  // A valid new regeneration whose staged chart/ sits under a parent we lock, so
+  // the commit rename fails after recovery has restored the orphan.
+  const fs::path ro_parent = dir_ / "ro_parent";
+  fs::create_directories(ro_parent);
+  BathymetryStore regen(5, false, /*chart_staging_writable=*/true);
+  regen.set(SourceLayer::Chart, regen.cellIndex(44.0, -71.0), BathyCell{-30.0, 1.5});
+  ASSERT_EQ(marine_bathymetry_store::save(regen, ro_parent.string()), 1u);
+  const fs::path staged = ro_parent / "chart";
+  // Same unconditional-unlock guard as the sibling test: EXPECT_THROW swallowing a
+  // non-matching exception type is not a reason to leave the unlock conditional.
+  const ScopedPermissions unlock_ro_parent(ro_parent);
+  fs::permissions(
+    ro_parent, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
+
+  EXPECT_THROW(
+    marine_bathymetry_store::replaceChartLayer(staged.string(), store_dir.string()),
+    fs::filesystem_error);
+
+  // The restored old layer stands (the failed regen left no chart/ gap), and no
+  // backup lingers.
+  EXPECT_FALSE(fs::exists(backup));
+  BathymetryStore runtime(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+  const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got.has_value());   // old orphan data restored and surviving
+  EXPECT_DOUBLE_EQ(got->depth, -10.0);
 }

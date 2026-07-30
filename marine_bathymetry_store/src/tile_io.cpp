@@ -21,6 +21,8 @@
 
 #include "marine_bathymetry_store/tile_io.hpp"
 
+#include <sys/stat.h>
+
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
@@ -28,6 +30,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "geographic_msgs/msg/geo_point.hpp"
@@ -154,12 +157,14 @@ bool tileOverlapsBox(
 }
 
 /// @brief Warn when a store directory holds content but exposes no recognized
-/// `survey/`/`reference/` layer subdirectory — an old-layout (or foreign) store
-/// from which NOTHING loads.
+/// `survey/`/`reference/`/`chart/` layer subdirectory — an old-layout (or
+/// foreign) store from which NOTHING loads.
 ///
 /// This is a navigation-safety *observability* guard: `load()`/`loadWindow()`
-/// skip a layer whose subdir is absent, so a store written in the pre-#248
-/// taxonomy (`chart/`, `draft/`, `processed/`) loads as **empty** without error.
+/// skip a layer whose subdir is absent, so a store written only in the still-
+/// obsolete taxonomy (`draft/`, `processed/` — D8, not yet implemented) loads as
+/// **empty** without error. (`chart/` is a real layer since #275, so it is
+/// recognized here and no longer part of the obsolete set.)
 /// With `BathymetryLayer`'s `unsurveyed_is_lethal_ == false` default, an empty
 /// bathy prior reads as *navigable*, so a silently-empty load must not pass
 /// unnoticed. Matches the store's existing stale-subdir WARNING idiom.
@@ -191,11 +196,11 @@ void warnIfUnrecognizedStoreLayout(const std::string & dir, bool any_layer_dir_p
     return;   // empty store, or metadata-only sidecar — legitimately nothing loaded
   }
   std::cerr << "[marine_bathymetry_store] WARNING: store directory '" << dir
-            << "' has content but no recognized 'survey/' or 'reference/' layer "
-            << "subdirectory — NOTHING was loaded. A pre-#248 old-layout store "
-            << "(chart/draft/processed) is not migrated (#221/#248); regenerate "
-            << "it. An empty bathy prior reads as unsurveyed (navigable unless "
-            << "unsurveyed_is_lethal is set).\n";
+            << "' has content but no recognized 'survey/', 'reference/', or "
+            << "'chart/' layer subdirectory — NOTHING was loaded. A pre-#248 "
+            << "old-layout store (draft/processed) is not migrated (#221/#248); "
+            << "regenerate it. An empty bathy prior reads as unsurveyed (navigable "
+            << "unless unsurveyed_is_lethal is set).\n";
 }
 
 /// @brief True if @p filename is a dropped pre-#248 companion raster
@@ -255,6 +260,7 @@ std::string layerDirName(SourceLayer layer)
   switch (layer) {
     case SourceLayer::Survey: return "survey";
     case SourceLayer::Reference: return "reference";
+    case SourceLayer::Chart: return "chart";
   }
   throw std::runtime_error("layerDirName: unknown SourceLayer");
 }
@@ -461,6 +467,272 @@ std::size_t evictOutside(
     }
   }
   return evicted;
+}
+
+void replaceChartLayer(
+  const std::string & staged_chart_dir, const std::string & store_dir)
+{
+  namespace fs = std::filesystem;
+  const fs::path staged(staged_chart_dir);
+  const fs::path chart = fs::path(store_dir) / layerDirName(SourceLayer::Chart);
+  const fs::path backup = fs::path(store_dir) / ".chart_backup";
+
+  // Validate the store dir up front: a non-directory store path would otherwise
+  // surface as an opaque ENOTDIR mid-swap once the renames start. Fail clearly
+  // before the live layer is ever touched.
+  if (!fs::is_directory(store_dir)) {
+    throw std::runtime_error(
+            "replaceChartLayer: store dir '" + store_dir +
+            "' does not exist or is not a directory");
+  }
+
+  // Validate the staged layer BEFORE touching the live one: it must exist and
+  // hold at least one value tile, so an empty/failed export can never swap in
+  // (ADR-0010 D7 — a corrupt regeneration must leave the old layer standing).
+  if (!fs::is_directory(staged)) {
+    throw std::runtime_error(
+            "replaceChartLayer: staged dir '" + staged_chart_dir +
+            "' does not exist or is not a directory");
+  }
+  // is_directory() follows symlinks, so a symlink-to-directory passes the check
+  // above; rename(staged, chart) would then move the SYMLINK into the store,
+  // leaving chart/ a link to an out-of-store tree (silently breakable, and
+  // remove_all(backup) semantics murky). Reject a symlinked staged dir outright.
+  if (fs::is_symlink(staged)) {
+    throw std::runtime_error(
+            "replaceChartLayer: staged dir '" + staged_chart_dir +
+            "' is a symlink — refusing to move a symlink into the store");
+  }
+  // Reject staged aliasing the live chart/ or its backup: were staged the same
+  // file as chart/ (or .chart_backup/), the chart -> backup rename and the
+  // remove_all(backup) recovery step would operate on the very tree we mean to
+  // swap in. equivalent() requires both paths to exist, so guard on existence
+  // (the error_code overload returns false without throwing for a missing side).
+  // Fail CLOSED if the equivalence check itself errors. The error_code overload
+  // returns false on failure, so an unreadable path or a race would silently
+  // degrade the guard to "no check" — precisely when the filesystem is already
+  // misbehaving. An indeterminate answer is treated as a refusal; the swap is
+  // destructive and a caller can always retry. (Not unit-tested: with both sides'
+  // existence already established just above, only a genuine race can make
+  // equivalent() fail, which a test cannot deterministically stage.)
+  const auto refuseIfAliases =
+    [&staged, &staged_chart_dir](const fs::path & other, const std::string & what) {
+      if (!fs::exists(other)) {
+        return;
+      }
+      std::error_code eq_ec;
+      const bool same = fs::equivalent(staged, other, eq_ec);
+      if (eq_ec) {
+        throw std::runtime_error(
+                "replaceChartLayer: cannot determine whether staged dir '" +
+                staged_chart_dir + "' is " + what + " ('" + other.string() + "'): " +
+                eq_ec.message() + " — refusing the swap rather than assuming it is not");
+      }
+      if (same) {
+        throw std::runtime_error(
+                "replaceChartLayer: staged dir '" + staged_chart_dir + "' is " + what +
+                " — refusing to swap");
+      }
+    };
+  refuseIfAliases(chart, "the live chart/ layer");
+  refuseIfAliases(backup, "the .chart_backup/ recovery path");
+  bool has_tile = false;
+  for (const auto & entry : fs::directory_iterator(staged)) {
+    // A symlinked entry inside staged is the same out-of-store-link hazard the
+    // symlinked-staged-dir guard above prevents, one level down: is_regular_file()
+    // follows symlinks, so a symlinked `foo.tif` would satisfy the value-tile check
+    // and then ride into chart/ on the commit rename, leaving the live navigation
+    // layer dependent on a tree outside the store. The load path can tolerate that
+    // (it only reads); replaceChartLayer commits it permanently, so refuse. Scan
+    // every entry rather than stopping at the first tile so the refusal does not
+    // depend on directory iteration order.
+    if (entry.is_symlink()) {
+      throw std::runtime_error(
+              "replaceChartLayer: staged dir '" + staged_chart_dir +
+              "' contains a symlinked entry '" + entry.path().filename().string() +
+              "' — refusing to commit a link into the store");
+    }
+    // A directory named `foo.tif` is not a value tile, so gate on
+    // is_regular_file() before accepting it — exactly as the load path does (see
+    // `load()`; is_regular_file() there guards the same case).
+    if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
+      continue;
+    }
+    const std::string name = entry.path().filename().string();
+    // Dropped pre-#248 companions (`*_time.tif`/`*_source.tif`) are not value
+    // tiles; `load()` skips them via isDroppedCompanionTile() rather than parsing
+    // their (non-numeric) name, so do the same here — neither validate nor count
+    // them as the required tile.
+    if (isDroppedCompanionTile(name)) {
+      continue;
+    }
+    // Validate the staged tile name the SAME way the load path will read it:
+    // `load()`/`loadWindow()` call levelFromTileFilename() on every non-companion
+    // `.tif`, and it THROWS on a non-numeric or out-of-GGGS-range level prefix
+    // (`chart.tif`, `foo.tif`, `99_0_0.tif`). `Chart` is last in
+    // source_layers_by_priority, so at load time that throw aborts the whole load
+    // *after* survey/reference were read, and `bathymetry_layer` then contributes
+    // nothing for the rest of the run — one mis-named staged tile permanently
+    // blacks out the layer. Validate here, before the commit, so such a tile is
+    // refused while the old `chart/` still stands (D7) rather than after it is live.
+    levelFromTileFilename(name);   // throws std::runtime_error on a bad tile name
+    has_tile = true;
+  }
+  if (!has_tile) {
+    throw std::runtime_error(
+            "replaceChartLayer: staged dir '" + staged_chart_dir +
+            "' contains no .tif tiles — refusing to swap in an empty layer");
+  }
+
+  // Fail fast on a cross-device staged dir. rename(2) across filesystems returns
+  // EXDEV, so a staged dir on another mount cannot atomically commit. Detecting
+  // it here — BEFORE the live chart/ is moved aside — means such a caller-contract
+  // breach is refused without ever disturbing the old layer (D7).
+  {
+    struct stat staged_st{};
+    struct stat store_st{};
+    if (::stat(staged.c_str(), &staged_st) != 0 ||
+      ::stat(store_dir.c_str(), &store_st) != 0)
+    {
+      throw std::runtime_error(
+              "replaceChartLayer: cannot stat staged dir or store dir to verify "
+              "same-filesystem placement");
+    }
+    if (staged_st.st_dev != store_st.st_dev) {
+      throw std::runtime_error(
+              "replaceChartLayer: staged dir '" + staged_chart_dir +
+              "' is on a different filesystem than store dir '" + store_dir +
+              "' — a cross-device rename cannot atomically commit (EXDEV); stage "
+              "on the same filesystem as the store");
+    }
+  }
+
+  // Crash recovery. A `.chart_backup/` left by a crashed prior run marks an
+  // interrupted swap; which repair to apply depends on whether `chart/` exists:
+  //   - chart/ ABSENT, backup present: the crash struck between the
+  //     chart/ -> backup rename and the staged -> chart commit. The backup holds
+  //     the ONLY copy of the old layer, so RESTORE it — discarding it would leave
+  //     the store with no chart layer at all.
+  //   - chart/ PRESENT, backup present: the crash struck after the commit but
+  //     before cleanup, so the backup is truly stale (the live chart/ supersedes
+  //     it) and is dropped below.
+  // After a restore the backup no longer exists, so the drop below is a no-op;
+  // otherwise it clears a genuinely stale backup that would else make the
+  // chart -> backup rename fail with ENOTEMPTY.
+  if (fs::exists(backup) && !fs::exists(chart)) {
+    fs::rename(backup, chart);
+  }
+  // Drop the stale backup TOLERANTLY. This is the step the post-commit cleanup
+  // warning below delegates to ("cleared by the next regeneration run"), so it
+  // must not itself be the thing that wedges regeneration: every realistic cause
+  // of a failed cleanup (EACCES on the backup dir, EROFS, EBUSY) is persistent,
+  // and a throwing remove_all here would make every subsequent run fail at the
+  // same point until a human intervened. Two-stage: try to delete it, and if the
+  // deletion fails while the backup still stands, rename it aside to
+  // `.chart_backup.stale.<n>/` — a rename needs only store-dir write permission
+  // (not permission to unlink the backup's contents), so a stubborn backup is
+  // moved out of the swap's way instead of blocking it. Aside dirs are not layer
+  // dirs, so `load()` (which reads only survey/reference/chart) ignores them;
+  // they are inert until a human clears them.
+  {
+    std::error_code drop_ec;
+    fs::remove_all(backup, drop_ec);
+    // Every filesystem probe in this tolerant block uses the `error_code`
+    // overload: the whole point is not to throw here (a throw is what would wedge
+    // the next run). Fail CLOSED on an indeterminate answer — if `exists()` itself
+    // errors (an unreadable `store_dir`, the very condition this block guards
+    // against), treat the backup as still present so the aside/refusal path runs
+    // rather than the throwing `chart/` → backup rename below.
+    std::error_code exist_ec;
+    const bool backup_remains = fs::exists(backup, exist_ec) || exist_ec;
+    if (drop_ec && backup_remains) {
+      // Find a free `.chart_backup.stale.<n>` slot. Bound the search: an unbounded
+      // loop would spin forever if `store_dir` became unreadable (every `exists()`
+      // erroring to false reads as "taken"), so cap it and turn exhaustion into a
+      // clean refusal before the live layer is touched.
+      constexpr int kMaxStaleAsides = 1000;
+      fs::path aside;
+      bool found_slot = false;
+      for (int n = 0; n < kMaxStaleAsides; ++n) {
+        aside = fs::path(store_dir) / (".chart_backup.stale." + std::to_string(n));
+        std::error_code slot_ec;
+        if (!fs::exists(aside, slot_ec) && !slot_ec) {
+          found_slot = true;
+          break;
+        }
+      }
+      if (!found_slot) {
+        throw std::runtime_error(
+                "replaceChartLayer: a stale '" + backup.string() +
+                "' could not be removed (" + drop_ec.message() +
+                ") and no free '.chart_backup.stale.<n>' slot was available under '" +
+                store_dir + "' within " + std::to_string(kMaxStaleAsides) +
+                " tries — clear it by hand before regenerating the chart layer");
+      }
+      std::error_code aside_ec;
+      fs::rename(backup, aside, aside_ec);
+      if (aside_ec) {
+        // Neither removable nor movable: the chart -> backup rename would fail
+        // with ENOTEMPTY mid-swap, so refuse now, before the live layer is
+        // touched (D7 — a failed regeneration leaves the old layer standing).
+        throw std::runtime_error(
+                "replaceChartLayer: a stale '" + backup.string() +
+                "' could not be removed (" + drop_ec.message() +
+                ") nor renamed aside (" + aside_ec.message() +
+                ") — clear it by hand before regenerating the chart layer");
+      }
+      std::cerr << "[marine_bathymetry_store] WARNING: replaceChartLayer could not remove "
+                << "the stale backup at '" << backup.string() << "': " << drop_ec.message()
+                << " — it was renamed aside to '" << aside.string()
+                << "' so the swap can proceed; remove that directory by hand.\n";
+    }
+  }
+
+  const bool had_chart = fs::exists(chart);
+  if (had_chart) {
+    fs::rename(chart, backup);
+  }
+  try {
+    // The commit point: atomic on a single filesystem (rename(2)).
+    fs::rename(staged, chart);
+  } catch (...) {
+    if (had_chart) {
+      // Best-effort restore via the error_code overload: if the restore rename
+      // ALSO fails (double fault) it must not throw over and mask the original
+      // swap failure — that original is what we rethrow. The old layer then
+      // survives under the backup path for manual recovery.
+      std::error_code restore_ec;
+      fs::rename(backup, chart, restore_ec);
+      if (restore_ec) {
+        std::cerr << "[marine_bathymetry_store] CRITICAL: replaceChartLayer could "
+                  << "not restore chart/ from '" << backup.string()
+                  << "' after a failed swap: " << restore_ec.message()
+                  << " — the previous layer survives under that backup path; "
+                  << "manual recovery required.\n";
+      }
+    }
+    throw;
+  }
+  if (had_chart) {
+    // The swap has ALREADY committed; clearing the backup is terminal cleanup, not
+    // part of the guarantee. Throwing here would report a successful swap as a
+    // failure — the caller could not tell "swap failed, old layer stands" from
+    // "swap succeeded, stale backup left behind" and might wrongly retry or abort
+    // the regeneration run. Use the error_code overload (same idiom as the restore
+    // path above) and warn instead; the next run's crash-recovery step clears the
+    // leftover backup (chart/ is present, so it is treated as stale) — and clears
+    // it *tolerantly* (rename-aside fallback), so a persistent cause of this
+    // failure cannot wedge later regenerations.
+    std::error_code cleanup_ec;
+    fs::remove_all(backup, cleanup_ec);
+    if (cleanup_ec) {
+      std::cerr << "[marine_bathymetry_store] WARNING: replaceChartLayer committed the "
+                << "new chart/ layer but could not remove the backup at '"
+                << backup.string() << "': " << cleanup_ec.message()
+                << " — the swap succeeded; the next regeneration run clears the stale "
+                << "backup, renaming it aside if it still cannot be removed.\n";
+    }
+  }
 }
 
 }  // namespace marine_bathymetry_store

@@ -254,3 +254,32 @@ TEST(Query, ShallowestReliableWithNoReliableDataReturnsNullopt)
   // rejects it. This confirms the nullopt is the gate, not absent data.
   EXPECT_TRUE(bestSource(store, cell).has_value());
 }
+
+TEST(Query, BestSourceFullPriorityOrderSurveyReferenceChart)
+{
+  // ADR-0010 D4 placeholder ordering: survey > reference > chart. With all
+  // three present the highest-priority layer wins; removing layers walks down.
+  BathymetryStore store(5, /*reference_writable=*/true, /*chart_staging_writable=*/true);
+  const auto cell = store.cellIndex(43.0, -70.5);
+  store.set(SourceLayer::Chart, cell, BathyCell{-20.0, 1.5});
+  store.set(SourceLayer::Reference, cell, BathyCell{-12.0, 2.0});
+  store.set(SourceLayer::Survey, cell, BathyCell{-10.0, 0.1});
+
+  auto best = bestSource(store, cell);
+  ASSERT_TRUE(best.has_value());
+  EXPECT_EQ(best->source, SourceLayer::Survey);
+
+  const auto cell2 = store.cellIndex(44.0, -71.0);
+  store.set(SourceLayer::Chart, cell2, BathyCell{-21.0, 1.5});
+  store.set(SourceLayer::Reference, cell2, BathyCell{-13.0, 2.0});
+  best = bestSource(store, cell2);
+  ASSERT_TRUE(best.has_value());
+  EXPECT_EQ(best->source, SourceLayer::Reference);
+
+  const auto cell3 = store.cellIndex(45.0, -69.0);
+  store.set(SourceLayer::Chart, cell3, BathyCell{-22.0, 1.5});
+  best = bestSource(store, cell3);
+  ASSERT_TRUE(best.has_value());
+  EXPECT_EQ(best->source, SourceLayer::Chart);
+  EXPECT_DOUBLE_EQ(best->depth, -22.0);
+}

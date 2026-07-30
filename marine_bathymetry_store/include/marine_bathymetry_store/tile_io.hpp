@@ -47,10 +47,13 @@
 /// cache, the per-cell time band's only reader (the costmap staleness gate) was
 /// retired, and per-cell source provenance is a constant for a single platform.
 ///
-/// The quality/maturity axis (Survey / Reference) is encoded as the on-disk
-/// subdirectory (`survey/`, `reference/`); each holds **one fused** set of value
-/// tiles directly (no per-day epoch subdirectory since #221). Coarse provenance
-/// moves to the store-wide `registry.json` `StoreMetadata` (ADR-0005 #248).
+/// The quality/maturity axis (Survey / Reference / Chart) is encoded as the
+/// on-disk subdirectory (`survey/`, `reference/`, `chart/`); each holds **one
+/// fused** set of value tiles directly (no per-day epoch subdirectory since
+/// #221). `chart/` (official navigation products, #275/ADR-0010 D3/D7) is written
+/// only via the wholesale atomic swap (`replaceChartLayer`), never incrementally.
+/// Coarse provenance moves to the store-wide `registry.json` `StoreMetadata`
+/// (ADR-0005 #248) — it lives at the store root, not inside any layer dir.
 ///
 /// @note Round-trip persistence is validated for **non-polar** latitudes
 /// (|lat| < 72°), the intended lake/coastal survey envelope. Near GGGS's polar
@@ -67,8 +70,9 @@ namespace marine_bathymetry_store
 ///        `<level>_<row>_<col>.tif`.
 std::string tileFilename(const gggs::GridIndex & grid);
 
-/// @brief Subdirectory name for a source layer (`"survey"` / `"reference"`).
-///        Each holds one fused set of value tiles directly (#221).
+/// @brief Subdirectory name for a source layer
+///        (`"survey"` / `"reference"` / `"chart"`). Each holds one fused set of
+///        value tiles directly (#221).
 std::string layerDirName(SourceLayer layer);
 
 /// @brief Write one tile as a single value GeoTIFF at @p path (`<grid>.tif`).
@@ -185,6 +189,58 @@ std::size_t evictOutside(
   BathymetryStore & store,
   const geographic_msgs::msg::GeoPoint & min_pt,
   const geographic_msgs::msg::GeoPoint & max_pt);
+
+/// @brief Atomically replace a store's `chart/` layer with a staged directory
+///        (ADR-0010 D7 wholesale regeneration — never a merge).
+///
+/// The updater builds the new chart layer (its value tiles) into
+/// @p staged_chart_dir, then calls this to swap it in. The rename is the
+/// single commit point: a failure at any step leaves the previous `chart/`
+/// fully intact. Always targets `chart/` — deliberately NOT parameterized by
+/// SourceLayer, so no caller can wholesale-replace survey/reference data.
+///
+/// Sequence: validate the store dir and staged dir (staged exists as a real
+/// directory — not a symlink — does not alias the live `chart/` or its backup,
+/// contains no symlinked entries, and holds ≥1 `.tif`); recover from
+/// an interrupted prior swap (restore `.chart_backup/` → `chart/` when `chart/`
+/// is absent — the crash struck mid-commit — otherwise drop the now-stale
+/// backup, renaming it aside to `.chart_backup.stale.<n>/` if it cannot be
+/// removed); rename existing `chart/` → `.chart_backup/`; rename staged →
+/// `chart/` (atomic on one filesystem); on failure restore the backup and
+/// rethrow; on success remove the backup (best-effort — see @throws).
+///
+/// Caller contract: run only while no consumer holds the store open (D7's
+/// enforced nav-down precondition); the staged dir must be on the same
+/// filesystem as @p store_dir for rename atomicity — this is now enforced up
+/// front (a cross-device staged dir is rejected before the live layer is
+/// touched) rather than left to fail mid-swap.
+///
+/// @throws std::runtime_error on validation failure (missing/empty staged dir,
+///         a symlinked staged dir, a symlinked entry inside the staged dir, a
+///         staged `.tif` whose name has no parseable GGGS level prefix — the same
+///         `levelFromTileFilename` check the load path applies, so a tile that
+///         would abort `load()` is rejected before the swap rather than after it
+///         is live — a staged dir aliasing the live `chart/` or its backup — or an
+///         alias check that cannot be resolved, which fails closed — a
+///         non-directory store dir, or a cross-device staged dir), and on a stale
+///         `.chart_backup/` that can be neither removed nor renamed aside (it
+///         would make the `chart/` → backup rename fail with ENOTEMPTY mid-swap)
+///         — all detected before any swap;
+///         std::filesystem::filesystem_error on a filesystem operation up to and
+///         including the commit point failing — the commit-point rename (after a
+///         best-effort backup restoration that never masks the original error)
+///         and the pre-swap crash-recovery *restore* of an orphaned
+///         `.chart_backup/` (`fs::rename`, throwing overload). The pre-swap drop
+///         of a *stale* backup is deliberately tolerant: it uses the `error_code`
+///         `fs::remove_all` and, if the backup survives, renames it aside to
+///         `.chart_backup.stale.<n>/` and warns, so a persistent cause
+///         (EACCES/EROFS/EBUSY) cannot wedge every subsequent regeneration.
+///         Nothing *after* the commit throws: the post-commit backup cleanup uses
+///         the `error_code` overload and only warns on `std::cerr`, so a committed
+///         swap is never reported to the caller as a failure — and the leftover
+///         backup really is cleared (removed, or moved aside) by the next run.
+void replaceChartLayer(
+  const std::string & staged_chart_dir, const std::string & store_dir);
 
 }  // namespace marine_bathymetry_store
 
