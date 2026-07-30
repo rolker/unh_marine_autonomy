@@ -108,3 +108,11 @@ pairing).
   ingest); a stale sidecar renders stale coarse imagery but can never corrupt
   fine data.
 - Overviews add ~1/3 of a layer's fine-tile volume (geometric series).
+- **Deferred, for the depths pyramid:** `marine_bathymetry_store`'s flat-layout
+  loader (`tile_io.cpp`) WARNs and skips **any** subdirectory it finds under a
+  layer dir (the `#221` flat-layout guard against stale epoch dirs). The reserved
+  depth `overviews/` sidecar is such a subdirectory, so when the depths pyramid
+  lands (after the ADR-0010 D8 re-split) that loader must be taught to skip
+  `overviews/` silently — not warn about it — or the sidecar will trip a spurious
+  "ignoring unexpected subdirectory" warning on every load. No action needed for
+  sidescan (this run), whose store loader does not share that guard.
