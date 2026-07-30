@@ -843,6 +843,51 @@ TEST_F(TileIoTest, ReplaceChartLayerRejectsSymlinkedAliasedAndNonDirectoryPaths)
   EXPECT_DOUBLE_EQ(got->depth, -20.5);
 }
 
+TEST_F(TileIoTest, ReplaceChartLayerRejectsMisnamedStagedTile)
+{
+  // A staged `.tif` whose name has no parseable GGGS level prefix is rejected
+  // BEFORE the swap. `load()`/`loadWindow()` call levelFromTileFilename() on every
+  // non-companion `.tif` and it throws on such a name; because `Chart` is last in
+  // source_layers_by_priority, that throw at load time aborts the whole load after
+  // survey/reference were read and blacks out the bathymetry layer for the run.
+  // The gate must therefore be at least as strict as the load path so the
+  // mis-named tile never commits into the live navigation layer — the old chart/
+  // must stand untouched, with no backup left behind.
+  const fs::path store_dir = dir_ / "store";
+  fs::create_directories(store_dir);
+
+  // Seed the live chart/ layer whose survival the refusal must preserve.
+  BathymetryStore seed(5, false, /*chart_staging_writable=*/true);
+  seed.set(SourceLayer::Chart, seed.cellIndex(43.0, -70.5), BathyCell{-20.5, 1.5});
+  const fs::path seed_staged = dir_ / "seed";
+  ASSERT_EQ(marine_bathymetry_store::save(seed, seed_staged.string()), 1u);
+  marine_bathymetry_store::replaceChartLayer(
+    (seed_staged / "chart").string(), store_dir.string());
+
+  // A staged layer holding a real value tile AND a mis-named one. The scan reaches
+  // the bad name and refuses even though a valid tile is present (it scans every
+  // entry), so the outcome does not depend on directory iteration order.
+  BathymetryStore regen(5, false, /*chart_staging_writable=*/true);
+  regen.set(SourceLayer::Chart, regen.cellIndex(43.0, -70.5), BathyCell{-99.0, 2.0});
+  const fs::path regen_root = dir_ / "regen";
+  ASSERT_EQ(marine_bathymetry_store::save(regen, regen_root.string()), 1u);
+  const fs::path staged = regen_root / "chart";
+  {
+    std::ofstream bad(staged / "chart.tif");   // non-numeric: no level prefix
+    bad << "x";
+  }
+
+  expectChartRefusal(staged, store_dir, "level prefix");
+
+  // No backup was made and the old layer stands, still holding the seeded value.
+  EXPECT_FALSE(fs::exists(store_dir / ".chart_backup"));
+  BathymetryStore runtime(5);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+  const auto got = runtime.get(SourceLayer::Chart, runtime.cellIndex(43.0, -70.5));
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->depth, -20.5);
+}
+
 TEST_F(TileIoTest, ReplaceChartLayerRemovesStaleTilesWholesale)
 {
   // Regeneration 1 covers two cells in different grids; regeneration 2 covers

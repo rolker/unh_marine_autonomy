@@ -213,9 +213,12 @@ std::size_t evictOutside(
 ///
 /// @throws std::runtime_error on validation failure (missing/empty staged dir,
 ///         a symlinked staged dir, a symlinked entry inside the staged dir, a
-///         staged dir aliasing the live `chart/` or its backup — or an alias
-///         check that cannot be resolved, which fails closed — a non-directory
-///         store dir, or a cross-device staged dir), and on a stale
+///         staged `.tif` whose name has no parseable GGGS level prefix — the same
+///         `levelFromTileFilename` check the load path applies, so a tile that
+///         would abort `load()` is rejected before the swap rather than after it
+///         is live — a staged dir aliasing the live `chart/` or its backup — or an
+///         alias check that cannot be resolved, which fails closed — a
+///         non-directory store dir, or a cross-device staged dir), and on a stale
 ///         `.chart_backup/` that can be neither removed nor renamed aside (it
 ///         would make the `chart/` → backup rename fail with ENOTEMPTY mid-swap)
 ///         — all detected before any swap;

@@ -552,11 +552,31 @@ void replaceChartLayer(
               "' contains a symlinked entry '" + entry.path().filename().string() +
               "' — refusing to commit a link into the store");
     }
-    // Mirror the load path (:343): a directory named `foo.tif` is not a value
-    // tile, so gate on is_regular_file() before accepting the staged layer.
-    if (entry.is_regular_file() && entry.path().extension() == ".tif") {
-      has_tile = true;
+    // A directory named `foo.tif` is not a value tile, so gate on
+    // is_regular_file() before accepting it — exactly as the load path does (see
+    // `load()`; is_regular_file() there guards the same case).
+    if (!entry.is_regular_file() || entry.path().extension() != ".tif") {
+      continue;
     }
+    const std::string name = entry.path().filename().string();
+    // Dropped pre-#248 companions (`*_time.tif`/`*_source.tif`) are not value
+    // tiles; `load()` skips them via isDroppedCompanionTile() rather than parsing
+    // their (non-numeric) name, so do the same here — neither validate nor count
+    // them as the required tile.
+    if (isDroppedCompanionTile(name)) {
+      continue;
+    }
+    // Validate the staged tile name the SAME way the load path will read it:
+    // `load()`/`loadWindow()` call levelFromTileFilename() on every non-companion
+    // `.tif`, and it THROWS on a non-numeric or out-of-GGGS-range level prefix
+    // (`chart.tif`, `foo.tif`, `99_0_0.tif`). `Chart` is last in
+    // source_layers_by_priority, so at load time that throw aborts the whole load
+    // *after* survey/reference were read, and `bathymetry_layer` then contributes
+    // nothing for the rest of the run — one mis-named staged tile permanently
+    // blacks out the layer. Validate here, before the commit, so such a tile is
+    // refused while the old `chart/` still stands (D7) rather than after it is live.
+    levelFromTileFilename(name);   // throws std::runtime_error on a bad tile name
+    has_tile = true;
   }
   if (!has_tile) {
     throw std::runtime_error(
