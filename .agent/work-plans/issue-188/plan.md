@@ -89,15 +89,58 @@ policy and the depths pyramid wait for the ADR-0010 D8 re-split (#271).
 
 ## Files to Change
 
+Updated to the as-built set (13 files; the plan below is corrected in
+**Implementation Notes (as-built)** where the design evolved through review
+rounds 1–2). Plus `.agent/work-plans/issue-188/{plan.md,progress.md}` (governance),
+for 15 total.
+
 | File | Change |
 |------|--------|
 | `docs/decisions/0011-overview-pyramid.md` | New ADR: sidecar layout, fold contract, band policies |
+| `docs/decisions/0002-bathymetric-data-store.md` | Header pointer to ADR-0011 (same-PR, must-fix 1) |
+| `docs/decisions/0006-multi-platform-backscatter-store.md` | Header pointer to ADR-0011 (same-PR, must-fix 1) |
 | `marine_tiled_raster_store/include/marine_tiled_raster_store/overview_builder.hpp` | New: generic header-only fold engine |
 | `marine_tiled_raster_store/test/test_overview_builder.cpp` | New: GTest for fold correctness + partial coverage |
 | `marine_tiled_raster_store/CMakeLists.txt` | Add `test_overview_builder` target |
-| `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp` | New: sidescan mean-fold CLI |
-| `marine_sidescan_mosaic/CMakeLists.txt` | Add `build_sidescan_overviews` executable |
 | `marine_tiled_raster_store/README.md` | Add "Overview builder" section noting the new header |
+| `marine_sidescan_mosaic/include/marine_sidescan_mosaic/overview_pyramid.hpp` | New: testable production-path entry points (arg parse + disk fold) |
+| `marine_sidescan_mosaic/src/overview_pyramid.cpp` | New: production path (grid reconstruction, per-level fold, level loop, guards, crash-safe swap) |
+| `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp` | New: thin CLI shell over `overview_pyramid.*` |
+| `marine_sidescan_mosaic/test/test_overview_pyramid.cpp` | New: GTest for arg parsing + on-disk fold + guards |
+| `marine_sidescan_mosaic/CMakeLists.txt` | Add `build_sidescan_overviews` executable + `overview_pyramid` lib + `test_overview_pyramid` |
+| `marine_sidescan_mosaic/README.md` | Document the `build_sidescan_overviews` CLI + `test_overview_pyramid` |
+
+## Implementation Notes (as-built)
+
+These reconcile the Approach/CLI text above with what shipped after review rounds
+1–2 (the original bullets are left as the plan-of-record; the corrections below
+supersede their now-stale specifics):
+
+- **Production path extracted to a library unit.** The CLI is not a single
+  `build_sidescan_overviews.cpp` file: its production path (grid reconstruction,
+  per-level fold, level loop, argument parsing) lives in a linkable
+  `overview_pyramid.{hpp,cpp}` so it is unit- and integration-testable;
+  `build_sidescan_overviews.cpp` is a thin `main()` shell. Tests are
+  `test_overview_pyramid.cpp` (not only the store's `test_overview_builder.cpp`).
+- **Fold-policy signature is whole-cell, not `band_policy(band, values)`.**
+  `buildParentTile<T>(parent_grid, children, band_fills, valid, fold)` takes two
+  closures — a `CellValidPolicy` (contributor gate) and a `CellFoldPolicy` that
+  reduces **all bands of a contributor together** — so cross-band-coherent folds
+  (the reserved depth {depth, σ} pair) are expressible. Sidescan validity gates on
+  the **quality band** (band 1, the no-data sentinel), not intensity.
+- **`buildOverviewLevel<T>` exists but has no production caller.** The CLI does
+  NOT use it (it holds a whole level — ~5.6 GB for L13 — in memory); it streams
+  ≤4 children per parent from filenames instead. `buildOverviewLevel` is retained
+  for tests/small levels and carries a `@warning` steering the next adopter.
+- **Regeneration is crash-safe staging, not "delete-and-recreate at start."** The
+  run builds into `overviews.tmp/` and swaps it over the live sidecar (rename-aside
+  via `overviews.old/`) only after every level succeeds; `overviews.tmp/` doubles
+  as the per-layer run lock. It refuses the swap for an empty/mis-pointed layer,
+  a non-3-band layer, or when any fine tile was skipped.
+- **Stopping rule is `--min-level`, not "until a level is empty."** The loop
+  builds down to `--min-level` (default 0 = apex); an empty level *above*
+  min_level is an error (broken fine-tile chain), not the normal terminator.
+  Added `--dry-run` (runs the guards, writes nothing).
 
 ## Principles Self-Check
 
@@ -140,5 +183,9 @@ policy and the depths pyramid wait for the ADR-0010 D8 re-split (#271).
 
 ## Estimated Scope
 
-Single PR. Six files changed (three new source files, one new ADR, two CMakeLists
-updates), plus README.
+Single PR. As-built: **13 source/doc files** (see Files to Change) — one new ADR
+plus two ADR header pointers, the generic fold engine + its test, the sidescan
+production-path library + CLI + test, two CMakeLists updates, and two READMEs —
+plus the `plan.md`/`progress.md` governance files (15 total). The original
+"six files" estimate did not anticipate the same-PR ADR pointers, the
+production-path/CLI split made for testability, or the second README.
