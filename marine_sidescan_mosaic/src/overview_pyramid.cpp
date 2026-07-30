@@ -339,11 +339,11 @@ OverviewBuildResult buildOverviewPyramid(
     throw std::runtime_error(
       "no usable fine tiles at level " + std::to_string(opts.fine_level) +
       " under " + opts.layer_dir +
-      (guard_skipped > 0 ?
-      " (" + std::to_string(guard_skipped) + " tile name(s) matched that level "
-      "but failed grid reconstruction — see the warnings above; not a path or "
-      "--fine-level typo)" :
-      " (no tile matched that level — check the path and --fine-level)") +
+            (guard_skipped > 0 ?
+            " (" + std::to_string(guard_skipped) + " tile name(s) matched that level "
+            "but failed grid reconstruction — see the warnings above; not a path or "
+            "--fine-level typo)" :
+            " (no tile matched that level — check the path and --fine-level)") +
       "; refusing to replace overviews/");
   }
 
@@ -395,10 +395,10 @@ OverviewBuildResult buildOverviewPyramid(
   if (!fs::create_directory(staging, create_ec)) {
     throw std::runtime_error(
       "cannot claim staging directory " + staging.string() +
-      (create_ec ?
-      ": " + create_ec.message() :
-      " (it already exists — another build is running over this layer, or a "
-      "crashed run left it behind; remove it to retry)"));
+            (create_ec ?
+            ": " + create_ec.message() :
+            " (it already exists — another build is running over this layer, or a "
+            "crashed run left it behind; remove it to retry)"));
   }
 
   OverviewBuildResult result;
