@@ -637,13 +637,37 @@ void replaceChartLayer(
   {
     std::error_code drop_ec;
     fs::remove_all(backup, drop_ec);
-    if (drop_ec && fs::exists(backup)) {
+    // Every filesystem probe in this tolerant block uses the `error_code`
+    // overload: the whole point is not to throw here (a throw is what would wedge
+    // the next run). Fail CLOSED on an indeterminate answer — if `exists()` itself
+    // errors (an unreadable `store_dir`, the very condition this block guards
+    // against), treat the backup as still present so the aside/refusal path runs
+    // rather than the throwing `chart/` → backup rename below.
+    std::error_code exist_ec;
+    const bool backup_remains = fs::exists(backup, exist_ec) || exist_ec;
+    if (drop_ec && backup_remains) {
+      // Find a free `.chart_backup.stale.<n>` slot. Bound the search: an unbounded
+      // loop would spin forever if `store_dir` became unreadable (every `exists()`
+      // erroring to false reads as "taken"), so cap it and turn exhaustion into a
+      // clean refusal before the live layer is touched.
+      constexpr int kMaxStaleAsides = 1000;
       fs::path aside;
-      for (int n = 0; ; ++n) {
+      bool found_slot = false;
+      for (int n = 0; n < kMaxStaleAsides; ++n) {
         aside = fs::path(store_dir) / (".chart_backup.stale." + std::to_string(n));
-        if (!fs::exists(aside)) {
+        std::error_code slot_ec;
+        if (!fs::exists(aside, slot_ec) && !slot_ec) {
+          found_slot = true;
           break;
         }
+      }
+      if (!found_slot) {
+        throw std::runtime_error(
+                "replaceChartLayer: a stale '" + backup.string() +
+                "' could not be removed (" + drop_ec.message() +
+                ") and no free '.chart_backup.stale.<n>' slot was available under '" +
+                store_dir + "' within " + std::to_string(kMaxStaleAsides) +
+                " tries — clear it by hand before regenerating the chart layer");
       }
       std::error_code aside_ec;
       fs::rename(backup, aside, aside_ec);
