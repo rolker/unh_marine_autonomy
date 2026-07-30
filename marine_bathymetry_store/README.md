@@ -113,6 +113,14 @@ wholesale-replace `survey/` or `reference/`. The producer builds the layer in a
 staging store (`chart_staging_writable=true`), `save()`s it, and hands the
 resulting `<staged>/chart` directory to this call.
 
+**No in-tree tool produces a staged chart layer yet.** The `import_geotiff` CLI
+accepts only `survey`/`reference`, nothing calls `fromCellSize(...,
+chart_staging_writable=true)`, and `replaceChartLayer` has no non-test caller —
+this phase ships the store-side layer and the swap primitive only. Chart
+production awaits the S57 exporter and the cron updater (separate issues), and no
+deployed store may carry a `chart/` layer until the cost-model rework
+([#276](https://github.com/rolker/unh_marine_autonomy/issues/276)) lands.
+
 Sequence — everything that can refuse does so **before** the live layer is
 touched, so a rejected regeneration leaves the old layer standing (D7):
 
@@ -151,10 +159,11 @@ colcon build --symlink-install --packages-select marine_bathymetry_store
 colcon test --packages-select marine_bathymetry_store
 ```
 
-Tests (`test_store`, `test_query`, `test_tile_io`) are headless GTest and cover
-priority precedence, no-data handling, the height-aware shallowest-reliable
-semantics, persistence round-trip (depth + uncertainty), incremental (dirty-only)
-save, level-mismatch rejection, and the coarse `StoreMetadata` round-trip.
+Tests (`test_store`, `test_query`, `test_tile_io`, `test_geotiff_import`) are
+headless GTest and cover priority precedence, no-data handling, the height-aware
+shallowest-reliable semantics, persistence round-trip (depth + uncertainty),
+incremental (dirty-only) save, level-mismatch rejection, the GeoTIFF importer,
+and the coarse `StoreMetadata` round-trip.
 
 The chart suite additionally covers the write gates (`set` / `importTiles` on a
 normal store, and both the constructor and `fromCellSize` staging opt-ins), the
