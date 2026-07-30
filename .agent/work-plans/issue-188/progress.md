@@ -250,9 +250,9 @@ partial-publish gaps.
 **When**: 2026-07-30 20:08 +00:00
 **By**: Claude Code Agent (Claude Opus)
 
-**Branch**: feature/issue-188 at `9fdab0f`
+**Branch**: feature/issue-188 at `035ecef`
 **Addressed**: Local Review (Pre-Push) of 2026-07-27 15:26 -04:00, at `60a293d` (5 must-fix + 14 suggestions — all 19 actioned)
-**Commits**: `e0a9d56`, `7440454`, `e1b1b6f`, `28249fe`, `601771a`, `2d8c73d`, `92f1018`, `8802b95`, `5edab9d`, `0aa524a`, `cf6b840`, `78fe6af`, `7212791`, `fe87a33` (round-2 code/doc fixes, previously committed but never recorded); `1dbc197`, `e5baf07`, `89d1e85`, `9fdab0f` (this pass)
+**Commits**: `e0a9d56`, `7440454`, `e1b1b6f`, `28249fe`, `601771a`, `2d8c73d`, `92f1018`, `8802b95`, `5edab9d`, `0aa524a`, `cf6b840`, `78fe6af`, `7212791`, `fe87a33` (round-2 code/doc fixes, previously committed but never recorded); `1dbc197`, `e5baf07`, `89d1e85`, `9fdab0f` (this pass); `035ecef` (Step-4 sanity-pass lint fix)
 
 The round-2 review's fourteen code/documentation findings had already been fixed
 in commits `e0a9d56..fe87a33` (made after the review but never checked off or
@@ -267,6 +267,13 @@ assert; buildOverviewLevel `@warning`; dead `.tiff` branch dropped; tiles-in
 progress; wholesale-rebuild usage text + `--dry-run`). This pass completed the
 four remaining findings (the two must-fix documentation gaps and two doc
 suggestions) and recorded the whole set.
+
+**Step-4 sanity pass:** the round-2 fix commits left `overview_pyramid.cpp` with
+two ternary-continuation blocks that raw `ament_uncrustify` flagged (drift not
+present at the round-2-clean `60a293d` state); `035ecef` reformats them to the
+tool's canonical indentation (no functional change). All six new C++ files now
+pass `ament_uncrustify` and `ament_cpplint` clean. My changes this pass are
+markdown-only otherwise, so no package build/test was required.
 
 ### Actions
 - [x] (must-fix) Fold gated on intensity dropped shadow cells — gate on quality band (band 1) + shadow-cell test — `marine_sidescan_mosaic/src/overview_pyramid.cpp:111` (`e0a9d56`)
