@@ -75,7 +75,8 @@ std::size_t evictOutside(
 /// `query.hpp`): the layers are independent, so a live CUBE write never clobbers
 /// the read-only prior. The single fused surface within a layer is
 /// last-write-wins per cell (there is no provenance ordering); `survey >
-/// reference` layer priority is the only provenance axis (ADR-0002 A2.1).
+/// reference > chart` layer priority is the only provenance axis (ADR-0002 A2.1;
+/// `Chart` added #275 per ADR-0010 D3/D7, lowest under the D4 placeholder order).
 ///
 /// This phase has no ROS interface or distribution — just storage, in-process
 /// queries (`query.hpp`), per-tile GeoTIFF persistence (`tile_io.hpp`), and the
@@ -155,8 +156,11 @@ public:
   ///         return is retained for source/API stability with the prior epoch
   ///         model and possible future write gates.
   /// @throws std::invalid_argument if @p cell is invalid.
-  /// @throws std::logic_error if @p layer is `Reference` and the store was not
-  ///   constructed `reference_writable` — the prior is read-only (ADR-0002 §D3).
+  /// @throws std::logic_error if a write-gated prior's gate is shut: `Reference`
+  ///   on a store not constructed `reference_writable` (the prior is read-only,
+  ///   ADR-0002 §D3), or `Chart` on a store not constructed
+  ///   `chart_staging_writable` (Chart is writable only via the wholesale
+  ///   regeneration workflow, ADR-0010 D7).
   bool set(SourceLayer layer, const gggs::CellIndex & cell, const BathyCell & value);
 
   /// @brief Read the raw cell of one @p layer (no priority overlay).
@@ -170,8 +174,8 @@ public:
   /// tile replaces any tile already resident at that grid, and grids not in
   /// @p tiles are left untouched (no wholesale clear — there is no epoch to
   /// supersede). Every inserted tile is marked dirty so it persists. The
-  /// Reference read-only gate applies, identical to `set()`. Tiles may be at
-  /// heterogeneous levels (multi-level, ADR-0002 §D2).
+  /// `Reference` and `Chart` write gates apply, identical to `set()`. Tiles may
+  /// be at heterogeneous levels (multi-level, ADR-0002 §D2).
   ///
   /// @note Additive-merge footgun: because this never clears and `save()` never
   ///   deletes on-disk tiles, a *shrinking* re-import (a corrected coverage with
@@ -183,8 +187,9 @@ public:
   /// @return The number of grids inserted/replaced.
   /// @throws std::invalid_argument if any grid key is invalid or a tile's own
   ///   GridIndex does not match its map key.
-  /// @throws std::logic_error if @p layer is `Reference` and the store was not
-  ///   constructed `reference_writable`.
+  /// @throws std::logic_error if a write-gated prior's gate is shut: `Reference`
+  ///   without `reference_writable`, or `Chart` without `chart_staging_writable`
+  ///   (writable only via the wholesale regeneration workflow, ADR-0010 D7).
   std::size_t importTiles(
     SourceLayer layer, std::map<gggs::GridIndex, BathymetryTile> tiles);
 
