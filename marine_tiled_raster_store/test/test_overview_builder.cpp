@@ -183,6 +183,19 @@ TEST(OverviewBuilder, MisgroupedChildThrowsRatherThanBeingDroppedSilently)
     std::invalid_argument);
 }
 
+TEST(OverviewBuilder, NullChildThrowsRatherThanBeingDroppedSilently)
+{
+  // Same refuse-don't-skip stance as the misgrouped-child check: a null child
+  // pointer is a caller bug, and skipping it would silently drop coverage.
+  const gggs::GridIndex fine = fineGrid();
+  const TiledRasterTile<std::uint16_t> child(fine, 1, 5);
+
+  EXPECT_THROW(
+    buildParentTile<std::uint16_t>(
+      gggs::parent(fine), {&child, nullptr}, {0}, nonZeroBand0, meanFold),
+    std::invalid_argument);
+}
+
 TEST(OverviewBuilder, ShortFoldResultThrowsRatherThanHalfWritingTheCell)
 {
   const gggs::GridIndex fine = fineGrid();

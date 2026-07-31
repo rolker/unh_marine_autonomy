@@ -111,9 +111,10 @@ using CellValidPolicy = std::function<bool (const CellValues<T> &)>;
 /// @param fold Per-cell reduction (see CellFoldPolicy). Must return exactly one
 ///   value per band.
 /// @return The folded parent tile (dirty, ready for saveTile).
-/// @throws std::invalid_argument on empty @p band_fills, no children, a child
-///   band count differing from @p band_fills, a child that is not a child of
-///   @p parent_grid, or a @p fold result whose size is not the band count.
+/// @throws std::invalid_argument on empty @p band_fills, no children, a null
+///   child pointer, a child band count differing from @p band_fills, a child
+///   that is not a child of @p parent_grid, or a @p fold result whose size is
+///   not the band count.
 template<typename T>
 TiledRasterTile<T> buildParentTile(
   const gggs::GridIndex & parent_grid,
@@ -140,7 +141,11 @@ TiledRasterTile<T> buildParentTile(
   std::vector<std::vector<CellValues<T>>> buckets(TiledRasterTile<T>::cell_count);
 
   for (const TiledRasterTile<T> * child : children) {
-    if (child == nullptr) {continue;}
+    if (child == nullptr) {
+      // Same refuse-don't-skip stance as the grouping check below: a null here
+      // is a caller bug, and skipping it would silently drop coverage.
+      throw std::invalid_argument("buildParentTile: null child pointer");
+    }
     if (child->bandCount() != bands) {
       throw std::invalid_argument("buildParentTile: child band count mismatch");
     }
