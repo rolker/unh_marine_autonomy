@@ -53,3 +53,15 @@ Single package (`bathymetry_layer`), well-defined change to cost model with expl
 - [ ] Plan-task: name the new parameters that replace `max_uncertainty` in its reject role (confidence gate threshold, caution cost scale) so the README migration section is concrete.
 - [ ] Plan-task: identify the sim harness and define the "sim-validated" criterion per ADR-0002 D7 before field use.
 - [ ] Follow-on (not blocking this PR): update platform-repo nav2_params when `max_uncertainty` is renamed/deprecated.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-07-31 00:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-276/plan.md` at `2bc009c`
+**Branch**: feature/issue-276 at `2bc009c`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
