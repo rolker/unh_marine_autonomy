@@ -434,7 +434,26 @@ restore rename is skipped — previous sidecar stranded as `overviews.old/`
 (`43f885a`): best-effort `std::error_code` overload in failure paths.
 
 ### Findings
-- [ ] (low, Copilot R2) Throwing `fs::remove_all(staging)` inside both catch blocks can mask the original exception and (swap path) skip the previous-sidecar restore — switch both to the non-throwing `std::error_code` overload — `marine_sidescan_mosaic/src/overview_pyramid.cpp:428,467`
+- [x] (low, Copilot R2) Throwing `fs::remove_all(staging)` inside both catch blocks can mask the original exception and (swap path) skip the previous-sidecar restore — switch both to the non-throwing `std::error_code` overload — `marine_sidescan_mosaic/src/overview_pyramid.cpp:428,467`
 
 ### False positives
 - (none)
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-31 12:14 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**Branch**: feature/issue-188 at `3604f4d`   <!-- PR #287 -->
+**Addressed**: Integrated Review (round 2) of 2026-07-31, PR #287 at `9dce632` (1 low finding — actioned)
+**Commits**: `3604f4d`
+
+Host-inline fix (two-line mechanical change; operator approved skipping a
+container dispatch): both catch-block cleanups in overview_pyramid.cpp now use
+the non-throwing `std::error_code` overload of `fs::remove_all`, so
+failure-path cleanup can neither mask the original exception nor skip the
+previous-sidecar restore. `<system_error>` was already included.
+`ament_uncrustify` + `ament_cpplint` clean.
+
+### Actions
+- [x] (low) Throwing `remove_all` in build-loop and swap catch blocks → `std::error_code` overload at both sites — `marine_sidescan_mosaic/src/overview_pyramid.cpp:427-433,465-476` (`3604f4d`)
