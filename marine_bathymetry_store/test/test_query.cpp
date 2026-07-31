@@ -23,7 +23,10 @@
 
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <optional>
+#include <set>
+#include <vector>
 
 #include "marine_autonomy/gggs.h"
 #include "marine_bathymetry_store/bathymetry_store.hpp"
@@ -34,6 +37,7 @@ using marine_bathymetry_store::BathymetryStore;
 using marine_bathymetry_store::bestSource;
 using marine_bathymetry_store::DepthSample;
 using marine_bathymetry_store::forEachCellBestSource;
+using marine_bathymetry_store::reliableSamples;
 using marine_bathymetry_store::shallowestReliable;
 using marine_bathymetry_store::SourceLayer;
 
@@ -253,6 +257,70 @@ TEST(Query, ShallowestReliableWithNoReliableDataReturnsNullopt)
   // bestSource (quality-blind) still resolves it — only the reliability gate
   // rejects it. This confirms the nullopt is the gate, not absent data.
   EXPECT_TRUE(bestSource(store, cell).has_value());
+}
+
+TEST(Query, ReliableSamplesCollectsAllLayersDropsNaNRetainsInfiniteAtInfinity)
+{
+  // Direct coverage for the public safety API introduced in #276. Unlike
+  // shallowestReliable (which collapses to one shallowest pick), reliableSamples
+  // returns EVERY passing sample so the caller can cost each and take the most
+  // hazardous (ADR-0010 §D7). Three properties are pinned:
+  //   1. multi-layer collection — one sample per covering layer, all returned;
+  //   2. NaN-σ drop — an unreliable sample is excluded;
+  //   3. σ=∞ retained at ∞ — passing max_uncertainty=∞ keeps a literal σ=∞
+  //      sample (∞ > ∞ is false), so the layer's own isfinite guard, not the
+  //      store gate, is what buckets σ=∞ as unknown quality.
+
+  // 1. Multi-layer collection: Survey/Reference/Chart all cover the cell within
+  //    tolerance → every one is returned (not just the shallowest).
+  {
+    BathymetryStore store(5, /*reference_writable=*/true, /*chart_staging_writable=*/true);
+    const auto cell = store.cellIndex(43.0, -70.5);
+    store.set(SourceLayer::Chart, cell, BathyCell{-20.0, 1.5});
+    store.set(SourceLayer::Reference, cell, BathyCell{-12.0, 2.0});
+    store.set(SourceLayer::Survey, cell, BathyCell{-10.0, 0.1});
+
+    const auto samples = reliableSamples(store, cell, 3.0);
+    ASSERT_EQ(samples.size(), 3u);
+    std::set<SourceLayer> sources;
+    for (const auto & s : samples) {
+      sources.insert(s.source);
+    }
+    EXPECT_EQ(sources.count(SourceLayer::Survey), 1u);
+    EXPECT_EQ(sources.count(SourceLayer::Reference), 1u);
+    EXPECT_EQ(sources.count(SourceLayer::Chart), 1u);
+  }
+
+  // 2. NaN-σ drop: the NaN sample is never reliable and must be excluded; the
+  //    co-located reliable sample survives.
+  {
+    BathymetryStore store(5, /*reference_writable=*/true);
+    const auto cell = store.cellIndex(43.0, -70.5);
+    store.set(SourceLayer::Survey, cell, BathyCell{-10.0, std::nan("")});
+    store.set(SourceLayer::Reference, cell, BathyCell{-12.0, 2.0});
+
+    const auto samples = reliableSamples(store, cell, 3.0);
+    ASSERT_EQ(samples.size(), 1u);
+    EXPECT_EQ(samples.front().source, SourceLayer::Reference);
+  }
+
+  // 3. σ=∞ retained at ∞, dropped under a finite gate. Called with ∞ the gate
+  //    admits a literal σ=∞ sample (∞ > ∞ is false); a finite tolerance rejects
+  //    it. This is the contract evaluateCell relies on to short-circuit σ=∞ to
+  //    conservative LETHAL in its own isfinite branch, not via the store gate.
+  {
+    BathymetryStore store(5);
+    const auto cell = store.cellIndex(43.0, -70.5);
+    store.set(
+      SourceLayer::Survey, cell,
+      BathyCell{-10.0, std::numeric_limits<double>::infinity()});
+
+    const auto at_inf = reliableSamples(store, cell, std::numeric_limits<double>::infinity());
+    ASSERT_EQ(at_inf.size(), 1u);
+    EXPECT_TRUE(std::isinf(at_inf.front().uncertainty));
+
+    EXPECT_TRUE(reliableSamples(store, cell, 3.0).empty());   // finite gate drops σ=∞
+  }
 }
 
 TEST(Query, BestSourceFullPriorityOrderSurveyReferenceChart)
