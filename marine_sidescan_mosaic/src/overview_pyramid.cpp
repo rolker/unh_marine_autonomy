@@ -482,7 +482,15 @@ OverviewBuildResult buildOverviewPyramid(
     }
     throw;
   }
-  fs::remove_all(retired);
+  // Best-effort: the swap already succeeded — a throwing cleanup here would
+  // report the build as failed with the new sidecar live, prompting a
+  // needless re-run. Warn so the leftover overviews.old/ is still visible.
+  std::error_code ec;
+  fs::remove_all(retired, ec);
+  if (ec) {
+    std::cerr << "warning: could not remove retired sidecar " <<
+      retired.string() << ": " << ec.message() << std::endl;
+  }
   result.sidecar_replaced = true;
   return result;
 }
