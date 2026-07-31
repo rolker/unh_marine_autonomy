@@ -98,6 +98,13 @@ std::optional<DepthSample> bestSource(
   // NO mechanical block on chart data driving navigation before the #276
   // cost-model rework lands. The standing precondition is that no deployed store
   // carries a chart/ layer until #276 is done; it is tracked there, not here.
+  //
+  // Finite-σ contract (ADR-0010 D7): a chart layer's cells MUST carry a large but
+  // *finite* σ for low-confidence CATZOC classes (D/U). The consumer buckets a
+  // non-finite σ = ∞ with no-data as unknown quality → conservative LETHAL
+  // (bathymetry_layer::evaluateCell), so exporting D/U as σ = ∞ would make those
+  // cells keepout-grade — the opposite of D7's "D/U never keepout-grade". The S57
+  // exporter owns this; σ = ∞ stays reserved for genuinely-unknown quality (D4).
   for (const SourceLayer layer : source_layers_by_priority) {
     if (auto sample = sampleFor(store, layer, cell, center)) {
       return sample;

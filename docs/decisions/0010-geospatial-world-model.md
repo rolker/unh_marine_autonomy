@@ -227,7 +227,15 @@ Export rules (`s57_to_geotiff`, new tool in `s57_tools`, feeding the existing
   generalized.)
 - **CATZOC → σ** (M_QUAL, currently ignored in `marine_charts`): per the ZOC
   table — A1 ≈ 0.5 m + 1 %d, A2/B ≈ 1.0 m + 2 %d, C ≈ 2.0 m + 5 %d, D/U →
-  large σ (never keepout-grade; see the cost-model work this feeds).
+  large but **finite** σ (never keepout-grade; see the cost-model work this
+  feeds). **Finite-σ is a hard contract, not a nicety:** `bathymetry_layer`
+  buckets a *non-finite* σ (σ = ∞) with no-data as **unknown quality** →
+  conservative LETHAL (ADR-0002 §D7), so exporting D/U as σ = ∞ would render
+  exactly the CATZOC D/U cells this rule protects as keepout-grade — the opposite
+  of the intent. σ = ∞ stays reserved for *genuinely unknown* quality (D4); the
+  exporter MUST emit a large **finite** σ for D/U (e.g. a ZOC-D floor) so those
+  cells cost as caution (go-slow), never keepout. Verify against
+  `bathymetry_layer::evaluateCell`'s finite-σ branch before the first D/U export.
 - **Datum**: per-cell chart-datum → ellipsoid via the D6 library.
 - **Scale → GGGS level**: each ENC cell exports at the level matching its
   compilation scale (≈0.5 mm-at-scale resolvable ground distance, mapped to
