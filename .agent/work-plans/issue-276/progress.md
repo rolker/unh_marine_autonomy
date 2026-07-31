@@ -256,3 +256,25 @@ fresh-context sub-agent:
 
 Follow-on (unchanged, not blocking this PR): platform-repo `nav2_params`
 `max_uncertainty` → `confidence_gate` migration; sim acceptance run (advisory).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-31 21:19 +0000
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-276 at `dfe5b59` (code HEAD `9169f23`)
+**Mode**: pre-push
+**Depth**: Deep (reason: safety-critical costmap cost model + cross-layer shared-lib API + ADR-0010 change)
+**Must-fix**: 1 | **Suggestions**: 3
+**Round**: 2 | **Ship**: recommended — sole must-fix is a one-line, mechanical README algorithm-prose fix (no design question); apply it (± suggestions) and push rather than run another full round.
+
+Specialists: Static Analysis (ament_cpplint clean, ament_uncrustify clean, cppcheck = pre-existing style noise only), Claude Adversarial x2 (Lens A logic + Lens B systemic — both no must-fix), Governance, Plan Drift. Local Adversarial off (--no-local, workspace#590). Copilot off (default).
+
+All three R1 must-fixes verified correctly resolved: MAX-over-reliable-samples preserves the trusted-keepout guarantee in every layer-priority permutation (max is order-independent; early-break at LETHAL sound — computeCost never emits NO_INFORMATION=255); σ=∞ short-circuit correct; confidence_gate fail-quiet guard correct; max_uncertainty deprecation fails safe (NaN sentinel → ignored + warned).
+
+### Findings
+- [ ] (must-fix) README algorithm prose stale: item 3 still names `shallowestReliable(store, cell, ∞)` "returns the shallowest sample" as the live model — contradicts README:77 (worst-case/MAX), the code (`reliableSamples` + MAX-over-samples), and re-describes the exact superseded shallowest-pick behavior that was R1's trusted-keepout safety regression — `bathymetry_layer/README.md:67`
+- [ ] (suggestion) New public shared-lib API `reliableSamples()` has no direct unit test (only transitive via layer regression test); add a case pinning multi-layer collection + NaN-σ drop + σ=∞-retained-at-∞ — `marine_bathymetry_store/test/test_query.cpp`
+- [ ] (suggestion) ADR citation nuance: σ=∞→unknown-quality mapping is ADR-0010 D4; note attributes it to "(ADR-0002 §D7)" (defensible for the conservative consumer policy, but D4 owns the mapping) — `docs/decisions/0010-geospatial-world-model.md:233`
+- [ ] (suggestion) Stale test comments still say "shallowestReliable → nullopt" for the NaN-σ path (now reliableSamples→empty→LETHAL); assertions correct — `bathymetry_layer/test/test_bathymetry_layer.cpp:299,331,345`
