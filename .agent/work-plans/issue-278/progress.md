@@ -534,3 +534,33 @@ Lifecycle: **Implementation** → **review-code** (re-review the fix). Hand off 
 fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-31 15:42 +0000
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-278 at `e26709a`
+**Mode**: pre-push
+**Depth**: Light (reason: 10-line single-function CLI guard; targeted confirmation pass over commits since PR head `3eb585f`)
+**Must-fix**: 0 | **Suggestions**: 0
+**Round**: 6 | **Ship**: recommended — zero must-fix; `f4e20a1` closes the one valid Copilot finding, guard verified correct/complete, static + adversarial clean.
+
+Confirmation pass on `f4e20a1` (`--cell-size` finiteness/positivity guard,
+`s102_import_main.cpp:122-131`). Guard rejects all of {0, negative, NaN, ±inf}
+(`!std::isfinite(v) || v <= 0.0`); placed immediately after the `std::stod` parse
+so no invalid value reaches `gggs::Level::fromCellSize()` (`log2(<=0)` → inf/NaN →
+`static_cast<int>` UB); does not regress the `0.5` default (a member initializer, not
+routed through the guard); error message prints the original arg with actionable text;
+`<cmath>` present (line 30); mirrors the existing `--area` guard. Independently re-ran
+ament_cpplint + ament_uncrustify on the changed file — "No problems found". Fresh-context
+Lens A adversarial read: no findings. `import_geotiff_main.cpp:141` same pre-existing
+exposure remains out of scope (follow-up candidate) — not flagged. Local specialist
+skipped (--no-local, workspace#590 standing).
+
+### Findings
+- [ ] No issues found. LGTM.
+
+### Next step
+Lifecycle: **Local Review** (approved) → push / open PR → **triage-reviews**.
