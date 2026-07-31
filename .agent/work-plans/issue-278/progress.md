@@ -437,3 +437,31 @@ Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand of
 to a fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-31 14:56 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-278 at `b542369`
+**Mode**: pre-push
+**Depth**: Light (reason: 2-commit confirmation pass, ~20 lines across 3 files; no security/cross-layer triggers)
+**Must-fix**: 0 | **Suggestions**: 0
+**Round**: 5 | **Ship**: recommended — both R4 suggestions resolved correctly; no must-fix, no regressions
+**Local Adversarial**: off (--no-local, workspace#590 standing)
+
+Round-5 confirmation focused on the two commits that resolved the R4 suggestions:
+- `234d00d` — `queryCatalog` now adds `rec.tile_id.empty()` to the skip guard. Verified: `tile_id` is populated (catalog.cpp:160) before the guard (167); `GetFieldAsString` returns "" for null/missing so `.empty()` catches both. Comment rationale confirmed accurate — `fetch.cpp:195` keys the cache filename by `sanitizeComponent(tile_id)+ext` (empty → just extension) and `fetch.cpp:201`/`run.cpp:163` use `tile_id` as the registry/sidecar key (empty → "" collision). Purely additive filtering; no regression.
+- `805f649` — `saveRegistryAtomic`/`saveImportedSidecarAtomic` now call `out.close()` before the `if (!out)` check, ahead of `fs::rename`. Verified ordering: write → close (surfaces deferred disk-full failbit) → check → throw-before-rename. The pre-existing "cannot open" path stays covered (the `<<` already sets failbit); the change only adds detection of the deferred close-time flush failure. No regression.
+
+Static analysis: clean — longest changed-file lines 92/83/81 vs ament limit 99; no other lint concerns. Build + full suite reported 286/0 green after the fixes; worktree clean.
+
+### Findings
+- [ ] No issues found. LGTM.
+
+### Next step
+Lifecycle: **Local Review** (approved) → push / open PR → **triage-reviews**.
+Branch is shippable at `b542369`. Hand off to a fresh-context sub-agent after push:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill triage-reviews
