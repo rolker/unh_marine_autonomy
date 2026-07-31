@@ -64,12 +64,15 @@ Per cell the layer uses a **two-query** pattern (ADR-0002 §D7; review finding M
    overrides other priors on those cells, so enable it per deployment. It stays
    behind the tide gate (below): no lethal-land is written before a valid tide.
 3. If `bestSource` is non-null → the cell **has data** →
-   `shallowestReliable(store, cell, ∞)` returns the shallowest sample **without a
-   finite-σ reject-filter**, and the cost comes from the worst-case-clearance /
-   confidence-gate model above (ADR-0010 D7). A high-σ cell is **costed as
-   caution**, not rejected. Only a cell whose only data has **σ = ∞ / NaN**
-   (unknown quality) is written **`LETHAL_OBSTACLE`** (conservative) — bucketed
-   with no-data, since no usable magnitude of uncertainty is known. (The pre-#248
+   `reliableSamples(store, cell, ∞)` returns **every** sample **without a finite-σ
+   reject-filter** (∞ keeps all finite-σ samples eligible; only NaN-σ samples are
+   dropped). Each sample is costed by the worst-case-clearance / confidence-gate
+   model above (ADR-0010 D7), and the cell takes the **MAX (most-hazardous) cost
+   over all reliable samples** — so a shallower but untrusted sample cannot mask a
+   co-located trusted keepout. A high-σ cell is **costed as caution**, not
+   rejected. Only a cell whose only data has **σ = ∞ / NaN** (unknown quality) is
+   written **`LETHAL_OBSTACLE`** (conservative) — bucketed with no-data, since no
+   usable magnitude of uncertainty is known. (The pre-#248
    per-cell staleness gate was **retired** — ADR-0002 Amendment A2.4: the bathy
    store holds a surveyed *static* bottom, not a live sensor feed, so per-cell age
    is not a meaningful costmap hazard.)
