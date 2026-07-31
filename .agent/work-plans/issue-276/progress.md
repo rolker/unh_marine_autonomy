@@ -195,3 +195,24 @@ Host: run `core_ws` build + `bathymetry_layer` (and `marine_bathymetry_store`)
 tests, then review-code. Follow-on (unchanged, not blocking): platform-repo
 `nav2_params` `max_uncertainty` → `confidence_gate` migration; sim acceptance run
 (now explicitly advisory).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-31 20:50 +0000
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-276 at `f24d7be`
+**Mode**: pre-push
+**Depth**: Deep (reason: safety-critical costmap cost model + cross-layer ADR-0010 precondition)
+**Must-fix**: 3 | **Suggestions**: 2
+**Round**: 1 | **Ship**: continue — a must-fix is a genuine safety regression (trusted-keepout masking), not mechanical; warrants another read after fixes.
+
+Specialists: Static Analysis (ament_cpplint clean; cppcheck = pre-existing style only), Claude Adversarial x2 (Lens A logic, Lens B systemic), Governance, Plan Drift. Local Adversarial off (--no-local, workspace#590). Copilot off (default).
+
+### Findings
+- [ ] (must-fix) Trusted-keepout REGRESSION on multi-sample cells: shallowestReliable(∞) retains over-gate samples and selects shallowest point-estimate; a shallower untrusted sample masks a co-located trusted LETHAL (capped at caution). Reachable via `source_layers_by_priority = {Survey, Reference, Chart}`. Cost by MAX over all reliable samples, not one shallowest-depth pick; add multi-layer test; fix "the two coincide" comment — `bathymetry_layer/src/bathymetry_layer.cpp:895-923`, `marine_bathymetry_store/src/query.cpp:134`
+- [ ] (must-fix) sigma=inf => LETHAL contradicts D7 "CATZOC D/U never keepout-grade" (D4: "unknown => sigma=inf"); finite-sigma-for-D/U contract is unbound for the future exporter. Add contract note to ADR-0010 D7 (~line 230) + update bestSource precondition note — `docs/decisions/0010-geospatial-world-model.md:230`, `marine_bathymetry_store/src/query.cpp:98`
+- [ ] (must-fix) `confidence_gate` unvalidated => fail-quiet: NaN/negative/zero silently disables ALL keepout (sigma <= NaN always false). Validate finite & >=0 with reset-to-default, mirroring the depth-ramp guard at :75-85 — `bathymetry_layer/src/bathymetry_layer.cpp:87`
+- [ ] (suggestion) computeCost hpp doc: note the sigma=inf/NaN => LETHAL path lives outside the trust gate (in evaluateCell), so the trust logic isn't the whole story — `bathymetry_layer/src/bathymetry_layer.hpp:89`
+- [ ] (suggestion) Stale S4 comment references non-existent "parameter-change callbacks" (no add_on_set_parameters_callback in package); reachable non-onInitialize path is the test setters — `bathymetry_layer/src/bathymetry_layer.cpp:835`
