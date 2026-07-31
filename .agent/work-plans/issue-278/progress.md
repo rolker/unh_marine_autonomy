@@ -477,7 +477,7 @@ Branch is shippable at `b542369`. Hand off to a fresh-context sub-agent after pu
 **CI**: all-pass (`build` success, `copilot-pull-request-reviewer` success)
 
 ### Findings
-- [ ] (low, Copilot) `--cell-size` accepts non-positive / non-finite values (`0`,
+- [x] (low, Copilot) `--cell-size` accepts non-positive / non-finite values (`0`,
   `-1`, `nan`, `inf` all parse via `std::stod`) which flow into
   `BathymetryStore::fromCellSize()` → `gggs::Level::fromCellSize()` where
   `std::log2` of 0/negative yields inf/NaN and the subsequent

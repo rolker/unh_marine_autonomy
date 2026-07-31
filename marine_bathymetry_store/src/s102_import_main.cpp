@@ -119,6 +119,16 @@ int main(int argc, char * argv[])
         std::cerr << "bad --cell-size '" << val << "'\n";
         return 1;
       }
+      if (!std::isfinite(options.cell_size) || options.cell_size <= 0.0) {
+        // std::stod happily parses "0"/"-1"/"nan"/"inf"; reject them here.
+        // A non-finite or non-positive cell size flows into
+        // gggs::Level::fromCellSize() where std::log2(<=0) yields inf/NaN and
+        // the subsequent static_cast<int> is undefined behavior. Mirrors the
+        // --area finiteness guard below.
+        std::cerr << "bad --cell-size '" << val <<
+          "' (want a positive finite number)\n";
+        return 1;
+      }
     } else if (std::strcmp(argv[i], "--offline") == 0) {
       options.offline = true;
     } else if (std::strcmp(argv[i], "--force") == 0) {
