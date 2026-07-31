@@ -437,7 +437,15 @@ OverviewBuildResult buildOverviewPyramid(
   // chain broke; `tiles_skipped` means one or more fine tiles failed grid
   // reconstruction, so their coverage is simply missing from every level built.
   if (result.early_empty || result.tiles_skipped > 0) {
-    fs::remove_all(staging);
+    // Best-effort: a throwing cleanup would replace the refusal result (and
+    // its skip/empty diagnostics) with an exception, and leave the run-lock
+    // debris regardless. Warn so the cleanup failure is still visible.
+    std::error_code ec;
+    fs::remove_all(staging, ec);
+    if (ec) {
+      std::cerr << "warning: could not remove staging dir " <<
+        staging.string() << ": " << ec.message() << std::endl;
+    }
     return result;
   }
 
