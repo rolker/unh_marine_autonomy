@@ -28,10 +28,25 @@ re-read the store live as the boat surveys — that is the D2 follow-on (see
    Both terms are WGS84 ellipsoidal heights (up-positive): a seafloor 5 m below
    the ellipsoid has height `-5.0`, so a *shallower* (more hazardous) seafloor has
    a *larger* (less-negative) height and therefore a *smaller* clearance.
-3. The clearance ramp (same shape as `s57_layer::get_cost_from_grid`):
-   - `clearance < minimum_depth` → `LETHAL_OBSTACLE`
-   - `clearance >= maximum_caution_depth` → `FREE_SPACE`
-   - between → linearly scaled cost (shallower = higher cost)
+3. The cost comes from the **worst-case clearance** — the point-estimate
+   clearance minus one standard deviation of vertical uncertainty
+   (`clearance − σ`, the shallowest the seafloor plausibly is) — through a
+   confidence-gated ramp (same shape as `s57_layer::get_cost_from_grid`,
+   ADR-0010 D7):
+   - `worst_case_clearance >= maximum_caution_depth` → `FREE_SPACE`
+   - between `minimum_depth` and `maximum_caution_depth` → linearly scaled cost
+     (shallower = higher cost); this ramp is **trust-independent**
+   - `worst_case_clearance < minimum_depth` → keepout **only for trusted data**
+     (`σ ≤ confidence_gate`) → `LETHAL_OBSTACLE`; a high-σ (untrusted) cell is
+     instead capped at `MAX_NON_OBSTACLE` (top of the caution band) — costed
+     go-slow, never hard-forbidden on uncertainty alone
+
+   So keepout is reserved for trusted data; chart-grade (CATZOC) σ that reads
+   shallow is costed as caution, not wholesale keepout. A cell whose only data
+   carries **σ = ∞ / NaN** (genuinely *unknown* quality) has no usable magnitude
+   of uncertainty and stays conservatively `LETHAL_OBSTACLE` (the "data but no
+   reliable sample" path below), the same as an over-uncertain cell was treated
+   before this rework.
 
 ## No-data policy (safety)
 
@@ -48,16 +63,21 @@ Per cell the layer uses a **two-query** pattern (ADR-0002 §D7; review finding M
    blanket rule (every no-data cell, not just "land") and, via max-cost combine,
    overrides other priors on those cells, so enable it per deployment. It stays
    behind the tide gate (below): no lethal-land is written before a valid tide.
-3. If `bestSource` is non-null → the cell **has data** → `shallowestReliable`
-   applies the navigation-safety (uncertainty) gate. A cell that has data but
-   fails the gate (over-uncertain) is written **`LETHAL_OBSTACLE`**
-   (conservative). Only a cell that passes the gate gets the clearance ramp.
-   (The pre-#248 per-cell staleness gate was **retired** — ADR-0002 Amendment
-   A2.4: the bathy store holds a surveyed *static* bottom, not a live sensor
-   feed, so per-cell age is not a meaningful costmap hazard.)
+3. If `bestSource` is non-null → the cell **has data** →
+   `shallowestReliable(store, cell, ∞)` returns the shallowest sample **without a
+   finite-σ reject-filter**, and the cost comes from the worst-case-clearance /
+   confidence-gate model above (ADR-0010 D7). A high-σ cell is **costed as
+   caution**, not rejected. Only a cell whose only data has **σ = ∞ / NaN**
+   (unknown quality) is written **`LETHAL_OBSTACLE`** (conservative) — bucketed
+   with no-data, since no usable magnitude of uncertainty is known. (The pre-#248
+   per-cell staleness gate was **retired** — ADR-0002 Amendment A2.4: the bathy
+   store holds a surveyed *static* bottom, not a live sensor feed, so per-cell age
+   is not a meaningful costmap hazard.)
 
-The critical distinction: a surveyed-but-noisy cell is an **obstacle**, not an
-unsurveyed cell. Treating it as unsurveyed would be a safety regression.
+The critical distinction: a surveyed-but-noisy cell is a **navigable-with-caution
+obstacle**, costed by its worst-case clearance — not an unsurveyed cell (treating
+it as unsurveyed would be a safety regression), and no longer wholesale keepout
+(pre-#276 that would have made CATZOC-grade chart regions all-LETHAL).
 
 ## Parameters
 
@@ -67,7 +87,7 @@ unsurveyed cell. Treating it as unsurveyed would be a safety regression.
 | `store_path` | string | `""` | Path to the on-disk store directory. Empty = contributes no cost. A leading `~`/`~/` is expanded to `$HOME`, so one portable value (`~/data/stores/bathymetry`) resolves on both the boat (`field` user) and a dev/sim host. |
 | `minimum_depth` | double | `1.0` | Clearance (m) below which a cell is `LETHAL_OBSTACLE`. |
 | `maximum_caution_depth` | double | `2.5` | Clearance (m) at/above which a cell is `FREE_SPACE`; between `minimum_depth` and this the cost ramps. |
-| `max_uncertainty` | double | `0.5` | Max 1-sigma vertical uncertainty (m) for `shallowestReliable`. A surveyed cell exceeding this is LETHAL. |
+| `confidence_gate` | double | `0.5` | 1-sigma vertical-uncertainty **trust threshold** (m). A sample with `σ ≤ confidence_gate` is *trusted* and may drive a cell to `LETHAL_OBSTACLE` when its worst-case clearance (`clearance − σ`) is below `minimum_depth`. A sample with larger σ is *costed as caution* (never LETHAL on uncertainty alone); only `σ = ∞ / NaN` (unknown quality) stays conservatively LETHAL. **Renamed from `max_uncertainty` (#276) — see the migration note below; this is NOT the old reject-filter.** |
 | `unsurveyed_is_lethal` | bool | `false` | When `true`, a truly-unsurveyed (no-data) cell is `LETHAL_OBSTACLE` instead of left untouched. Blanket rule — suits a closed basin whose prior fills the whole interior (no-data = land). Still gated by the tide (no cost before a valid `map_tide`). |
 | `map_tide_frame` | string | `map_tide` | Frame whose z-origin is the current water-surface ellipsoidal height. Prefix per platform (`<tf_prefix>/map_tide`). |
 | `map_frame` | string | `map` | Ellipsoid-referenced world frame (REP-105 `map`, z=0 at the WGS84 ellipsoid). The water-surface height is read as `map_tide_frame`'s z in this frame. **Must** be set and distinct from both `map_tide_frame` and the costmap's own global frame — otherwise the tide lookup self-references and reads 0, flooding the survey LETHAL (#220). Prefix per platform (`<tf_prefix>/map`). |
@@ -75,6 +95,31 @@ unsurveyed cell. Treating it as unsurveyed would be a safety regression.
 | `tide_invalidate_threshold` | double | `0.1` | Re-render the cached cost tiles only when the water surface moves more than this (m) from the value they were rendered against. Above realistic sea-surface-estimate jitter (~±0.02 m) so noise doesn't constantly re-render and defeat the cache, while still tracking a real (e.g. reservoir) level change. |
 | `update_timeout` | double | `0.5` | Per-cycle wall-clock budget (s) for tile (re)rendering. The window fills over a few cycles (robot-first) instead of blocking the costmap thread. |
 | `ready_radius` | double | `200.0` | Radius (m) around the vehicle whose tiles must be rendered before the layer reports `current_`. Decouples readiness from the full window so a large global (which can take minutes to render fully) doesn't stall the planner: the robot-centred core is ready in seconds, the rest fills outward in the background, and the local costmap covers the immediate surroundings meanwhile. Scale-independent — enlarging the global for longer transits doesn't change time-to-ready. |
+
+### Migration: `max_uncertainty` → `confidence_gate` (#276)
+
+`max_uncertainty` was **renamed to `confidence_gate` and its meaning changed** —
+this is a **semantic** change, not just a rename:
+
+- **Before (`max_uncertainty`, reject-filter):** any cell whose σ exceeded the
+  value was treated as unreliable and written `LETHAL_OBSTACLE`. CATZOC-grade
+  chart σ (0.5 m – several m) entering the store would therefore render chart-only
+  regions **wholesale keepout**, or force a global gate relaxation that also
+  weakened the filter for noisy draft data.
+- **After (`confidence_gate`, trust-threshold):** the value is the σ **at/below
+  which a sample is trusted enough to justify keepout**. Cost is driven by the
+  worst-case clearance (`clearance − σ`); a cell with σ *above* the gate is costed
+  as **caution** (never LETHAL on uncertainty alone), and only trusted
+  (`σ ≤ confidence_gate`) worst-case-shallow cells become `LETHAL_OBSTACLE`.
+  `σ = ∞ / NaN` (unknown quality) stays conservatively LETHAL.
+
+**Action:** rename the key in every `nav2_params` and remove `max_uncertainty`.
+The default (`0.5`) is unchanged, so a straight rename preserves survey-grade
+behavior, but re-read the meaning before tuning — raising it now widens the
+*trusted-keepout* band, it does **not** relax a reject-filter. A config that still
+sets `max_uncertainty:` is **ignored** and logs a one-shot deprecation `WARN` at
+layer init (the key falls back to the `confidence_gate` default rather than
+silently carrying the old value).
 
 ## Layer coexistence
 
@@ -121,7 +166,7 @@ local_costmap:
         store_path: "/path/to/bathy_store"   # override per platform
         minimum_depth: 1.0
         maximum_caution_depth: 2.5
-        max_uncertainty: 0.5
+        confidence_gate: 0.5          # σ trust threshold (was max_uncertainty, #276)
         unsurveyed_is_lethal: False   # True for a closed basin (no-data = land)
         map_tide_frame: <tf_prefix>/map_tide
         buffer_fraction: 0.05
