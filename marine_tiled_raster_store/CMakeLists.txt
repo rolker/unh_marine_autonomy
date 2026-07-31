@@ -67,6 +67,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_tile_catalog test/test_tile_catalog.cpp)
   target_link_libraries(test_tile_catalog ${PROJECT_NAME})
+
+  ament_add_gtest(test_overview_builder test/test_overview_builder.cpp)
+  target_link_libraries(test_overview_builder ${PROJECT_NAME})
 endif()
 
 ament_package()

@@ -86,6 +86,27 @@ ros2 launch marine_sidescan_mosaic sidescan_mosaic.launch.py \
 
 The resulting WGS84 GeoTIFF tiles load directly in QGIS / a CAMP `RasterLayer`.
 
+### Overview pyramid (post-ingest, #188 / ADR-0011)
+
+The live mosaic is single-level (L13), so a zoomed-out consumer must open every
+fine tile — a 1000-tile store costs a 3.6 GB eager read. `build_sidescan_overviews`
+folds the fine tiles into coarser GGGS parent tiles (4 children → 1 parent, MEAN
+of valid contributors) and writes them to a per-layer `overviews/` sidecar. It is
+an **offline batch step — run it after every ingest**; the sidecar is derived and
+regenerable, so a rebuild is idempotent and safe to re-run.
+
+```bash
+ros2 run marine_sidescan_mosaic build_sidescan_overviews \
+    ~/data/stores/sidescan/processed [--fine-level 13] [--min-level 0] [--dry-run]
+```
+
+Each level is folded from the one below it, down to `--min-level` (0 = apex). The
+rebuild is **wholesale and crash-safe**: it stages into `overviews.tmp/` and swaps
+it in (rename-aside via `overviews.old/`) only once every level succeeds, so an
+interrupted run leaves the previous sidecar intact. `--dry-run` runs the layer
+guards and reports what would be built without writing. See ADR-0011 for the
+sidecar layout and fold-policy contract.
+
 ## Build & test
 
 ```bash
@@ -94,7 +115,10 @@ colcon test --packages-select marine_sidescan_mosaic
 ```
 
 Unit tests cover the projection geometry (`test_projection`), the splat
-accumulator (`test_accumulator`), and the normalizer (`test_normalizer`).
+accumulator (`test_accumulator`), the normalizer (`test_normalizer`), and the
+overview-pyramid builder's production path (`test_overview_pyramid` — argument
+parsing, on-disk fold, level-distinguished sidecar, mean/value-idempotency, and
+the empty-layer / partial-pyramid guards).
 
 ## Dependencies
 
