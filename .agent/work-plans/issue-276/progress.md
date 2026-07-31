@@ -382,7 +382,7 @@ Fix confirmation (R2 finding → R3 verdict):
 **CI**: copilot-pull-request-reviewer success; `build` still running — merge gate waits for it regardless of triage outcome.
 
 ### Findings
-- [ ] (must-fix, Copilot) Non-finite `worst_case_clearance` loses unconditional conservatism: `computeCost()` folds `!isfinite(worst_case_clearance)` into the same branch as "below minimum_depth", so an UNTRUSTED sample with invalid math (non-finite `sample.depth` in a store tile → clearance ±∞/NaN with finite σ) caps at MAX_NON_OBSTACLE instead of the pre-PR unconditional LETHAL. Invalid input is not "shallow but untrusted" — it is unknown, and must stay LETHAL independent of trust. Fix: split the first branch — `!std::isfinite(worst_case_clearance)` → `LETHAL_OBSTACLE` unconditionally; `< minimum_depth_` → `keepout_cost` (trust-gated) — and add a test (finite untrusted σ + NaN depth ⇒ LETHAL). Store tiles are on-disk external input; malformed data cannot be ruled out in the field. — `bathymetry_layer/src/bathymetry_layer.cpp:848`
+- [x] (must-fix, Copilot) Non-finite `worst_case_clearance` loses unconditional conservatism: `computeCost()` folds `!isfinite(worst_case_clearance)` into the same branch as "below minimum_depth", so an UNTRUSTED sample with invalid math (non-finite `sample.depth` in a store tile → clearance ±∞/NaN with finite σ) caps at MAX_NON_OBSTACLE instead of the pre-PR unconditional LETHAL. Invalid input is not "shallow but untrusted" — it is unknown, and must stay LETHAL independent of trust. Fix: split the first branch — `!std::isfinite(worst_case_clearance)` → `LETHAL_OBSTACLE` unconditionally; `< minimum_depth_` → `keepout_cost` (trust-gated) — and add a test (finite untrusted σ + NaN depth ⇒ LETHAL). Store tiles are on-disk external input; malformed data cannot be ruled out in the field. — `bathymetry_layer/src/bathymetry_layer.cpp:848`
 
 ### False positives
 - None. The single Copilot comment survives code verification; local rounds R1–R3 did not cover the non-finite-depth path (they covered non-finite σ).
@@ -391,3 +391,67 @@ Fix confirmation (R2 finding → R3 verdict):
 Hand off to `address-findings` for the must-fix, then a fast re-confirm
 `review-code` round and re-triage. Merge additionally gated on the in-flight
 `build` CI check.
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-31 22:00 +00:00
+**By**: Claude Opus
+
+**Branch**: feature/issue-276 at `0abef41`   <!-- PR #290; fix commit sha -->
+**Addressed**: `## Integrated Review` (2026-07-31 17:53 -04:00, PR #290 at `375d9a4`; 1 must-fix, 0 false positives)
+**Commits**: `0abef41` (fix + tests), progress commit (this entry)
+
+Addressed the sole open finding from the Integrated Review — one atomic fix
+commit. No deferrals. Verified against the current source before acting.
+
+### Actions
+- [x] (must-fix, Copilot) Non-finite `worst_case_clearance` loses unconditional
+  conservatism — split `computeCost`'s first branch so `!std::isfinite(worst_case_clearance)`
+  returns `LETHAL_OBSTACLE` **unconditionally** (invalid geometry is *unknown*, not
+  "shallow but untrusted"), while `< minimum_depth_` keeps the trust-gated
+  `keepout_cost`. An untrusted sample with a malformed (non-finite) depth can no
+  longer cap at the caution band. Updated the `computeCost` header doc to record
+  the unconditional-LETHAL path. — `bathymetry_layer/src/bathymetry_layer.cpp:846`,
+  `bathymetry_layer/src/bathymetry_layer.hpp:102` — `0abef41`
+
+### Test note (finding's suggested vector corrected — NOT a deferral)
+
+The finding suggested a test with "finite untrusted σ + **NaN** depth ⇒ LETHAL".
+On inspection, a NaN depth is the **no-data** path, not this bug's path:
+`BathyCell::hasData()` is `!std::isnan(depth)` (`bathy_cell.hpp:97`), so a NaN-depth
+cell reads as unsurveyed → `evaluateCell` returns `nullopt`, never reaching
+`computeCost`. The reachable malformed-geometry path is an **infinite** depth: ∞ is
+not NaN → `hasData()` true → survives `reliableSamples` (finite σ) → reaches
+`computeCost` with a non-finite clearance. The added tests therefore use ±∞ depths
+for the `evaluateCell` integration path (the finding's *intent* — non-finite
+geometry + finite untrusted σ ⇒ LETHAL — fully covered), plus NaN and ±∞ at the
+`computeCost` unit level:
+- `ClearanceRampBoundaries` — extended to assert `computeCost(non-finite, trusted=false)
+  == LETHAL` for NaN / +∞ / −∞ (was only `trusted=true`), pinning the split branch.
+- `NonFiniteDepthWithUntrustedFiniteSigmaStaysLethal` (new) — `evaluateCell` with a
+  ±∞-depth Survey sample at σ=2.0 > gate (0.5, untrusted) ⇒ LETHAL, not the caution
+  cap.
+
+### Build/test status
+
+**Full build + test PASS in-container.** Rebuilt the underlay `geodesy` dependency
+from source (custom `geodesy/ecef.h`, absent from `/opt/ros/jazzy`), then
+clean-rebuilt both packages (stale CMake cache had pinned the system geodesy):
+- `colcon build` — `marine_bathymetry_store` + `bathymetry_layer` build clean.
+- `colcon test` — `bathymetry_layer` **25/25 gtest** (was 24; +1 new case) + plugin
+  load, all linters (`ament_cpplint`/`ament_uncrustify` clean on the three changed
+  files); `marine_bathymetry_store` 96 gtest across 8 executables — **0 errors, 0
+  failures** across both packages. Both new/extended tests executed
+  (`status="run"`) and passed.
+
+### Next step
+
+Lifecycle: **Implementation → review-code** (re-confirm the fix). Hand off to a
+fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 276 --skill review-code
+
+Per the Integrated Review's Next step: a fast re-confirm `review-code` round, then
+re-triage. Merge remains gated on the in-flight `build` CI check. Follow-on
+(unchanged, not blocking this PR): platform-repo `nav2_params` `max_uncertainty`
+→ `confidence_gate` migration; sim acceptance run (advisory).
