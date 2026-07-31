@@ -295,3 +295,31 @@ markdown-only otherwise, so no package build/test was required.
 - [x] (suggestion) Usage said "Regenerates" while destroying — usage now says the rebuild is WHOLESALE + crash-safe; added `--dry-run` — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:35-47` (`fe87a33`)
 - [x] (suggestion) ADR-0011 §4 named MBES backscatter with no ADR-0007 pointer — added reciprocal header pointers ADR-0007 ↔ ADR-0011 — `docs/decisions/0007-mbes-backscatter-store.md:9-15`, `docs/decisions/0011-overview-pyramid.md:12-17` (`9fdab0f`)
 - [x] (suggestion) Per-level progress printed out-count only — report tiles in as well as out — `marine_sidescan_mosaic/src/overview_pyramid.cpp:210-215,411-413` (`7212791`)
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-31 15:06 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-188 at `954e464`
+**Mode**: pre-push
+**Depth**: Deep (reason: 2394 lines / 16 files / ADR-0011 — three independent Deep triggers)
+**Must-fix**: 0 | **Suggestions**: 3
+**Round**: 3 | **Ship**: recommended — zero must-fix; all 19 round-2 findings verified resolved, MF1 quality-band gate confirmed end-to-end (shadow-cell test passes), statics clean, both test suites green; the 3 suggestions are low-severity and non-blocking
+
+Round-3 verification: ament_uncrustify + ament_cpplint + ament_cppcheck clean on all six new C++
+files. `test_overview_builder` 6/6 (rebuilt fresh this session). `test_overview_pyramid` 21/21 —
+run from the binary built 2026-07-27 20:20 (postdates the MF1 fix `e0a9d56` @ 15:55); the only
+source change since is the whitespace-only reformat `035ecef`, so it validly exercises current
+behavior, including `ShadowCellsWithZeroIntensityStillFold` (MF1's shadow-cell regression guard).
+`validCell` gates on band 1 (quality) — a revert to intensity would zero the shadow test's
+coverage count and fail it. Two disjoint-lens Deep adversarial reads found no must-fix. Note:
+`marine_sidescan_mosaic` could not be recompiled here (pre-existing missing underlay `geodesy`
+install, unrelated to #188), so the pyramid suite ran from the post-fix binary rather than a
+this-session rebuild.
+
+### Findings
+- [ ] (suggestion) Swap-failure `catch` runs `remove_all(staging)` after the restore rename; if the restore throws, staging cleanup is skipped and `overviews.tmp/` is left behind — reorder cleanup before the restore (or nest a try) — `marine_sidescan_mosaic/src/overview_pyramid.cpp:455`
+- [ ] (suggestion) CLI prints `overview pyramid complete: N tile(s) written` before the refusal error on `early_empty`/`tiles_skipped` builds (exit codes correct; cosmetic) — gate the success line on `result.sidecar_replaced` — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:80`
+- [ ] (suggestion) ADR-0011 says `overviews.old/` "must be removed by hand" but the code safely auto-reclaims it (never the sole copy) — soften the wording or add a code comment so spec and behavior agree — `docs/decisions/0011-overview-pyramid.md:64`
