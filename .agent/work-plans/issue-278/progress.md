@@ -564,3 +564,32 @@ skipped (--no-local, workspace#590 standing).
 
 ### Next step
 Lifecycle: **Local Review** (approved) → push / open PR → **triage-reviews**.
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-31 12:01 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #286 at `c4be878`
+
+Operator-directed scope extension (Roland: "Fixing bugs is fine even if it's
+not in the issue's original scope. Fix it.") — the Integrated Review's
+follow-up note on `import_geotiff_main.cpp` is fixed in this PR instead of
+deferred:
+
+### Actions
+- [x] `import_geotiff` CLI: same `--cell-size` UB guard as `f4e20a1`
+  (`!isfinite || <= 0` → clean error), plus the wider bug class found on
+  inspection: all `std::stod`/`std::stoi` parses were unguarded with no
+  enclosing try in `main` (non-numeric input → `std::terminate`), and
+  non-finite `--depth-scale`/`--depth-offset`/`--uncertainty` were
+  accepted (silent depth poisoning / silent sentinel-gate fallback). All
+  numeric flags now parse via a `parse_finite` helper — `c4be878`
+
+Verification: colcon build clean; ament_uncrustify + ament_cpplint clean;
+suite 286/0 (38 skipped); manual CLI smoke — `0`/`-1`/`nan`/`inf`/`abc`
+all exit 1 with clean messages on every numeric flag, valid values proceed.
+
+### Next step
+Lifecycle: **Implementation** → push to PR #286 (operator-directed fix on a
+published branch) → hosted CI + Copilot re-review → merge checkpoint.
