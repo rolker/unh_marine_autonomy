@@ -85,8 +85,24 @@ void BathymetryLayer::onInitialize()
     maximum_caution_depth_ = 2.5;
   }
 
+  const double default_confidence_gate = confidence_gate_;
   declareParameter("confidence_gate", rclcpp::ParameterValue(confidence_gate_));
   node->get_parameter(name_ + ".confidence_gate", confidence_gate_);
+  // confidence_gate is external input and gates ALL keepout: a sample is TRUSTED
+  // (keepout-eligible) only when σ ≤ confidence_gate. A NaN, negative, or zero
+  // gate makes `σ ≤ gate` false for every realistic sample (σ ≥ 0, and every NaN
+  // comparison is false), silently disabling trusted keepout entirely — a
+  // fail-quiet safety hole where the layer would never keep the vehicle out of a
+  // trusted shoal. Validate finite & strictly positive (mirroring the depth-ramp
+  // guard above); reset to the default on a bad value rather than run degraded.
+  if (!(std::isfinite(confidence_gate_) && confidence_gate_ > 0.0)) {
+    RCLCPP_WARN_STREAM(
+      logger_,
+      "Invalid confidence_gate (" << confidence_gate_ << "); it must be finite and > 0 "
+        "(σ ≤ gate ⇒ trusted keepout-eligible). Using default "
+                                  << default_confidence_gate << " m instead.");
+    confidence_gate_ = default_confidence_gate;
+  }
 
   // #276 deprecation guard: `max_uncertainty` was renamed to `confidence_gate`
   // AND its meaning was inverted — from a reject-filter (σ over the gate ⇒ the

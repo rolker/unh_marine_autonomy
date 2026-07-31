@@ -16,6 +16,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "marine_autonomy/gggs.h"
 #include "marine_bathymetry_store/bathy_cell.hpp"
@@ -60,6 +62,7 @@ public:
   // Renamed from setMaxUncertainty (#276): the parameter is now a trust-threshold
   // (σ ≤ gate ⇒ keepout-eligible), not a reject-filter.
   void setConfidenceGate(double v) {confidence_gate_ = v;}
+  double getConfidenceGate() const {return confidence_gate_;}
   void setUnsurveyedIsLethal(bool v) {unsurveyed_is_lethal_ = v;}
   // #276 deprecation guard: whether onInitialize saw a config still setting the
   // removed `max_uncertainty` key (and fired the one-shot migration WARN).
@@ -810,6 +813,53 @@ TEST_F(TideFrameTest, DeprecatedMaxUncertaintyKeyIsDetected)
   EXPECT_TRUE(layer.deprecatedMaxUncertaintySeen())
     << "a config still setting max_uncertainty must trip the deprecation guard "
        "(one-shot WARN), not be silently ignored";
+}
+
+// #276 local-review must-fix: an invalid confidence_gate (NaN / negative / zero)
+// silently disables ALL trusted keepout, because `σ ≤ gate` is then false for
+// every realistic sample — a fail-quiet safety hole. onInitialize must validate
+// it (finite & > 0) and reset to the default, mirroring the depth-ramp guard.
+TEST_F(TideFrameTest, InvalidConfidenceGateResetsToDefault)
+{
+  auto make_node = [](const std::string & name, double gate) {
+      auto node = std::make_shared<nav2_util::LifecycleNode>(name);
+      node->declare_parameter("bathymetry_layer.map_frame", std::string("map"));
+      node->declare_parameter("bathymetry_layer.map_tide_frame", std::string("map_tide"));
+      node->declare_parameter("bathymetry_layer.confidence_gate", gate);
+      return node;
+    };
+
+  // Each bad value (negative, zero, NaN) must be rejected and reset to the 0.5 m
+  // default so trusted keepout keeps working.
+  for (const auto & [suffix, gate] : std::vector<std::pair<std::string, double>>{
+    {"neg", -1.0}, {"zero", 0.0},
+    {"nan", std::numeric_limits<double>::quiet_NaN()}})
+  {
+    auto node = make_node("test_bad_confidence_gate_" + suffix, gate);
+    auto tf_buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
+    publishMapTide(tf_buffer, "map", 48.88);
+
+    nav2_costmap_2d::LayeredCostmap layered_costmap("map_tide", false, false);
+    layered_costmap.resizeMap(10, 10, 1.0, 0.0, 0.0);
+
+    BathymetryLayerForTest layer;
+    layer.initialize(&layered_costmap, "bathymetry_layer", tf_buffer.get(), node, nullptr);
+
+    EXPECT_DOUBLE_EQ(layer.getConfidenceGate(), 0.5)
+      << "confidence_gate=" << gate << " must reset to the 0.5 m default, not "
+      "silently disable all keepout";
+  }
+
+  // A valid positive gate is honoured (not clobbered by the guard).
+  auto node = make_node("test_good_confidence_gate", 1.25);
+  auto tf_buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
+  publishMapTide(tf_buffer, "map", 48.88);
+  nav2_costmap_2d::LayeredCostmap layered_costmap("map_tide", false, false);
+  layered_costmap.resizeMap(10, 10, 1.0, 0.0, 0.0);
+  BathymetryLayerForTest layer;
+  layer.initialize(&layered_costmap, "bathymetry_layer", tf_buffer.get(), node, nullptr);
+  EXPECT_DOUBLE_EQ(layer.getConfidenceGate(), 1.25)
+    << "a valid confidence_gate must be preserved";
 }
 
 // A degenerate config (map_frame == map_tide_frame) must NOT be accepted: the
