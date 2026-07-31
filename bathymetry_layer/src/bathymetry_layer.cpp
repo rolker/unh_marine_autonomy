@@ -850,9 +850,11 @@ unsigned char BathymetryLayer::computeCost(double worst_case_clearance, bool tru
     return nav2_costmap_2d::FREE_SPACE;
   }
   // S4: guard div-by-zero when parameters are degenerate (maximum_caution_depth_
-  // == minimum_depth_). onInitialize() validates and resets to defaults, but
-  // setters (used in tests and via parameter-change callbacks) do not. At the
-  // ramp boundary worst_case_clearance == minimum_depth_ with a zero-width window,
+  // == minimum_depth_). onInitialize() validates and resets to defaults, but the
+  // protected test setters (test_bathymetry_layer.cpp) write the members directly
+  // and bypass that validation — the only non-onInitialize path (there is no
+  // add_on_set_parameters_callback in this layer). At the ramp boundary
+  // worst_case_clearance == minimum_depth_ with a zero-width window,
   // any cost in [LETHAL+1, MAX_NON_OBSTACLE] is defensible; the keepout cost
   // (LETHAL when trusted, else the caution cap) is the conservative choice.
   const double range = maximum_caution_depth_ - minimum_depth_;
