@@ -99,6 +99,13 @@ protected:
   // the below-`minimum_depth_` verdict is capped at MAX_NON_OBSTACLE (top of the
   // caution band) instead of LETHAL — high-σ data is costed (go-slow), never
   // hard-forbidden on its own (D7: keepout only on trusted data).
+  //
+  // NOTE: the trust flag is NOT the whole safety story. A sample with a *non-finite*
+  // σ (σ = ∞ / NaN → genuinely unknown quality, ADR-0010 D4) is bucketed with
+  // no-data → conservative LETHAL by `evaluateCell` *before* it ever reaches
+  // computeCost, so computeCost only ever sees a usable finite σ reduced to
+  // (worst_case_clearance, trusted). Do not read a `trusted == false → caution`
+  // guarantee here as covering unknown-quality data — that path never gets here.
   unsigned char computeCost(double worst_case_clearance, bool trusted) const;
 
   // Exposed for unit testing: the full two-query per-cell decision (review M1),
