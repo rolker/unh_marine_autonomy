@@ -216,3 +216,43 @@ Specialists: Static Analysis (ament_cpplint clean; cppcheck = pre-existing style
 - [x] (must-fix) `confidence_gate` unvalidated => fail-quiet: NaN/negative/zero silently disables ALL keepout (sigma <= NaN always false). Validate finite & >=0 with reset-to-default, mirroring the depth-ramp guard at :75-85 — `bathymetry_layer/src/bathymetry_layer.cpp:87`
 - [x] (suggestion) computeCost hpp doc: note the sigma=inf/NaN => LETHAL path lives outside the trust gate (in evaluateCell), so the trust logic isn't the whole story — `bathymetry_layer/src/bathymetry_layer.hpp:89`
 - [x] (suggestion) Stale S4 comment references non-existent "parameter-change callbacks" (no add_on_set_parameters_callback in package); reachable non-onInitialize path is the test setters — `bathymetry_layer/src/bathymetry_layer.cpp:835`
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-31 21:09 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-276 at `9169f23`
+**Addressed**: `## Local Review (Pre-Push)` (2026-07-31 20:50 +0000, branch `feature/issue-276` at `f24d7be`; changes-requested, 3 must-fix + 2 suggestions)
+**Commits**: `bc5d81e`, `027b372`, `99f2ecc`, `3989c71`, `9169f23`
+
+Addressed all five findings from the pre-push review — one commit each, atomic.
+
+### Actions
+- [x] (must-fix) Trusted-keepout regression on multi-sample cells — added `reliableSamples()` to the store query (returns EVERY reliable sample, not just the shallowest) and reworked `evaluateCell` to cost by the **MAX** over all reliable samples, so a shallower untrusted sample can no longer mask a co-located trusted LETHAL. σ=∞ still short-circuits to conservative LETHAL. Fixed the stale "the two coincide" comment; added the `TrustedKeepoutNotMaskedByShallowerUntrustedSample` regression test (Survey trusted-keepout + shallower untrusted Chart sample ⇒ LETHAL). — `marine_bathymetry_store/src/query.cpp` (`reliableSamples`), `.../query.hpp`, `bathymetry_layer/src/bathymetry_layer.cpp` (`evaluateCell`), test — `bc5d81e`
+- [x] (must-fix) σ=∞ vs "CATZOC D/U never keepout-grade" — documentation: recorded the finite-σ export contract in ADR-0010 D7 (D/U must export a large **finite** σ; σ=∞ stays reserved for genuinely-unknown D4 quality → conservative LETHAL) and mirrored the contract into the `bestSource` precondition note. No behaviour change — the consumer policy is correct; the ADR now binds the future S57 exporter. — `docs/decisions/0010-geospatial-world-model.md`, `marine_bathymetry_store/src/query.cpp` — `027b372`
+- [x] (must-fix) `confidence_gate` unvalidated fail-quiet — added a finite-&-strictly-positive guard in `onInitialize` (mirrors the depth-ramp guard) that resets a NaN/negative/zero gate to the default with a WARN, so an invalid gate can no longer silently disable ALL trusted keepout. Added the `InvalidConfidenceGateResetsToDefault` test (negative/zero/NaN reset + valid pass-through). — `bathymetry_layer/src/bathymetry_layer.cpp`, test — `99f2ecc`
+- [x] (suggestion) `computeCost` hpp doc — noted that the σ=∞/NaN ⇒ LETHAL bucketing lives in `evaluateCell` upstream of `computeCost`, so the trust flag here is not the whole safety story. — `bathymetry_layer/src/bathymetry_layer.hpp` — `3989c71`
+- [x] (suggestion) Stale S4 comment — replaced the non-existent "parameter-change callbacks" reference with the real bypass path (the protected test setters); noted there is no `add_on_set_parameters_callback` in this layer. — `bathymetry_layer/src/bathymetry_layer.cpp` — `9169f23`
+
+### Build/test status
+
+**Full build + test PASS in-container this round.** Built the missing `geodesy`
+underlay dependency from source (`underlay_ws/src/geographic_info/geodesy`), which
+unblocked `bathymetry_layer` — resolving the "not run in this container"
+limitation from the prior implementation entry. Results:
+- `marine_bathymetry_store`: `colcon build` + `colcon test` — 14/14 pass (incl. copyright/cpplint/cppcheck/uncrustify/lint_cmake/xmllint).
+- `bathymetry_layer`: `colcon build` + `colcon test` — 7/7 test executables, **24/24 gtest cases** + plugin-load + all linters pass. The two new tests
+  (`TrustedKeepoutNotMaskedByShallowerUntrustedSample`, `InvalidConfidenceGateResetsToDefault`) pass, and every pre-existing test still passes.
+
+All five findings' files pass `ament_cpplint` and `ament_uncrustify` clean.
+
+### Next step
+
+Lifecycle: **Implementation → review-code** (re-review the fixes). Hand off to a
+fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 276 --skill review-code
+
+Follow-on (unchanged, not blocking this PR): platform-repo `nav2_params`
+`max_uncertainty` → `confidence_gate` migration; sim acceptance run (advisory).
