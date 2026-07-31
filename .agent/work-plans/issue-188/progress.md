@@ -374,3 +374,42 @@ left behind as run-lock debris.
 
 ### False positives
 - (none)
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-31 15:48 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-188 at `43f885a`   <!-- PR #287 -->
+**Addressed**: Integrated Review of 2026-07-31 11:41 -04:00, PR #287 at `b379038` (0 must-fix + 3 Copilot findings [1 medium, 2 low] — all 3 actioned)
+**Commits**: `8de3bd5`, `fa700a0`, `43f885a`
+
+The Integrated Review carried three Copilot findings (all verified VALID at
+triage; no cross-source confirmations). All three verified against current
+source before fixing and are genuinely resolved.
+
+The medium finding (retire step outside the swap guard) was the load-bearing
+one: `overviews/`→`overviews.old/` retire sat before the `try`, so a throw from
+`remove_all(retired)` or `rename(overviews, retired)` exited with the
+`overviews.tmp/` run-lock left behind, blocking the next build. The retire is
+now inside the guard, and restore is gated on a `retired_moved` flag (restore
+only if the retire rename actually completed) — the swap's crash-safe-not-atomic
+contract is preserved with no partial-publish window widened. The two low
+findings are test-hardening: an explicit `<map>` include and a non-throwing
+`error_code` `remove_all` in the `ScratchDir` dtor (plus an explicit
+`<system_error>` include, in the same anti-transitive-include spirit as the
+`<map>` fix).
+
+**Step-4 sanity pass:** `ament_cpplint` + `ament_uncrustify` clean on all three
+changed files. `marine_tiled_raster_store` (finding #2's package) rebuilt clean
+and its test suite is green (66 tests, 0 failures — includes
+`test_overview_builder`). `marine_sidescan_mosaic` (findings #1, #3) could not be
+compiled here: it still fails on the missing underlay `geodesy/geodesics.h` in
+the untouched `projection.cpp` — the same pre-existing environment gap the round-3
+and prior address-findings entries recorded, unrelated to these changes (a swap
+control-flow restructure and a test-dtor tweak).
+
+### Actions
+- [x] (medium) Retire step outside the swap try/catch left `overviews.tmp/` behind on throw — retire+swap now share one guard; restore gated on `retired_moved` — `marine_sidescan_mosaic/src/overview_pyramid.cpp:450-471` (`8de3bd5`)
+- [x] (low) `test_overview_builder.cpp` missing `#include <map>` — added — `marine_tiled_raster_store/test/test_overview_builder.cpp:26` (`fa700a0`)
+- [x] (low) `ScratchDir` dtor used throwing `fs::remove_all` — switched to the non-throwing `std::error_code` overload (+ explicit `<system_error>` include) — `marine_sidescan_mosaic/test/test_overview_pyramid.cpp:30,63-68` (`43f885a`)
