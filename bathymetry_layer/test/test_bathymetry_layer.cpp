@@ -135,10 +135,21 @@ TEST(BathymetryLayer, ClearanceRampBoundaries)
   // Monotonic: shallower clearance must never cost less than deeper clearance.
   EXPECT_GE(layer.computeCost(1.2, true), layer.computeCost(2.5, true));
 
-  // Non-finite worst-case clearance is conservatively LETHAL for trusted data.
-  EXPECT_EQ(
-    layer.computeCost(std::numeric_limits<double>::quiet_NaN(), true),
-    nav2_costmap_2d::LETHAL_OBSTACLE);
+  // Non-finite worst-case clearance is INVALID INPUT (unknown geometry), not
+  // "shallow but untrusted": it stays LETHAL regardless of the trust flag. The
+  // untrusted caution cap (MAX_NON_OBSTACLE) applies only to a finite-but-shallow
+  // clearance — never to NaN / ±∞ (#276 Integrated Review, Copilot must-fix).
+  for (const double bad :
+    {std::numeric_limits<double>::quiet_NaN(),
+      std::numeric_limits<double>::infinity(),
+      -std::numeric_limits<double>::infinity()})
+  {
+    EXPECT_EQ(layer.computeCost(bad, true), nav2_costmap_2d::LETHAL_OBSTACLE)
+      << "Non-finite clearance (trusted) → LETHAL.";
+    EXPECT_EQ(layer.computeCost(bad, false), nav2_costmap_2d::LETHAL_OBSTACLE)
+      << "Non-finite clearance (UNTRUSTED) → LETHAL, not the caution cap: invalid "
+      "geometry is unknown, not merely uncertain.";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -358,6 +369,52 @@ TEST(BathymetryLayer, UnknownUncertaintyCellStaysConservativeLethal)
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(*result, nav2_costmap_2d::FREE_SPACE)
       << "Deep, reliable record → FREE.";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// #276 Integrated Review (Copilot must-fix): a sample with a FINITE σ but a
+// non-finite DEPTH (malformed store tile) yields a non-finite worst-case
+// clearance. Its σ can still be large enough to be UNTRUSTED (σ > confidence
+// gate), so before the fix computeCost folded it into the trust-gated keepout
+// branch and capped it at MAX_NON_OBSTACLE (caution) instead of LETHAL. Invalid
+// geometry is UNKNOWN, not "shallow but untrusted", and must stay LETHAL
+// regardless of trust — store tiles are on-disk external input and cannot be
+// assumed well-formed in the field. Distinct from UnknownUncertaintyCell above
+// (that path is driven by a non-finite σ; here σ is finite and the DEPTH is bad).
+//
+// Depth here is an INFINITE, not NaN, value: BathyCell::hasData() is
+// `!isnan(depth)`, so a NaN depth reads as NO-DATA (the unsurveyed path), whereas
+// a ±∞ depth HAS data, survives reliableSamples (finite σ), and reaches
+// computeCost with a non-finite clearance — the exact reachable malformed-tile
+// path the finding is about.
+// ---------------------------------------------------------------------------
+TEST(BathymetryLayer, NonFiniteDepthWithUntrustedFiniteSigmaStaysLethal)
+{
+  BathymetryLayerForTest layer;
+  layer.setMinimumDepth(1.0);
+  layer.setMaximumCautionDepth(3.0);
+  layer.setConfidenceGate(0.5);
+  layer.setMapTideZ(0.0);
+  layer.setMapTideValid(true);
+
+  // σ = 2.0 > confidence_gate (0.5) → UNTRUSTED; the ±∞ depth makes the worst-case
+  // clearance non-finite. Both signs of infinity must be LETHAL, not the caution
+  // cap: invalid geometry is unknown, so trust does not soften it.
+  for (const double bad_depth :
+    {std::numeric_limits<double>::infinity(),
+      -std::numeric_limits<double>::infinity()})
+  {
+    auto store = std::make_unique<BathymetryStore>(5);
+    const auto cell = store->cellIndex(kLat, kLon);
+    store->set(SourceLayer::Survey, cell, BathyCell{bad_depth, 2.0});
+    layer.setStore(std::move(store));
+
+    const auto result = layer.evaluateCell(cell);
+    ASSERT_TRUE(result.has_value())
+      << "±∞ depth still HAS data (not NaN) → must write, not skip as unsurveyed.";
+    EXPECT_EQ(*result, nav2_costmap_2d::LETHAL_OBSTACLE)
+      << "Non-finite depth + finite untrusted σ → LETHAL, not the caution cap.";
   }
 }
 

@@ -843,7 +843,15 @@ unsigned char BathymetryLayer::computeCost(double worst_case_clearance, bool tru
   const unsigned char keepout_cost =
     trusted ? nav2_costmap_2d::LETHAL_OBSTACLE : nav2_costmap_2d::MAX_NON_OBSTACLE;
 
-  if (!std::isfinite(worst_case_clearance) || worst_case_clearance < minimum_depth_) {
+  // A non-finite worst-case clearance is INVALID INPUT (e.g. a malformed store
+  // tile with a non-finite depth → clearance ±∞/NaN even with a finite σ), NOT
+  // "shallow but untrusted". Unknown geometry must stay LETHAL independent of
+  // trust — the untrusted caution cap applies only to a genuinely-computed
+  // finite-but-shallow clearance. Keep these two verdicts separate.
+  if (!std::isfinite(worst_case_clearance)) {
+    return nav2_costmap_2d::LETHAL_OBSTACLE;
+  }
+  if (worst_case_clearance < minimum_depth_) {
     return keepout_cost;
   }
   if (worst_case_clearance >= maximum_caution_depth_) {

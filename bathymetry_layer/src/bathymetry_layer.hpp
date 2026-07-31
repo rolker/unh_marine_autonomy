@@ -106,6 +106,10 @@ protected:
   // computeCost, so computeCost only ever sees a usable finite σ reduced to
   // (worst_case_clearance, trusted). Do not read a `trusted == false → caution`
   // guarantee here as covering unknown-quality data — that path never gets here.
+  // Separately, a *non-finite* @p worst_case_clearance (invalid geometry — e.g. a
+  // non-finite sample depth even with a finite σ) is treated as unknown and
+  // returns LETHAL unconditionally, independent of @p trusted: the untrusted
+  // caution cap applies only to a finite-but-shallow clearance.
   unsigned char computeCost(double worst_case_clearance, bool trusted) const;
 
   // Exposed for unit testing: the full two-query per-cell decision (review M1),
