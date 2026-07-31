@@ -278,3 +278,72 @@ All three R1 must-fixes verified correctly resolved: MAX-over-reliable-samples p
 - [x] (suggestion) New public shared-lib API `reliableSamples()` has no direct unit test (only transitive via layer regression test); add a case pinning multi-layer collection + NaN-σ drop + σ=∞-retained-at-∞ — `marine_bathymetry_store/test/test_query.cpp`
 - [x] (suggestion) ADR citation nuance: σ=∞→unknown-quality mapping is ADR-0010 D4; note attributes it to "(ADR-0002 §D7)" (defensible for the conservative consumer policy, but D4 owns the mapping) — `docs/decisions/0010-geospatial-world-model.md:233`
 - [x] (suggestion) Stale test comments still say "shallowestReliable → nullopt" for the NaN-σ path (now reliableSamples→empty→LETHAL); assertions correct — `bathymetry_layer/test/test_bathymetry_layer.cpp:299,331,345`
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-31 21:29 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-276 at `5255b3c`
+**Addressed**: `## Local Review (Pre-Push)` (2026-07-31 21:19 +0000, branch `feature/issue-276` at `dfe5b59`, code HEAD `9169f23`; changes-requested, 1 must-fix + 3 suggestions)
+**Commits**: `1fb8717`, `8c6d1d9`, `5595532`, `5255b3c`
+
+Addressed all four open findings from the R2 pre-push review — one atomic commit
+each, no deferrals. Nothing was re-litigated; each fix matches what the review
+called for and was verified against the current source first.
+
+### Actions
+- [x] (must-fix) README algorithm prose stale — rewrote item 3 of the cost-flow
+  list so it names `reliableSamples(store, cell, ∞)` returning **every** sample and
+  the cell taking the **MAX (most-hazardous) cost over all reliable samples**,
+  replacing the superseded "shallowestReliable → shallowest sample" description
+  (the exact shallowest-pick behaviour that was R1's trusted-keepout regression).
+  Now consistent with README:77 and `evaluateCell`'s MAX loop; the σ=∞/NaN →
+  conservative-LETHAL outcome text was preserved (still correct). —
+  `bathymetry_layer/README.md:66` — `1fb8717`
+- [x] (suggestion) `reliableSamples()` had no direct unit test — added
+  `Query.ReliableSamplesCollectsAllLayersDropsNaNRetainsInfiniteAtInfinity`
+  pinning the three contract properties: (1) multi-layer collection (Survey +
+  Reference + Chart all returned, not collapsed to the shallowest), (2) NaN-σ
+  drop, (3) σ=∞ **retained at ∞** (∞ > ∞ is false) but dropped under a finite
+  gate — the exact contract `evaluateCell` relies on to bucket σ=∞ in its own
+  isfinite branch rather than via the store gate. —
+  `marine_bathymetry_store/test/test_query.cpp` — `5255b3c`
+- [x] (suggestion) ADR citation nuance — split the citation on ADR-0010 D7: the
+  σ = ∞ ↔ unknown-quality **mapping** is now attributed to **D4** (which owns
+  "unknown → σ = ∞", line 152), while the conservative-LETHAL **consumer policy**
+  keeps its §D7 reference. Resolves the internal inconsistency with the same
+  paragraph's line 235, which already cited D4. —
+  `docs/decisions/0010-geospatial-world-model.md:232` — `5595532`
+- [x] (suggestion) Stale test comments — updated the three `shallowestReliable →
+  nullopt` references in the NaN-σ / σ=∞ test to the current `reliableSamples →
+  empty set → conservative LETHAL` model (assertions were already correct; only
+  the prose was stale). The unrelated MF1-tide `nullopt` reference at :269 is a
+  genuine path and was left untouched. —
+  `bathymetry_layer/test/test_bathymetry_layer.cpp:299,331,345` — `8c6d1d9`
+
+### Build/test status
+
+**Full build + test PASS in-container.** Rebuilt the underlay `geodesy` dependency
+(carries the custom `geodesy/ecef.h`, absent from the `/opt/ros/jazzy` package),
+then clean-rebuilt `bathymetry_layer` (stale build cache had pinned the system
+geodesy) and `marine_bathymetry_store`:
+- `colcon build` — both packages build clean.
+- `colcon test` — **287 tests, 0 errors, 0 failures, 36 skipped** across both
+  packages (all gtest cases + copyright/cpplint/uncrustify/cppcheck/lint_cmake/
+  xmllint linters). The new
+  `ReliableSamplesCollectsAllLayersDropsNaNRetainsInfiniteAtInfinity` executed and
+  passed; every pre-existing test still passes.
+
+### Next step
+
+Lifecycle: **Implementation → review-code** (re-review the fixes). Hand off to a
+fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 276 --skill review-code
+
+The R2 review's Ship note recommended applying these (a one-line must-fix + three
+suggestions) and pushing rather than running another full round; the host drives
+that decision. Follow-on (unchanged, not blocking this PR): platform-repo
+`nav2_params` `max_uncertainty` → `confidence_gate` migration; sim acceptance run
+(advisory).
