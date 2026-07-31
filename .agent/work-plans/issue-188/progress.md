@@ -413,3 +413,28 @@ control-flow restructure and a test-dtor tweak).
 - [x] (medium) Retire step outside the swap try/catch left `overviews.tmp/` behind on throw — retire+swap now share one guard; restore gated on `retired_moved` — `marine_sidescan_mosaic/src/overview_pyramid.cpp:450-471` (`8de3bd5`)
 - [x] (low) `test_overview_builder.cpp` missing `#include <map>` — added — `marine_tiled_raster_store/test/test_overview_builder.cpp:26` (`fa700a0`)
 - [x] (low) `ScratchDir` dtor used throwing `fs::remove_all` — switched to the non-throwing `std::error_code` overload (+ explicit `<system_error>` include) — `marine_sidescan_mosaic/test/test_overview_pyramid.cpp:30,63-68` (`43f885a`)
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-31 12:08 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #287 at `9dce632`
+**Sources**: 2 (Copilot R2 @ `9dce632`, CI rollup)
+**Cross-source confirmations**: 0
+**CI**: all-pass (build green on `9dce632`, run 30644635433 — compile-verifies the marine_sidescan_mosaic changes the container could not build)
+
+Copilot R2 has zero inline comments; its review body carries one residual
+concern, verified VALID at both cleanup sites: the build-loop catch
+(overview_pyramid.cpp:428) and the swap catch (:467) call the **throwing**
+`fs::remove_all(staging)` inside `catch` blocks. If cleanup itself throws, it
+replaces the original exception (diagnosis lost), and in the swap path the
+restore rename is skipped — previous sidecar stranded as `overviews.old/`
+(hand-recoverable, but avoidable). Same fix family as the ScratchDir dtor
+(`43f885a`): best-effort `std::error_code` overload in failure paths.
+
+### Findings
+- [ ] (low, Copilot R2) Throwing `fs::remove_all(staging)` inside both catch blocks can mask the original exception and (swap path) skip the previous-sidecar restore — switch both to the non-throwing `std::error_code` overload — `marine_sidescan_mosaic/src/overview_pyramid.cpp:428,467`
+
+### False positives
+- (none)
