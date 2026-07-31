@@ -23,6 +23,12 @@ find_package(nlohmann_json REQUIRED)
 # GeoTIFF I/O to marine_tiled_raster_store; the importer needs GDAL directly, so
 # declare it explicitly (also in package.xml).
 find_package(GDAL REQUIRED)
+# The S-102 importer (#278) additionally needs OpenSSL (SHA256 verification of
+# catalog-listed tile digests) and marine_vertical_datum (#274, per-cell
+# MLLW->ellipsoid at import). Both stay PRIVATE to the internal
+# s102_import_core target below — they never enter this package's export.
+find_package(OpenSSL REQUIRED)
+find_package(marine_vertical_datum REQUIRED)
 
 add_library(${PROJECT_NAME}
   src/bathymetry_store.cpp
@@ -78,6 +84,33 @@ install(TARGETS ${PROJECT_NAME}
 add_executable(import_geotiff src/import_geotiff_main.cpp)
 target_link_libraries(import_geotiff ${PROJECT_NAME})
 
+# S-102 importer core (#278): discover/fetch/convert/run stages as an internal
+# static library so the pipeline is testable without spawning the CLI. Its
+# headers live under src/s102/ and are NOT installed; nothing here is exported.
+add_library(s102_import_core STATIC
+  src/s102/catalog.cpp
+  src/s102/convert.cpp
+  src/s102/fetch.cpp
+  src/s102/run.cpp
+  src/s102/vdatum_provider.cpp
+)
+target_include_directories(s102_import_core PUBLIC
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>")
+target_link_libraries(s102_import_core PUBLIC
+  ${PROJECT_NAME}
+  marine_vertical_datum::marine_vertical_datum
+)
+target_link_libraries(s102_import_core PRIVATE
+  ${GDAL_LIBRARIES}
+  OpenSSL::Crypto
+  nlohmann_json::nlohmann_json
+)
+target_include_directories(s102_import_core PRIVATE ${GDAL_INCLUDE_DIRS})
+
+# The `s102_import` CLI: fetch + convert + import NOAA S-102 tiles for an area.
+add_executable(s102_import src/s102_import_main.cpp)
+target_link_libraries(s102_import s102_import_core)
+
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 # nlohmann_json and GDAL are PRIVATE link deps, but a static library propagates them
 # into the export's INTERFACE_LINK_LIBRARIES as $<LINK_ONLY:...>, so a consumer that
@@ -87,7 +120,7 @@ ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   marine_autonomy marine_tiled_raster_store geographic_msgs nlohmann_json GDAL)
 
-install(TARGETS import_geotiff RUNTIME DESTINATION lib/${PROJECT_NAME})
+install(TARGETS import_geotiff s102_import RUNTIME DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -110,6 +143,25 @@ if(BUILD_TESTING)
   ament_add_gtest(test_geotiff_import test/test_geotiff_import.cpp)
   target_link_libraries(test_geotiff_import ${PROJECT_NAME} ${GDAL_LIBRARIES})
   target_include_directories(test_geotiff_import PRIVATE ${GDAL_INCLUDE_DIRS})
+
+  # S-102 importer tests (#278). All offline: fixture GeoPackages, file://
+  # fetches, synthetic projected rasters, ConstantOffsetProvider. They build
+  # fixtures with GDAL directly, so they link it (PRIVATE in the core lib).
+  ament_add_gtest(test_s102_catalog test/test_s102_catalog.cpp)
+  target_link_libraries(test_s102_catalog s102_import_core ${GDAL_LIBRARIES})
+  target_include_directories(test_s102_catalog PRIVATE ${GDAL_INCLUDE_DIRS})
+
+  ament_add_gtest(test_s102_fetch test/test_s102_fetch.cpp)
+  target_link_libraries(test_s102_fetch s102_import_core
+    nlohmann_json::nlohmann_json)
+
+  ament_add_gtest(test_s102_convert test/test_s102_convert.cpp)
+  target_link_libraries(test_s102_convert s102_import_core ${GDAL_LIBRARIES})
+  target_include_directories(test_s102_convert PRIVATE ${GDAL_INCLUDE_DIRS})
+
+  ament_add_gtest(test_s102_run test/test_s102_run.cpp)
+  target_link_libraries(test_s102_run s102_import_core ${GDAL_LIBRARIES})
+  target_include_directories(test_s102_run PRIVATE ${GDAL_INCLUDE_DIRS})
 endif()
 
 ament_package()

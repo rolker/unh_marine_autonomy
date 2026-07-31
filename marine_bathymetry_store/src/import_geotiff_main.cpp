@@ -33,6 +33,7 @@
 /// (StoreMetadata) may be set with the --platform/--sensor/--survey/--date flags
 /// and is written to <store_dir>/registry.json.
 
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -99,18 +100,53 @@ int main(int argc, char * argv[])
       }
       return argv[++i];
     };
+  // std::stod/std::stoi throw on non-numeric input and there is no enclosing
+  // try block in main, so an unguarded parse aborts via std::terminate.
+  // Parse through these helpers instead: bad input is a clean usage error.
+  // Finite-only because a NaN/inf here either hits undefined behavior
+  // (--cell-size -> log2/int-cast in gggs::Level::fromCellSize) or silently
+  // poisons imported depths (--depth-scale/--depth-offset) or silently
+  // disables the flag (--uncertainty: NaN fails the >= 0 sentinel gate).
+  const auto parse_finite = [](const char * flag, const char * val) -> double {
+      double parsed = 0.0;
+      try {
+        parsed = std::stod(val);
+      } catch (const std::exception &) {
+        std::cerr << "bad " << flag << " '" << val << "'\n";
+        std::exit(1);
+      }
+      if (!std::isfinite(parsed)) {
+        std::cerr << "bad " << flag << " '" << val << "' (want a finite number)\n";
+        std::exit(1);
+      }
+      return parsed;
+    };
 
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--cell-size") == 0) {
-      cell_size = std::stod(need_arg(i));
+      const char * val = need_arg(i);
+      cell_size = parse_finite("--cell-size", val);
+      // Non-positive values flow into gggs::Level::fromCellSize() where
+      // std::log2(<=0) yields inf/NaN and the following static_cast<int> is
+      // undefined behavior — same guard as s102_import.
+      if (cell_size <= 0.0) {
+        std::cerr << "bad --cell-size '" << val << "' (want a positive finite number)\n";
+        return 1;
+      }
     } else if (std::strcmp(argv[i], "--level") == 0) {
-      level = std::stoi(need_arg(i));
+      const char * val = need_arg(i);
+      try {
+        level = std::stoi(val);
+      } catch (const std::exception &) {
+        std::cerr << "bad --level '" << val << "'\n";
+        return 1;
+      }
     } else if (std::strcmp(argv[i], "--uncertainty") == 0) {
-      constant_uncertainty = std::stod(need_arg(i));
+      constant_uncertainty = parse_finite("--uncertainty", need_arg(i));
     } else if (std::strcmp(argv[i], "--depth-scale") == 0) {
-      depth_scale = std::stod(need_arg(i));
+      depth_scale = parse_finite("--depth-scale", need_arg(i));
     } else if (std::strcmp(argv[i], "--depth-offset") == 0) {
-      depth_offset = std::stod(need_arg(i));
+      depth_offset = parse_finite("--depth-offset", need_arg(i));
     } else if (std::strcmp(argv[i], "--platform") == 0) {
       metadata.platform = need_arg(i);
     } else if (std::strcmp(argv[i], "--sensor") == 0) {
