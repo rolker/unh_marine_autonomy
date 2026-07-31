@@ -61,9 +61,13 @@ pairing).
    skipped (a partial pyramid must not displace a complete one).
    `overviews.tmp/` doubles as the **per-layer run lock**: it is claimed with a
    failing `create_directory`, so two concurrent builds cannot trample one
-   staging directory. A stray `overviews.tmp/` (or `overviews.old/`) is a
-   crashed run's debris; it must be removed by hand before the next build,
-   which is deliberate — silently deleting it would defeat the lock.
+   staging directory. A stray `overviews.tmp/` is a crashed run's debris and
+   must be removed by hand before the next build — deliberate, since silently
+   deleting it would defeat the lock. A stray `overviews.old/` needs no such
+   care: the next successful build reclaims it automatically (the rename-aside
+   deletes any leftover `overviews.old/` before retiring the current sidecar,
+   and it is created only after staging is complete, so it is never the sole
+   copy).
 
 3. **The fold's load-bearing mapping is `gggs::parent()` / `gggs::children()`
    (`marine_autonomy/gggs/index_math.h`) plus per-cell geographic
