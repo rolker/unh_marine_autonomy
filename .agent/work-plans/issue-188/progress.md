@@ -505,3 +505,39 @@ hosted CI on the push is the live signal for that package.)
 ### Actions
 - [x] (low) `buildParentTile` null-child skip → throw + doc + regression test — `marine_tiled_raster_store` (`bc1e2dc`)
 - [x] (low) refusal-path throwing `remove_all` → `error_code` overload + warning — `marine_sidescan_mosaic/src/overview_pyramid.cpp` (`d9ddd88`)
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-31 12:49 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #287 at `9599cd3`
+**Sources**: 2 (Copilot R4 @ `9599cd3` — Lite, 1 suppressed comment, 0 inline; CI rollup)
+**Cross-source confirmations**: 0
+**CI**: all-pass on `9599cd3`
+
+Merge-gate sweep caught one final Copilot round. The suppressed comment is
+VALID and substantive (wrong-outcome path): post-swap `fs::remove_all(retired)`
+was the last throwing cleanup — a throw there reports the build failed with the
+new sidecar already live. Fixed immediately below rather than merging past it.
+
+### Findings
+- [x] (low, Copilot R4) Post-swap throwing `remove_all(retired)` reports failure after a successful swap — `error_code` overload + warning (`943faca`) — `marine_sidescan_mosaic/src/overview_pyramid.cpp:485`
+
+### False positives
+- (none)
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-31 12:49 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**Branch**: feature/issue-188 at `943faca`   <!-- PR #287 -->
+**Addressed**: Integrated Review (round 4, above) — 1 low finding, actioned
+**Commits**: `943faca`
+
+Host-inline (standing operator-approved pattern): post-swap retired-sidecar
+cleanup now best-effort non-throwing with a stderr warning. This was the final
+throwing cleanup site — the non-throwing pattern is now complete across the
+pyramid build/swap path. Lint clean; hosted CI is the compile/test signal for
+marine_sidescan_mosaic.
