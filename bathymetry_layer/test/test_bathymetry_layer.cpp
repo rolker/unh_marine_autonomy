@@ -296,9 +296,10 @@ TEST(BathymetryLayer, InvalidTideYieldsNoInformation)
 // magnitude of uncertainty (genuinely unknown quality, ADR-0010 D4). That is
 // bucketed with no-data, NOT with high-but-finite-σ caution, so it stays
 // conservatively LETHAL — the pre-existing "data exists but no reliable sample"
-// path, unchanged. This also pins the σ=∞ correctness detail: shallowestReliable
-// called with ∞ does NOT filter a literal σ=∞ sample (∞ > ∞ is false), so
-// evaluateCell's own isfinite guard is what makes σ=∞ conservative. The confident
+// path, unchanged. This also pins the σ=∞ correctness detail: reliableSamples
+// called with ∞ does NOT filter a literal σ=∞ sample (∞ > ∞ is false), so it is
+// retained in the returned set and evaluateCell's own isfinite guard is what
+// makes σ=∞ conservative. The confident
 // control confirms the LETHAL came from the unknown-σ guard, not absent data.
 // ---------------------------------------------------------------------------
 TEST(BathymetryLayer, UnknownUncertaintyCellStaysConservativeLethal)
@@ -328,7 +329,7 @@ TEST(BathymetryLayer, UnknownUncertaintyCellStaysConservativeLethal)
       << "σ=∞ (unknown quality) → conservative LETHAL, unchanged from pre-#276.";
   }
 
-  // σ = NaN: every sample is filtered by shallowestReliable → nullopt → the same
+  // σ = NaN: every sample is dropped by reliableSamples → empty set → the same
   // conservative LETHAL path.
   {
     auto store = std::make_unique<BathymetryStore>(5);
@@ -342,7 +343,7 @@ TEST(BathymetryLayer, UnknownUncertaintyCellStaysConservativeLethal)
     ASSERT_TRUE(result.has_value())
       << "NaN-σ cell still HAS data (depth present) → must be written.";
     EXPECT_EQ(*result, nav2_costmap_2d::LETHAL_OBSTACLE)
-      << "NaN-σ → nullopt from shallowestReliable → conservative LETHAL.";
+      << "NaN-σ → empty reliableSamples → conservative LETHAL.";
   }
 
   // The same confident record is FREE — confirming the LETHAL verdicts above came
