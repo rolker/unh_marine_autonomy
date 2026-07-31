@@ -370,3 +370,24 @@ Fix confirmation (R2 finding → R3 verdict):
 
 ### Findings
 - [ ] No issues found. LGTM.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-31 17:53 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #290 at `375d9a4`
+**Sources**: 3 (Copilot R1 @ `375d9a4`, Local Review (Pre-Push) R3 @ `cd79411` [approved], CI rollup @ `375d9a4` [build in progress at triage time])
+**Cross-source confirmations**: 0
+**CI**: copilot-pull-request-reviewer success; `build` still running — merge gate waits for it regardless of triage outcome.
+
+### Findings
+- [ ] (must-fix, Copilot) Non-finite `worst_case_clearance` loses unconditional conservatism: `computeCost()` folds `!isfinite(worst_case_clearance)` into the same branch as "below minimum_depth", so an UNTRUSTED sample with invalid math (non-finite `sample.depth` in a store tile → clearance ±∞/NaN with finite σ) caps at MAX_NON_OBSTACLE instead of the pre-PR unconditional LETHAL. Invalid input is not "shallow but untrusted" — it is unknown, and must stay LETHAL independent of trust. Fix: split the first branch — `!std::isfinite(worst_case_clearance)` → `LETHAL_OBSTACLE` unconditionally; `< minimum_depth_` → `keepout_cost` (trust-gated) — and add a test (finite untrusted σ + NaN depth ⇒ LETHAL). Store tiles are on-disk external input; malformed data cannot be ruled out in the field. — `bathymetry_layer/src/bathymetry_layer.cpp:848`
+
+### False positives
+- None. The single Copilot comment survives code verification; local rounds R1–R3 did not cover the non-finite-depth path (they covered non-finite σ).
+
+### Next step
+Hand off to `address-findings` for the must-fix, then a fast re-confirm
+`review-code` round and re-triage. Merge additionally gated on the in-flight
+`build` CI check.
