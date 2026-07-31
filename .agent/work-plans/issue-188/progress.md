@@ -457,3 +457,24 @@ previous-sidecar restore. `<system_error>` was already included.
 
 ### Actions
 - [x] (low) Throwing `remove_all` in build-loop and swap catch blocks → `std::error_code` overload at both sites — `marine_sidescan_mosaic/src/overview_pyramid.cpp:427-433,465-476` (`3604f4d`)
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-31 12:21 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #287 at `a6fdbe1`
+**Sources**: 2 (Copilot R3 @ `a6fdbe1` — Lite effort, 2 suppressed comments, 0 inline; CI rollup)
+**Cross-source confirmations**: 0
+**CI**: build pending on `a6fdbe1` at triage time (run 30646309542); prior heads all green
+
+Both suppressed comments verified VALID against local code. Round-3 triage of
+this PR; both findings are small and in the same robustness family the prior
+rounds worked through.
+
+### Findings
+- [ ] (low, Copilot R3) `buildParentTile` silently skips `nullptr` children — inconsistent with its documented refuse-caller-mistakes contract (grouping errors throw precisely to avoid silent coverage loss); no production caller can pass null (both build pointer vectors from live objects), so the lenient branch is dead code that would hide a future caller bug — throw `std::invalid_argument` on null child + document — `marine_tiled_raster_store/include/marine_tiled_raster_store/overview_builder.hpp:143`
+- [ ] (low, Copilot R3) Refusal path (`early_empty`/`tiles_skipped`) still uses throwing `fs::remove_all(staging)` — a throw replaces the refusal result (caller loses the skip/empty diagnostics) and leaves the run-lock debris anyway; use the `std::error_code` overload + stderr warning, consistent with the other cleanup sites — `marine_sidescan_mosaic/src/overview_pyramid.cpp:442`
+
+### False positives
+- (none)
