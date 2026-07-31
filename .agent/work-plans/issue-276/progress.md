@@ -347,3 +347,26 @@ suggestions) and pushing rather than running another full round; the host drives
 that decision. Follow-on (unchanged, not blocking this PR): platform-repo
 `nav2_params` `max_uncertainty` → `confidence_gate` migration; sim acceptance run
 (advisory).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-31 21:36 +0000
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-276 at `cd79411` (reviewed code HEAD `5255b3c`; R2 HEAD `9169f23`)
+**Mode**: pre-push
+**Depth**: Light (reason: scoped R3 re-confirm — diff docs/comments/test-only, no production code since R2's Deep read)
+**Must-fix**: 0 | **Suggestions**: 0
+**Round**: 3 | **Ship**: recommended — all four R2 findings resolved in atomic commits, diff is docs/test-only (0 production-code change), nothing new introduced.
+
+Scoped fast re-confirm per round brief — did not restart a full review. Verified the diff since R2's reviewed HEAD `9169f23` is confined to README.md, ADR-0010, and two test files (no production code), and that each of the four R2-addressing commits does exactly what its finding called for. Specialists: Static Analysis (README/ADR = markdown content-review only; both .cpp files passed cpplint/uncrustify/cppcheck/copyright + 287 gtests in the Implementation step's colcon test at code HEAD `5255b3c`). Claude Adversarial not re-dispatched (targeted confirm of 4 known fixes, not a fresh full read; R2 dual-lens Deep already cleared the production model). Local off (--no-local, workspace#590). Copilot off (default).
+
+Fix confirmation (R2 finding → R3 verdict):
+- README item 3 (`1fb8717`) — CONFIRMED: prose now `reliableSamples(store,cell,∞)` returns every sample, MAX-over-reliable-samples cost, "shallower untrusted sample cannot mask a co-located trusted keepout"; consistent with README:77 and evaluateCell's MAX loop; conservative σ=∞/NaN→LETHAL text preserved.
+- Direct `reliableSamples()` test (`5255b3c`) — CONFIRMED: verified against real API (returns std::vector<DepthSample>; gate "≤ max_uncertainty, NaN never reliable"); all three properties (multi-layer collection, NaN drop, σ=∞ retained@∞ / dropped@finite) pin correctly; BathyCell{depth,uncertainty} order + 3-arg BathymetryStore(5,true,true) Chart-write resolve.
+- ADR D4/D7 attribution (`5595532`) — CONFIRMED: mapping→D4, consumer policy→§D7; resolves inconsistency with same paragraph's line 235.
+- Stale test comments (`8c6d1d9`) — CONFIRMED: three shallowestReliable→nullopt comments updated to reliableSamples→empty→LETHAL; assertions unchanged; genuine MF1-tide nullopt at :269 correctly left.
+
+### Findings
+- [ ] No issues found. LGTM.
