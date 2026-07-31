@@ -320,6 +320,32 @@ install, unrelated to #188), so the pyramid suite ran from the post-fix binary r
 this-session rebuild.
 
 ### Findings
-- [ ] (suggestion) Swap-failure `catch` runs `remove_all(staging)` after the restore rename; if the restore throws, staging cleanup is skipped and `overviews.tmp/` is left behind — reorder cleanup before the restore (or nest a try) — `marine_sidescan_mosaic/src/overview_pyramid.cpp:455`
-- [ ] (suggestion) CLI prints `overview pyramid complete: N tile(s) written` before the refusal error on `early_empty`/`tiles_skipped` builds (exit codes correct; cosmetic) — gate the success line on `result.sidecar_replaced` — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:80`
-- [ ] (suggestion) ADR-0011 says `overviews.old/` "must be removed by hand" but the code safely auto-reclaims it (never the sole copy) — soften the wording or add a code comment so spec and behavior agree — `docs/decisions/0011-overview-pyramid.md:64`
+- [x] (suggestion) Swap-failure `catch` runs `remove_all(staging)` after the restore rename; if the restore throws, staging cleanup is skipped and `overviews.tmp/` is left behind — reorder cleanup before the restore (or nest a try) — `marine_sidescan_mosaic/src/overview_pyramid.cpp:455`
+- [x] (suggestion) CLI prints `overview pyramid complete: N tile(s) written` before the refusal error on `early_empty`/`tiles_skipped` builds (exit codes correct; cosmetic) — gate the success line on `result.sidecar_replaced` — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:80`
+- [x] (suggestion) ADR-0011 says `overviews.old/` "must be removed by hand" but the code safely auto-reclaims it (never the sole copy) — soften the wording or add a code comment so spec and behavior agree — `docs/decisions/0011-overview-pyramid.md:64`
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-31 15:19 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-188 at `21a63fe`
+**Addressed**: Local Review (Pre-Push) of 2026-07-31 15:06 +00:00, at `954e464` (0 must-fix + 3 suggestions — all 3 actioned)
+**Commits**: `dc1921d`, `31a75f6`, `21a63fe`
+
+The round-3 review was **approved** with zero must-fix and three low-severity
+suggestions; all three are actioned here (a pre-push review writes suggestions as
+unchecked actions, so address-findings closes them before re-review). All three
+were verified against current source before fixing.
+
+**Step-4 sanity pass:** `ament_cpplint` and `ament_uncrustify` clean on both
+changed C++ files. Package build/test could not run — `marine_sidescan_mosaic`
+fails to compile on the missing underlay `geodesy/geodesics.h` (in the untouched
+`projection.cpp`), the same pre-existing environment gap the round-3 review
+recorded; it is unrelated to these changes, which are mechanical statement/output
+reordering plus a doc wording fix.
+
+### Actions
+- [x] (suggestion) Swap-failure `catch` cleaned staging after the restore rename — reordered to `remove_all(staging)` **before** the restore, so a throwing restore can't leave `overviews.tmp/` behind — `marine_sidescan_mosaic/src/overview_pyramid.cpp:455-464` (`dc1921d`)
+- [x] (suggestion) Success line printed before the refusal error on `early_empty`/`tiles_skipped` — moved the two refusal blocks ahead of the "overview pyramid complete" line so it prints only on the actual swap (`sidecar_replaced`) — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:80-100` (`31a75f6`)
+- [x] (suggestion) ADR-0011 said `overviews.old/` must be hand-removed like `overviews.tmp/` — reworded so only the `overviews.tmp/` run-lock needs manual cleanup; `overviews.old/` is documented as auto-reclaimed (never the sole copy) — `docs/decisions/0011-overview-pyramid.md:62-66` (`21a63fe`)
