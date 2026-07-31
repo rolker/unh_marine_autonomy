@@ -65,3 +65,34 @@ Single package (`bathymetry_layer`), well-defined change to cost model with expl
 
 ### Open questions
 - [ ] No open questions — plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-07-31 19:36 +00:00
+**By**: Claude Code Agent (Claude Opus)
+<!-- Independent review. The `## Plan Authored` By-name ("Claude Code Agent")
+collides with this reviewer's name (workspace convention: all Claude agents
+share that name), but this is a fresh-context sub-agent on a different model
+(Opus reviewing a Sonnet-authored plan), dispatched independently — not an
+author self-review, so no self-review annotation. -->
+
+**Plan**: `.agent/work-plans/issue-276/plan.md` at `2bc009c`
+**PR**: PR-less (`--issue` mode; branch `feature/issue-276`)
+**Verdict**: approve-with-suggestions
+
+Core approach verified against source and ADR-0010 D7 and is sound. The
+critical fork review-issue flagged — does `marine_bathymetry_store` need an
+API change to expose σ? — is correctly RESOLVED: `shallowestReliable(*store_,
+cell, ∞)` returns the shallowest finite-σ sample (nullopt only when every σ is
+NaN → the existing "data but no reliable sample" LETHAL path), and
+`DepthSample.uncertainty` already exposes σ for the `trusted` test. No store
+change needed (verified `query.cpp:131`, `query.hpp:80`). ADR-0010 D7 semantics
+(keepout only on trusted σ ≤ gate; high-σ → costed caution, never LETHAL alone)
+match the ADR text. Scope is single-package / single-PR / ~4 files — correct.
+
+### Findings
+- [ ] (must-address) Sim-validation gate dropped — review-issue actioned plan-task to "identify the sim harness and define the 'sim-validated' criterion per ADR-0002 D7 before field use"; the plan is silent. Record the decision: define the scenario, or explicitly mark it a non-blocking pre-field gate with rationale, so the review-issue action isn't lost. — `plan.md:22` (Approach) / `plan.md:94` (Estimated Scope)
+- [ ] (suggestion) README has a *second* `max_uncertainty` occurrence in the example nav2 config block (`bathymetry_layer/README.md:124`), not just the parameter table (`:70`). Plan step 5 names only the "parameter table" — update the example snippet too. — `plan.md:52`
+- [ ] (suggestion) Silent config drift on rename — existing boat/platform configs setting `max_uncertainty:` will be silently ignored after the rename and fall back to `confidence_gate_` default 0.5, *and* the semantics change (reject-filter → trust-threshold). Per "Enforcement over documentation" (review-issue's ADR-0008 note flagged "not deprecation warnings"), consider a one-shot WARN if the deprecated key is still declared; at minimum the README migration note must call out the semantic change, not just the rename. — `plan.md:23`, `plan.md:87`
+- [ ] (suggestion) Member rename ripples beyond `computeCost` callers — the test helper `setMaxUncertainty` (`test_bathymetry_layer.cpp:60`) and comment at `:232` also reference `max_uncertainty`. The test file is already in the plan's file list, so it's in scope; just call out that the rename touches these, not only test cases 1 & 8. — `plan.md:44`
+- [ ] (suggestion, low) Worst-case selection — `evaluateCell` uses the σ of the *shallowest-depth* sample; the true worst-case clearance is min over samples of (clearance − σ), and a deeper-but-noisier sample could bind tighter. With one fused surface per layer (ADR-0002 #221) this is near-moot and matches the existing safety-query design, but worth a one-line confirmation against ADR-0010 D7 intent. — `plan.md:38`
