@@ -26,6 +26,7 @@
 #include <fstream>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "marine_autonomy/gggs.h"
@@ -58,7 +59,13 @@ public:
     fs::remove_all(path_);
     fs::create_directories(path_);
   }
-  ~ScratchDir() {fs::remove_all(path_);}
+  ~ScratchDir()
+  {
+    // Non-throwing overload: a cleanup error in the dtor would std::terminate
+    // and mask the real test failure.
+    std::error_code ec;
+    fs::remove_all(path_, ec);
+  }
   const fs::path & path() const {return path_;}
 
 private:
