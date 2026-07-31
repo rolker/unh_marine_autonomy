@@ -435,6 +435,55 @@ TEST(BathymetryLayer, KeepoutOnlyOnTrustedShallow)
 }
 
 // ---------------------------------------------------------------------------
+// Test case (#276 local-review must-fix): trusted-keepout must NOT be masked on a
+// MULTI-SAMPLE cell. When several source layers cover one cell, evaluateCell must
+// cost by the MAX over all reliable samples — not select one by shallowest point
+// estimate. Here a shallower UNTRUSTED Chart sample (caution) sits over a slightly
+// deeper TRUSTED Survey sample whose worst-case clearance is keepout-grade
+// (LETHAL). A shallowest-depth pick would return the Chart caution and hide the
+// Survey LETHAL; the max keeps the keepout (ADR-0010 D7: keepout on trusted data).
+// ---------------------------------------------------------------------------
+TEST(BathymetryLayer, TrustedKeepoutNotMaskedByShallowerUntrustedSample)
+{
+  BathymetryLayerForTest layer;
+  layer.setMinimumDepth(1.0);
+  layer.setMaximumCautionDepth(3.0);
+  layer.setConfidenceGate(0.5);
+  layer.setMapTideZ(0.0);
+  layer.setMapTideValid(true);
+
+  // Staging-writable so the Chart layer can be populated directly in the test.
+  auto store = std::make_unique<BathymetryStore>(
+    5, /*reference_writable=*/false, /*chart_staging_writable=*/true);
+  const auto cell = store->cellIndex(kLat, kLon);
+  // TRUSTED Survey shoal: seafloor 0.5 m down, σ 0.2 ≤ gate. worst_case =
+  // 0.5 − 0.2 = 0.3 < minimum_depth → LETHAL (trusted keepout).
+  store->set(SourceLayer::Survey, cell, BathyCell{-0.5, 0.2});
+  // UNTRUSTED Chart sample, SHALLOWER point estimate (−0.2 > −0.5) so it would win
+  // a shallowest-depth pick, but σ 2.0 > gate → caution cap, never keepout.
+  store->set(SourceLayer::Chart, cell, BathyCell{-0.2, 2.0});
+  layer.setStore(std::move(store));
+
+  const auto result = layer.evaluateCell(cell);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(*result, nav2_costmap_2d::LETHAL_OBSTACLE)
+    << "the trusted Survey keepout must survive a shallower untrusted Chart sample "
+       "(cost = MAX over reliable samples, not a shallowest-depth pick)";
+
+  // Control: the Chart sample ALONE is caution, confirming the LETHAL above came
+  // from the trusted Survey sample via the max — not from the Chart sample.
+  auto chart_only = std::make_unique<BathymetryStore>(
+    5, /*reference_writable=*/false, /*chart_staging_writable=*/true);
+  const auto chart_cell = chart_only->cellIndex(kLat, kLon);
+  chart_only->set(SourceLayer::Chart, chart_cell, BathyCell{-0.2, 2.0});
+  layer.setStore(std::move(chart_only));
+  const auto chart_result = layer.evaluateCell(chart_cell);
+  ASSERT_TRUE(chart_result.has_value());
+  EXPECT_EQ(*chart_result, nav2_costmap_2d::MAX_NON_OBSTACLE)
+    << "the untrusted Chart sample on its own is caution, not LETHAL";
+}
+
+// ---------------------------------------------------------------------------
 // Test case (#276, issue-named "ramp continuity at gate boundaries"): within the
 // [minimum_depth, maximum_caution_depth] ramp band, cost does NOT depend on
 // trust, so as a sample's σ crosses confidence_gate (trusted ⇄ untrusted) at a

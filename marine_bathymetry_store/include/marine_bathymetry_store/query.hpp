@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <vector>
 
 #include "geographic_msgs/msg/geo_point.hpp"
 #include "marine_autonomy/gggs.h"
@@ -78,6 +79,23 @@ std::optional<DepthSample> bestSource(
 ///   value. This is a deliberate tradeoff for the single-survey use case (see
 ///   ADR-0002 Amendment A1 supersession note).
 std::optional<DepthSample> shallowestReliable(
+  const BathymetryStore & store, const gggs::CellIndex & cell, double max_uncertainty);
+
+/// @brief EVERY reliable sample at @p cell across all layers and levels.
+///
+/// Same reliability gate as `shallowestReliable` (uncertainty ≤ @p
+/// max_uncertainty; a NaN uncertainty is never reliable), but returns **all**
+/// passing samples rather than collapsing to the shallowest. A cell can carry
+/// more than one sample when several source layers (Survey/Reference/Chart) or
+/// several GGGS levels cover it.
+///
+/// @note This exists because a *shallowest-depth* pick is unsafe for cost: a
+///   shallower but high-σ (untrusted) sample would mask a co-located trusted
+///   sample whose worst-case clearance is keepout-grade (ADR-0010 §D7). A
+///   safety-conscious caller must cost each sample and take the **most hazardous**
+///   (max cost), not select one by point-estimate depth. The result is empty when
+///   no reliable sample covers the cell — the caller must treat that as not-safe.
+std::vector<DepthSample> reliableSamples(
   const BathymetryStore & store, const gggs::CellIndex & cell, double max_uncertainty);
 
 /// @brief Visit every GGGS cell overlapping the geographic box, with its best source.

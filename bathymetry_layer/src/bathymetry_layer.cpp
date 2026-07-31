@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "geodesy/ecef.h"
 #include "geodesy/wgs84.h"
@@ -26,7 +27,7 @@ namespace bathymetry_layer
 using marine_bathymetry_store::bestSource;
 using marine_bathymetry_store::BathymetryStore;
 using marine_bathymetry_store::DepthSample;
-using marine_bathymetry_store::shallowestReliable;
+using marine_bathymetry_store::reliableSamples;
 
 // Expand a leading "~" or "~/" in a path to $HOME so one portable store_path
 // value (e.g. "~/data/stores/bathymetry") resolves on both the boat (field user)
@@ -881,46 +882,57 @@ std::optional<unsigned char> BathymetryLayer::evaluateCell(
     return std::nullopt;
   }
 
-  //   2. shallowestReliable(∞) — the shallowest sample WITHOUT a finite-σ reject
-  //   filter (ADR-0010 D7). Passing infinity keeps every finite-σ sample eligible
-  //   so σ drives *cost*, not rejection. It returns nullopt only when every
-  //   sample over the cell has a NaN σ. NOTE: it does NOT filter a literal σ=∞
-  //   sample — the gate test is `σ > max_uncertainty` and `∞ > ∞` is false
-  //   (query.cpp) — so a σ=∞ cell IS returned; the isfinite guard below folds it
-  //   into the same conservative path as NaN. Worst-case selection: this returns
-  //   the σ of the SHALLOWEST-depth sample, not the min over samples of
-  //   (clearance − σ). With one fused surface per layer (ADR-0002 #221) there is a
-  //   single sample per cell per layer, so the two coincide, and the
-  //   shallowest-depth sample is also the most-hazardous point estimate —
-  //   consistent with the existing shallowest-reliable safety-query design.
-  const std::optional<DepthSample> sample =
-    shallowestReliable(*store_, cell, std::numeric_limits<double>::infinity());
-
-  if (!sample || !std::isfinite(sample->uncertainty)) {
-    // Data exists but carries no usable magnitude of uncertainty (σ = NaN → all
-    // samples filtered → nullopt; or σ = ∞ → genuinely unknown quality,
-    // ADR-0010 D4). Neither is high-but-finite-σ "caution" data — it is bucketed
-    // with no-data → conservative LETHAL (the pre-existing "data but no reliable
-    // sample" path). A surveyed-but-unusable cell must NOT be treated as
-    // unsurveyed (review M1). (The pre-#248 per-cell staleness gate was retired —
-    // ADR-0002 A2.4.)
+  //   2. reliableSamples(∞) — EVERY sample WITHOUT a finite-σ reject filter
+  //   (ADR-0010 D7). Passing infinity keeps every finite-σ sample eligible so σ
+  //   drives *cost*, not rejection; only NaN-σ samples are dropped (∞ > ∞ is
+  //   false, so a literal σ=∞ sample IS returned and the isfinite branch below
+  //   folds it into the same conservative path as NaN). An EMPTY result means
+  //   data exists (bestSource above) but every sample has a NaN σ → the
+  //   pre-existing "data but no reliable sample" → conservative LETHAL path. A
+  //   surveyed-but-unusable cell must NOT be treated as unsurveyed (review M1).
+  //   (The pre-#248 per-cell staleness gate was retired — ADR-0002 A2.4.)
+  const std::vector<DepthSample> samples =
+    reliableSamples(*store_, cell, std::numeric_limits<double>::infinity());
+  if (samples.empty()) {
     return nav2_costmap_2d::LETHAL_OBSTACLE;
   }
 
-  // sample->depth is ellipsoidal HEIGHT (WGS84, up-positive): a seafloor 5 m
-  // below the ellipsoid has depth=-5.0, so a SHALLOWER (more hazardous) seafloor
-  // has a LARGER (less-negative) depth, hence a SMALLER clearance and a HIGHER
-  // cost. clearance = water-surface height − seafloor height.
-  //
-  // Worst-case clearance subtracts one standard deviation of vertical
-  // uncertainty (clearance − σ) — the shallowest the seafloor plausibly is — so
-  // a noisy sample is costed as if it were σ shallower (ADR-0010 D7). `trusted`
-  // is whether σ passed the confidence gate: only trusted data can drive LETHAL;
-  // high-σ data is costed (caution), never keepout on its own.
-  const double clearance = map_tide_z_ - sample->depth;
-  const double worst_case_clearance = clearance - sample->uncertainty;
-  const bool trusted = sample->uncertainty <= confidence_gate_;
-  return computeCost(worst_case_clearance, trusted);
+  // Cost by the MAX over ALL reliable samples, NOT a single shallowest-depth
+  // pick. Multiple samples arise when several source layers (Survey/Reference/
+  // Chart) or GGGS levels cover one cell (they no longer "coincide" once Chart is
+  // loaded — ADR-0010 D7). Selecting the shallowest point estimate would let a
+  // shallower but UNTRUSTED sample (high finite σ → capped at the caution band,
+  // 252) MASK a co-located TRUSTED sample whose worst-case clearance is
+  // keepout-grade (LETHAL, 254) — a safety regression. Taking the max cost keeps
+  // the trusted keepout: LETHAL > caution numerically.
+  unsigned char cost = nav2_costmap_2d::FREE_SPACE;
+  for (const DepthSample & sample : samples) {
+    unsigned char sample_cost;
+    if (!std::isfinite(sample.uncertainty)) {
+      // σ = ∞: genuinely unknown quality (ADR-0010 D4), not high-but-finite-σ
+      // caution — bucketed with no-data → conservative LETHAL. (The future chart
+      // exporter must emit a large *finite* σ for CATZOC D/U so those cells cost
+      // as caution, never keepout; ADR-0010 D7 finite-σ contract.)
+      sample_cost = nav2_costmap_2d::LETHAL_OBSTACLE;
+    } else {
+      // depth is ellipsoidal HEIGHT (WGS84, up-positive): a seafloor 5 m below the
+      // ellipsoid has depth=-5.0, so a SHALLOWER (more hazardous) seafloor has a
+      // LARGER (less-negative) depth, hence a SMALLER clearance and a HIGHER cost.
+      // Worst-case clearance subtracts one σ (clearance − σ) — the shallowest the
+      // seafloor plausibly is. `trusted` (σ ≤ confidence_gate_) gates keepout: only
+      // trusted data can drive LETHAL; high-σ data is costed (caution), never
+      // keepout on its own.
+      const double clearance = map_tide_z_ - sample.depth;
+      const double worst_case_clearance = clearance - sample.uncertainty;
+      const bool trusted = sample.uncertainty <= confidence_gate_;
+      sample_cost = computeCost(worst_case_clearance, trusted);
+    }
+    cost = std::max(cost, sample_cost);
+    if (cost == nav2_costmap_2d::LETHAL_OBSTACLE) {
+      break;  // nothing costs above LETHAL — no need to examine the rest.
+    }
+  }
+  return cost;
 }
 
 void BathymetryLayer::updateCosts(
