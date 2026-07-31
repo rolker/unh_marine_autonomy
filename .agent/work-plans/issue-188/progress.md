@@ -349,3 +349,28 @@ reordering plus a doc wording fix.
 - [x] (suggestion) Swap-failure `catch` cleaned staging after the restore rename — reordered to `remove_all(staging)` **before** the restore, so a throwing restore can't leave `overviews.tmp/` behind — `marine_sidescan_mosaic/src/overview_pyramid.cpp:455-464` (`dc1921d`)
 - [x] (suggestion) Success line printed before the refusal error on `early_empty`/`tiles_skipped` — moved the two refusal blocks ahead of the "overview pyramid complete" line so it prints only on the actual swap (`sidecar_replaced`) — `marine_sidescan_mosaic/src/build_sidescan_overviews.cpp:80-100` (`31a75f6`)
 - [x] (suggestion) ADR-0011 said `overviews.old/` must be hand-removed like `overviews.tmp/` — reworded so only the `overviews.tmp/` run-lock needs manual cleanup; `overviews.old/` is documented as auto-reclaimed (never the sole copy) — `docs/decisions/0011-overview-pyramid.md:62-66` (`21a63fe`)
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-31 11:41 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #287 at `b379038`
+**Sources**: 2 (Copilot R1 @ `b379038`, prior Local Review (Pre-Push) R3 @ `954e464` — all its findings closed by `dc1921d`/`31a75f6`/`21a63fe`)
+**Cross-source confirmations**: 0
+**CI**: build pending at triage time (run 30643104387)
+
+All three Copilot inline comments verified VALID against local code at head.
+Finding 3 is adjacent to (not a duplicate of) R3 suggestion 1: that fix
+(`dc1921d`) cleans staging when the *swap* rename throws; Copilot found the
+*retire* step (`fs::remove_all(retired)` + `fs::rename(overviews, retired)`)
+still sits outside the try/catch, so a throw there exits with `overviews.tmp/`
+left behind as run-lock debris.
+
+### Findings
+- [ ] (medium, Copilot) Retire step outside the swap try/catch: if `fs::remove_all(retired)` or `fs::rename(overviews, retired)` throws, staging is never cleaned and `overviews.tmp/` blocks the next run — widen the try to cover retire+swap; on failure remove staging, restore `retired` → `overviews` only if the retire rename had completed, rethrow — `marine_sidescan_mosaic/src/overview_pyramid.cpp:451-466`
+- [ ] (low, Copilot) `test_overview_builder.cpp` uses `std::map` (line 205) with no `#include <map>` — compiles today via transitive include, brittle across stdlib implementations — add the include — `marine_tiled_raster_store/test/test_overview_builder.cpp:24-28`
+- [ ] (low, Copilot) `ScratchDir` destructor calls throwing `fs::remove_all`; a cleanup error would `std::terminate` and mask the real test failure — use the non-throwing `std::error_code` overload in the dtor — `marine_sidescan_mosaic/test/test_overview_pyramid.cpp:61`
+
+### False positives
+- (none)
