@@ -77,13 +77,9 @@ int main(int argc, char ** argv)
       std::cerr << "dry run: nothing written\n";
       return 0;
     }
-    std::cerr << "overview pyramid complete: " << result.tiles_written <<
-      " tile(s) written";
-    if (result.tiles_skipped > 0) {
-      std::cerr << ", " << result.tiles_skipped <<
-        " tile(s) skipped (grid reconstruction mismatch)";
-    }
-    std::cerr << "\n";
+    // Report the refusals before any success line: on early_empty or a skip the
+    // swap never happened (sidecar_replaced stays false), so "complete" would be
+    // a lie next to the error.
     if (result.early_empty) {
       std::cerr << "error: a level above --min-level " << opts.min_level <<
         " produced no tiles — the fine-tile chain is broken; overviews/ left "
@@ -97,6 +93,9 @@ int main(int argc, char ** argv)
         "pyramid; overviews/ left unchanged\n";
       return 4;
     }
+    // Success: the swap happened (result.sidecar_replaced is true here).
+    std::cerr << "overview pyramid complete: " << result.tiles_written <<
+      " tile(s) written\n";
     return 0;
   } catch (const std::exception & e) {
     std::cerr << "error: " << e.what() << "\n";
