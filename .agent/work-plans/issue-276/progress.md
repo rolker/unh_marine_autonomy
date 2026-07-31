@@ -455,3 +455,34 @@ Per the Integrated Review's Next step: a fast re-confirm `review-code` round, th
 re-triage. Merge remains gated on the in-flight `build` CI check. Follow-on
 (unchanged, not blocking this PR): platform-repo `nav2_params` `max_uncertainty`
 → `confidence_gate` migration; sim acceptance run (advisory).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-31 22:06 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-276 at `746aa2e`   <!-- fix commit 0abef41 -->
+**Mode**: pre-push
+**Depth**: Light (reason: Round-4 fast re-confirm of one ~10-line scoped fix; Rounds 1–3 cleared the full change)
+**Must-fix**: 0 | **Suggestions**: 0
+**Round**: 4 | **Ship**: recommended — fix 0abef41 confirmed correct and complete; zero findings across static analysis + independent adversarial pass.
+
+Scope: re-confirm `0abef41` (split computeCost's first branch — non-finite
+worst_case_clearance -> unconditional LETHAL; < minimum_depth_ -> trust-gated),
+addressing the PR #290 Integrated Review Copilot must-fix. Not a full re-review.
+
+### Findings
+- [ ] No issues found. LGTM.
+
+### Re-confirm notes
+- Untrusted non-finite case is pinned at two levels, both fail pre-fix:
+  `ClearanceRampBoundaries` asserts `computeCost(NaN/+-inf, false) == LETHAL`
+  (was MAX_NON_OBSTACLE caution pre-fix); `NonFiniteDepthWithUntrustedFiniteSigmaStaysLethal`
+  drives the reachable evaluateCell path (+-inf depth + finite untrusted sigma -> LETHAL).
+- No other path reaches a trust-gated verdict with invalid math: `!isfinite` is
+  computeCost's first branch, so both `keepout_cost` returns (`< minimum_depth_`,
+  degenerate `range <= 0`) and the ramp get finite input. Single caller (line 954);
+  non-finite sigma intercepted earlier (line 936).
+- Static analysis clean (cpplint + uncrustify, all 3 files). Independent Claude
+  Lens-A adversarial pass agrees clean. `--no-local` per workspace#590.
