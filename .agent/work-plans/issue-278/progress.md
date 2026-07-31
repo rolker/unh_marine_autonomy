@@ -465,3 +465,34 @@ Lifecycle: **Local Review** (approved) → push / open PR → **triage-reviews**
 Branch is shippable at `b542369`. Hand off to a fresh-context sub-agent after push:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill triage-reviews
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-07-31 11:30 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #286 at `3eb585f`
+**Sources**: 3 (Copilot R1 @ `3eb585f`, Local Review rounds 1-5 @ `3eb585f` and prior, CI rollup)
+**Cross-source confirmations**: 0
+**CI**: all-pass (`build` success, `copilot-pull-request-reviewer` success)
+
+### Findings
+- [ ] (low, Copilot) `--cell-size` accepts non-positive / non-finite values (`0`,
+  `-1`, `nan`, `inf` all parse via `std::stod`) which flow into
+  `BathymetryStore::fromCellSize()` → `gggs::Level::fromCellSize()` where
+  `std::log2` of 0/negative yields inf/NaN and the subsequent
+  `static_cast<int>` is undefined behavior (`gggs/level.h:67`). Verified
+  valid against current code: the R2 hardening pass (`dcded4e`) added
+  non-finite rejection for `--area` and a try/catch for non-numeric
+  `--cell-size`, but no range/finiteness check on the parsed value. Fix:
+  reject `!std::isfinite(v) || v <= 0` at parse time in
+  `src/s102_import_main.cpp:112-121`, matching the `--area` validation
+  pattern. Note: `import_geotiff_main.cpp:141` has the same pre-existing
+  exposure (out of this PR's scope — candidate follow-up).
+
+### False positives
+- none — the single Copilot comment verified valid.
+
+### Next step
+Lifecycle: **Integrated Review** → `address-findings` (1 open finding) →
+`review-code` re-review → merge checkpoint.
