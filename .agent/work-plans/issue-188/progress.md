@@ -368,7 +368,7 @@ still sits outside the try/catch, so a throw there exits with `overviews.tmp/`
 left behind as run-lock debris.
 
 ### Findings
-- [ ] (medium, Copilot) Retire step outside the swap try/catch: if `fs::remove_all(retired)` or `fs::rename(overviews, retired)` throws, staging is never cleaned and `overviews.tmp/` blocks the next run — widen the try to cover retire+swap; on failure remove staging, restore `retired` → `overviews` only if the retire rename had completed, rethrow — `marine_sidescan_mosaic/src/overview_pyramid.cpp:451-466`
+- [x] (medium, Copilot) Retire step outside the swap try/catch: if `fs::remove_all(retired)` or `fs::rename(overviews, retired)` throws, staging is never cleaned and `overviews.tmp/` blocks the next run — widen the try to cover retire+swap; on failure remove staging, restore `retired` → `overviews` only if the retire rename had completed, rethrow — `marine_sidescan_mosaic/src/overview_pyramid.cpp:451-466`
 - [ ] (low, Copilot) `test_overview_builder.cpp` uses `std::map` (line 205) with no `#include <map>` — compiles today via transitive include, brittle across stdlib implementations — add the include — `marine_tiled_raster_store/test/test_overview_builder.cpp:24-28`
 - [ ] (low, Copilot) `ScratchDir` destructor calls throwing `fs::remove_all`; a cleanup error would `std::terminate` and mask the real test failure — use the non-throwing `std::error_code` overload in the dtor — `marine_sidescan_mosaic/test/test_overview_pyramid.cpp:61`
 

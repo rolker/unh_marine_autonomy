@@ -448,18 +448,24 @@ OverviewBuildResult buildOverviewPyramid(
   // one is in place. This is crash-SAFE, not atomic: POSIX offers no atomic
   // directory swap on a plain filesystem.
   const bool had_previous = fs::exists(overviews);
-  if (had_previous) {
-    fs::remove_all(retired);
-    fs::rename(overviews, retired);
-  }
+  bool retired_moved = false;
   try {
+    // Retire the previous sidecar (overviews/ -> overviews.old/) and swap the
+    // new one in under one guard: a throw from the retire step must clear the
+    // staging lock too, or overviews.tmp/ blocks the next run.
+    if (had_previous) {
+      fs::remove_all(retired);
+      fs::rename(overviews, retired);
+      retired_moved = true;
+    }
     fs::rename(staging, overviews);
   } catch (...) {
     // Clear the staging debris first, then restore: if the restore rename
     // itself throws, staging is already gone and can't be left behind as
-    // orphaned overviews.tmp/.
+    // orphaned overviews.tmp/. Restore only if the retire rename actually
+    // completed — otherwise overviews/ was never moved and is still in place.
     fs::remove_all(staging);
-    if (had_previous) {
+    if (retired_moved) {
       fs::rename(retired, overviews);   // restore the previous sidecar
     }
     throw;
