@@ -57,8 +57,13 @@ public:
   bool isMapTideValid() const {return map_tide_valid_;}
   void setMinimumDepth(double v) {minimum_depth_ = v;}
   void setMaximumCautionDepth(double v) {maximum_caution_depth_ = v;}
-  void setMaxUncertainty(double v) {max_uncertainty_ = v;}
+  // Renamed from setMaxUncertainty (#276): the parameter is now a trust-threshold
+  // (σ ≤ gate ⇒ keepout-eligible), not a reject-filter.
+  void setConfidenceGate(double v) {confidence_gate_ = v;}
   void setUnsurveyedIsLethal(bool v) {unsurveyed_is_lethal_ = v;}
+  // #276 deprecation guard: whether onInitialize saw a config still setting the
+  // removed `max_uncertainty` key (and fired the one-shot migration WARN).
+  bool deprecatedMaxUncertaintySeen() const {return deprecated_max_uncertainty_seen_;}
   void setWindowValid(bool v) {setWindowValidForTest(v);}
   void setCoverageEmptyLethal(bool v) {coverage_empty_lethal_ = v;}
   // enabled_ is set from the "enabled" param in onInitialize(); the blit tests
@@ -99,7 +104,10 @@ TEST(BathymetryLayer, ExpandUserPathHandlesTilde)
 }
 
 // ---------------------------------------------------------------------------
-// Test case 1: clearance → cost ramp boundaries (lethal / caution / free).
+// Test case 1: worst-case-clearance → cost ramp boundaries (lethal / caution /
+// free) for TRUSTED data (σ ≤ confidence_gate). The ramp shape is unchanged from
+// the pre-#276 clearance ramp; only the argument is now worst-case clearance and
+// a trust flag (ADR-0010 D7). Trusted below-minimum_depth → LETHAL.
 // ---------------------------------------------------------------------------
 TEST(BathymetryLayer, ClearanceRampBoundaries)
 {
@@ -107,26 +115,26 @@ TEST(BathymetryLayer, ClearanceRampBoundaries)
   layer.setMinimumDepth(1.0);
   layer.setMaximumCautionDepth(3.0);
 
-  // Below minimum_depth → LETHAL.
-  EXPECT_EQ(layer.computeCost(0.5), nav2_costmap_2d::LETHAL_OBSTACLE);
-  EXPECT_EQ(layer.computeCost(1.0 - 1e-6), nav2_costmap_2d::LETHAL_OBSTACLE);
+  // Below minimum_depth → LETHAL (trusted).
+  EXPECT_EQ(layer.computeCost(0.5, true), nav2_costmap_2d::LETHAL_OBSTACLE);
+  EXPECT_EQ(layer.computeCost(1.0 - 1e-6, true), nav2_costmap_2d::LETHAL_OBSTACLE);
 
-  // At / above maximum_caution_depth → FREE_SPACE.
-  EXPECT_EQ(layer.computeCost(3.0), nav2_costmap_2d::FREE_SPACE);
-  EXPECT_EQ(layer.computeCost(10.0), nav2_costmap_2d::FREE_SPACE);
+  // At / above maximum_caution_depth → FREE_SPACE (trust-independent).
+  EXPECT_EQ(layer.computeCost(3.0, true), nav2_costmap_2d::FREE_SPACE);
+  EXPECT_EQ(layer.computeCost(10.0, true), nav2_costmap_2d::FREE_SPACE);
 
   // Midpoint of the [1, 3] ramp → half of MAX_NON_OBSTACLE.
-  const unsigned char mid = layer.computeCost(2.0);
+  const unsigned char mid = layer.computeCost(2.0, true);
   const unsigned char expected_mid =
     static_cast<unsigned char>(nav2_costmap_2d::MAX_NON_OBSTACLE * 0.5);
   EXPECT_EQ(mid, expected_mid);
 
   // Monotonic: shallower clearance must never cost less than deeper clearance.
-  EXPECT_GE(layer.computeCost(1.2), layer.computeCost(2.5));
+  EXPECT_GE(layer.computeCost(1.2, true), layer.computeCost(2.5, true));
 
-  // Non-finite clearance is conservatively LETHAL.
+  // Non-finite worst-case clearance is conservatively LETHAL for trusted data.
   EXPECT_EQ(
-    layer.computeCost(std::numeric_limits<double>::quiet_NaN()),
+    layer.computeCost(std::numeric_limits<double>::quiet_NaN(), true),
     nav2_costmap_2d::LETHAL_OBSTACLE);
 }
 
@@ -192,13 +200,14 @@ TEST(BathymetryLayer, SurveyedCellMapsClearanceToCost)
   BathymetryLayerForTest layer;
   layer.setMinimumDepth(1.0);
   layer.setMaximumCautionDepth(3.0);
-  layer.setMaxUncertainty(0.5);
+  layer.setConfidenceGate(0.5);
   layer.setMapTideZ(0.0);  // water surface at ellipsoidal height 0.
 
   auto store = std::make_unique<BathymetryStore>(5);
   const auto cell = store->cellIndex(kLat, kLon);
 
-  // Shoal: seafloor 0.5 m below the water surface → clearance 0.5 m < 1.0 → LETHAL.
+  // Shoal: seafloor 0.5 m below the surface, trusted (σ 0.1 ≤ gate). Worst-case
+  // clearance = 0.5 − 0.1 = 0.4 m < 1.0 → LETHAL (trusted keepout).
   store->set(SourceLayer::Survey, cell, BathyCell{-0.5, 0.1});
   layer.setStore(std::move(store));
   layer.setMapTideValid(true);
@@ -206,7 +215,8 @@ TEST(BathymetryLayer, SurveyedCellMapsClearanceToCost)
   ASSERT_TRUE(shoal.has_value());
   EXPECT_EQ(*shoal, nav2_costmap_2d::LETHAL_OBSTACLE);
 
-  // Deep: seafloor 5 m down → clearance 5 m >= 3.0 → FREE_SPACE.
+  // Deep: seafloor 5 m down, trusted. Worst-case clearance = 5 − 0.1 = 4.9 m
+  // >= 3.0 → FREE_SPACE.
   auto deep_store = std::make_unique<BathymetryStore>(5);
   const auto deep_cell = deep_store->cellIndex(kLat, kLon);
   deep_store->set(SourceLayer::Survey, deep_cell, BathyCell{-5.0, 0.1});
@@ -218,28 +228,38 @@ TEST(BathymetryLayer, SurveyedCellMapsClearanceToCost)
 }
 
 // ---------------------------------------------------------------------------
-// Test case 4 (review M1): a surveyed-but-over-uncertain cell → LETHAL, NOT
-// treated as unsurveyed. This is the safety-critical two-query case.
+// Test case 4 (#276, issue-named "chart-σ shallow ⇒ caution not LETHAL"):
+// REWRITTEN for ADR-0010 D7. Pre-#276 this asserted that any finite σ over the
+// gate collapsed the cell to LETHAL (the reject-filter). Under the new model a
+// high-σ (untrusted, chart-grade) cell that reads shallow is COSTED as caution,
+// never keepout on uncertainty alone. The cell still HAS data (bestSource
+// non-null) and must be written — not skipped as unsurveyed (review M1).
 // ---------------------------------------------------------------------------
-TEST(BathymetryLayer, OverUncertainSurveyedCellIsLethal)
+TEST(BathymetryLayer, UntrustedShallowCellIsCautionNotLethal)
 {
   BathymetryLayerForTest layer;
-  layer.setMaxUncertainty(0.5);
+  layer.setMinimumDepth(1.0);
+  layer.setMaximumCautionDepth(3.0);
+  layer.setConfidenceGate(0.5);
   layer.setMapTideZ(0.0);
 
   auto store = std::make_unique<BathymetryStore>(5);
   const auto cell = store->cellIndex(kLat, kLon);
-  // Data present, but uncertainty 5.0 m exceeds max_uncertainty 0.5 m: the cell
-  // HAS data (bestSource non-null) but fails the reliability gate
-  // (shallowestReliable nullopt).
-  store->set(SourceLayer::Survey, cell, BathyCell{-10.0, 5.0});
+  // Chart-grade cell: seafloor 1.0 m down but σ 2.0 m (CATZOC-C-like) is above
+  // the 0.5 m confidence gate → UNTRUSTED. Worst-case clearance = 1.0 − 2.0 =
+  // −1.0 m < minimum_depth, so pre-#276 this would be LETHAL; under D7 an
+  // untrusted below-threshold cell is capped at the caution band, NOT LETHAL.
+  store->set(SourceLayer::Survey, cell, BathyCell{-1.0, 2.0});
   layer.setStore(std::move(store));
   layer.setMapTideValid(true);
 
   const auto result = layer.evaluateCell(cell);
   ASSERT_TRUE(result.has_value())
     << "Over-uncertain surveyed cell must be written (not skipped as unsurveyed).";
-  EXPECT_EQ(*result, nav2_costmap_2d::LETHAL_OBSTACLE);
+  EXPECT_EQ(*result, nav2_costmap_2d::MAX_NON_OBSTACLE)
+    << "High-σ shallow cell is costed at the top of the caution band, not LETHAL "
+       "(ADR-0010 D7: keepout only on trusted data).";
+  EXPECT_NE(*result, nav2_costmap_2d::LETHAL_OBSTACLE);
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +272,7 @@ TEST(BathymetryLayer, InvalidTideYieldsNoInformation)
   BathymetryLayerForTest layer;
   layer.setMinimumDepth(1.0);
   layer.setMaximumCautionDepth(3.0);
-  layer.setMaxUncertainty(0.5);
+  layer.setConfidenceGate(0.5);
   // Deliberately do NOT call setMapTideValid(true) — map_tide_valid_ defaults false.
   layer.setMapTideZ(52.3);  // Even a "correct" z must be rejected without a valid flag.
 
@@ -268,42 +288,62 @@ TEST(BathymetryLayer, InvalidTideYieldsNoInformation)
 }
 
 // ---------------------------------------------------------------------------
-// Test case 7 (S1, rewritten for #221 and #248): single fused surface — no prior
-// epoch to fall back to. A cell whose (only) record is over-uncertain has no
-// older confident epoch to fall through to: shallowestReliable returns nullopt
-// and the cell is LETHAL (the deliberate fallback-loss tradeoff recorded in
-// ADR-0002 A1's supersession). This pins that an over-uncertain cell is LETHAL
-// even when bestSource finds data, and that the same confident record is FREE.
-// (The per-cell staleness gate was retired in #248 — ADR-0002 A2.4 — so age no
-// longer factors into the verdict.)
+// Test case 7 (#276, issue-named "σ=∞/no-data unchanged"): REWRITTEN for
+// ADR-0010 D7. A cell whose only record carries σ = ∞ or σ = NaN has NO usable
+// magnitude of uncertainty (genuinely unknown quality, ADR-0010 D4). That is
+// bucketed with no-data, NOT with high-but-finite-σ caution, so it stays
+// conservatively LETHAL — the pre-existing "data exists but no reliable sample"
+// path, unchanged. This also pins the σ=∞ correctness detail: shallowestReliable
+// called with ∞ does NOT filter a literal σ=∞ sample (∞ > ∞ is false), so
+// evaluateCell's own isfinite guard is what makes σ=∞ conservative. The confident
+// control confirms the LETHAL came from the unknown-σ guard, not absent data.
 // ---------------------------------------------------------------------------
-TEST(BathymetryLayer, OverUncertainCellIsLethalWithNoPriorFallback)
+TEST(BathymetryLayer, UnknownUncertaintyCellStaysConservativeLethal)
 {
   BathymetryLayerForTest layer;
   layer.setMinimumDepth(1.0);
   layer.setMaximumCautionDepth(3.0);
-  layer.setMaxUncertainty(0.5);
+  layer.setConfidenceGate(0.5);
   layer.setMapTideZ(0.0);
   layer.setMapTideValid(true);
 
-  // Single fused surface: one record per cell. A deep but OVER-UNCERTAIN record.
-  // bestSource finds it (it has data) but shallowestReliable returns nullopt —
-  // and there is no prior epoch to fall through to, so the cell is LETHAL.
+  // σ = ∞ (unknown quality): deep depth, but the magnitude of uncertainty is
+  // unknown → conservative LETHAL, NOT costed as caution. (A finite large σ here
+  // would instead be caution — see UntrustedShallowCellIsCautionNotLethal.)
   {
     auto store = std::make_unique<BathymetryStore>(5);
     const auto cell = store->cellIndex(kLat, kLon);
-    store->set(SourceLayer::Survey, cell, BathyCell{-5.0, 5.0});
+    store->set(
+      SourceLayer::Survey, cell,
+      BathyCell{-5.0, std::numeric_limits<double>::infinity()});
     layer.setStore(std::move(store));
 
     const auto result = layer.evaluateCell(cell);
     ASSERT_TRUE(result.has_value())
       << "Cell has data → must write something (not skip as unsurveyed).";
     EXPECT_EQ(*result, nav2_costmap_2d::LETHAL_OBSTACLE)
-      << "Over-uncertain with no prior fallback → LETHAL (#221 tradeoff).";
+      << "σ=∞ (unknown quality) → conservative LETHAL, unchanged from pre-#276.";
   }
 
-  // The same confident record is FREE — confirming the LETHAL verdict above came
-  // from the reliability gate, not from the data being absent.
+  // σ = NaN: every sample is filtered by shallowestReliable → nullopt → the same
+  // conservative LETHAL path.
+  {
+    auto store = std::make_unique<BathymetryStore>(5);
+    const auto cell = store->cellIndex(kLat, kLon);
+    store->set(
+      SourceLayer::Survey, cell,
+      BathyCell{-5.0, std::numeric_limits<double>::quiet_NaN()});
+    layer.setStore(std::move(store));
+
+    const auto result = layer.evaluateCell(cell);
+    ASSERT_TRUE(result.has_value())
+      << "NaN-σ cell still HAS data (depth present) → must be written.";
+    EXPECT_EQ(*result, nav2_costmap_2d::LETHAL_OBSTACLE)
+      << "NaN-σ → nullopt from shallowestReliable → conservative LETHAL.";
+  }
+
+  // The same confident record is FREE — confirming the LETHAL verdicts above came
+  // from the unknown-σ guard, not from the data being absent.
   {
     auto store = std::make_unique<BathymetryStore>(5);
     const auto cell = store->cellIndex(kLat, kLon);
@@ -329,12 +369,12 @@ TEST(BathymetryLayer, ComputeCostDegenerateRampAndBoundary)
   layer.setMaximumCautionDepth(2.0);  // degenerate: range == 0
 
   // Degenerate range: any clearance < maximum_caution_depth_ falls through to
-  // the ramp but the range guard returns LETHAL (S4).
-  EXPECT_EQ(layer.computeCost(1.9), nav2_costmap_2d::LETHAL_OBSTACLE)
-    << "Below the (degenerate) boundary → LETHAL";
+  // the ramp but the range guard returns the keepout cost (LETHAL for trusted).
+  EXPECT_EQ(layer.computeCost(1.9, true), nav2_costmap_2d::LETHAL_OBSTACLE)
+    << "Below the (degenerate) boundary → LETHAL (trusted)";
   // At exactly the boundary both the < minimum_depth_ check and the range guard
   // fire in sequence; the result must be LETHAL or FREE — not UB.
-  const unsigned char at_boundary = layer.computeCost(2.0);
+  const unsigned char at_boundary = layer.computeCost(2.0, true);
   EXPECT_TRUE(
     at_boundary == nav2_costmap_2d::LETHAL_OBSTACLE ||
     at_boundary == nav2_costmap_2d::FREE_SPACE)
@@ -344,8 +384,93 @@ TEST(BathymetryLayer, ComputeCostDegenerateRampAndBoundary)
   // (the top of the caution band, just inside LETHAL).
   layer.setMinimumDepth(1.0);
   layer.setMaximumCautionDepth(3.0);
-  EXPECT_EQ(layer.computeCost(1.0), nav2_costmap_2d::MAX_NON_OBSTACLE)
+  EXPECT_EQ(layer.computeCost(1.0, true), nav2_costmap_2d::MAX_NON_OBSTACLE)
     << "At minimum_depth_ on a normal ramp → MAX_NON_OBSTACLE (highest caution).";
+}
+
+// ---------------------------------------------------------------------------
+// Test case (#276, issue-named "keepout only on trusted-shallow"): two cells at
+// the same shoal depth, one TRUSTED (σ ≤ confidence_gate) and one UNTRUSTED
+// (σ > gate). Both have a worst-case clearance below minimum_depth, but only the
+// trusted cell is keepout (LETHAL); the untrusted cell — even though it reads
+// shallower after subtracting its larger σ — is costed as caution. This is the
+// core ADR-0010 D7 guarantee: keepout is reserved for trusted data.
+// ---------------------------------------------------------------------------
+TEST(BathymetryLayer, KeepoutOnlyOnTrustedShallow)
+{
+  BathymetryLayerForTest layer;
+  layer.setMinimumDepth(1.0);
+  layer.setMaximumCautionDepth(3.0);
+  layer.setConfidenceGate(0.5);
+  layer.setMapTideZ(0.0);
+  layer.setMapTideValid(true);
+
+  // Trusted shoal: seafloor 0.5 m down, σ 0.2 ≤ gate. worst_case = 0.5 − 0.2 =
+  // 0.3 < minimum_depth → LETHAL (keepout is allowed for trusted data).
+  {
+    auto store = std::make_unique<BathymetryStore>(5);
+    const auto cell = store->cellIndex(kLat, kLon);
+    store->set(SourceLayer::Survey, cell, BathyCell{-0.5, 0.2});
+    layer.setStore(std::move(store));
+    const auto result = layer.evaluateCell(cell);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, nav2_costmap_2d::LETHAL_OBSTACLE)
+      << "trusted (σ ≤ gate) worst-case-shallow cell → keepout";
+  }
+
+  // Same shoal depth but UNTRUSTED (σ 0.8 > gate): worst_case = 0.5 − 0.8 = −0.3
+  // is even shallower, yet the cell is caution, NOT LETHAL — keepout is reserved
+  // for trusted data (never keepout on uncertainty alone).
+  {
+    auto store = std::make_unique<BathymetryStore>(5);
+    const auto cell = store->cellIndex(kLat, kLon);
+    store->set(SourceLayer::Survey, cell, BathyCell{-0.5, 0.8});
+    layer.setStore(std::move(store));
+    const auto result = layer.evaluateCell(cell);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, nav2_costmap_2d::MAX_NON_OBSTACLE)
+      << "untrusted (σ > gate) worst-case-shallow cell → caution, never keepout";
+    EXPECT_NE(*result, nav2_costmap_2d::LETHAL_OBSTACLE);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test case (#276, issue-named "ramp continuity at gate boundaries"): within the
+// [minimum_depth, maximum_caution_depth] ramp band, cost does NOT depend on
+// trust, so as a sample's σ crosses confidence_gate (trusted ⇄ untrusted) at a
+// fixed worst-case clearance the cost is unchanged — no discontinuity. The only
+// trust-dependent difference is strictly below minimum_depth (trusted → LETHAL,
+// untrusted → the caution cap), which is the intended keepout cliff for trusted
+// data; an untrusted cell has no cliff at minimum_depth at all.
+// ---------------------------------------------------------------------------
+TEST(BathymetryLayer, RampContinuityAcrossConfidenceGate)
+{
+  BathymetryLayerForTest layer;
+  layer.setMinimumDepth(1.0);
+  layer.setMaximumCautionDepth(3.0);
+
+  // In the ramp band the cost is trust-independent → identical across the split.
+  for (const double w : {1.0 + 1e-6, 1.5, 2.0, 2.5, 3.0 - 1e-6}) {
+    EXPECT_EQ(layer.computeCost(w, true), layer.computeCost(w, false))
+      << "ramp cost must not depend on trust at worst_case=" << w;
+  }
+  // At/above the FREE boundary both are FREE (trust-independent).
+  EXPECT_EQ(layer.computeCost(3.0, true), layer.computeCost(3.0, false));
+  EXPECT_EQ(layer.computeCost(3.0, false), nav2_costmap_2d::FREE_SPACE);
+
+  // The single trust-dependent split is strictly below minimum_depth.
+  EXPECT_EQ(layer.computeCost(0.5, true), nav2_costmap_2d::LETHAL_OBSTACLE);
+  EXPECT_EQ(layer.computeCost(0.5, false), nav2_costmap_2d::MAX_NON_OBSTACLE);
+  EXPECT_LT(
+    static_cast<int>(nav2_costmap_2d::MAX_NON_OBSTACLE),
+    static_cast<int>(nav2_costmap_2d::LETHAL_OBSTACLE))
+    << "the untrusted caution cap must be strictly below LETHAL";
+
+  // Untrusted continuity across minimum_depth: the ramp top (at minimum_depth)
+  // and the below-threshold cap are the SAME value (MAX_NON_OBSTACLE), so an
+  // untrusted cell has no cost cliff at minimum_depth.
+  EXPECT_EQ(layer.computeCost(1.0, false), nav2_costmap_2d::MAX_NON_OBSTACLE);
+  EXPECT_EQ(layer.computeCost(1.0 - 1e-6, false), nav2_costmap_2d::MAX_NON_OBSTACLE);
 }
 
 // ---------------------------------------------------------------------------
@@ -605,6 +730,37 @@ TEST_F(TideFrameTest, MapTideZReadFromMapFrameNotGlobalFrame)
   EXPECT_NEAR(layer.getMapTideZ(), 48.88, 1e-6)
     << "map_tide_z_ must be the surface height in map_frame, not 0 from a "
        "global-frame self-lookup";
+
+  // Negative control for the #276 deprecation guard: this config does NOT set the
+  // removed `max_uncertainty` key, so the guard must not fire.
+  EXPECT_FALSE(layer.deprecatedMaxUncertaintySeen())
+    << "no deprecated key set → deprecation guard must stay quiet";
+}
+
+// #276 deprecation guard: a config that still declares the removed
+// `max_uncertainty` key must trip the one-shot migration WARN (recorded via the
+// latch) rather than be silently ignored — the rename ALSO inverted the meaning
+// (reject-filter → trust-threshold), so silent drift would carry the wrong model.
+TEST_F(TideFrameTest, DeprecatedMaxUncertaintyKeyIsDetected)
+{
+  auto node = std::make_shared<nav2_util::LifecycleNode>("test_deprecated_key");
+  node->declare_parameter("bathymetry_layer.map_frame", std::string("map"));
+  node->declare_parameter("bathymetry_layer.map_tide_frame", std::string("map_tide"));
+  // A stale config still carrying the removed key (from YAML overrides).
+  node->declare_parameter("bathymetry_layer.max_uncertainty", 0.5);
+
+  auto tf_buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
+  publishMapTide(tf_buffer, "map", 48.88);
+
+  nav2_costmap_2d::LayeredCostmap layered_costmap("map_tide", false, false);
+  layered_costmap.resizeMap(10, 10, 1.0, 0.0, 0.0);
+
+  BathymetryLayerForTest layer;
+  layer.initialize(&layered_costmap, "bathymetry_layer", tf_buffer.get(), node, nullptr);
+
+  EXPECT_TRUE(layer.deprecatedMaxUncertaintySeen())
+    << "a config still setting max_uncertainty must trip the deprecation guard "
+       "(one-shot WARN), not be silently ignored";
 }
 
 // A degenerate config (map_frame == map_tide_frame) must NOT be accepted: the
