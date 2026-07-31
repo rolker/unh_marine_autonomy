@@ -425,7 +425,10 @@ OverviewBuildResult buildOverviewPyramid(
       result.coarsest_level = level - 1;
     }
   } catch (...) {
-    fs::remove_all(staging);   // never leave a partial staging dir behind
+    // Best-effort: cleanup must not throw here, or it would replace the
+    // original exception with its own.
+    std::error_code ec;
+    fs::remove_all(staging, ec);   // never leave a partial staging dir behind
     throw;
   }
 
@@ -460,11 +463,12 @@ OverviewBuildResult buildOverviewPyramid(
     }
     fs::rename(staging, overviews);
   } catch (...) {
-    // Clear the staging debris first, then restore: if the restore rename
-    // itself throws, staging is already gone and can't be left behind as
-    // orphaned overviews.tmp/. Restore only if the retire rename actually
-    // completed — otherwise overviews/ was never moved and is still in place.
-    fs::remove_all(staging);
+    // Clear the staging debris (best-effort, non-throwing — a throwing cleanup
+    // would mask the original failure and skip the restore below), then
+    // restore. Restore only if the retire rename actually completed —
+    // otherwise overviews/ was never moved and is still in place.
+    std::error_code ec;
+    fs::remove_all(staging, ec);
     if (retired_moved) {
       fs::rename(retired, overviews);   // restore the previous sidecar
     }
