@@ -473,8 +473,35 @@ this PR; both findings are small and in the same robustness family the prior
 rounds worked through.
 
 ### Findings
-- [ ] (low, Copilot R3) `buildParentTile` silently skips `nullptr` children — inconsistent with its documented refuse-caller-mistakes contract (grouping errors throw precisely to avoid silent coverage loss); no production caller can pass null (both build pointer vectors from live objects), so the lenient branch is dead code that would hide a future caller bug — throw `std::invalid_argument` on null child + document — `marine_tiled_raster_store/include/marine_tiled_raster_store/overview_builder.hpp:143`
-- [ ] (low, Copilot R3) Refusal path (`early_empty`/`tiles_skipped`) still uses throwing `fs::remove_all(staging)` — a throw replaces the refusal result (caller loses the skip/empty diagnostics) and leaves the run-lock debris anyway; use the `std::error_code` overload + stderr warning, consistent with the other cleanup sites — `marine_sidescan_mosaic/src/overview_pyramid.cpp:442`
+- [x] (low, Copilot R3) `buildParentTile` silently skips `nullptr` children — inconsistent with its documented refuse-caller-mistakes contract (grouping errors throw precisely to avoid silent coverage loss); no production caller can pass null (both build pointer vectors from live objects), so the lenient branch is dead code that would hide a future caller bug — throw `std::invalid_argument` on null child + document — `marine_tiled_raster_store/include/marine_tiled_raster_store/overview_builder.hpp:143`
+- [x] (low, Copilot R3) Refusal path (`early_empty`/`tiles_skipped`) still uses throwing `fs::remove_all(staging)` — a throw replaces the refusal result (caller loses the skip/empty diagnostics) and leaves the run-lock debris anyway; use the `std::error_code` overload + stderr warning, consistent with the other cleanup sites — `marine_sidescan_mosaic/src/overview_pyramid.cpp:442`
 
 ### False positives
 - (none)
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-31 12:33 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**Branch**: feature/issue-188 at `d9ddd88`   <!-- PR #287 -->
+**Addressed**: Integrated Review (round 3) of 2026-07-31, PR #287 at `a6fdbe1` (2 low findings — both actioned)
+**Commits**: `bc1e2dc`, `d9ddd88`
+
+Host-inline fixes (operator approved): `buildParentTile` now throws
+`std::invalid_argument` on a null child (contract doc updated + regression
+test `NullChildThrowsRatherThanBeingDroppedSilently` added), and the refusal
+path uses the non-throwing `error_code` `remove_all` with a stderr warning.
+Every cleanup site in the diff now shares the best-effort non-throwing
+pattern, and the fold-engine contract is uniformly refuse-on-caller-bug.
+
+**Verification**: marine_tiled_raster_store rebuilt in-worktree; 75 tests,
+0 failures (incl. the new null-child test, run individually as well).
+`ament_uncrustify` + `ament_cpplint` clean on all three changed files.
+(Aggregate test.sh output also sweeps stale 07-27 marine_sidescan_mosaic
+results from build/ — pre-`035ecef` uncrustify failures, not current code;
+hosted CI on the push is the live signal for that package.)
+
+### Actions
+- [x] (low) `buildParentTile` null-child skip → throw + doc + regression test — `marine_tiled_raster_store` (`bc1e2dc`)
+- [x] (low) refusal-path throwing `remove_all` → `error_code` overload + warning — `marine_sidescan_mosaic/src/overview_pyramid.cpp` (`d9ddd88`)
