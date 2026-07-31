@@ -455,10 +455,13 @@ OverviewBuildResult buildOverviewPyramid(
   try {
     fs::rename(staging, overviews);
   } catch (...) {
+    // Clear the staging debris first, then restore: if the restore rename
+    // itself throws, staging is already gone and can't be left behind as
+    // orphaned overviews.tmp/.
+    fs::remove_all(staging);
     if (had_previous) {
       fs::rename(retired, overviews);   // restore the previous sidecar
     }
-    fs::remove_all(staging);
     throw;
   }
   fs::remove_all(retired);
