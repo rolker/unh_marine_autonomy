@@ -496,3 +496,41 @@ Branch is shippable at `b542369`. Hand off to a fresh-context sub-agent after pu
 ### Next step
 Lifecycle: **Integrated Review** → `address-findings` (1 open finding) →
 `review-code` re-review → merge checkpoint.
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-31 15:35 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**PR**: #286 at `f4e20a1`
+**Addressed**: `## Integrated Review` (2026-07-31 11:30 -04:00, PR #286 at `3eb585f`) — 1 open finding
+**Commits**: `f4e20a1`
+
+The single open Copilot finding, verified valid against current source before
+acting: the `--cell-size` try/catch (`s102_import_main.cpp:112-121`) rejected only
+non-numeric input; `std::stod` still accepted `0`/`-1`/`nan`/`inf`, which flowed
+into `gggs::Level::fromCellSize()` where `std::log2(<=0)` yields inf/NaN and the
+following `static_cast<int>` is UB. Added a finiteness+positivity guard right after
+the parse, mirroring the existing `--area` finiteness check in the same file.
+
+### Actions
+- [x] (low, Copilot) Reject non-positive / non-finite `--cell-size` at parse time
+  (`!std::isfinite(v) || v <= 0` → clean stderr + `return 1`), matching the `--area`
+  validation pattern — `marine_bathymetry_store/src/s102_import_main.cpp:114` (`f4e20a1`)
+
+### Verification
+Built `marine_bathymetry_store` clean (`colcon build`, Release) — the change
+compiles; only pre-existing unrelated `-Wunused-result` warnings in test fixtures.
+ament_cpplint + ament_uncrustify "No problems found" on the changed file. Pre-commit
+hooks passed on the fix commit; no `--no-verify`. The CLI parser lives in `main()`
+(not unit-tested); the guard reuses the already-compiled `--area` `std::isfinite`
+pattern. No self-review — the next `review-code` pass is the quality gate.
+
+Note: Copilot flagged the same pre-existing exposure at `import_geotiff_main.cpp:141`
+as out of this PR's scope (candidate follow-up) — not addressed here.
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fix). Hand off to a
+fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 278 --skill review-code
