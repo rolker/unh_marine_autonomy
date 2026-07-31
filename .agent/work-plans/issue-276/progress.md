@@ -96,3 +96,102 @@ match the ADR text. Scope is single-package / single-PR / ~4 files — correct.
 - [ ] (suggestion) Silent config drift on rename — existing boat/platform configs setting `max_uncertainty:` will be silently ignored after the rename and fall back to `confidence_gate_` default 0.5, *and* the semantics change (reject-filter → trust-threshold). Per "Enforcement over documentation" (review-issue's ADR-0008 note flagged "not deprecation warnings"), consider a one-shot WARN if the deprecated key is still declared; at minimum the README migration note must call out the semantic change, not just the rename. — `plan.md:23`, `plan.md:87`
 - [ ] (suggestion) Member rename ripples beyond `computeCost` callers — the test helper `setMaxUncertainty` (`test_bathymetry_layer.cpp:60`) and comment at `:232` also reference `max_uncertainty`. The test file is already in the plan's file list, so it's in scope; just call out that the rename touches these, not only test cases 1 & 8. — `plan.md:44`
 - [ ] (suggestion, low) Worst-case selection — `evaluateCell` uses the σ of the *shallowest-depth* sample; the true worst-case clearance is min over samples of (clearance − σ), and a deeper-but-noisier sample could bind tighter. With one fused surface per layer (ADR-0002 #221) this is near-moot and matches the existing safety-query design, but worth a one-line confirmation against ADR-0010 D7 intent. — `plan.md:38`
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-31 20:30 +00:00
+**By**: Claude Opus
+
+**Plan**: `.agent/work-plans/issue-276/plan.md` at `45b728b` (amended from `2bc009c`)
+**Branch**: feature/issue-276
+**Commits**:
+- `45b728b` plan: amend #276 with operator decisions + 5 plan-review findings
+- `4e54071` feat(bathymetry_layer): worst-case-clearance cost model (ADR-0010 D7)
+- `a6e46c0` docs(bathymetry_layer): document worst-case-clearance cost model + migration
+- (this entry)
+
+### What changed
+
+Reworked `bathymetry_layer`'s cost model per ADR-0010 D7 (confirmed against
+`docs/decisions/0010-geospatial-world-model.md` D7: "high-σ ⇒ go-slow, keepout
+only on trusted data"):
+
+- **`computeCost(double worst_case_clearance, bool trusted)`** — new signature.
+  The ramp is trust-independent; only the below-`minimum_depth` verdict depends
+  on trust: trusted → `LETHAL_OBSTACLE`, untrusted → `MAX_NON_OBSTACLE` (caution
+  cap, never LETHAL on uncertainty alone). Cost is continuous across the gate.
+- **`evaluateCell`** — calls `shallowestReliable(*store_, cell, ∞)` (no store API
+  change, per the Plan Review), computes `worst_case = clearance − σ` and
+  `trusted = (σ ≤ confidence_gate_)`, returns `computeCost(worst_case, trusted)`.
+- **σ=∞ correctness detail (not in the original plan; found in implementation):**
+  `shallowestReliable(∞)` returns nullopt only for all-NaN σ — it does **not**
+  filter a literal σ=∞ sample (`∞ > ∞` is false; `query.cpp:131`). Since D7
+  buckets σ=∞ (unknown quality, D4) with no-data rather than caution,
+  `evaluateCell` guards `!sample || !std::isfinite(sample->uncertainty)` →
+  conservative LETHAL. Verified this preserves "σ=∞/no-data conservative" while
+  "large *finite* σ ⇒ caution".
+- **`max_uncertainty` → `confidence_gate`** rename (param + member), with a
+  one-shot deprecation `WARN` + `deprecated_max_uncertainty_seen_` latch when a
+  config still declares the removed key (detected via a NaN-sentinel declare).
+  Startup INFO log and class doc updated.
+
+### Plan-Review findings — all five folded in (amended in the plan first)
+
+1. (must-address) **Sim-validation gate** — recorded the operator decision:
+   **non-blocking / advisory**. Unit tests are the enforced correctness bar; sim
+   adds integration confidence but does NOT gate the August deployment. Written
+   into the plan's new "Sim-Validation Decision" section; the review-issue action
+   is resolved, not lost.
+2. README example nav2 config block updated (`confidence_gate`), not just the
+   parameter table.
+3. One-shot deprecation WARN implemented + README migration note that calls out
+   the **semantic** change (reject-filter → trust-threshold), not just the rename.
+4. Test-file rename ripples covered: `setMaxUncertainty` → `setConfidenceGate`
+   helper and the `:232` comment; additionally the two tests that pinned the OLD
+   reject-filter (`OverUncertainSurveyedCellIsLethal`,
+   `OverUncertainCellIsLethalWithNoPriorFallback`) were **reframed** to the new
+   model — the plan's original step-4 list missed these; leaving them would have
+   been a test failure.
+5. (low) Worst-case selection confirmed against ADR-0010 D7 intent: with one
+   fused surface per layer (#221) the shallowest-depth sample's σ is the single
+   per-cell sample, so shallowest-σ and min-over-samples coincide. No behavior
+   change; documented in an `evaluateCell` code comment.
+
+### Tests
+
+Four issue-named cases plus deprecation coverage (in
+`test/test_bathymetry_layer.cpp`):
+- `KeepoutOnlyOnTrustedShallow` — trusted worst-case-shallow → LETHAL; same depth
+  untrusted → caution (keepout reserved for trusted data).
+- `UntrustedShallowCellIsCautionNotLethal` (reframed test 4) — chart-σ shallow →
+  `MAX_NON_OBSTACLE`, not LETHAL.
+- `UnknownUncertaintyCellStaysConservativeLethal` (reframed test 7) — σ=∞ and
+  σ=NaN → conservative LETHAL; confident control → FREE.
+- `RampContinuityAcrossConfidenceGate` — ramp cost is trust-independent (no
+  discontinuity as σ crosses the gate); the only split is the below-`minimum_depth`
+  keepout for trusted data.
+- `DeprecatedMaxUncertaintyKeyIsDetected` (+ negative control in the map-frame
+  test) — the deprecation latch/WARN fires iff a config still sets the old key.
+- Existing tests 1, 3, 6, 8 updated for the new `computeCost` signature /
+  `setConfidenceGate` rename; existing no-data tests (2/2b/2c) unchanged.
+
+### Build/test status
+
+**Not run in this container — known limitation.** `bathymetry_layer` depends on
+`marine_bathymetry_store`, which needs `marine_interfaces`,
+`marine_vertical_datum`, `marine_autonomy`, `marine_tiled_raster_store` built;
+none are compiled in this worktree and `underlay_ws/install` is empty. A
+`./build.sh marine_bathymetry_store bathymetry_layer` attempt failed at
+dependency resolution (missing `package.sh` for the four packages above), not on
+this change's code. Manual verification done: line lengths < 100; nav2 cost
+constants confirmed (`LETHAL_OBSTACLE=254`, `MAX_NON_OBSTACLE=252`,
+`FREE_SPACE=0`) against the ramp math and every new assertion; no stale
+`max_uncertainty_` / single-arg `computeCost` / `setMaxUncertainty` references
+remain in source or tests. **The host runs the full build + test before push.**
+
+### Next step
+
+Host: run `core_ws` build + `bathymetry_layer` (and `marine_bathymetry_store`)
+tests, then review-code. Follow-on (unchanged, not blocking): platform-repo
+`nav2_params` `max_uncertainty` → `confidence_gate` migration; sim acceptance run
+(now explicitly advisory).
