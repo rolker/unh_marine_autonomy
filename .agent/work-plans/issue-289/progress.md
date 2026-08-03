@@ -102,3 +102,15 @@ From the workspace consequences map:
 - [ ] Define concrete pass/fail criteria for the Lewes round-trip acceptance test (tile count, depth range, σ range, or diff against the existing reference import).
 - [ ] Update `usage()` string and any README references to include `chart` in the layer list.
 - [ ] Document the import-≠-costmap-active boundary explicitly in the PR or CLI help.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-08-03 00:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-289/plan.md` at `bbac1f9`
+**Branch**: feature/issue-289 at `bbac1f9`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — operator has decided the CLI shape (`--stage`/`--commit`); plan is review-plan-ready.
