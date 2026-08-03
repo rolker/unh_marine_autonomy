@@ -6,9 +6,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "geodesy/ecef.h"
 #include "geodesy/wgs84.h"
@@ -25,7 +27,7 @@ namespace bathymetry_layer
 using marine_bathymetry_store::bestSource;
 using marine_bathymetry_store::BathymetryStore;
 using marine_bathymetry_store::DepthSample;
-using marine_bathymetry_store::shallowestReliable;
+using marine_bathymetry_store::reliableSamples;
 
 // Expand a leading "~" or "~/" in a path to $HOME so one portable store_path
 // value (e.g. "~/data/stores/bathymetry") resolves on both the boat (field user)
@@ -83,8 +85,53 @@ void BathymetryLayer::onInitialize()
     maximum_caution_depth_ = 2.5;
   }
 
-  declareParameter("max_uncertainty", rclcpp::ParameterValue(max_uncertainty_));
-  node->get_parameter(name_ + ".max_uncertainty", max_uncertainty_);
+  const double default_confidence_gate = confidence_gate_;
+  declareParameter("confidence_gate", rclcpp::ParameterValue(confidence_gate_));
+  node->get_parameter(name_ + ".confidence_gate", confidence_gate_);
+  // confidence_gate is external input and gates ALL keepout: a sample is TRUSTED
+  // (keepout-eligible) only when σ ≤ confidence_gate. A NaN, negative, or zero
+  // gate makes `σ ≤ gate` false for every realistic sample (σ ≥ 0, and every NaN
+  // comparison is false), silently disabling trusted keepout entirely — a
+  // fail-quiet safety hole where the layer would never keep the vehicle out of a
+  // trusted shoal. Validate finite & strictly positive (mirroring the depth-ramp
+  // guard above); reset to the default on a bad value rather than run degraded.
+  if (!(std::isfinite(confidence_gate_) && confidence_gate_ > 0.0)) {
+    RCLCPP_WARN_STREAM(
+      logger_,
+      "Invalid confidence_gate (" << confidence_gate_ << "); it must be finite and > 0 "
+        "(σ ≤ gate ⇒ trusted keepout-eligible). Using default "
+                                  << default_confidence_gate << " m instead.");
+    confidence_gate_ = default_confidence_gate;
+  }
+
+  // #276 deprecation guard: `max_uncertainty` was renamed to `confidence_gate`
+  // AND its meaning was inverted — from a reject-filter (σ over the gate ⇒ the
+  // cell collapses to LETHAL) to a trust-threshold (σ ≤ gate ⇒ the cell is
+  // keepout-eligible; σ over the gate ⇒ costed caution, ADR-0010 D7). A boat
+  // config still setting `max_uncertainty:` would be silently ignored and would
+  // also carry the wrong mental model. Declare the old key with a NaN sentinel so
+  // an operator-provided value (from YAML overrides, applied at declare time) is
+  // detectable, and warn once (onInitialize runs once per lifecycle) naming both
+  // the rename and the semantic change. The value is NOT honoured — a straight
+  // remap would misapply the old reject semantics.
+  const double deprecated_sentinel = std::numeric_limits<double>::quiet_NaN();
+  declareParameter("max_uncertainty", rclcpp::ParameterValue(deprecated_sentinel));
+  double deprecated_max_uncertainty = deprecated_sentinel;
+  node->get_parameter(name_ + ".max_uncertainty", deprecated_max_uncertainty);
+  if (std::isfinite(deprecated_max_uncertainty)) {
+    deprecated_max_uncertainty_seen_ = true;
+    RCLCPP_WARN_STREAM(
+      logger_,
+      "bathymetry_layer '" << name_ << "': parameter 'max_uncertainty' ("
+                           << deprecated_max_uncertainty << ") is DEPRECATED and IGNORED. "
+                           << "It was renamed to 'confidence_gate' and its meaning CHANGED: "
+                           << "it is no longer a reject-filter (over-uncertain cells forced "
+                           << "LETHAL) but a trust-threshold (sigma <= confidence_gate makes a "
+                           << "cell keepout-eligible; higher-sigma cells are costed as caution, "
+                           << "never LETHAL on uncertainty alone; ADR-0010 D7). Set "
+                           << "'confidence_gate' instead (currently " << confidence_gate_
+                           << " m) and remove 'max_uncertainty'.");
+  }
 
   declareParameter("unsurveyed_is_lethal", rclcpp::ParameterValue(unsurveyed_is_lethal_));
   node->get_parameter(name_ + ".unsurveyed_is_lethal", unsurveyed_is_lethal_);
@@ -184,7 +231,7 @@ void BathymetryLayer::onInitialize()
     logger_,
     "bathymetry_layer '" << name_ << "': store_path='" << store_path_ << "', minimum_depth="
                          << minimum_depth_ << " m, maximum_caution_depth=" << maximum_caution_depth_
-                         << " m, max_uncertainty=" << max_uncertainty_
+                         << " m, confidence_gate=" << confidence_gate_
                          << " m, unsurveyed_is_lethal=" << unsurveyed_lethal_str
                          << ", map_frame='" << map_frame_ << "', map_tide_frame='"
                          << map_tide_frame_ << "'");
@@ -785,28 +832,47 @@ void BathymetryLayer::updateBounds(
   *max_y = std::max(*max_y, world_max_y);
 }
 
-unsigned char BathymetryLayer::computeCost(double clearance) const
+unsigned char BathymetryLayer::computeCost(double worst_case_clearance, bool trusted) const
 {
-  if (!std::isfinite(clearance) || clearance < minimum_depth_) {
+  // ADR-0010 D7: only TRUSTED data (σ ≤ confidence_gate) may keep a cell out
+  // (LETHAL). High-σ (untrusted) data that reads shallow is capped at the top of
+  // the caution band (MAX_NON_OBSTACLE) — costed go-slow, never hard-forbidden on
+  // its own. This single cap encodes the trusted/untrusted split; the ramp itself
+  // is trust-independent, so cost is continuous across the gate boundary (only the
+  // below-minimum_depth_ verdict changes with trust).
+  const unsigned char keepout_cost =
+    trusted ? nav2_costmap_2d::LETHAL_OBSTACLE : nav2_costmap_2d::MAX_NON_OBSTACLE;
+
+  // A non-finite worst-case clearance is INVALID INPUT (e.g. a malformed store
+  // tile with a non-finite depth → clearance ±∞/NaN even with a finite σ), NOT
+  // "shallow but untrusted". Unknown geometry must stay LETHAL independent of
+  // trust — the untrusted caution cap applies only to a genuinely-computed
+  // finite-but-shallow clearance. Keep these two verdicts separate.
+  if (!std::isfinite(worst_case_clearance)) {
     return nav2_costmap_2d::LETHAL_OBSTACLE;
   }
-  if (clearance >= maximum_caution_depth_) {
+  if (worst_case_clearance < minimum_depth_) {
+    return keepout_cost;
+  }
+  if (worst_case_clearance >= maximum_caution_depth_) {
     return nav2_costmap_2d::FREE_SPACE;
   }
   // S4: guard div-by-zero when parameters are degenerate (maximum_caution_depth_
-  // == minimum_depth_). onInitialize() validates and resets to defaults, but
-  // setters (used in tests and via parameter-change callbacks) do not. At the
-  // ramp boundary clearance == minimum_depth_ with a zero-width window, any cost
-  // in [LETHAL+1, MAX_NON_OBSTACLE] is defensible; LETHAL is the conservative
-  // choice.
+  // == minimum_depth_). onInitialize() validates and resets to defaults, but the
+  // protected test setters (test_bathymetry_layer.cpp) write the members directly
+  // and bypass that validation — the only non-onInitialize path (there is no
+  // add_on_set_parameters_callback in this layer). At the ramp boundary
+  // worst_case_clearance == minimum_depth_ with a zero-width window,
+  // any cost in [LETHAL+1, MAX_NON_OBSTACLE] is defensible; the keepout cost
+  // (LETHAL when trusted, else the caution cap) is the conservative choice.
   const double range = maximum_caution_depth_ - minimum_depth_;
   if (range <= 0.0) {
-    return nav2_costmap_2d::LETHAL_OBSTACLE;
+    return keepout_cost;
   }
-  // Linear ramp between minimum_depth_ (LETHAL boundary) and maximum_caution_depth_
+  // Linear ramp between minimum_depth_ (keepout boundary) and maximum_caution_depth_
   // (FREE boundary), matching s57_layer::get_cost_from_grid.
   const double scaled =
-    nav2_costmap_2d::MAX_NON_OBSTACLE * (1.0 - (clearance - minimum_depth_) / range);
+    nav2_costmap_2d::MAX_NON_OBSTACLE * (1.0 - (worst_case_clearance - minimum_depth_) / range);
   return static_cast<unsigned char>(scaled);
 }
 
@@ -842,22 +908,57 @@ std::optional<unsigned char> BathymetryLayer::evaluateCell(
     return std::nullopt;
   }
 
-  //   2. shallowestReliable — the navigation-safety gate (uncertainty).
-  const std::optional<DepthSample> sample = shallowestReliable(*store_, cell, max_uncertainty_);
-
-  if (!sample) {
-    // Data exists but every sample is over-uncertain → conservative LETHAL. A
-    // surveyed-but-unusable cell must NOT be treated as unsurveyed (review M1).
-    // (The pre-#248 per-cell staleness gate was retired — ADR-0002 A2.4.)
+  //   2. reliableSamples(∞) — EVERY sample WITHOUT a finite-σ reject filter
+  //   (ADR-0010 D7). Passing infinity keeps every finite-σ sample eligible so σ
+  //   drives *cost*, not rejection; only NaN-σ samples are dropped (∞ > ∞ is
+  //   false, so a literal σ=∞ sample IS returned and the isfinite branch below
+  //   folds it into the same conservative path as NaN). An EMPTY result means
+  //   data exists (bestSource above) but every sample has a NaN σ → the
+  //   pre-existing "data but no reliable sample" → conservative LETHAL path. A
+  //   surveyed-but-unusable cell must NOT be treated as unsurveyed (review M1).
+  //   (The pre-#248 per-cell staleness gate was retired — ADR-0002 A2.4.)
+  const std::vector<DepthSample> samples =
+    reliableSamples(*store_, cell, std::numeric_limits<double>::infinity());
+  if (samples.empty()) {
     return nav2_costmap_2d::LETHAL_OBSTACLE;
   }
 
-  // sample->depth is ellipsoidal HEIGHT (WGS84, up-positive): a seafloor 5 m
-  // below the ellipsoid has depth=-5.0, so a SHALLOWER (more hazardous) seafloor
-  // has a LARGER (less-negative) depth, hence a SMALLER clearance and a HIGHER
-  // cost. clearance = water-surface height − seafloor height.
-  const double clearance = map_tide_z_ - sample->depth;
-  return computeCost(clearance);
+  // Cost by the MAX over ALL reliable samples, NOT a single shallowest-depth
+  // pick. Multiple samples arise when several source layers (Survey/Reference/
+  // Chart) or GGGS levels cover one cell (they no longer "coincide" once Chart is
+  // loaded — ADR-0010 D7). Selecting the shallowest point estimate would let a
+  // shallower but UNTRUSTED sample (high finite σ → capped at the caution band,
+  // 252) MASK a co-located TRUSTED sample whose worst-case clearance is
+  // keepout-grade (LETHAL, 254) — a safety regression. Taking the max cost keeps
+  // the trusted keepout: LETHAL > caution numerically.
+  unsigned char cost = nav2_costmap_2d::FREE_SPACE;
+  for (const DepthSample & sample : samples) {
+    unsigned char sample_cost;
+    if (!std::isfinite(sample.uncertainty)) {
+      // σ = ∞: genuinely unknown quality (ADR-0010 D4), not high-but-finite-σ
+      // caution — bucketed with no-data → conservative LETHAL. (The future chart
+      // exporter must emit a large *finite* σ for CATZOC D/U so those cells cost
+      // as caution, never keepout; ADR-0010 D7 finite-σ contract.)
+      sample_cost = nav2_costmap_2d::LETHAL_OBSTACLE;
+    } else {
+      // depth is ellipsoidal HEIGHT (WGS84, up-positive): a seafloor 5 m below the
+      // ellipsoid has depth=-5.0, so a SHALLOWER (more hazardous) seafloor has a
+      // LARGER (less-negative) depth, hence a SMALLER clearance and a HIGHER cost.
+      // Worst-case clearance subtracts one σ (clearance − σ) — the shallowest the
+      // seafloor plausibly is. `trusted` (σ ≤ confidence_gate_) gates keepout: only
+      // trusted data can drive LETHAL; high-σ data is costed (caution), never
+      // keepout on its own.
+      const double clearance = map_tide_z_ - sample.depth;
+      const double worst_case_clearance = clearance - sample.uncertainty;
+      const bool trusted = sample.uncertainty <= confidence_gate_;
+      sample_cost = computeCost(worst_case_clearance, trusted);
+    }
+    cost = std::max(cost, sample_cost);
+    if (cost == nav2_costmap_2d::LETHAL_OBSTACLE) {
+      break;  // nothing costs above LETHAL — no need to examine the rest.
+    }
+  }
+  return cost;
 }
 
 void BathymetryLayer::updateCosts(

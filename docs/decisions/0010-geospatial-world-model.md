@@ -227,7 +227,16 @@ Export rules (`s57_to_geotiff`, new tool in `s57_tools`, feeding the existing
   generalized.)
 - **CATZOC → σ** (M_QUAL, currently ignored in `marine_charts`): per the ZOC
   table — A1 ≈ 0.5 m + 1 %d, A2/B ≈ 1.0 m + 2 %d, C ≈ 2.0 m + 5 %d, D/U →
-  large σ (never keepout-grade; see the cost-model work this feeds).
+  large but **finite** σ (never keepout-grade; see the cost-model work this
+  feeds). **Finite-σ is a hard contract, not a nicety:** `bathymetry_layer`
+  buckets a *non-finite* σ (σ = ∞) with no-data as **unknown quality** (the
+  σ = ∞ ↔ unknown-quality mapping is D4) → conservative LETHAL (the consumer
+  policy, ADR-0002 §D7), so exporting D/U as σ = ∞ would render
+  exactly the CATZOC D/U cells this rule protects as keepout-grade — the opposite
+  of the intent. σ = ∞ stays reserved for *genuinely unknown* quality (D4); the
+  exporter MUST emit a large **finite** σ for D/U (e.g. a ZOC-D floor) so those
+  cells cost as caution (go-slow), never keepout. Verify against
+  `bathymetry_layer::evaluateCell`'s finite-σ branch before the first D/U export.
 - **Datum**: per-cell chart-datum → ellipsoid via the D6 library.
 - **Scale → GGGS level**: each ENC cell exports at the level matching its
   compilation scale (≈0.5 mm-at-scale resolvable ground distance, mapped to
@@ -238,14 +247,17 @@ Export rules (`s57_to_geotiff`, new tool in `s57_tools`, feeding the existing
   shallowest-reliable walk from letting a coarse band's midpoint shadow a
   confident harbor-chart depth.
 
-**Chart ingestion is gated on the cost-model rework.** `bathymetry_layer`'s
-current `max_uncertainty` gate treats over-uncertain cells as
-not-reliable → LETHAL, so CATZOC-grade σ entering the store would render
-chart-only regions wholesale keepout (or force a global gate relaxation that
-also weakens it for noisy draft data). The worst-case-clearance /
-confidence-gate cost model (design settled 2026-06-25: high-σ ⇒ go-slow,
-keepout only on trusted data) must land **with or before** the first chart
-cells — it is a precondition, not a parallel track.
+**Chart ingestion is gated on the cost-model rework** — a precondition, not a
+parallel track, and satisfied by
+[uma#276](https://github.com/rolker/unh_marine_autonomy/issues/276).
+`bathymetry_layer`'s former `max_uncertainty` gate treated over-uncertain cells
+as not-reliable → LETHAL, so CATZOC-grade σ entering the store would have
+rendered chart-only regions wholesale keepout (or forced a global gate
+relaxation that also weakened it for noisy draft data). #276 replaced it with
+the worst-case-clearance / `confidence_gate` cost model (design settled
+2026-06-25: high-σ ⇒ go-slow via worst-case clearance = clearance − σ, keepout
+only on data trusted at or below the gate; a config still setting
+`max_uncertainty` gets a one-shot deprecation warning and the value is ignored).
 
 First cut regenerates **only while navigation is down** — an *enforced*
 precondition, not an assumption: the updater checks a navigation-liveness

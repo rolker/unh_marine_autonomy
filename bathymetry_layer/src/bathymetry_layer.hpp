@@ -46,12 +46,19 @@ namespace bathymetry_layer
 /// "land") and, via max-cost combine, overrides other priors on those cells — so
 /// choose it per deployment. It is still held behind the tide gate: no cost,
 /// lethal-land included, is emitted before a valid `map_tide` arrives.
-/// If there *is* data, `shallowestReliable` applies the navigation-safety gate; a
-/// cell that has data but fails the uncertainty gate is written `LETHAL_OBSTACLE`
-/// (conservative). Only the clearance ramp produces non-lethal cost. (The
-/// pre-#248 per-cell staleness gate was retired — ADR-0002 Amendment A2.4: the
-/// bathy store is a surveyed static bottom, not a live feed, so per-cell age is
-/// not a meaningful costmap hazard.)
+/// If there *is* data, the cost comes from the **worst-case clearance**
+/// (clearance − σ) via a confidence-gated ramp (ADR-0010 D7): keepout (LETHAL) is
+/// reserved for **trusted** data (σ ≤ `confidence_gate`) whose worst-case
+/// clearance is below `minimum_depth`; a high-σ (chart-grade) cell is *costed*
+/// (caution ramp, capped at `MAX_NON_OBSTACLE`), never hard-forbidden on its own.
+/// A cell whose only data carries σ = ∞ / NaN (genuinely unknown quality) has no
+/// usable magnitude of uncertainty and stays conservatively `LETHAL_OBSTACLE`
+/// (the "data exists but no reliable sample" path) — same as before. This
+/// supersedes the pre-#276 reject-filter, where any σ over `max_uncertainty`
+/// collapsed the cell to LETHAL, which would wholesale-keepout CATZOC-grade chart
+/// regions. (The pre-#248 per-cell staleness gate was retired — ADR-0002
+/// Amendment A2.4: the bathy store is a surveyed static bottom, not a live feed,
+/// so per-cell age is not a meaningful costmap hazard.)
 ///
 /// **Layer coexistence:** writes use max-cost semantics (a cell is only raised,
 /// never lowered, and an unsurveyed cell is skipped), so this layer composes with
@@ -82,9 +89,28 @@ public:
 
 protected:
   // Exposed for unit testing (test/test_bathymetry_layer.cpp): the pure
-  // clearance→cost ramp, decoupled from the store/TF pipeline. `clearance` is in
-  // metres (water-surface height minus seafloor height; see updateCosts).
-  unsigned char computeCost(double clearance) const;
+  // worst-case-clearance→cost ramp, decoupled from the store/TF pipeline
+  // (ADR-0010 D7). @p worst_case_clearance is in metres — the point-estimate
+  // clearance (water-surface height minus seafloor height; see evaluateCell)
+  // minus one standard deviation of vertical uncertainty (clearance − σ), i.e.
+  // the shallowest the seafloor plausibly is. @p trusted is whether the sample's
+  // σ passed the confidence gate (σ ≤ confidence_gate_): only trusted data may
+  // drive a cell to LETHAL. When @p trusted is false the same ramp applies but
+  // the below-`minimum_depth_` verdict is capped at MAX_NON_OBSTACLE (top of the
+  // caution band) instead of LETHAL — high-σ data is costed (go-slow), never
+  // hard-forbidden on its own (D7: keepout only on trusted data).
+  //
+  // NOTE: the trust flag is NOT the whole safety story. A sample with a *non-finite*
+  // σ (σ = ∞ / NaN → genuinely unknown quality, ADR-0010 D4) is bucketed with
+  // no-data → conservative LETHAL by `evaluateCell` *before* it ever reaches
+  // computeCost, so computeCost only ever sees a usable finite σ reduced to
+  // (worst_case_clearance, trusted). Do not read a `trusted == false → caution`
+  // guarantee here as covering unknown-quality data — that path never gets here.
+  // Separately, a *non-finite* @p worst_case_clearance (invalid geometry — e.g. a
+  // non-finite sample depth even with a finite σ) is treated as unknown and
+  // returns LETHAL unconditionally, independent of @p trusted: the untrusted
+  // caution cap applies only to a finite-but-shallow clearance.
+  unsigned char computeCost(double worst_case_clearance, bool trusted) const;
 
   // Exposed for unit testing: the full two-query per-cell decision (review M1),
   // decoupled from the costmap/TF pipeline. Reads store_ and map_tide_z_.
@@ -164,12 +190,26 @@ protected:
   // Parameters (protected so the test fixture can configure them directly).
   double minimum_depth_ = 1.0;
   double maximum_caution_depth_ = 2.5;
-  double max_uncertainty_ = 0.5;
+  // Confidence gate (was `max_uncertainty` pre-#276, with inverted role): the
+  // 1-sigma vertical-uncertainty threshold (m) at/below which a sample is
+  // TRUSTED. Trusted samples may drive a cell to LETHAL when the worst-case
+  // clearance (clearance − σ) falls below minimum_depth_; a sample with σ above
+  // this gate is high-σ chart-grade data that is COSTED (caution ramp), never
+  // hard-forbidden on its own (ADR-0010 D7). This is NOT the old reject-filter,
+  // where any σ over the gate collapsed the cell to LETHAL.
+  double confidence_gate_ = 0.5;
   // When true, a truly-unsurveyed (no-data) cell is written LETHAL_OBSTACLE
   // instead of being left untouched (NO_INFORMATION). Opt-in (default false):
   // a blanket rule suited to a closed basin whose prior covers the whole
   // interior, so the only no-data cells are land. Still subject to the tide gate.
   bool unsurveyed_is_lethal_ = false;
+
+  // #276 deprecation latch: set true by onInitialize when a config still declares
+  // the removed `max_uncertainty` key (renamed to `confidence_gate` with an
+  // inverted, trust-threshold meaning). Records that the one-shot migration WARN
+  // fired, so the silent-config-drift guard can be unit-tested without scraping
+  // logs. Protected for the test seam.
+  bool deprecated_max_uncertainty_seen_ = false;
 
 private:
   // Convert a costmap world coordinate to WGS84 lat/lon via the `earth` TF frame

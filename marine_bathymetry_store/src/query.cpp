@@ -24,6 +24,7 @@
 #include <cmath>
 #include <map>
 #include <set>
+#include <vector>
 
 namespace marine_bathymetry_store
 {
@@ -97,6 +98,13 @@ std::optional<DepthSample> bestSource(
   // NO mechanical block on chart data driving navigation before the #276
   // cost-model rework lands. The standing precondition is that no deployed store
   // carries a chart/ layer until #276 is done; it is tracked there, not here.
+  //
+  // Finite-σ contract (ADR-0010 D7): a chart layer's cells MUST carry a large but
+  // *finite* σ for low-confidence CATZOC classes (D/U). The consumer buckets a
+  // non-finite σ = ∞ with no-data as unknown quality → conservative LETHAL
+  // (bathymetry_layer::evaluateCell), so exporting D/U as σ = ∞ would make those
+  // cells keepout-grade — the opposite of D7's "D/U never keepout-grade". The S57
+  // exporter owns this; σ = ∞ stays reserved for genuinely-unknown quality (D4).
   for (const SourceLayer layer : source_layers_by_priority) {
     if (auto sample = sampleFor(store, layer, cell, center)) {
       return sample;
@@ -137,6 +145,36 @@ std::optional<DepthSample> shallowestReliable(
     }
   }
   return shallowest;
+}
+
+std::vector<DepthSample> reliableSamples(
+  const BathymetryStore & store, const gggs::CellIndex & cell, double max_uncertainty)
+{
+  std::vector<DepthSample> samples;
+  const auto center = cellCenter(cell);
+
+  // Same walk as shallowestReliable, but collect EVERY passing sample instead of
+  // keeping only the shallowest — the caller costs each and takes the most
+  // hazardous (ADR-0010 §D7: a shallower untrusted sample must not mask a
+  // co-located trusted keepout). Chart participates here too once loaded — see the
+  // #276 nav-safety precondition note in bestSource above.
+  for (const SourceLayer layer : source_layers_by_priority) {
+    const auto & tiles = store.tiles(layer);
+    for (const uint8_t lvl : levelsPresent(tiles)) {
+      const gggs::CellIndex lvl_cell =
+        (lvl == cell.level()) ? cell : gggs::Level(lvl).cellIndex(center);
+      const auto c = cellIn(tiles, lvl_cell);
+      if (!c || !c->hasData()) {
+        continue;
+      }
+      // A NaN uncertainty is never reliable; otherwise require within tolerance.
+      if (std::isnan(c->uncertainty) || c->uncertainty > max_uncertainty) {
+        continue;
+      }
+      samples.push_back(DepthSample{c->depth, c->uncertainty, layer, lvl});
+    }
+  }
+  return samples;
 }
 
 void forEachCellBestSource(
