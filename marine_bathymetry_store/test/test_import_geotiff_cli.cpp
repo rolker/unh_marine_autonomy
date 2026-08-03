@@ -169,16 +169,18 @@ TEST_F(ImportGeotiffCliTest, StageThenCommitChartLandsTiles)
 TEST_F(ImportGeotiffCliTest, StageRejectsNonChartLayer)
 {
   // survey/reference are direct-to-store imports; --stage is chart-only.
+  // Assert the exact usage-error code (1): run() maps abnormal termination to
+  // -1, so EXPECT_EQ(..., 1) keeps a crash from passing as a usage rejection.
   const fs::path staged = dir_ / "staged";
-  EXPECT_NE(
-    run("--stage \"" + staged.string() + "\" survey \"" + tif_.string() + "\" --level 11"), 0);
+  EXPECT_EQ(
+    run("--stage \"" + staged.string() + "\" survey \"" + tif_.string() + "\" --level 11"), 1);
   EXPECT_FALSE(fs::exists(staged / "chart"));
 }
 
 TEST_F(ImportGeotiffCliTest, StageWithoutOperandIsUsageError)
 {
   // --stage consumes the staged dir as its operand; nothing follows -> usage.
-  EXPECT_NE(run("--stage"), 0);
+  EXPECT_EQ(run("--stage"), 1);
 }
 
 TEST_F(ImportGeotiffCliTest, CommitWithoutStoreDirIsUsageError)
@@ -186,5 +188,5 @@ TEST_F(ImportGeotiffCliTest, CommitWithoutStoreDirIsUsageError)
   // --commit needs exactly one positional (<store_dir>) after its staged-dir
   // operand.
   const fs::path staged = dir_ / "staged";
-  EXPECT_NE(run("--commit \"" + staged.string() + "\""), 0);
+  EXPECT_EQ(run("--commit \"" + staged.string() + "\""), 1);
 }
