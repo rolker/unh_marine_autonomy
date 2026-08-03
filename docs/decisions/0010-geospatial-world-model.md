@@ -247,14 +247,17 @@ Export rules (`s57_to_geotiff`, new tool in `s57_tools`, feeding the existing
   shallowest-reliable walk from letting a coarse band's midpoint shadow a
   confident harbor-chart depth.
 
-**Chart ingestion is gated on the cost-model rework.** `bathymetry_layer`'s
-current `max_uncertainty` gate treats over-uncertain cells as
-not-reliable → LETHAL, so CATZOC-grade σ entering the store would render
-chart-only regions wholesale keepout (or force a global gate relaxation that
-also weakens it for noisy draft data). The worst-case-clearance /
-confidence-gate cost model (design settled 2026-06-25: high-σ ⇒ go-slow,
-keepout only on trusted data) must land **with or before** the first chart
-cells — it is a precondition, not a parallel track.
+**Chart ingestion is gated on the cost-model rework** — a precondition, not a
+parallel track, and satisfied by
+[uma#276](https://github.com/rolker/unh_marine_autonomy/issues/276).
+`bathymetry_layer`'s former `max_uncertainty` gate treated over-uncertain cells
+as not-reliable → LETHAL, so CATZOC-grade σ entering the store would have
+rendered chart-only regions wholesale keepout (or forced a global gate
+relaxation that also weakened it for noisy draft data). #276 replaced it with
+the worst-case-clearance / `confidence_gate` cost model (design settled
+2026-06-25: high-σ ⇒ go-slow via worst-case clearance = clearance − σ, keepout
+only on data trusted at or below the gate; a config still setting
+`max_uncertainty` gets a one-shot deprecation warning and the value is ignored).
 
 First cut regenerates **only while navigation is down** — an *enforced*
 precondition, not an assumption: the updater checks a navigation-liveness
