@@ -113,13 +113,42 @@ wholesale-replace `survey/` or `reference/`. The producer builds the layer in a
 staging store (`chart_staging_writable=true`), `save()`s it, and hands the
 resulting `<staged>/chart` directory to this call.
 
-**No in-tree tool produces a staged chart layer yet.** The `import_geotiff` CLI
-accepts only `survey`/`reference`, nothing calls `fromCellSize(...,
-chart_staging_writable=true)`, and `replaceChartLayer` has no non-test caller —
-this phase ships the store-side layer and the swap primitive only. Chart
-production awaits the S57 exporter and the cron updater (separate issues), and no
-deployed store may carry a `chart/` layer until the cost-model rework
-([#276](https://github.com/rolker/unh_marine_autonomy/issues/276)) lands.
+The `import_geotiff` CLI produces and commits a staged chart layer with a
+two-phase `--stage` / `--commit` grammar (#289). `--stage` builds the
+write-gated chart layer into a staging directory (constructing the store with
+`chart_staging_writable=true`); one `--commit` performs the atomic
+`replaceChartLayer` swap into the live store:
+
+```bash
+# Build the chart layer: one or more --stage calls into the SAME (fresh) dir.
+import_geotiff --stage /path/to/staged chart cellA.tif --level 5
+import_geotiff --stage /path/to/staged chart cellB.tif --level 7
+# Atomically swap the staged chart layer into the live store.
+import_geotiff --commit /path/to/staged /path/to/store
+```
+
+- **Offline/maintenance only.** `--commit` swaps the whole layer and must run
+  only while navigation is **not** consuming the store (ADR-0010 D7 nav-down
+  precondition). This CLI does **not** enforce a nav-liveness check — that
+  enforced check is the cron updater's job
+  ([rolker/s57_tools#28](https://github.com/rolker/s57_tools/issues/28)), which
+  is where D7 places the updater obligation.
+- **Same filesystem.** `<staged_dir>` and `<store_dir>` must be on the same
+  filesystem: `replaceChartLayer`'s atomic `rename(2)` rejects a cross-device
+  staged dir before touching the live layer.
+- **Fresh dir per cycle.** `--stage` *appends* (it never deletes). Point repeated
+  `--stage` calls at one dir to accumulate cells within a regeneration cycle, but
+  start each new cycle from a fresh/empty staged dir — a reused non-empty dir
+  carries stale tiles from the prior cycle into the wholesale swap (the CLI warns
+  when the staged dir is non-empty).
+- **Import ≠ costmap-active.** Importing chart data into the store does **not**
+  activate it in the costmap; no deployed store may carry a `chart/` layer until
+  the cost-model rework
+  ([#276](https://github.com/rolker/unh_marine_autonomy/issues/276)) lands.
+
+`survey`/`reference` imports keep the single-step form
+`import_geotiff <store_dir> <layer> <geotiff>`; `chart` is stage/commit only (a
+chart layer is never written into a live store incrementally).
 
 Sequence — everything that can refuse does so **before** the live layer is
 touched, so a rejected regeneration leaves the old layer standing (D7):
