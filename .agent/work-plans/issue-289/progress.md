@@ -137,3 +137,86 @@ From the workspace consequences map:
 - File targeting is accurate: the README "No in-tree tool produces a staged chart layer yet" paragraph exists (README.md:116) and is the right update target.
 - Positional order nuance (not a defect): the current CLI is `import_geotiff <store_dir> <layer> <geotiff>` (store_dir first); the plan's `--stage`/`--commit` positionals are internally coherent with this.
 - review-issue actions #1 (CLI-shape decision captured), #3 (`usage()`/README include `chart`), and #4 (import-≠-costmap boundary) are addressed by the plan; action #2 is the gap flagged above.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-03 18:16 +00:00
+**By**: Claude Opus
+
+**Plan**: `.agent/work-plans/issue-289/plan.md` at `4bea567` (revised this run)
+**Branch**: feature/issue-289
+**Commits**: `4bea567` (plan revision), `0283e2e` (CLI), `8564f40` (tests),
+`7a20b75` (README)
+
+### What was done
+
+Exposed the store's `chart` source layer through the `import_geotiff` CLI with
+the operator-approved two-phase `--stage`/`--commit` grammar (ADR-0010 D7
+wholesale-regeneration semantics), and folded the plan-review adjudication into
+the code, tests, and docs.
+
+- **Plan revised first** (`4bea567`): recorded the two binding must-fix
+  decisions and the three suggestions inline, added the manual Lewes acceptance
+  procedure and the explicit synthetic-test criteria.
+- **CLI** (`import_geotiff_main.cpp`, `0283e2e`):
+  - `layerFromName("chart")` → `SourceLayer::Chart`; error text now
+    `survey|reference|chart`.
+  - `--stage <staged_dir> chart <geotiff>`: staging store
+    (`fromCellSize(cell_size, false, true)`), import into `Chart`, `save()` to
+    `<staged_dir>/chart/`; live store untouched; no load (OS-level accumulation).
+  - `--commit <staged_dir> <store_dir>`: `replaceChartLayer(<staged>/chart,
+    store_dir)` in a try/catch that reports a clean `commit failed:` error and
+    exits 1.
+  - Modes are mutually exclusive; a bare `chart` in normal mode is rejected
+    (never written into a live store incrementally).
+  - **Must-fix 1**: `--commit` help + README state the D7 nav-down precondition;
+    the CLI is documented offline-only and implements **no** liveness guard
+    (enforcement deferred to rolker/s57_tools#28).
+  - **Suggestion 1**: same-filesystem requirement documented in `usage()`/README.
+  - **Suggestion 2**: chose **warn** over refuse on a non-empty staged dir —
+    refuse would break the multi-invocation accumulation the `--stage`/`--commit`
+    split exists for; the warning names the stale-tile risk and the
+    fresh-dir-per-cycle mitigation.
+- **Tests** (`8564f40`):
+  - **Must-fix 2**: `test_geotiff_import.cpp` gains a synthetic
+    `--stage`→`--commit` round-trip with explicit criteria — exact staged tile
+    count (1), exact committed tile count (1), and every reloaded cell's depth
+    and σ within `1e-6` of the source.
+  - **Suggestion 3**: new `test_import_geotiff_cli.cpp` runs the built binary
+    (path via `IMPORT_GEOTIFF_BINARY` compile def) across stage+commit happy
+    path, non-chart-layer stage rejection, missing `--stage` operand, and
+    missing `--commit` `<store_dir>`.
+- **README** (`7a20b75`): replaced the "No in-tree tool produces a staged chart
+  layer yet" paragraph with the real CLI usage + all four notes (D7 nav-down,
+  same-fs, fresh-dir, import≠costmap).
+
+### Test results
+
+`./core_ws/build.sh` needed the dependency chain first (fresh worktree); built
+with `colcon build --packages-up-to marine_bathymetry_store` (5 packages OK).
+`colcon test --packages-select marine_bathymetry_store`: **249 tests, 0 errors,
+0 failures, 33 skipped** (the skips are the pre-existing root-permission
+`GTEST_SKIP` cases). Confirmed all 5 new cases ran and passed
+(`ChartStageCommitRoundTripPreservesDepthAndSigma`, `StageThenCommitChartLandsTiles`,
+`StageRejectsNonChartLayer`, `StageWithoutOperandIsUsageError`,
+`CommitWithoutStoreDirIsUsageError`). Stderr output during the build is
+pre-existing GDAL `-Wunused-result` warnings in the s102 test fixtures, not from
+this change.
+
+### Deviations
+
+- **Lewes corpus test → synthetic + manual** (per must-fix 2): no in-tree NOAA
+  fixture; the in-tree test is a synthetic round-trip with concrete criteria and
+  the real Lewes validation is the manual procedure documented in the plan (for
+  the PR description). Deviation and rationale (determinism/CI-runnability)
+  stated there.
+- **Additive-merge footgun → warn, not refuse** (suggestion 2): rationale above;
+  documented in `usage()`/README.
+- Both `--stage` and `--commit` take the staged dir as their flag operand (a
+  uniform grammar); the plan's positional layout is preserved.
+
+### Next step
+
+Ready for `review-code` / PR. The PR description must carry: the CLI-shape
+rationale, the manual Lewes acceptance procedure + its deviation note, and the
+s57_tools#29 README interim-note follow-up (cross-repo).
