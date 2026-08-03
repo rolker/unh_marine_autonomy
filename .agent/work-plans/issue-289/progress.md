@@ -220,3 +220,27 @@ this change.
 Ready for `review-code` / PR. The PR description must carry: the CLI-shape
 rationale, the manual Lewes acceptance procedure + its deviation note, and the
 s57_tools#29 README interim-note follow-up (cross-repo).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-03 18:23 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-289 at `2059659`
+**Mode**: pre-push
+**Depth**: Standard (reason: ~480 code lines / 5 files, ADR-0010 D7 governance-touching)
+**Must-fix**: 0 | **Suggestions**: 4
+**Round**: 1 | **Ship**: recommended — no must-fix findings; static analysis clean, both adversarial passes clean
+
+### Findings
+- [ ] (suggestion) `--stage` provenance flags (--platform/--sensor/--survey/--date) write registry.json into the staged dir but --commit only swaps chart/, so they never reach the store — reject in stage mode or document — `src/import_geotiff_main.cpp:301`
+- [ ] (suggestion) README/usage "--stage appends (never deletes)" is grid-granular; same-grid re-stage overwrites the tile wholesale — clarify — `README.md:77`
+- [ ] (suggestion) negative --level silently ignored while error text advertises "0..20"; -1 sentinel collides with literal --level -1 (pre-existing, propagated) — `src/import_geotiff_main.cpp:286`
+- [ ] (suggestion) CLI subprocess test run() collapses signal-death to -1 with EXPECT_NE(...,0), and std::system interpolates paths (safe here) — test-only, low severity — `test/test_import_geotiff_cli.cpp:126`
+
+### Notes
+- Static analysis: ament_cpplint + cppcheck clean on all 3 changed C++ files. Local Adversarial skipped (Ollama unreachable). Copilot off (default).
+- Two disjoint-lens fresh Opus adversarial passes; independent of the Sonnet issue-review and Opus plan-review.
+- False positive recorded: Lens B flagged mixed-level chart as must-fix; rejected — multi-level stores are supported (tile_io.hpp:125, ADR-0002 D2) and the plan's Lewes procedure stages L5/L7/L8 into one dir by design.
+- API wiring verified against the library: fromCellSize(cell,false,true), save() -> <dir>/chart/, replaceChartLayer(<commit_dir>/chart, store_dir). All ADR-0010 D7 caveats (nav-down, EXDEV/same-fs, fresh-dir, import != costmap) match the real replaceChartLayer.
