@@ -259,6 +259,16 @@ int main(int argc, char * argv[])
     if (n_positional != 2) {
       usage();
     }
+    // Provenance flags write registry.json into the staged dir, but --commit
+    // swaps only <staged>/chart/ into the live store, so staged provenance never
+    // reaches it. Reject them here rather than silently dropping the metadata at
+    // commit time (fail loud over silent drop).
+    if (!metadata.empty()) {
+      std::cerr << "--platform/--sensor/--survey/--date are not supported with "
+                << "--stage: --commit swaps only chart/, so staged provenance "
+                << "would be silently dropped\n";
+      usage();
+    }
     const auto layer = layerFromName(positional[0]);
     if (layer != marine_bathymetry_store::SourceLayer::Chart) {
       std::cerr << "--stage requires layer 'chart' (got '" << positional[0]
@@ -298,9 +308,9 @@ int main(int argc, char * argv[])
       store, layer, geotiff, options);
     std::cout << "imported " << imported << " cell(s) into chart\n";
 
-    const marine_bathymetry_store::StoreMetadata * to_write =
-      metadata.empty() ? nullptr : &metadata;
-    const std::size_t saved = marine_bathymetry_store::save(store, stage_dir, to_write);
+    // Provenance flags are rejected above, so the staged store never carries a
+    // registry.json (it would be dropped by the chart-only --commit anyway).
+    const std::size_t saved = marine_bathymetry_store::save(store, stage_dir, nullptr);
     std::cout << "saved " << saved << " tile(s) under " << stage_dir << "\n";
     return 0;
   }

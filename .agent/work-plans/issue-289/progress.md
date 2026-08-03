@@ -256,7 +256,7 @@ s57_tools#29 README interim-note follow-up (cross-repo).
 **CI**: all-pass (build ✓, copilot-pull-request-reviewer ✓)
 
 ### Findings
-- [ ] (cross-confirmed: Copilot + Local Review) `--stage` provenance flags (`--platform/--sensor/--survey/--date`) write registry.json into the staged dir, but `--commit` only swaps `chart/` — provenance is silently dropped at commit. Fix: reject provenance flags in `--stage` mode with a clear error (fail loud over silent drop) — `src/import_geotiff_main.cpp:304`
+- [x] (cross-confirmed: Copilot + Local Review) `--stage` provenance flags (`--platform/--sensor/--survey/--date`) write registry.json into the staged dir, but `--commit` only swaps `chart/` — provenance is silently dropped at commit. Fix: reject provenance flags in `--stage` mode with a clear error (fail loud over silent drop) — `src/import_geotiff_main.cpp:304`
 - [ ] (cross-confirmed: Copilot + Local Review) README "`--stage` appends (it never deletes)" is grid-granular: re-staging the same GGGS grid overwrites that tile wholesale; the real invariant is that tiles for grids you *don't* re-stage persist (the stale-carry risk). Clarify the sentence — `README.md:143`
 - [ ] (cross-confirmed: Copilot + Local Review) CLI subprocess `run()` collapses abnormal termination (signal death) to `-1`, and error-case tests assert only `EXPECT_NE(rc, 0)` — a crash passes as a usage error. Assert the exact expected exit code (1) for usage-error cases — `test/test_import_geotiff_cli.cpp:133`
 - [ ] (suggestion, Local Review only) negative `--level` silently ignored while the error text advertises `0..20` (pre-existing behavior, propagated) — `src/import_geotiff_main.cpp:286`
