@@ -150,7 +150,8 @@ int main(int argc, char * argv[])
   const char * stage_dir = nullptr;    // set by --stage: build chart into here
   const char * commit_dir = nullptr;   // set by --commit: staged dir to swap in
   double cell_size = 0.5;
-  int level = -1;                       // sentinel: derive from --cell-size
+  int level = 0;                        // valid only when level_set is true
+  bool level_set = false;               // unset: derive the level from --cell-size
   double constant_uncertainty = -1.0;   // sentinel: use the file's band
   double depth_scale = 1.0;
   double depth_offset = 0.0;
@@ -207,6 +208,14 @@ int main(int argc, char * argv[])
         std::cerr << "bad --level '" << val << "'\n";
         return 1;
       }
+      // Validate the range at parse time so a negative level is a clean error
+      // rather than being silently ignored later (it no longer aliases a
+      // "derive from --cell-size" sentinel — level_set carries that instead).
+      if (level < 0 || level > 20) {
+        std::cerr << "invalid --level " << level << " (GGGS levels are 0..20)\n";
+        return 1;
+      }
+      level_set = true;
     } else if (std::strcmp(argv[i], "--uncertainty") == 0) {
       constant_uncertainty = parse_finite("--uncertainty", need_arg(i));
     } else if (std::strcmp(argv[i], "--depth-scale") == 0) {
@@ -295,11 +304,7 @@ int main(int argc, char * argv[])
     marine_bathymetry_store::GeoTiffImportOptions options;
     options.depth_scale = depth_scale;
     options.depth_offset = depth_offset;
-    if (level >= 0) {
-      if (level > 20) {
-        std::cerr << "invalid --level " << level << " (GGGS levels are 0..20)\n";
-        return 1;
-      }
+    if (level_set) {
       options.level = static_cast<uint8_t>(level);
     }
     if (constant_uncertainty >= 0.0) {
@@ -349,11 +354,7 @@ int main(int argc, char * argv[])
   marine_bathymetry_store::GeoTiffImportOptions options;
   options.depth_scale = depth_scale;
   options.depth_offset = depth_offset;
-  if (level >= 0) {
-    if (level > 20) {
-      std::cerr << "invalid --level " << level << " (GGGS levels are 0..20)\n";
-      return 1;
-    }
+  if (level_set) {
     options.level = static_cast<uint8_t>(level);
   }
   if (constant_uncertainty >= 0.0) {
