@@ -322,3 +322,26 @@ Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand of
 to a fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 289 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-03 22:55 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-289 at `679f8d8`
+**Mode**: pre-push
+**Depth**: Standard (reason: ~529 code/doc/test lines / 5 files, ADR-0010 D7 governance-touching)
+**Must-fix**: 0 | **Suggestions**: 2
+**Round**: 2 | **Ship**: recommended — re-review of the 4 Integrated-Review fixes; all present and correct, no must-fix, static analysis + Lens A clean
+
+### Findings
+- [ ] (suggestion) CLI subprocess `run()` interpolates paths into a `std::system` shell command; inputs are test-controlled (temp_directory_path + gtest name) so injection risk is negligible — a shell-free exec would remove the smell (previously raised; the actionable exit-code half was fixed in `aa4d00e`) — `test/test_import_geotiff_cli.cpp:127`
+- [ ] (suggestion) `countStagedChartTiles` counts `.tif` by extension without filtering symlinks/regular files; feeds only the non-empty-dir warning (not validation — `replaceChartLayer` rejects symlinked staged entries), so at worst the warning count is slightly off — `src/import_geotiff_main.cpp:128`
+
+### Notes
+- Round 2 re-review after the Integrated Review (PR #291). All 4 addressed action items verified in the current tree: provenance flags rejected in `--stage` (fail-loud, `746f79f`); grid-tile-granular append/stale-carry wording in README + usage (`bc72cb5`); exact usage-error exit code `EXPECT_EQ(rc,1)` in the 3 CLI error tests (`aa4d00e`); `--level` range validated at parse time with a `level_set` flag replacing the `-1` sentinel — removes the `--level -1` collision and the duplicated late range check (`a65cbb7`).
+- Static analysis: ament_cpplint clean on all 3 changed C++ files; cppcheck reported only `useStlAlgorithm` style hints (dropped as nits). Local Adversarial skipped (Ollama unreachable). Copilot off (default).
+- Two disjoint-lens fresh Opus adversarial passes (Lens A logic / Lens B systemic), independent of prior reviews. Lens A: no findings. Lens B: the 2 suggestions above only.
+- API wiring re-verified against the library headers: `fromCellSize(cell,false,true)` (3-arg overload, bathymetry_store.hpp:118), `save(store,dir,nullptr)` (tile_io.hpp:117, metadata defaults nullptr), `replaceChartLayer(<commit_dir>/chart, store_dir)` (tile_io.hpp:242). All ADR-0010 D7 caveats (nav-down offline-only, EXDEV/same-fs, fresh-dir, import≠costmap) match the real `replaceChartLayer` contract.
+- Plan adherence: diff matches plan.md "Files to Change" exactly (5 files); no scope creep.
