@@ -35,6 +35,7 @@
 #include "marine_autonomy/gggs.h"
 #include "marine_bathymetry_store/bathymetry_store.hpp"
 #include "marine_bathymetry_store/geotiff_import.hpp"
+#include "marine_bathymetry_store/tile_io.hpp"
 
 using marine_bathymetry_store::BathymetryStore;
 using marine_bathymetry_store::GeoTiffImportOptions;
@@ -353,4 +354,84 @@ TEST_F(GeoTiffImportTest, MissingFileThrows)
   EXPECT_THROW(
     importGeoTiff(store, SourceLayer::Survey, (dir_ / "absent.tif").string()),
     std::runtime_error);
+}
+
+namespace
+{
+/// Count `.tif` tiles directly under @p layer_dir (non-recursive).
+std::size_t countTiles(const fs::path & layer_dir)
+{
+  std::size_t n = 0;
+  if (!fs::is_directory(layer_dir)) {
+    return 0;
+  }
+  for (const auto & entry : fs::directory_iterator(layer_dir)) {
+    if (entry.path().extension() == ".tif") {
+      ++n;
+    }
+  }
+  return n;
+}
+}  // namespace
+
+// Synthetic in-tree stand-in for the issue's "Lewes corpus" acceptance test:
+// the full `--stage` -> `--commit` chart round-trip at the library level, with
+// explicit pass/fail criteria (exact tile count staged and committed; per-cell
+// depth and sigma equal the source within tolerance). The manual Lewes corpus
+// procedure is documented in the PR (no in-tree NOAA fixture — kept deterministic
+// and CI-runnable). See plan.md, must-fix 2.
+TEST_F(GeoTiffImportTest, ChartStageCommitRoundTripPreservesDepthAndSigma)
+{
+  // A staging store (chart_staging_writable) is the only store that may write
+  // the Chart layer (ADR-0010 D7). Import a fully-valid 3x3 tile at the store
+  // level: nine known depths, uniform sigma.
+  BathymetryStore staging(11, /*reference_writable=*/false, /*chart_staging_writable=*/true);
+  const std::vector<float> depth{
+    -30.0f, -31.0f, -32.0f,
+    -33.0f, -34.0f, -35.0f,
+    -36.0f, -37.0f, -38.0f};
+  const std::vector<float> unc{
+    1.5f, 1.5f, 1.5f,
+    1.5f, 1.5f, 1.5f,
+    1.5f, 1.5f, 1.5f};
+  const auto tif = writeTestTiff(dir_ / "chart.tif", staging.level(), 3, 3, depth, unc);
+
+  const auto imported = importGeoTiff(staging, SourceLayer::Chart, tif);
+  EXPECT_EQ(imported, 9u);   // all nine pixels are valid
+
+  // --stage: save the chart layer into a staged directory. The 3x3 import sits
+  // within one GGGS grid, so exactly one value tile is written under chart/.
+  const fs::path staged = dir_ / "staged";
+  const std::size_t saved = marine_bathymetry_store::save(staging, staged.string());
+  EXPECT_EQ(saved, 1u);
+  EXPECT_EQ(countTiles(staged / "chart"), 1u);   // exact staged tile count
+
+  // --commit: atomic wholesale swap into a fresh store dir. The same single tile
+  // must land under <store>/chart/.
+  const fs::path store_dir = dir_ / "store";
+  fs::create_directories(store_dir);
+  marine_bathymetry_store::replaceChartLayer(
+    (staged / "chart").string(), store_dir.string());
+  EXPECT_EQ(countTiles(store_dir / "chart"), 1u);   // exact committed tile count
+
+  // Reload through a normal (non-staging) runtime store and assert every
+  // imported cell's depth and sigma equal the source within the Float64
+  // round-trip tolerance.
+  BathymetryStore runtime(11);
+  EXPECT_EQ(marine_bathymetry_store::load(runtime, store_dir.string()), 1u);
+
+  const gggs::GridIndex grid = runtime.level().gridIndex(43.0, -70.5);
+  const double cell_x = grid.longitudinalSpan() / gggs::cell_rows_per_grid;
+  const double cell_y = grid.latitudinalSpan() / gggs::cell_rows_per_grid;
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 3; ++col) {
+      const auto cell = runtime.cellIndex(
+        grid.northLatitude() - (row + 0.5) * cell_y,
+        grid.westLongitude() + (col + 0.5) * cell_x);
+      const auto got = runtime.get(SourceLayer::Chart, cell);
+      ASSERT_TRUE(got.has_value()) << "missing chart cell at row " << row << " col " << col;
+      EXPECT_NEAR(got->depth, depth[row * 3 + col], 1e-6);
+      EXPECT_NEAR(got->uncertainty, unc[row * 3 + col], 1e-6);
+    }
+  }
 }
