@@ -114,3 +114,26 @@ From the workspace consequences map:
 
 ### Open questions
 - [ ] No open questions — operator has decided the CLI shape (`--stage`/`--commit`); plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-08-03 18:00 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-289/plan.md` at `bbac1f9`
+**PR**: PR-less (issue/worktree review)
+**Verdict**: changes-requested
+
+### Findings
+- [ ] (must-fix) `--commit` performs the D7 wholesale swap but neither enforces nor documents ADR-0010 D7's *enforced* nav-liveness precondition ("the updater checks a navigation-liveness signal … and refuses to swap while nav is active, cron or not", ADR-0010 D7 §165-167). `replaceChartLayer`'s own contract only *assumes* "no consumer holds the store open" — it does not check. Since the CLI is designed to be cron-composable (s57_tools#28), either add the nav-liveness guard to `--commit` or explicitly scope it out (offline-operator-only) AND document the nav-down precondition in `usage()`/README. — `plan.md:34`
+- [ ] (must-fix) The issue asks for "a round-trip acceptance test against the Lewes NOAA corpus"; step 6 substitutes a synthetic library round-trip (no Lewes fixture exists in-tree). Reasonable substitution, but the plan is silent about the deviation and does not give the concrete pass/fail criteria review-issue action #2 requested. State the deferral/substitution and its criteria explicitly. — `plan.md:56`
+- [ ] (suggestion) `replaceChartLayer` rejects a cross-device staged dir (rename atomicity). `--commit` will fail closed if `<staged_dir>` and `<store_dir>` are on different filesystems — document the same-filesystem requirement in `usage()`/README so operators aren't surprised at commit time. — `plan.md:36`
+- [ ] (suggestion) Step 4's "point the same `<staged_dir>` across invocations; the OS directory merge handles accumulation" inherits the additive-merge footgun (`save()`/`importTiles` never delete): reusing a *non-empty* staged dir across regeneration cycles can carry stale tiles into a nominally *wholesale* swap, contradicting D7 semantics. Advise a fresh/empty staged dir per regeneration cycle (or refuse a non-empty staged dir). — `plan.md:46`
+- [ ] (suggestion) The new `main()` logic — mode selection (`--stage`/`--commit`/normal), mode-dependent positional counts, and the "layer must be `chart` with `--stage`" usage error — is the actual deliverable but is untested; the library round-trip does not exercise `main()`. Consider a subprocess/launch_testing check of the built `import_geotiff` binary (its `exit()` usage makes in-process testing awkward). — `plan.md:28`
+
+### Notes
+- Independent review (fresh Opus sub-agent; plan authored by a separate Sonnet invocation).
+- Mechanics verified against the live API: the 3-arg `fromCellSize(cell_size, false, true)` overload exists (`bathymetry_store.hpp:118`), `save()` writes the Chart layer to `<dir>/chart/` (`tile_io.cpp:258-263`), and `replaceChartLayer(staged_chart_dir, store_dir)` takes the staged *tiles* dir — so `replaceChartLayer(staged_dir + "/chart", store_dir)` is correct.
+- File targeting is accurate: the README "No in-tree tool produces a staged chart layer yet" paragraph exists (README.md:116) and is the right update target.
+- Positional order nuance (not a defect): the current CLI is `import_geotiff <store_dir> <layer> <geotiff>` (store_dir first); the plan's `--stage`/`--commit` positionals are internally coherent with this.
+- review-issue actions #1 (CLI-shape decision captured), #3 (`usage()`/README include `chart`), and #4 (import-≠-costmap boundary) are addressed by the plan; action #2 is the gap flagged above.
