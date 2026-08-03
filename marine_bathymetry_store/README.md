@@ -136,11 +136,15 @@ import_geotiff --commit /path/to/staged /path/to/store
 - **Same filesystem.** `<staged_dir>` and `<store_dir>` must be on the same
   filesystem: `replaceChartLayer`'s atomic `rename(2)` rejects a cross-device
   staged dir before touching the live layer.
-- **Fresh dir per cycle.** `--stage` *appends* (it never deletes). Point repeated
-  `--stage` calls at one dir to accumulate cells within a regeneration cycle, but
-  start each new cycle from a fresh/empty staged dir — a reused non-empty dir
-  carries stale tiles from the prior cycle into the wholesale swap (the CLI warns
-  when the staged dir is non-empty).
+- **Fresh dir per cycle.** `--stage` accumulates at *grid-tile* granularity:
+  re-staging a GeoTIFF that lands on an already-staged GGGS grid overwrites that
+  grid's tile wholesale, but tiles for grids you do **not** re-stage this cycle
+  persist untouched (it never deletes). That per-grid persistence is the
+  stale-carry risk — a reused non-empty dir keeps prior-cycle tiles for any grid
+  the new cycle happens not to cover, and `--commit` then swaps them into the
+  live store as if current. Point repeated `--stage` calls at one dir to
+  accumulate cells *within* a regeneration cycle, but start each new cycle from a
+  fresh/empty staged dir (the CLI warns when the staged dir is non-empty).
 - **Import ≠ costmap-active.** Importing chart data into the store does **not**
   activate it in the costmap; no deployed store may carry a `chart/` layer until
   the cost-model rework
