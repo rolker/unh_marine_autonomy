@@ -244,3 +244,22 @@ s57_tools#29 README interim-note follow-up (cross-repo).
 - Two disjoint-lens fresh Opus adversarial passes; independent of the Sonnet issue-review and Opus plan-review.
 - False positive recorded: Lens B flagged mixed-level chart as must-fix; rejected — multi-level stores are supported (tile_io.hpp:125, ADR-0002 D2) and the plan's Lewes procedure stages L5/L7/L8 into one dir by design.
 - API wiring verified against the library: fromCellSize(cell,false,true), save() -> <dir>/chart/, replaceChartLayer(<commit_dir>/chart, store_dir). All ADR-0010 D7 caveats (nav-down, EXDEV/same-fs, fresh-dir, import != costmap) match the real replaceChartLayer.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-03 18:14 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #291 at `9ff4b60`
+**Sources**: 3 (Copilot R1 @ `9ff4b60`, Local Review (Pre-Push) @ `2059659`, CI rollup)
+**Cross-source confirmations**: 3
+**CI**: all-pass (build ✓, copilot-pull-request-reviewer ✓)
+
+### Findings
+- [ ] (cross-confirmed: Copilot + Local Review) `--stage` provenance flags (`--platform/--sensor/--survey/--date`) write registry.json into the staged dir, but `--commit` only swaps `chart/` — provenance is silently dropped at commit. Fix: reject provenance flags in `--stage` mode with a clear error (fail loud over silent drop) — `src/import_geotiff_main.cpp:304`
+- [ ] (cross-confirmed: Copilot + Local Review) README "`--stage` appends (it never deletes)" is grid-granular: re-staging the same GGGS grid overwrites that tile wholesale; the real invariant is that tiles for grids you *don't* re-stage persist (the stale-carry risk). Clarify the sentence — `README.md:143`
+- [ ] (cross-confirmed: Copilot + Local Review) CLI subprocess `run()` collapses abnormal termination (signal death) to `-1`, and error-case tests assert only `EXPECT_NE(rc, 0)` — a crash passes as a usage error. Assert the exact expected exit code (1) for usage-error cases — `test/test_import_geotiff_cli.cpp:133`
+- [ ] (suggestion, Local Review only) negative `--level` silently ignored while the error text advertises `0..20` (pre-existing behavior, propagated) — `src/import_geotiff_main.cpp:286`
+
+### False positives
+- none — all 3 Copilot comments verified against local code and confirmed valid; each matches a Local Review (Pre-Push) suggestion at the prior head.
