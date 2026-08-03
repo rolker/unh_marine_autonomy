@@ -144,6 +144,19 @@ if(BUILD_TESTING)
   target_link_libraries(test_geotiff_import ${PROJECT_NAME} ${GDAL_LIBRARIES})
   target_include_directories(test_geotiff_import PRIVATE ${GDAL_INCLUDE_DIRS})
 
+  # Subprocess test of the built import_geotiff binary (#289): the arg-parsing
+  # paths in main() (--stage/--commit mode selection, positional counts,
+  # chart-only stage guard, missing-operand handling) are otherwise untested.
+  # The binary path is injected as a compile definition; the test writes a GDAL
+  # fixture raster and invokes the binary, so it links GDAL and depends on the
+  # binary being built first.
+  ament_add_gtest(test_import_geotiff_cli test/test_import_geotiff_cli.cpp)
+  target_link_libraries(test_import_geotiff_cli ${PROJECT_NAME} ${GDAL_LIBRARIES})
+  target_include_directories(test_import_geotiff_cli PRIVATE ${GDAL_INCLUDE_DIRS})
+  target_compile_definitions(test_import_geotiff_cli PRIVATE
+    IMPORT_GEOTIFF_BINARY="$<TARGET_FILE:import_geotiff>")
+  add_dependencies(test_import_geotiff_cli import_geotiff)
+
   # S-102 importer tests (#278). All offline: fixture GeoPackages, file://
   # fetches, synthetic projected rasters, ConstantOffsetProvider. They build
   # fixtures with GDAL directly, so they link it (PRIVATE in the core lib).
