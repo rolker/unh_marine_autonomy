@@ -263,3 +263,62 @@ s57_tools#29 README interim-note follow-up (cross-repo).
 
 ### False positives
 - none — all 3 Copilot comments verified against local code and confirmed valid; each matches a Local Review (Pre-Push) suggestion at the prior head.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-03 18:48 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-289 at `a65cbb7`
+**Addressed**: Integrated Review (PR #291 @ `9ff4b60`, When 2026-08-03 18:14 -04:00)
+**Commits**: `746f79f`, `bc72cb5`, `aa4d00e`, `a65cbb7`
+
+### What was done
+
+Worked the 4 open action items from the latest review entry (the Integrated
+Review). All 4 were verified against current source and fixed — none deferred.
+One logical fix per commit; each fix commit also checked its box in the
+Integrated Review entry.
+
+- **Provenance dropped at commit** (`746f79f`): `--stage` now rejects
+  `--platform/--sensor/--survey/--date` with a clear error instead of writing a
+  `registry.json` that the chart-only `--commit` would silently discard. The
+  stage-mode `save()` now passes `nullptr` metadata explicitly (the guard makes
+  it unreachable otherwise). — `src/import_geotiff_main.cpp`
+- **Grid-granular append wording** (`bc72cb5`): reworded the "Fresh dir per
+  cycle" README bullet (and the matching `usage()` string) — `--stage`
+  accumulates at *grid-tile* granularity (re-staging a grid overwrites its tile;
+  tiles for grids not re-staged persist), which is the stale-carry risk. Replaces
+  the imprecise "appends (it never deletes)". — `README.md`,
+  `src/import_geotiff_main.cpp`
+- **Exact usage-error exit code** (`aa4d00e`): the 3 usage-error CLI subprocess
+  tests now assert `EXPECT_EQ(rc, 1)` instead of `EXPECT_NE(rc, 0)`, so a crash
+  (which `run()` maps to `-1`) can no longer pass as a usage rejection. —
+  `test/test_import_geotiff_cli.cpp`
+- **Negative `--level` silently ignored** (`a65cbb7`): range is now validated at
+  parse time (`0..20`, negatives rejected) with an explicit `level_set` flag
+  replacing the `-1` sentinel — removing the sentinel/`--level -1` collision and
+  the duplicated late range check in both stage and normal modes. —
+  `src/import_geotiff_main.cpp`
+
+### Test results
+
+`./core_ws/build.sh marine_bathymetry_store` OK; `./core_ws/test.sh
+marine_bathymetry_store`: **249 tests, 0 errors, 0 failures, 33 skipped** (the
+skips are the pre-existing root-permission `GTEST_SKIP` cases). Confirmed the 4
+CLI subprocess cases ran and passed under the new exact-exit-code assertions
+(`StageThenCommitChartLandsTiles`, `StageRejectsNonChartLayer`,
+`StageWithoutOperandIsUsageError`, `CommitWithoutStoreDirIsUsageError`).
+
+### Actions
+- [x] `--stage` rejects provenance flags (fail loud over silent drop) — `src/import_geotiff_main.cpp`
+- [x] Clarify `--stage` per-grid append / stale-carry wording — `README.md` + `usage()`
+- [x] Assert exact usage-error exit code (1) in CLI subprocess tests — `test/test_import_geotiff_cli.cpp`
+- [x] Reject out-of-range/negative `--level` at parse time — `src/import_geotiff_main.cpp`
+
+### Next step
+
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off
+to a fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 289 --skill review-code
