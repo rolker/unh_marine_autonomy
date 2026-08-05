@@ -137,3 +137,19 @@ update(TwistStamped), not the Helm-input path).
 
 ### False positives
 - (none)
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-05 12:20 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #293 at `68bd621` (fix pushed as follow-up head `a2fefb7`)
+**Sources**: 2 (Copilot R2 @ `68bd621`, CI build pass @ `68bd621`)
+**Cross-source confirmations**: 0
+**CI**: build pass at `68bd621`; rerunning on the fix head
+
+### Findings
+- [x] (low, Copilot R2 — VALID, FIXED) unsynchronized read/write of curvature_config_ (parameter-callback writer vs command-path reader; torn std::vector read = UB under a multi-threaded executor; shipped node is single-threaded but the class is a library). Fixed: mutex-guarded write + copy-under-lock read — `helm_manager/src/helm_manager.{h,cpp}`
+
+### False positives
+- (none)
