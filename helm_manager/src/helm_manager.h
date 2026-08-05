@@ -41,6 +41,8 @@
 #include "std_msgs/msg/bool.hpp"
 #include "marine_interfaces/msg/heartbeat.hpp"
 
+#include "curvature_regulation.h"
+
 namespace helm_manager
 {
 
@@ -90,6 +92,13 @@ private:
 
     double max_speed_ = 1.0;
     double max_yaw_speed_ = 1.0;
+
+    // Curvature-preserving speed regulation (ADR-0012, #292). Loaded and
+    // validated in on_configure/updateParameters; applied at the entry of
+    // update(mode, TwistStamped) so both output branches see regulated
+    // values. Invalid config disables regulation (fail-safe passthrough).
+    CurvatureRegulationConfig curvature_config_;
+    void loadCurvatureConfig();
 
     rclcpp::node_interfaces::PostSetParametersCallbackHandle::SharedPtr update_parameters_callback_;
   };
