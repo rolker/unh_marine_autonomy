@@ -121,3 +121,19 @@ update(TwistStamped), not the Helm-input path).
 
 ### Findings
 - [ ] (suggestion) Consider ParameterDescriptor descriptions for the four new capability_curve_* params (optional; existing params lack them too — defer to a repo-wide pass) — `helm_manager/src/helm_manager.cpp:69`
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-05 11:35 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #293 at `1c5c1b0`
+**Sources**: 3 (Copilot R1 @ `1c5c1b0`, Local Review (Pre-Push) @ `eb0fc35`, CI rollup)
+**Cross-source confirmations**: 0
+**CI**: build pending at triage time; Copilot check green
+
+### Findings
+- [ ] (low, Copilot — VALID) validateCurvatureConfig accepts an enabled curve whose first breakpoint speed is > 0; curvatureCapabilityAt(0.0) then clamp-extends the first omega_max down to rest, overestimating rest capability on weaker-at-rest hulls. Fix: require first breakpoint at v = 0.0 for enabled curves (+ test + README note) — `helm_manager/src/curvature_regulation.h`
+
+### False positives
+- (none)
