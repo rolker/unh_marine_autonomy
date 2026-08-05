@@ -174,6 +174,7 @@ void HelmManager::loadCurvatureConfig()
       error.c_str());
     config.enabled = false;
   }
+  std::lock_guard<std::mutex> lock(curvature_config_mutex_);
   curvature_config_ = config;
 }
 
@@ -224,11 +225,18 @@ void HelmManager::update(const std::string & mode, const geometry_msgs::msg::Twi
   if(canPublish(mode)) {
     // Regulate once, before the output-type branch, so both the twist
     // output and the twist->helm conversion carry regulated values
-    // (ADR-0012). The max clamps below stay as the backstop.
+    // (ADR-0012). The max clamps below stay as the backstop. Copy the
+    // config under the lock (small: a handful of doubles) so the
+    // parameter-callback writer can never tear a read mid-command.
+    CurvatureRegulationConfig config;
+    {
+      std::lock_guard<std::mutex> lock(curvature_config_mutex_);
+      config = curvature_config_;
+    }
     geometry_msgs::msg::TwistStamped regulated = msg;
     std::tie(regulated.twist.linear.x, regulated.twist.angular.z) =
       applyCurvatureRegulation(msg.twist.linear.x, msg.twist.angular.z,
-        curvature_config_);
+        config);
 
     if(output_type_ == "twist" || output_type_ == "dual") {
       geometry_msgs::msg::TwistStamped twist_clamped = regulated;
