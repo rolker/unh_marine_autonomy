@@ -236,4 +236,9 @@ TEST(CurvatureRegulationConfigTest, InvalidCurvesRejected)
   auto bad_pivot = bizzyLikeConfig();
   bad_pivot.pivot_speed = -0.1;
   EXPECT_FALSE(validateCurvatureConfig(bad_pivot, error));
+
+  auto no_rest = bizzyLikeConfig();
+  no_rest.curve = {0.5, 0.4, 1.3, 0.4};  // first breakpoint above v=0:
+  EXPECT_FALSE(validateCurvatureConfig(no_rest, error))
+    << "rest capability must be explicit, not clamp-extended";
 }

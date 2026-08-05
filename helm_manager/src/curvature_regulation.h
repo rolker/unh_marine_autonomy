@@ -88,6 +88,14 @@ namespace helm_manager
         "(got " + std::to_string(c.size()) + " values)";
       return false;
     }
+    if (c[0] != 0.0) {
+      // Rest capability must be explicit: clamp-extending the first
+      // breakpoint down to v=0 would overestimate yaw authority at rest on
+      // weaker-at-rest hulls (ADR-0012) — exactly where pivot commands land.
+      error = "capability_curve_v_omega_max must start at v = 0.0 so rest "
+        "capability is explicitly defined";
+      return false;
+    }
     for (size_t i = 0; i < c.size(); i += 2) {
       if (!std::isfinite(c[i]) || !std::isfinite(c[i + 1]) ||
         c[i] < 0.0 || c[i + 1] < 0.0)

@@ -55,8 +55,9 @@ velocity pair.
 
 - `capability_curve_enabled` (`bool`, default: `false`): Master gate.
 - `capability_curve_v_omega_max` (`double[]`, default: `[]`): Flat `[v₀, ω_max₀, v₁, ω_max₁, …]`
-  pairs — achievable |yaw rate| (rad/s) at forward |speed| (m/s). Speeds strictly ascending;
-  linear interpolation within segments, clamp-constant beyond both ends. The curve may be
+  pairs — achievable |yaw rate| (rad/s) at forward |speed| (m/s). Speeds strictly ascending and
+  **starting at `v = 0.0`** (rest capability must be explicit — it is not extrapolated); linear
+  interpolation within segments, clamp-constant beyond the last breakpoint. The curve may be
   **non-monotonic** (measured envelopes can peak at mid-speed). Values come from platform
   measurement, live in platform config, and are re-measured when the platform changes.
 - `capability_curve_margin` (`double`, default: `0.8`): Safety factor in `(0, 1]` applied to
