@@ -626,3 +626,141 @@ TEST_F(ParameterUpdateTest, MaxYawSpeedUpdateAffectsConversion)
   ASSERT_TRUE(twist_received_);
   EXPECT_NEAR(last_twist_.twist.angular.z, -1.0, 0.001);
 }
+
+// ---------------------------------------------------------------------------
+// Curvature regulation: both output branches receive regulated values
+// (ADR-0012, #292). A constant capability envelope of 1.0 rad/s with a
+// commanded (2.0, 2.0) regulates to (1.0, 1.0): same curvature (radius 1 m),
+// half the speed. The plan-review must-fix locked in by these tests: the
+// regulation applies at update() entry, ahead of the output-type branch.
+// ---------------------------------------------------------------------------
+
+class CurvatureRegulationNodeTest : public ::testing::Test
+{
+protected:
+  void setUpWithOutputType(const std::string & output_type)
+  {
+    rclcpp::init(0, nullptr);
+
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+      rclcpp::Parameter("output_type", output_type),
+      rclcpp::Parameter("max_speed", 2.0),
+      rclcpp::Parameter("max_yaw_speed", 2.0),
+      rclcpp::Parameter("capability_curve_enabled", true),
+      rclcpp::Parameter("capability_curve_v_omega_max",
+        std::vector<double>{0.0, 1.0, 2.0, 1.0}),
+      rclcpp::Parameter("capability_curve_margin", 1.0),
+      rclcpp::Parameter("capability_curve_pivot_speed", 0.05)
+    });
+    node_ = std::make_shared<helm_manager::HelmManager>("test_curv_node", options);
+    helper_ = std::make_shared<rclcpp::Node>("test_curv_helper");
+
+    mode_pub_ = helper_->create_publisher<std_msgs::msg::String>(
+      "/piloting_mode", 1);
+    manual_twist_pub_ = helper_->create_publisher<geometry_msgs::msg::TwistStamped>(
+      "/piloting_mode/manual/cmd_vel", 10);
+
+    twist_sub_ = helper_->create_subscription<geometry_msgs::msg::TwistStamped>(
+      "/out/cmd_vel", 1,
+      [this](const geometry_msgs::msg::TwistStamped::SharedPtr msg) {
+        last_twist_ = *msg;
+        twist_received_ = true;
+      });
+    helm_sub_ = helper_->create_subscription<marine_interfaces::msg::Helm>(
+      "/out/helm", 1,
+      [this](const marine_interfaces::msg::Helm::SharedPtr msg) {
+        last_helm_ = *msg;
+        helm_received_ = true;
+      });
+
+    auto state = node_->configure();
+    ASSERT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+    state = node_->activate();
+    ASSERT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+
+    std_msgs::msg::String mode;
+    mode.data = "manual";
+    mode_pub_->publish(mode);
+    spinBoth(100ms);
+  }
+
+  void TearDown() override
+  {
+    mode_pub_.reset();
+    manual_twist_pub_.reset();
+    twist_sub_.reset();
+    helm_sub_.reset();
+    helper_.reset();
+    node_.reset();
+    rclcpp::shutdown();
+  }
+
+  void spinBoth(std::chrono::milliseconds duration)
+  {
+    auto start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - start < duration) {
+      rclcpp::spin_some(node_->get_node_base_interface());
+      rclcpp::spin_some(helper_);
+      std::this_thread::sleep_for(1ms);
+    }
+  }
+
+  template<typename Predicate>
+  bool spinUntil(Predicate pred, std::chrono::milliseconds timeout = 2000ms)
+  {
+    auto start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - start < timeout) {
+      rclcpp::spin_some(node_->get_node_base_interface());
+      rclcpp::spin_some(helper_);
+      if (pred()) {
+        return true;
+      }
+      std::this_thread::sleep_for(1ms);
+    }
+    return false;
+  }
+
+  std::shared_ptr<helm_manager::HelmManager> node_;
+  std::shared_ptr<rclcpp::Node> helper_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr mode_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr manual_twist_pub_;
+  rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr twist_sub_;
+  rclcpp::Subscription<marine_interfaces::msg::Helm>::SharedPtr helm_sub_;
+
+  geometry_msgs::msg::TwistStamped last_twist_;
+  marine_interfaces::msg::Helm last_helm_;
+  bool twist_received_ = false;
+  bool helm_received_ = false;
+};
+
+TEST_F(CurvatureRegulationNodeTest, RegulationAppliesToTwistOutputBranch)
+{
+  setUpWithOutputType("twist");
+
+  geometry_msgs::msg::TwistStamped twist;
+  twist.twist.linear.x = 2.0;
+  twist.twist.angular.z = 2.0;  // envelope allows 1.0 -> regulate to (1, 1)
+  manual_twist_pub_->publish(twist);
+  spinUntil([this] {return twist_received_;});
+
+  ASSERT_TRUE(twist_received_);
+  EXPECT_NEAR(last_twist_.twist.linear.x, 1.0, 1e-6);
+  EXPECT_NEAR(last_twist_.twist.angular.z, 1.0, 1e-6);
+}
+
+TEST_F(CurvatureRegulationNodeTest, RegulationAppliesToHelmConversionBranch)
+{
+  setUpWithOutputType("helm");
+
+  geometry_msgs::msg::TwistStamped twist;
+  twist.twist.linear.x = 2.0;
+  twist.twist.angular.z = 2.0;  // regulated to (1, 1) before conversion
+  manual_twist_pub_->publish(twist);
+  spinUntil([this] {return helm_received_;});
+
+  ASSERT_TRUE(helm_received_);
+  // throttle = 1.0 / max_speed(2.0); rudder = -1.0 / max_yaw_speed(2.0)
+  EXPECT_NEAR(last_helm_.throttle, 0.5, 1e-6);
+  EXPECT_NEAR(last_helm_.rudder, -0.5, 1e-6);
+}

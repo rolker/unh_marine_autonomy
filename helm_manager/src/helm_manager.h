@@ -30,6 +30,7 @@
 #define HELM_MANAGER_HELM_MANAGER_H
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,8 @@
 #include "std_msgs/msg/string.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "marine_interfaces/msg/heartbeat.hpp"
+
+#include "curvature_regulation.h"
 
 namespace helm_manager
 {
@@ -90,6 +93,18 @@ private:
 
     double max_speed_ = 1.0;
     double max_yaw_speed_ = 1.0;
+
+    // Curvature-preserving speed regulation (ADR-0012, #292). Loaded and
+    // validated in on_configure/updateParameters; applied at the entry of
+    // update(mode, TwistStamped) so both output branches see regulated
+    // values. Invalid config disables regulation (fail-safe passthrough).
+    // The mutex guards the config (incl. its vector) between the parameter
+    // callback writer and command-path readers: the shipped node spins
+    // single-threaded, but this class is a library and must not hand a
+    // torn read to a future multi-threaded executor.
+    CurvatureRegulationConfig curvature_config_;
+    mutable std::mutex curvature_config_mutex_;
+    void loadCurvatureConfig();
 
     rclcpp::node_interfaces::PostSetParametersCallbackHandle::SharedPtr update_parameters_callback_;
   };

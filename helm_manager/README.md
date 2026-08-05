@@ -38,3 +38,35 @@ The node is implemented as a **ROS 2 Lifecycle Node**, allowing for controlled t
 - `max_speed` (`double`, default: `1.0`): Used for scaling when converting between `Helm` throttle and `Twist` linear velocity.
 - `max_yaw_speed` (`double`, default: `1.0`): Used for scaling when converting between `Helm` rudder and `Twist` angular velocity.
 
+## Curvature-Preserving Speed Regulation
+
+Optional (default off; [ADR-0012](../docs/decisions/0012-curvature-preserving-speed-regulation.md),
+[#292](https://github.com/rolker/unh_marine_autonomy/issues/292)). On platforms whose achievable
+yaw rate depends strongly on forward speed (e.g. a differential/skid-steer hull), independently
+clamping `angular.z` silently widens executed turns. When enabled, a commanded `(v, ω)` that
+exceeds the platform's capability envelope is scaled — **both components by the same factor** —
+until the yaw rate is achievable, preserving the commanded curvature `v/ω` (turn radius) exactly:
+the boat stays on the planned arc and simply traverses it slower.
+
+Applied once at the `TwistStamped` command entry, so both the twist output and the twist→helm
+conversion carry regulated values. The `max_speed`/`max_yaw_speed` clamps remain as a backstop.
+`Helm` (throttle/rudder) input is never modulated — it is operator-shaped normalized input, not a
+velocity pair.
+
+- `capability_curve_enabled` (`bool`, default: `false`): Master gate.
+- `capability_curve_v_omega_max` (`double[]`, default: `[]`): Flat `[v₀, ω_max₀, v₁, ω_max₁, …]`
+  pairs — achievable |yaw rate| (rad/s) at forward |speed| (m/s). Speeds strictly ascending and
+  **starting at `v = 0.0`** (rest capability must be explicit — it is not extrapolated); linear
+  interpolation within segments, clamp-constant beyond the last breakpoint. The curve may be
+  **non-monotonic** (measured envelopes can peak at mid-speed). Values come from platform
+  measurement, live in platform config, and are re-measured when the platform changes.
+- `capability_curve_margin` (`double`, default: `0.8`): Safety factor in `(0, 1]` applied to
+  every `ω_max`.
+- `capability_curve_pivot_speed` (`double`, default: `0.05`): Floor speed (m/s). If the commanded
+  yaw is unachievable even at crawl, the helm commands this speed with the maximum achievable yaw
+  there — it never stops the boat mid-line. A true pivot command (`v = 0`) stays at `v = 0` with
+  yaw clamped to rest capability.
+
+Regulation never speeds the boat up (a low commanded speed may be low for reasons the helm cannot
+see), never flips signs, and disables itself with an error log if the curve table is invalid.
+

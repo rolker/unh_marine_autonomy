@@ -85,6 +85,9 @@ if(BUILD_TESTING)
     rclcpp_lifecycle
   )
 
+  # Curvature-preserving speed regulation pure-logic tests (ADR-0012, #292)
+  ament_add_gtest(test_curvature_regulation test/test_curvature_regulation.cpp)
+
   # Command conversion and clamping tests
   ament_add_gtest(test_command_conversion test/test_command_conversion.cpp)
   target_link_libraries(test_command_conversion ${PROJECT_NAME}_lib)

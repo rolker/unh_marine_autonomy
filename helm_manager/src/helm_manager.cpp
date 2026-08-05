@@ -27,6 +27,9 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 #include <algorithm>
+#include <string>
+#include <tuple>
+#include <vector>
 
 #include "helm_manager.h"
 #include "piloting_mode.h"
@@ -60,6 +63,15 @@ CallbackReturn HelmManager::on_configure(const rclcpp_lifecycle::State & state)
   declare_parameter<double>("max_yaw_speed", 1.0);
   max_speed_ = get_parameter("max_speed").as_double();
   max_yaw_speed_ = get_parameter("max_yaw_speed").as_double();
+
+  // Curvature-preserving speed regulation (ADR-0012, #292): per-platform
+  // capability envelope; default off so existing platforms are unaffected.
+  declare_parameter<bool>("capability_curve_enabled", false);
+  declare_parameter<std::vector<double>>(
+    "capability_curve_v_omega_max", std::vector<double>());
+  declare_parameter<double>("capability_curve_margin", 0.8);
+  declare_parameter<double>("capability_curve_pivot_speed", 0.05);
+  loadCurvatureConfig();
 
   helm_status_subscription_ = create_subscription<marine_interfaces::msg::Heartbeat>("status/helm",
       1, std::bind(&HelmManager::helmStatusCallback, this, std::placeholders::_1));
@@ -116,6 +128,7 @@ CallbackReturn HelmManager::on_shutdown(const rclcpp_lifecycle::State & state)
 
 void HelmManager::updateParameters(const std::vector<rclcpp::Parameter> & parameters)
 {
+  bool curvature_touched = false;
   for(const auto & param: parameters) {
     if(param.get_name() == "max_speed") {
       max_speed_ = param.as_double();
@@ -123,7 +136,46 @@ void HelmManager::updateParameters(const std::vector<rclcpp::Parameter> & parame
     if(param.get_name() == "max_yaw_speed") {
       max_yaw_speed_ = param.as_double();
     }
+    if(param.get_name().rfind("capability_curve_", 0) == 0) {
+      curvature_touched = true;
+    }
   }
+  if(curvature_touched) {
+    loadCurvatureConfig();
+  }
+}
+
+void HelmManager::loadCurvatureConfig()
+{
+  // The post-set-parameter callback fires during each declare_parameter in
+  // on_configure — before the full set exists. Load only once all four are
+  // declared (the explicit loadCurvatureConfig() call at the end of the
+  // declares performs the first real load).
+  if(!has_parameter("capability_curve_enabled") ||
+    !has_parameter("capability_curve_v_omega_max") ||
+    !has_parameter("capability_curve_margin") ||
+    !has_parameter("capability_curve_pivot_speed"))
+  {
+    return;
+  }
+
+  CurvatureRegulationConfig config;
+  config.enabled = get_parameter("capability_curve_enabled").as_bool();
+  config.curve = get_parameter("capability_curve_v_omega_max").as_double_array();
+  config.margin = get_parameter("capability_curve_margin").as_double();
+  config.pivot_speed = get_parameter("capability_curve_pivot_speed").as_double();
+
+  std::string error;
+  if(!validateCurvatureConfig(config, error)) {
+    // Fail-safe: refuse the bad envelope rather than guess with it; the
+    // independent max_speed/max_yaw_speed clamps remain in effect.
+    RCLCPP_ERROR(get_logger(),
+      "capability curve rejected, curvature regulation disabled: %s",
+      error.c_str());
+    config.enabled = false;
+  }
+  std::lock_guard<std::mutex> lock(curvature_config_mutex_);
+  curvature_config_ = config;
 }
 
 
@@ -171,8 +223,23 @@ void HelmManager::update(const std::string & mode, const marine_interfaces::msg:
 void HelmManager::update(const std::string & mode, const geometry_msgs::msg::TwistStamped & msg)
 {
   if(canPublish(mode)) {
+    // Regulate once, before the output-type branch, so both the twist
+    // output and the twist->helm conversion carry regulated values
+    // (ADR-0012). The max clamps below stay as the backstop. Copy the
+    // config under the lock (small: a handful of doubles) so the
+    // parameter-callback writer can never tear a read mid-command.
+    CurvatureRegulationConfig config;
+    {
+      std::lock_guard<std::mutex> lock(curvature_config_mutex_);
+      config = curvature_config_;
+    }
+    geometry_msgs::msg::TwistStamped regulated = msg;
+    std::tie(regulated.twist.linear.x, regulated.twist.angular.z) =
+      applyCurvatureRegulation(msg.twist.linear.x, msg.twist.angular.z,
+        config);
+
     if(output_type_ == "twist" || output_type_ == "dual") {
-      geometry_msgs::msg::TwistStamped twist_clamped = msg;
+      geometry_msgs::msg::TwistStamped twist_clamped = regulated;
       twist_clamped.twist.linear.x = std::max(-max_speed_,
           std::min(max_speed_, twist_clamped.twist.linear.x));
       twist_clamped.twist.angular.z = std::max(-max_yaw_speed_,
@@ -180,14 +247,14 @@ void HelmManager::update(const std::string & mode, const geometry_msgs::msg::Twi
       twist_publisher_->publish(twist_clamped);
     } else {
       marine_interfaces::msg::Helm helm;
-      helm.header = msg.header;
-      if(std::isnan(msg.twist.linear.x)) {
+      helm.header = regulated.header;
+      if(std::isnan(regulated.twist.linear.x)) {
         helm.throttle = 0;
       } else {
-        helm.throttle = msg.twist.linear.x / max_speed_;
+        helm.throttle = regulated.twist.linear.x / max_speed_;
       }
       helm.throttle = std::max(-1.0, std::min(1.0, static_cast<double>(helm.throttle)));
-      helm.rudder = -msg.twist.angular.z / max_yaw_speed_;
+      helm.rudder = -regulated.twist.angular.z / max_yaw_speed_;
       helm.rudder = std::max(-1.0, std::min(1.0, static_cast<double>(helm.rudder)));
       helm_publisher_->publish(helm);
     }
