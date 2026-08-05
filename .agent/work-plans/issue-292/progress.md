@@ -93,3 +93,31 @@ Proposes adding curvature-preserving speed regulation to `helm_manager` in `unh_
 - [ ] (suggestion) ADR Compliance table mislabels project `ADR-0001` as "Adopt ADRs" (that is a workspace ADR; project 0001 is shared-scalar-colormap); new ADR is correctly project `0012` — fix the label — `plan.md:88`
 
 Note: independent cross-model review (Opus reviewing a Sonnet-authored plan in fresh context); not an author self-review despite the shared `Claude Code Agent` name.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-05 15:06 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-292 at `eb0fc35`
+**Mode**: pre-push
+**Depth**: Deep (reason: safety-relevant vehicle-control logic + new ADR + cross-layer — helm_manager runs on every platform)
+**Must-fix**: 0 | **Suggestions**: 1
+**Round**: 1 | **Ship**: recommended — no must-fix; clean linters; 33/33 helm_manager tests pass locally
+
+Static analysis: ament_cpplint + ament_uncrustify clean. Claude Adversarial: 2 passes
+(Lens A logic + Lens B systemic/safety). Local Adversarial: skipped (no Ollama server).
+Copilot: off (default). Built and ran tests: test_curvature_regulation 15/15,
+test_command_conversion 18/18 (incl. both-branch node tests).
+
+Algorithm (non-monotonic top-down feasibility scan, floor/pivot, never-speed-up,
+sign preservation) scrutinized by both lenses + lead trace — no correctness defects.
+Prior plan-review must-fix (regulate at update(TwistStamped) entry so both output
+branches carry regulated values) is implemented and locked by node-level tests.
+One cross-lens divergence (Lens A: update(Helm) input path unregulated) adjudicated
+by-design per ADR-0012 §6 ("both output branches" = the two branches inside
+update(TwistStamped), not the Helm-input path).
+
+### Findings
+- [ ] (suggestion) Consider ParameterDescriptor descriptions for the four new capability_curve_* params (optional; existing params lack them too — defer to a repo-wide pass) — `helm_manager/src/helm_manager.cpp:69`
