@@ -76,3 +76,20 @@ Proposes adding curvature-preserving speed regulation to `helm_manager` in `unh_
 ### Open questions
 - [ ] Simulation coverage: blocking requirement before merge or follow-up? (feature is param-gated default-off, so field risk is low)
 - [ ] BizzyBoat capability curve values: what `capability_curve_v_omega_max` and `capability_curve_margin` to commit after rolker/unh_echoboats_project11#411 FCU test?
+
+## Plan Review
+**Status**: complete
+**When**: 2026-08-05 14:12 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-292/plan.md` at `8c721f2`
+**PR**: PR-less (reviewed via local plan file; `gh` unauthenticated — issue read from the `## Issue Review` entry above)
+**Verdict**: changes-requested
+
+### Findings
+- [ ] (must-fix) Step 4 wires regulation "before the max_speed/max_yaw_speed clamps", which exist only in the twist-output branch (`helm_manager.cpp:176-179`); the twist→helm conversion branch (`helm_manager.cpp:181-193`) — BizzyBoat's actual FCU path — would be left unregulated. Apply `applyCurvatureRegulation` at `update(TwistStamped)` entry so both branches use regulated `(v, ω)` — `plan.md:44`
+- [ ] (suggestion) "binary-search (or scan)" assumes monotonicity, contradicting the stated non-monotonic curve; commit to a linear scan over breakpoints (with per-segment interpolation crossing) — `plan.md:39`
+- [ ] (suggestion) Resolve the simulation-coverage open question (review-issue flagged it "before field deployment"): confirm blocking vs. tracked follow-up before merge — `plan.md:112`
+- [ ] (suggestion) ADR Compliance table mislabels project `ADR-0001` as "Adopt ADRs" (that is a workspace ADR; project 0001 is shared-scalar-colormap); new ADR is correctly project `0012` — fix the label — `plan.md:88`
+
+Note: independent cross-model review (Opus reviewing a Sonnet-authored plan in fresh context); not an author self-review despite the shared `Claude Code Agent` name.
