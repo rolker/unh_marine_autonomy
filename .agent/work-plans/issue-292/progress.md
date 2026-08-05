@@ -63,3 +63,16 @@ Proposes adding curvature-preserving speed regulation to `helm_manager` in `unh_
 - [ ] Add simulation coverage (unh_marine_simulation) for curvature-preserving behavior and floor behavior before field deployment
 - [ ] Write unit tests for capability curve lookup (including non-monotonic regions) and floor behavior alongside the implementation
 - [ ] Update helm_manager parameter documentation / README in the same PR as the implementation
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-08-05 14:06 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-292/plan.md` at `8c721f2`
+**Branch**: feature/issue-292 at `8c721f2`
+**Phases**: single
+
+### Open questions
+- [ ] Simulation coverage: blocking requirement before merge or follow-up? (feature is param-gated default-off, so field risk is low)
+- [ ] BizzyBoat capability curve values: what `capability_curve_v_omega_max` and `capability_curve_margin` to commit after rolker/unh_echoboats_project11#411 FCU test?
