@@ -134,16 +134,17 @@ std::string jsonEscape(const std::string & s)
 /// single-source writer in `marine_backscatter`, and widening it is a package API
 /// change that belongs with #179's append-only registry merge. Until then the tool
 /// writes its own sidecar, which every run (flat included) emits.
-void writeProjectionSidecar(
+/// @return true when the sidecar is on disk complete; false on any I/O failure
+///   (open, write, or the flush that close() performs — a full filesystem fails
+///   only there, so the stream state is checked after the close, not before).
+bool writeProjectionSidecar(
   const std::string & out_dir, const std::string & mode,
   const std::string & bathy_store, const std::string & bathy_layers)
 {
   const std::string path = (std::filesystem::path(out_dir) / "projection.json").string();
   std::ofstream out(path);
   if (!out) {
-    std::cerr << "warning: could not write " << path
-              << "; a later --accumulate run cannot check the projection mode\n";
-    return;
+    return false;
   }
   out << "{\n"
       << "  \"version\": 1,\n"
@@ -151,14 +152,35 @@ void writeProjectionSidecar(
       << "  \"bathy_store\": \"" << jsonEscape(bathy_store) << "\",\n"
       << "  \"bathy_layers\": \"" << jsonEscape(bathy_layers) << "\"\n"
       << "}\n";
+  out.close();
+  return !out.fail();
 }
 
-/// @brief The `projection_mode` recorded in @p out_dir's sidecar, or "" if there
-///   is no sidecar (or it carries no parseable mode).
-std::string readProjectionMode(const std::string & out_dir)
+/// @brief What @p out_dir's sidecar says about how its store was projected.
+///
+/// `kMissing` (no sidecar at all) is a **pre-#297 store**, which is flat-built by
+/// construction. `kUnreadable` (present but unopenable, truncated, or carrying no
+/// parseable `projection_mode`) is an unknown mode and must never be silently
+/// read as flat — a DEM store whose sidecar was truncated would otherwise accept
+/// a flat `--accumulate`.
+enum class SidecarState { kMissing, kUnreadable, kOk };
+
+struct ProjectionSidecar
+{
+  SidecarState state = SidecarState::kMissing;
+  std::string mode;   ///< only meaningful when `state == kOk`.
+};
+
+ProjectionSidecar readProjectionMode(const std::string & out_dir)
 {
   const std::string path = (std::filesystem::path(out_dir) / "projection.json").string();
+  if (!std::filesystem::exists(path)) {
+    return {SidecarState::kMissing, ""};
+  }
   std::ifstream in(path);
+  if (!in) {
+    return {SidecarState::kUnreadable, ""};
+  }
   std::string line;
   while (std::getline(in, line)) {
     const auto key = line.find("\"projection_mode\"");
@@ -177,9 +199,15 @@ std::string readProjectionMode(const std::string & out_dir)
     if (close == std::string::npos) {
       continue;
     }
-    return line.substr(open + 1, close - open - 1);
+    const std::string mode = line.substr(open + 1, close - open - 1);
+    if (mode.empty()) {
+      break;   // present but empty: an unknown mode, not a flat store.
+    }
+    return {SidecarState::kOk, mode};
   }
-  return "";
+  // Ran off the end (or hit a read error) without a parseable mode: truncated or
+  // corrupt, never "flat".
+  return {SidecarState::kUnreadable, ""};
 }
 
 }  // namespace
@@ -271,13 +299,25 @@ int main(int argc, char ** argv)
   // decoding. A store with no sidecar predates mode recording and is therefore
   // flat-built (every store built before this flag existed is).
   if (accumulate && std::filesystem::exists(std::filesystem::path(out_dir) / "registry.json")) {
-    const std::string recorded = readProjectionMode(out_dir);
-    const std::string existing_mode = recorded.empty() ? "flat" : recorded;
+    const ProjectionSidecar recorded = readProjectionMode(out_dir);
+    if (recorded.state == SidecarState::kUnreadable) {
+      std::cerr << "error: --accumulate: the store in " << out_dir << " has a projection.json "
+                << "that could not be read or carries no projection_mode.\n"
+                << "  Its projection mode is therefore UNKNOWN, and an unknown mode is not\n"
+                << "  assumed to be flat: folding this run in could composite flat-bottom and\n"
+                << "  DEM-orthorectified samples into the same cells, which per-cell provenance\n"
+                << "  cannot tell apart afterwards. Repair or remove the sidecar (a store with\n"
+                << "  NO projection.json is a pre-#297 flat build), or use a fresh out_dir.\n";
+      return 2;
+    }
+    const std::string existing_mode =
+      recorded.state == SidecarState::kOk ? recorded.mode : "flat";
     if (existing_mode != projection_mode) {
       std::cerr << (allow_mixed_projection ? "warning" : "error")
                 << ": --accumulate: the store in " << out_dir << " was built with "
                 << "projection_mode '" << existing_mode << "'"
-                << (recorded.empty() ? " (no projection.json — a pre-#297 flat build)" : "")
+                << (recorded.state == SidecarState::kMissing ?
+        " (no projection.json — a pre-#297 flat build)" : "")
                 << ", but this run uses '" << projection_mode << "'.\n"
                 << "  Compositing flat-bottom and DEM-orthorectified samples into the same\n"
                 << "  cells is unrecoverable: per-cell provenance records only the source id,\n"
@@ -575,7 +615,16 @@ int main(int argc, char ** argv)
   writeRegistry(out_dir + "/registry.json", source_id, platform, sensor, sensor_class, campaign);
   // Every run records its projection mode, flat included — a later --accumulate
   // reads it to refuse mixing modes (#297).
-  writeProjectionSidecar(out_dir, projection_mode, bathy_store, dem_mode ? bathy_layers : "");
+  if (!writeProjectionSidecar(
+      out_dir, projection_mode, bathy_store, dem_mode ? bathy_layers : ""))
+  {
+    std::cerr << "error: could not write " << out_dir << "/projection.json.\n"
+              << "  The tiles and registry ARE written, but the store now carries no record of\n"
+              << "  how its samples were placed, so a later --accumulate cannot check the mode\n"
+              << "  (and a missing sidecar reads as a pre-#297 FLAT build). Write the sidecar by\n"
+              << "  hand or regenerate the store into a writable directory before using it.\n";
+    return 1;
+  }
 
   std::cerr << "tier2-processed: projected " << n_proj << "/" << n_in << " pings ("
             << n_placed << " samples; dropped no-nadir=" << n_no_nadir

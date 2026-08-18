@@ -435,6 +435,25 @@ TEST_F(Tier2ProcessedDemTest, CoverageGateAbortsBeforeAnyWrite)
   EXPECT_FALSE(tileNames(allowed).empty());
 }
 
+// A sidecar that is present but unreadable/truncated leaves the store's mode
+// UNKNOWN. Unknown must not read as "flat": a DEM store whose sidecar was cut
+// short would otherwise silently accept a flat --accumulate.
+TEST_F(Tier2ProcessedDemTest, UnparseableSidecarIsNotTreatedAsFlat)
+{
+  const fs::path store_out = dir_ / "dem_store";
+  ASSERT_EQ(run(store_out, "--bathy-store \"" + store_.string() + "\""), 0) << log();
+
+  // Truncate the sidecar before the projection_mode line.
+  {
+    std::ofstream truncate(store_out / "projection.json", std::ios::trunc);
+    truncate << "{\n";
+  }
+  const auto before = readFile(store_out / *tileNames(store_out).begin());
+  EXPECT_EQ(run(store_out, "--accumulate"), 2) << log();
+  EXPECT_NE(log().find("UNKNOWN"), std::string::npos) << log();
+  EXPECT_EQ(readFile(store_out / *tileNames(store_out).begin()), before);
+}
+
 // --accumulate must refuse to composite DEM-corrected samples into a store built
 // flat (and vice versa): per-cell provenance cannot tell the two apart.
 TEST_F(Tier2ProcessedDemTest, AccumulateRefusesToMixProjectionModes)
