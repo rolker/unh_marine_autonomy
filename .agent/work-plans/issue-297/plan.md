@@ -123,6 +123,11 @@ std::optional<double> depthAt(double lat_deg, double lon_deg);   // WGS84 ellips
   (L13 ≈ 0.11 m) is generally finer than the bathy store's (Massabesic L11 ≈ 0.45 m).
   A lookup resolves the finest available level that has coverage at that position,
   falling back to coarser levels — so a fine patch is used where it exists.
+  **Level is resolved once, at the query point, and then held for the whole bilinear
+  stencil**: all four neighbours are read at that level. Resolving per-neighbour would
+  blend cells of different resolutions and produce a visible seam wherever a fine
+  patch ends. If a neighbour is missing *at the resolved level*, it is treated as
+  no-data by the degraded-case rule below — never substituted from a coarser level.
 - **Bilinear interpolation (ADR-0006 D9's explicit requirement)**: sample the four
   bathy cells whose centres bracket the query position and bilinearly blend them.
   Cell centres are computed geographically (`CellIndex::position()` returns the
@@ -207,6 +212,35 @@ unbounded, and emitting it silently is exactly the stale/wrong-data path the wor
 quality standard forbids. Return the flat-bottom result with
 `status = kNotConverged`, counted separately in the summary so a store with slopes
 that defeat the iteration is visible rather than silently degraded.
+
+**Multi-valued intersections and acoustic shadow (v1 scope).** On a steep slope the
+ray can meet the bottom at more than one range (a facet tilted toward the sensor
+re-enters the ray) or at none (the sample lies in an acoustic shadow, its energy
+belonging to the shadow edge rather than to a bottom point at that range). The
+fixed-point iteration cannot distinguish these: it converges to **whichever fixed
+point its seed leads to**, which — seeded at the flat-bottom range — is the one
+nearest the flat solution. v1 accepts that: **the nearest converged solution wins**,
+and shadow detection (a ray-march along the DEM profile that would identify occluded
+ranges and flag rather than place those samples) is **out of scope**, filed as
+follow-up (e). This is a documented approximation, not an oversight: the alternative
+is a full ray-march per sample, which is the shape of the D4 radiometry phase, not of
+this placement fix. The regime where it matters (slope steep enough to double-value
+the ray) is the same regime the contraction condition `θ + β < 90°` already flags, so
+those samples show up in `n_dem_nonconverged` when the iteration cannot settle.
+
+**Cost budget (asserted bounds, verified in the acceptance run).** Per sample the
+correction costs at most **5 iterations × 4 DEM cell reads = 20 cell reads**, each a
+`Level::gridIndex` + set-membership + array index once the tile is resident; tile
+loads are amortised by the LRU (a swath advances a few cells per ping, so
+consecutive pings hit the same tiles). Two bounds keep it honest:
+
+- **Early exit**: if the seed already satisfies the 0.01 m tolerance after the first
+  evaluation — the common case over the flat-ish lake bottom that dominates this
+  survey — the routine returns after **one** lookup group, not five.
+- **Measured**: the acceptance run (step 6) reports wall clock for the flat and DEM
+  runs; the budget is **≤ 2× the flat run**. Exceeding it is a reportable result
+  that triages into a perf follow-up (this tool's importer perf has been tuned
+  before), not something to discover in the field.
 
 At convergence the routine also yields `vertical_offset`, which is the local grazing
 geometry "for free" — consumed by step 4.
@@ -422,7 +456,7 @@ flat store; that is the case step 3 now refuses):
 | Datum discipline | The vertical term is WGS84 ellipsoidal height on both sides (sensor from the ECEF pose, bottom from `BathyCell::depth`); `nadir_altitude_m` is used only where it means height above bottom (seed + flat fallback + cross-check) |
 | No silent failure / stale data | Hard-fail on an unusable bathy store (absent/empty) **and** on a store that does not actually cover the survey (`--min-dem-coverage`, exit 3, nothing written); a non-converged iterate is **never emitted** (flat fallback + counter); every degraded path is counted and printed; an independent datum cross-check warns on a systematic offset; `--accumulate` refuses to mix projection modes |
 | Backward compatibility | `--bathy-store` is opt-in; omitting it takes the unchanged flat code path — asserted by the end-to-end test's flat-vs-no-coverage byte-identity comparison (no golden fixture is committed, so the equivalence is proven between two live runs) |
-| Bounded cost | Iteration capped at 5 per sample, confined to the offline batch tool; the live `mosaic_node` hot path and `sidescan_tier2_flat` are untouched |
+| Bounded cost | ≤ 20 DEM cell reads per sample (5 iterations × 4 neighbours), with an early exit when the flat seed already meets tolerance and an LRU tile cache; confined to the offline batch tool (the live `mosaic_node` hot path and `sidescan_tier2_flat` are untouched); the bound is **measured** in the acceptance run against a ≤ 2× flat-run wall-clock budget |
 | Fix it completely | Bilinear interpolation is implemented rather than deferred (D9 requires it and the offline context makes it cheap); the degenerate and non-convergent branches are specified, not left to chance |
 
 ## ADR Compliance
