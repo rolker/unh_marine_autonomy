@@ -322,12 +322,12 @@ int main(int argc, char ** argv)
     }
     const std::string existing_mode =
       recorded.state == SidecarState::kOk ? recorded.mode : "flat";
+    const std::string mode_note = recorded.state == SidecarState::kMissing ?
+      " (no projection.json — a pre-#297 flat build)" : "";
     if (existing_mode != projection_mode) {
       std::cerr << (allow_mixed_projection ? "warning" : "error")
                 << ": --accumulate: the store in " << out_dir << " was built with "
-                << "projection_mode '" << existing_mode << "'"
-                << (recorded.state == SidecarState::kMissing ?
-        " (no projection.json — a pre-#297 flat build)" : "")
+                << "projection_mode '" << existing_mode << "'" << mode_note
                 << ", but this run uses '" << projection_mode << "'.\n"
                 << "  Compositing flat-bottom and DEM-orthorectified samples into the same\n"
                 << "  cells is unrecoverable: per-cell provenance records only the source id,\n"
@@ -558,7 +558,12 @@ int main(int argc, char ** argv)
   // fallback and the tool exited 0 with a normal-looking summary. Checked here,
   // BEFORE saveTiles/writeRegistry, so a failure writes nothing.
   if (dem) {
-    const std::size_t denominator = n_dem_hit + n_dem_no_coverage;
+    // Every non-converged status places the sample FLAT, so all of them belong in
+    // the denominator — a run that is 40 % degenerate is 40 % flat-placed, and
+    // scoring it on hits-vs-no-coverage alone would report coverage 1.0 and sail
+    // through the very gate meant to stop it (#297 review).
+    const std::size_t denominator =
+      n_dem_hit + n_dem_no_coverage + n_dem_degenerate + n_dem_nonconverged;
     const double coverage =
       denominator == 0 ? 0.0 : static_cast<double>(n_dem_hit) / static_cast<double>(denominator);
     const bool below_gate = coverage < min_dem_coverage;
@@ -569,7 +574,8 @@ int main(int argc, char ** argv)
       }
       std::cerr << (below_gate ? "error" : "warning") << ": DEM coverage " << coverage
                 << " (" << n_dem_hit << " of " << denominator << " samples that reached the "
-                << "lookup)" << gate_note << "\n"
+                << "lookup; the other " << (denominator - n_dem_hit)
+                << " were placed flat)" << gate_note << "\n"
                 << "  bathy store: " << dem->describe() << "\n"
                 << "  layer search order: " << bathy_layers << "\n"
                 << "  counters: hit=" << n_dem_hit << " no-coverage=" << n_dem_no_coverage

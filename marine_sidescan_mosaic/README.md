@@ -112,7 +112,7 @@ ros2 run marine_sidescan_mosaic sidescan_tier2_processed \
 |---|---|---|
 | `--bathy-store` | *(unset)* | Bathy store root. **Omitted ⇒ the unchanged flat-bottom path.** An absent root, an absent layer directory, or a store with no tiles is a hard failure at startup (exit 1) — never a silent whole-run fallback to flat |
 | `--bathy-layers` | `survey,reference` | Layer directory search order, highest priority first. `chart` is **not** in the default: chart soundings are shoal-biased for navigation safety (ADR-0010 D7) and would bias placement; opt in only where it is the only coverage. ADR-0010 D3's `survey/`→`processed/` re-classification is a change to this flag, not to code |
-| `--min-dem-coverage` | `0.5` | Minimum share of DEM-consulted samples that must actually find data. Below it the run **exits 3 having written nothing** — no tiles, no registry. `0` is the explicit opt-in for a deliberately partial run; a below-50 % fraction still prints the same diagnostic block as a warning |
+| `--min-dem-coverage` | `0.5` | Minimum share of DEM-consulted samples that must actually be placed against the DEM. The denominator is **every** sample that reached the lookup — `hit + no-coverage + degenerate + non-converged` — because every non-`hit` status falls back to flat placement. Below the threshold the run **exits 3 having written nothing** — no tiles, no registry. `0` is the explicit opt-in for a deliberately partial run; a below-50 % fraction still prints the same diagnostic block as a warning |
 | `--datum-check-warn-m` | `1.0` | Warn when the mean nadir-altimeter-vs-DEM discrepancy exceeds this |
 | `--allow-mixed-projection` | off | Accept an `--accumulate` across projection modes (see below) |
 

@@ -75,6 +75,7 @@ constexpr double kFarLat = 10.0, kFarLon = 10.0;  // a store that covers a diffe
 constexpr double kSensorHeight = 0.0;             // WGS84 ellipsoidal height of the sensor
 constexpr double kNadirAltitude = 10.0;           // altimeter height above bottom (m)
 constexpr double kSlope = 0.2;                    // bottom deepens 0.2 m per metre east
+constexpr double kShelfEastM = 25.0;              // degenerate-geometry shelf (see writeBathyStore)
 constexpr int kSampleCount = 400;
 constexpr int kSample0 = 200;
 constexpr double kSoundSpeed = 1500.0, kSampleRate = 10000.0;
@@ -199,7 +200,13 @@ void writeTier1Fixture(const fs::path & path, double lat, double lon, int n_ping
 
 /// Write a bathy `survey/` layer covering the ~±110 m neighbourhood of
 /// (@p lat, @p lon) with the eastward-deepening plane of @ref bottomHeight.
-void writeBathyStore(const fs::path & root, double lat, double lon)
+///
+/// @param shelf_above_sensor when true, every cell more than @ref kShelfEastM east
+///   of the origin is given a height ABOVE the sensor — DEM data is present, but
+///   the geometry is degenerate there, so those samples fall back to flat
+///   placement. Covered-but-degenerate is the case the coverage gate must count.
+void writeBathyStore(
+  const fs::path & root, double lat, double lon, bool shelf_above_sensor = false)
 {
   const gggs::Level level(kBathyLevel);
   const fs::path layer_dir = root / "survey";
@@ -226,7 +233,10 @@ void writeBathyStore(const fs::path & root, double lat, double lon)
       const double cell_lat = grid.southLatitude() + (r + 0.5) * lat_span;
       for (uint16_t c = 0; c < tile.edge; ++c) {
         const double cell_lon = grid.westLongitude() + (c + 0.5) * lon_span;
-        tile.set(r, c, 0, bottomHeight(lat, lon, cell_lat, cell_lon));
+        const double east_m = (cell_lon - lon) * metresPerDegreeLon(lat);
+        const double height = (shelf_above_sensor && east_m > kShelfEastM) ?
+          kSensorHeight + 1.0 : bottomHeight(lat, lon, cell_lat, cell_lon);
+        tile.set(r, c, 0, height);
         tile.set(r, c, 1, 0.25);
       }
     }
@@ -452,6 +462,31 @@ TEST_F(Tier2ProcessedDemTest, UnparseableSidecarIsNotTreatedAsFlat)
   EXPECT_EQ(run(store_out, "--accumulate"), 2) << log();
   EXPECT_NE(log().find("UNKNOWN"), std::string::npos) << log();
   EXPECT_EQ(readFile(store_out / *tileNames(store_out).begin()), before);
+}
+
+// Degenerate and non-converged samples are placed FLAT, so they count against
+// coverage. A store that covers the survey but yields degenerate geometry over
+// most of the swath must not report coverage 1.0 and sail through the gate.
+TEST_F(Tier2ProcessedDemTest, DegenerateSamplesCountAgainstTheCoverageGate)
+{
+  const fs::path shelf_store = dir_ / "bathy_shelf";
+  writeBathyStore(shelf_store, kLat, kLon, /*shelf_above_sensor=*/ true);
+
+  const fs::path gated = dir_ / "shelf_gated";
+  EXPECT_EQ(run(gated, "--bathy-store \"" + shelf_store.string() + "\""), 3) << log();
+  const std::string gate_log = log();
+  EXPECT_NE(gate_log.find("error: DEM coverage"), std::string::npos) << gate_log;
+  EXPECT_EQ(gate_log.find("degenerate=0 "), std::string::npos) << gate_log;
+  EXPECT_TRUE(tileNames(gated).empty());
+  EXPECT_FALSE(fs::exists(gated / "registry.json"));
+
+  // The operator can still opt in explicitly.
+  const fs::path allowed = dir_ / "shelf_allowed";
+  EXPECT_EQ(
+    run(
+      allowed,
+      "--bathy-store \"" + shelf_store.string() + "\" --min-dem-coverage 0"), 0) << log();
+  EXPECT_FALSE(tileNames(allowed).empty());
 }
 
 // --accumulate must refuse to composite DEM-corrected samples into a store built
