@@ -12,7 +12,7 @@ the processed layer gains a regenerable `overviews/` sidecar for LOD — layout 
 fold-policy contract in **[ADR-0011](0011-overview-pyramid.md)** (imagery fold:
 mean; source band 0 in overviews; fine-tile format unchanged).
 
-**Amended 2026-08-17 ([#297](https://github.com/rolker/unh_marine_autonomy/issues/297)):**
+**Amended 2026-08-18 ([#297](https://github.com/rolker/unh_marine_autonomy/issues/297)):**
 the Tier-2 `processed` build can DEM-orthorectify its sample placement against the
 bathy store (D9), and records how it placed them in an interim `projection.json`
 sidecar — see the amendment under **[D9](#d9--bathy-coupling-is-a-direct-tile-file-read-not-a-package-dependency)**.
