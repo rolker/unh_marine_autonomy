@@ -360,6 +360,39 @@ below is therefore **new scaffolding**, planned as such.
   a flat-mode `--accumulate` over the same directory still succeeds; the sidecar
   `projection.json` records the mode of each run.
 
+### 6. Real-data acceptance run (manual, reported in the PR)
+
+Synthetic fixtures prove the geometry; they cannot show that the datum, the layer
+choice, or the coverage assumption hold on this survey. PRINCIPLES' "Iterative,
+Validated Evolution" expects a real-data pass, and the inputs exist on the dev
+machine today (paths verified while writing this revision, sizes/level noted from
+the directory listing, not assumed):
+
+- Tier-1 archive: `~/data/stores/sidescan/tier1/2026-06-19.sst1` (the only `.sst1`
+  currently in the store).
+- Bathy store: `~/data/stores/bathymetry/` with `survey/`, `reference/`, `chart/`
+  layers populated (tile filenames show level 10 in `survey/` and `reference/`).
+- Reference output to compare against: the existing flat-built processed store
+  `~/data/stores/sidescan/processed/` (~1070 L13 tiles, `registry.json` source 1,
+  `campaign: massabesic-jun2026`).
+
+Procedure — build into a **fresh** output directory (never `--accumulate` onto the
+flat store; that is the case step 3 now refuses):
+
+1. Flat baseline run into `/tmp/tier2_flat_ref/` (no `--bathy-store`).
+2. DEM run into `/tmp/tier2_dem/` with `--bathy-store ~/data/stores/bathymetry
+   --bathy-layers survey,reference`.
+3. Report in the PR: the full counter set (`n_dem_hit`, `n_dem_no_coverage`,
+   `n_dem_degenerate`, `n_dem_nonconverged`, per-layer hits), the DEM coverage
+   fraction, the datum cross-check mean/RMS, wall-clock for both runs, and a
+   before/after look at a known target (the object-search contact this issue is
+   driven by) showing the displacement direction is down-slope-consistent.
+4. Acceptance thresholds, stated up front so the run can fail: coverage fraction
+   ≥ 0.5 on the surveyed area; datum cross-check mean < 1.0 m (a larger offset means
+   a datum bug, not a tuning knob); `n_dem_nonconverged` < 1 % of samples; DEM-run
+   wall clock ≤ 2× the flat run (see the cost budget in step 2). A miss on any of
+   these is reported and triaged before merge, not silently accepted.
+
 ## Files to Change
 
 | File | Change |
