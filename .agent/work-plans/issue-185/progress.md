@@ -20,3 +20,25 @@ issue: 185
 - [ ] Note the beamwidth-convention correction propagates into Stage 2/3 math: `rx_beamwidths` now holds the **full** -3dB fan (not a half-angle) per the merged convention, so the boresight-tilt formula ("90° − fan/2") must explicitly halve the stored value — the issue body's own worked numbers (27.5°/23°) are already half-fan and consistent, but the formula description should say so explicitly to avoid an off-by-2x repeat of rviz_sonar_image#8.
 - [ ] Confirm Stage 3/4 sim-validation path before field trial per this repo's PRINCIPLES.md ("Simulation-First Validation") — the issue doesn't mention a sim gate for the new attitude-aware projection or footprint splat; `unh_marine_simulation` should exercise the new geometry path before a field deployment relies on it.
 - [ ] Treat the Stage 1 "propose upstream `PingInfo.msg` comment" item as non-blocking/optional — `marine_acoustic_msgs` (apl-ocean-engineering/marine_msgs) is a third-party upstream repo outside this workspace's control; ADR-0009 was written specifically to avoid depending on upstream `marine_acoustic_msgs` changes (companion `SonarInfo` message instead). The local driver-README mirror of the convention (already shipped in marine_tools#63) is the load-bearing copy; the upstream comment PR, if pursued, should not gate any stage here.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-08-17 22:30 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-185/plan.md` at `0dc9194`
+**Branch**: feature/issue-185 at `0dc9194`
+**Phases**: single (verification-only; no implementation phase — see below)
+
+**Finding**: the host-scoped in-scope item (replace yaw-only
+`ecefPoseToGeoHeading` with a full-attitude `earth→sensor` transform in
+`marine_sidescan_mosaic`) is already implemented and merged via
+[rolker/unh_marine_autonomy#200](https://github.com/rolker/unh_marine_autonomy/issues/200)
+(closed), verified directly against current source: `projection.hpp`/`.cpp`
+(`GeoBeam`/`ecefPoseToGeoBeam`), `mosaic_node.cpp:315` (live node wired),
+`sidescan_tier2_flat.cpp:175` + `sidescan_tier2_processed.cpp:228` (both
+offline batch tools wired), and `test_projection.cpp` (roll/depression
+regression tests landed with #200). No diff is produced by this plan.
+
+### Open questions
+- [ ] Should `#185` be closed/updated to reflect the uma-side Stage 2 item is done (via #200), leaving only `echoboats#433` (URDF grazing-tilt macro) as the remaining Stage-2 work? — host decision, not edited here.
