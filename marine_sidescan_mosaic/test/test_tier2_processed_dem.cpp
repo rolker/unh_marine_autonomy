@@ -1014,6 +1014,44 @@ TEST_F(Tier2ProcessedDemTest, V1SidecarCoverageIsCarriedIntoTheHistory)
   EXPECT_NE(log().find("UNKNOWN"), std::string::npos) << log();
 }
 
+// A figure just under 1.0 must survive a rewrite at full precision. The default
+// 6-significant-digit stream precision rounds anything above ~0.9999995 to the
+// literal `1`, which reads back as PERFECT DEM coverage — the exact "rosier than
+// the store deserves" laundering the worst-of aggregate exists to prevent (#297
+// round-5 review).
+TEST_F(Tier2ProcessedDemTest, NearPerfectCoverageSurvivesRewriteWithoutRoundingToOne)
+{
+  const fs::path out = dir_ / "near_perfect";
+  ASSERT_EQ(run(out, "--bathy-store \"" + store_.string() + "\""), 0) << log();
+
+  // Seed a v2 sidecar whose sole history element is just below 1.0 — the
+  // narrowest case that rounds to the literal `1` at 6 significant digits.
+  {
+    std::ofstream seed(out / "projection.json", std::ios::trunc);
+    seed << "{\"version\": 2, \"projection_mode\": \"dem\", \"bathy_store\": \""
+         << store_.string() << "\", \"bathy_layers\": \"survey,reference\", "
+         << "\"dem_coverage\": 0.9999995, \"dem_coverage_history\": [0.9999995]}\n";
+  }
+
+  // A flat --accumulate onto it contributes a null history element (never
+  // affects the worst-of aggregate) and forces the rewrite path without
+  // introducing a second real coverage figure to reason about.
+  ASSERT_EQ(run(out, "--accumulate --allow-mixed-projection"), 0) << log();
+  const std::string rewritten = readFile(out / "projection.json");
+  EXPECT_EQ(rewritten.find("\"dem_coverage\": 1,"), std::string::npos) << rewritten;
+  EXPECT_NE(
+    rewritten.find("\"dem_coverage_history\": [0.9999995"), std::string::npos) << rewritten;
+  EXPECT_EQ(
+    rewritten.find("\"dem_coverage_history\": [1, "), std::string::npos) << rewritten;
+
+  const std::string key = "\"dem_coverage\": ";
+  const auto value_pos = rewritten.find(key);
+  ASSERT_NE(value_pos, std::string::npos) << rewritten;
+  const double reread = std::stod(rewritten.substr(value_pos + key.size()));
+  EXPECT_LT(reread, 1.0) << rewritten;
+  EXPECT_NEAR(reread, 0.9999995, 1e-9) << rewritten;
+}
+
 // The sidecar is the sole durable record of the coverage history and the bathy-store
 // provenance, so its rewrite must never destroy the previous one on a failed write.
 // It is staged and swapped: with the staging path blocked, the live sidecar is

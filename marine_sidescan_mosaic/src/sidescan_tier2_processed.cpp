@@ -35,7 +35,9 @@
 /// establishes the compositing + provenance contract.
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -314,6 +316,24 @@ std::optional<std::vector<CoverageElement>> parseCoverageElements(const std::str
   return out;
 }
 
+/// @brief Format a `[0, 1]` coverage figure for the sidecar at full round-trip
+///   precision.
+///
+/// `operator<<`'s default 6-significant-digit stream precision rounds any
+/// coverage above ~0.9999995 to the literal `1`, which reads back as PERFECT
+/// DEM coverage — the exact "rosier than the store deserves" laundering the
+/// worst-of aggregate exists to prevent. `std::to_chars` with the default
+/// (general) format writes the SHORTEST decimal that reads back as the exact
+/// same `double` — full precision where it matters (e.g. `0.9999995`) without
+/// spelling ordinary figures like `0.03` as `0.029999999999999999` the way a
+/// fixed `max_digits10` stream precision would (#297 round-5 review).
+std::string formatCoverage(double value)
+{
+  std::array<char, 32> buf{};
+  const auto result = std::to_chars(buf.data(), buf.data() + buf.size(), value);
+  return std::string(buf.data(), result.ptr);
+}
+
 /// @brief Record this run's projection mode next to `registry.json` (#297).
 ///
 /// The mode cannot live in `registry.json` yet: `writeRegistry` is a fixed-shape
@@ -382,7 +402,7 @@ bool writeProjectionSidecar(
         // when no contributing run had one (a flat store).
         << "  \"dem_coverage\": ";
     if (worst) {
-      out << *worst;
+      out << formatCoverage(*worst);
     } else {
       out << "null";
     }
@@ -396,7 +416,7 @@ bool writeProjectionSidecar(
         out << ", ";
       }
       if (dem_coverage_history[i]) {
-        out << *dem_coverage_history[i];
+        out << formatCoverage(*dem_coverage_history[i]);
       } else {
         out << "null";
       }
