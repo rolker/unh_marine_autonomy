@@ -441,118 +441,132 @@ int main(int argc, char ** argv)
   bool warned_wide_per_ping = false;   // throttle the degrees-slip warning to once.
   // A DEM lookup throws only when a tile the startup scan listed cannot be read —
   // a corrupt/truncated store. Abort the run (nothing has been written yet) rather
-  // than silently finish with the rest of the samples placed flat.
-  try {
-    while (readTier1Ping(in, p)) {
-      ++n_in;
-      if (p.sample_rate <= 0.0) {
-        continue;
-      }
-      double altitude = 0.0;
-      if (p.nadir_altitude_m > 0.0F) {
-        altitude = p.nadir_altitude_m;
-      } else if (no_nadir != "assume_zero") {
-        ++n_no_nadir;
-        continue;
-      }
+  // than silently finish with the rest of the samples placed flat. The handler is
+  // installed around the DEM CALL SITES only: a catch-all around the whole ping
+  // loop would also change the flat path (which this feature must leave untouched)
+  // and would report a Tier-1 decode or accumulator failure as a DEM fault.
+  const auto demLookupFailed = [](const std::exception & e) {
+      std::cerr << "error: bathy DEM lookup failed: " << e.what() << "\n"
+                << "  a tile the startup scan listed could not be read, so the store is\n"
+                << "  corrupt or truncated. No tiles and no registry were written.\n";
+    };
+  while (readTier1Ping(in, p)) {
+    ++n_in;
+    if (p.sample_rate <= 0.0) {
+      continue;
+    }
+    double altitude = 0.0;
+    if (p.nadir_altitude_m > 0.0F) {
+      altitude = p.nadir_altitude_m;
+    } else if (no_nadir != "assume_zero") {
+      ++n_no_nadir;
+      continue;
+    }
 
-      const GeoBeam gb = ecefPoseToGeoBeam(p.tx, p.ty, p.tz, p.qx, p.qy, p.qz, p.qw);
-      if (!gb.valid) {
-        ++n_bad_pose;   // degenerate quaternion: don't project the ping due north.
-        continue;
-      }
-      geographic_msgs::msg::GeoPoint origin;
-      origin.latitude = gb.latitude_deg;
-      origin.longitude = gb.longitude_deg;
-      origin.altitude = 0.0;
-      const double azimuth = gb.azimuth_rad;
-      bbox_min_lat = std::min(bbox_min_lat, gb.latitude_deg);
-      bbox_max_lat = std::max(bbox_max_lat, gb.latitude_deg);
-      bbox_min_lon = std::min(bbox_min_lon, gb.longitude_deg);
-      bbox_max_lon = std::max(bbox_max_lon, gb.longitude_deg);
+    const GeoBeam gb = ecefPoseToGeoBeam(p.tx, p.ty, p.tz, p.qx, p.qy, p.qz, p.qw);
+    if (!gb.valid) {
+      ++n_bad_pose;   // degenerate quaternion: don't project the ping due north.
+      continue;
+    }
+    geographic_msgs::msg::GeoPoint origin;
+    origin.latitude = gb.latitude_deg;
+    origin.longitude = gb.longitude_deg;
+    origin.altitude = 0.0;
+    const double azimuth = gb.azimuth_rad;
+    bbox_min_lat = std::min(bbox_min_lat, gb.latitude_deg);
+    bbox_max_lat = std::max(bbox_max_lat, gb.latitude_deg);
+    bbox_min_lon = std::min(bbox_min_lon, gb.longitude_deg);
+    bbox_max_lon = std::max(bbox_max_lon, gb.longitude_deg);
 
-      // Datum cross-check (see the counters above): only meaningful where the
-      // altimeter actually returned, so it never runs under assume_zero.
-      if (dem && p.nadir_altitude_m > 0.0F) {
-        const auto nadir_bottom = dem->depthAt(gb.latitude_deg, gb.longitude_deg);
-        if (nadir_bottom) {
-          const double implied = gb.altitude_m - *nadir_bottom;
-          const double discrepancy = static_cast<double>(p.nadir_altitude_m) - implied;
-          ++n_datum_check;
-          datum_sum += discrepancy;
-          datum_sq_sum += discrepancy * discrepancy;
-        }
+    // Datum cross-check (see the counters above): only meaningful where the
+    // altimeter actually returned, so it never runs under assume_zero.
+    if (dem && p.nadir_altitude_m > 0.0F) {
+      std::optional<double> nadir_bottom;
+      try {
+        nadir_bottom = dem->depthAt(gb.latitude_deg, gb.longitude_deg);
+      } catch (const std::exception & e) {
+        demLookupFailed(e);
+        return 1;
       }
-
-      // Along-track footprint splat (#208): per-sample beamwidth from Tier-1 v2, else
-      // the CLI fallback (0 → point-deposit, unchanged). Run the stored width through
-      // the shared validator too (non-finite/negative falls back; a degrees slip is
-      // flagged once before the splat hard-caps it).
-      bool per_ping_suspicious = false;
-      const double per_ping_bw =
-        sanitizeBeamwidthRad(static_cast<double>(p.tx_beamwidth_rad), &per_ping_suspicious);
-      const double bw = per_ping_bw > 0.0 ? per_ping_bw : bw_fallback;
-      if (per_ping_bw > 0.0 && per_ping_suspicious && !warned_wide_per_ping) {
-        warned_wide_per_ping = true;
-        std::cerr << "warning: stored per-ping tx_beamwidth " << per_ping_bw
-                  << " rad (~" << per_ping_bw * 180.0 / M_PI << " deg) is implausibly wide; "
-                  << "capping the splat (further such pings not warned)\n";
+      if (nadir_bottom) {
+        const double implied = gb.altitude_m - *nadir_bottom;
+        const double discrepancy = static_cast<double>(p.nadir_altitude_m) - implied;
+        ++n_datum_check;
+        datum_sum += discrepancy;
+        datum_sq_sum += discrepancy * discrepancy;
       }
+    }
 
-      for (std::size_t j = 0; j < p.samples.size(); ++j) {
-        const double slant =
-          slantRange(static_cast<int>(j), p.sample0, p.sound_speed, p.sample_rate);
-        const double flat_ground = groundRange(slant, altitude);
-        if (flat_ground <= 0.0) {
-          continue;   // nadir cone.
-        }
-        // DEM orthorectification (#297). The flat range stays the nadir-cone gate
-        // and the iteration seed; on any degraded status the flat pair is used
-        // unchanged, so the no-DEM path is bit-for-bit what it was.
-        double ground = flat_ground;
-        double vertical = altitude;
-        if (dem) {
-          const DemCorrection corrected = correctedGroundRange(
+    // Along-track footprint splat (#208): per-sample beamwidth from Tier-1 v2, else
+    // the CLI fallback (0 → point-deposit, unchanged). Run the stored width through
+    // the shared validator too (non-finite/negative falls back; a degrees slip is
+    // flagged once before the splat hard-caps it).
+    bool per_ping_suspicious = false;
+    const double per_ping_bw =
+      sanitizeBeamwidthRad(static_cast<double>(p.tx_beamwidth_rad), &per_ping_suspicious);
+    const double bw = per_ping_bw > 0.0 ? per_ping_bw : bw_fallback;
+    if (per_ping_bw > 0.0 && per_ping_suspicious && !warned_wide_per_ping) {
+      warned_wide_per_ping = true;
+      std::cerr << "warning: stored per-ping tx_beamwidth " << per_ping_bw
+                << " rad (~" << per_ping_bw * 180.0 / M_PI << " deg) is implausibly wide; "
+                << "capping the splat (further such pings not warned)\n";
+    }
+
+    for (std::size_t j = 0; j < p.samples.size(); ++j) {
+      const double slant =
+        slantRange(static_cast<int>(j), p.sample0, p.sound_speed, p.sample_rate);
+      const double flat_ground = groundRange(slant, altitude);
+      if (flat_ground <= 0.0) {
+        continue;   // nadir cone.
+      }
+      // DEM orthorectification (#297). The flat range stays the nadir-cone gate
+      // and the iteration seed; on any degraded status the flat pair is used
+      // unchanged, so the no-DEM path is bit-for-bit what it was.
+      double ground = flat_ground;
+      double vertical = altitude;
+      if (dem) {
+        DemCorrection corrected;
+        try {
+          corrected = correctedGroundRange(
             slant, gb.altitude_m, origin, azimuth, flat_ground,
             [&dem](double lat, double lon) {return dem->depthAt(lat, lon);});
-          switch (corrected.status) {
-            case DemCorrection::Status::kConverged:
-              ++n_dem_hit;
-              ground = corrected.ground_range;
-              vertical = corrected.vertical_offset;
-              break;
-            case DemCorrection::Status::kNoCoverage:
-              ++n_dem_no_coverage;
-              break;
-            case DemCorrection::Status::kDegenerate:
-              ++n_dem_degenerate;
-              break;
-            case DemCorrection::Status::kNotConverged:
-              ++n_dem_nonconverged;
-              break;
-          }
+        } catch (const std::exception & e) {
+          demLookupFailed(e);
+          return 1;
         }
-        const auto intensity =
-          static_cast<std::uint16_t>(std::clamp(static_cast<double>(p.samples[j]), 0.0, 65535.0));
-        // grazingQuality derives the grazing angle from the (vertical, horizontal)
-        // pair, so the DEM-corrected pair improves the best-source score with no
-        // marine_backscatter API change. (Seabed-NORMAL incidence — ADR-0006 D4 —
-        // stays out of scope; it belongs with the GeoCoder radiometry phase.)
-        const std::uint16_t quality = grazingQuality(vertical, ground);
-        const double footprint_m = footprintAlongTrack(slant, bw);
-        splatAlongTrack(
-          origin, gb.heading_rad, footprint_m, azimuth, ground, level,
-          [&acc, intensity, quality, source_id](const gggs::CellIndex & cell) {
-            acc.add(cell, intensity, quality, source_id);
-          });
-        ++n_placed;
+        switch (corrected.status) {
+          case DemCorrection::Status::kConverged:
+            ++n_dem_hit;
+            ground = corrected.ground_range;
+            vertical = corrected.vertical_offset;
+            break;
+          case DemCorrection::Status::kNoCoverage:
+            ++n_dem_no_coverage;
+            break;
+          case DemCorrection::Status::kDegenerate:
+            ++n_dem_degenerate;
+            break;
+          case DemCorrection::Status::kNotConverged:
+            ++n_dem_nonconverged;
+            break;
+        }
       }
-      ++n_proj;
+      const auto intensity =
+        static_cast<std::uint16_t>(std::clamp(static_cast<double>(p.samples[j]), 0.0, 65535.0));
+      // grazingQuality derives the grazing angle from the (vertical, horizontal)
+      // pair, so the DEM-corrected pair improves the best-source score with no
+      // marine_backscatter API change. (Seabed-NORMAL incidence — ADR-0006 D4 —
+      // stays out of scope; it belongs with the GeoCoder radiometry phase.)
+      const std::uint16_t quality = grazingQuality(vertical, ground);
+      const double footprint_m = footprintAlongTrack(slant, bw);
+      splatAlongTrack(
+        origin, gb.heading_rad, footprint_m, azimuth, ground, level,
+        [&acc, intensity, quality, source_id](const gggs::CellIndex & cell) {
+          acc.add(cell, intensity, quality, source_id);
+        });
+      ++n_placed;
     }
-  } catch (const std::exception & e) {
-    std::cerr << "error: bathy DEM lookup failed: " << e.what() << "\n"
-              << "  no tiles and no registry were written.\n";
-    return 1;
+    ++n_proj;
   }
 
   // DEM coverage gate (#297). The startup hard-fail proves the store exists and

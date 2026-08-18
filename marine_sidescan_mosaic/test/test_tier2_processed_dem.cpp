@@ -464,6 +464,33 @@ TEST_F(Tier2ProcessedDemTest, UnparseableSidecarIsNotTreatedAsFlat)
   EXPECT_EQ(readFile(store_out / *tileNames(store_out).begin()), before);
 }
 
+// A tile the startup scan listed but that cannot be read is a corrupt store, and
+// the run aborts having written nothing. The handler is scoped to the DEM call
+// sites, so the message names the real fault instead of blaming the DEM for any
+// exception the ping loop might throw.
+TEST_F(Tier2ProcessedDemTest, CorruptTileAbortsTheRunWithoutWriting)
+{
+  const fs::path corrupt_store = dir_ / "bathy_corrupt";
+  writeBathyStore(corrupt_store, kLat, kLon);
+  const fs::path layer = corrupt_store / "survey";
+  ASSERT_TRUE(fs::is_directory(layer));
+  for (const auto & entry : fs::directory_iterator(layer)) {
+    if (entry.path().extension() == ".tif") {
+      std::ofstream clobber(entry.path(), std::ios::binary | std::ios::trunc);
+      clobber << "not a GeoTIFF";
+    }
+  }
+
+  const fs::path out = dir_ / "corrupt_out";
+  EXPECT_EQ(run(out, "--bathy-store \"" + corrupt_store.string() + "\""), 1) << log();
+  const std::string fail_log = log();
+  EXPECT_NE(fail_log.find("bathy DEM lookup failed"), std::string::npos) << fail_log;
+  EXPECT_NE(fail_log.find("corrupt or truncated"), std::string::npos) << fail_log;
+  EXPECT_TRUE(tileNames(out).empty());
+  EXPECT_FALSE(fs::exists(out / "registry.json"));
+  EXPECT_FALSE(fs::exists(out / "projection.json"));
+}
+
 // Degenerate and non-converged samples are placed FLAT, so they count against
 // coverage. A store that covers the survey but yields degenerate geometry over
 // most of the swath must not report coverage 1.0 and sail through the gate.
