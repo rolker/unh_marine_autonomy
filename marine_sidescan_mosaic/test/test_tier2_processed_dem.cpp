@@ -39,6 +39,7 @@
 #include <gtest/gtest.h>
 
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include <cmath>
 #include <cstdint>
@@ -600,6 +601,16 @@ TEST_F(Tier2ProcessedDemTest, DegenerateSamplesCountAgainstTheCoverageGate)
 // build). Proven by making the sidecar write fail: nothing else may be on disk.
 TEST_F(Tier2ProcessedDemTest, SidecarIsWrittenBeforeAnyTile)
 {
+  // The technique is a read-only directory, which CAP_DAC_OVERRIDE defeats: root
+  // writes into it regardless, the sidecar write succeeds, and the test fails on a
+  // tool that is behaving correctly. `ci_local.sh` runs its container `--user root`
+  // — i.e. under precisely the full-scope attestation ADR-0018 makes the merge gate
+  // — so skip rather than fail there (#297 round-3 review). This is the only test
+  // in the package that denies access by permissions.
+  if (::geteuid() == 0) {
+    GTEST_SKIP() << "running as root: CAP_DAC_OVERRIDE defeats the read-only output "
+                 << "directory this test needs to make the sidecar write fail";
+  }
   const fs::path out = dir_ / "no_sidecar_write";
   fs::create_directories(out);
   fs::permissions(
