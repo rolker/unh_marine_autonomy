@@ -222,6 +222,41 @@ flat-bottom (ADR-0006 D6/D9).
 - Per sample: keep the existing flat `groundRange(slant, altitude)` as the nadir-cone
   gate and the iteration seed, then call `correctedGroundRange(...)` with
   `sensor_height_m = gb.altitude_m` (`GeoBeam` is already computed at line 228).
+- **`--accumulate` × projection mode — refuse to interleave flat and DEM samples.**
+  `--accumulate` folds this run into the tiles already on disk best-source
+  (`sidescan_tier2_processed.cpp:277-310`), and its only provenance guard is a
+  `source_id` match against `registry.json` (`:155-189`) — which a DEM-corrected
+  re-run with the same `--source-id` passes. The real store on disk today
+  (`~/data/stores/sidescan/processed/`, `registry.json` source 1,
+  `campaign: massabesic-jun2026`, ~1070 L13 tiles) was built **flat**, bag by bag,
+  under exactly that flag. Re-running with `--bathy-store --accumulate --source-id 1`
+  would composite correctly-placed and mis-placed samples into the same cells with
+  **indistinguishable per-cell provenance** — an unrecoverable mix, since the
+  source band records only source 1 either way.
+
+  `registry.json` cannot carry the mode in this PR: `writeRegistry` is a fixed-shape
+  single-source writer in `marine_backscatter`
+  (`registry.hpp:42-45`, `registry.cpp:56-72`), and widening its signature is a
+  `marine_backscatter` API change that belongs with #179's append-only registry merge
+  (filed as a follow-up below). So this PR records the mode in a **sidecar written by
+  this tool**, needing no other package's API:
+
+  - `sidescan_tier2_processed` writes `<out_dir>/projection.json` next to
+    `registry.json`: `{"version":1, "projection_mode":"flat"|"dem",
+    "bathy_store":"<path>", "bathy_layers":"survey,reference"}`. Every run writes it,
+    including the default flat run.
+  - Under `--accumulate`, alongside the existing `source_id` check and **before**
+    decoding, read the existing sidecar and refuse a mode mismatch with the same
+    fail-fast shape as the `source_id` guard (exit 2), naming both modes and telling
+    the operator to regenerate into a fresh `out_dir` rather than accumulate.
+  - A **missing** sidecar with `--accumulate` means the store predates mode
+    recording — i.e. it is flat-built (every existing store is) — so a `--bathy-store`
+    run is refused the same way. A flat run over a sidecar-less store is allowed
+    (unchanged behaviour) and writes the sidecar going forward.
+  - `--allow-mixed-projection` is the explicit, documented override for an operator
+    who accepts the mix; it prints the refusal text as a warning and continues.
+  - When #179 lands the append-only registry, the mode moves into the registry's
+    per-source record and the sidecar is retired.
 - **Datum cross-check diagnostic**: for each ping with a valid `nadir_altitude_m`,
   compare it against `gb.altitude_m − depthAt(nadir point)`. These are the same
   physical quantity by two independent paths, so a persistent offset means a datum
@@ -319,7 +354,11 @@ below is therefore **new scaffolding**, planned as such.
   (c) a nonexistent `--bathy-store` path exits non-zero (the hard-fail from step 1),
   (d) a valid store that does **not** overlap the synthetic survey exits **3** with an
   empty output directory (the coverage gate from step 3), and the same run with
-  `--min-dem-coverage 0` exits 0 (the documented opt-in).
+  `--min-dem-coverage 0` exits 0 (the documented opt-in),
+  (e) a DEM run with `--accumulate` over the flat run's output directory exits 2 and
+  writes nothing (projection-mode guard), passes with `--allow-mixed-projection`, and
+  a flat-mode `--accumulate` over the same directory still succeeds; the sidecar
+  `projection.json` records the mode of each run.
 
 ## Files to Change
 
@@ -330,7 +369,7 @@ below is therefore **new scaffolding**, planned as such.
 | `marine_sidescan_mosaic/include/marine_sidescan_mosaic/projection.hpp` | Add `DemCorrection` + `correctedGroundRange<DepthLookup>` |
 | `marine_sidescan_mosaic/src/sidescan_tier2_processed.cpp` | `--bathy-store` / `--bathy-layers` / `--datum-check-warn-m` / `--min-dem-coverage` / `--allow-mixed-projection`; `sensor_height_m` from `GeoBeam::altitude_m`; corrected `(vertical_offset, ground)` into `grazingQuality`; new counters + datum cross-check in the summary; coverage gate before the writes; `projection.json` sidecar write + `--accumulate` mode guard |
 | `marine_sidescan_mosaic/CMakeLists.txt` | `bathy_dem.cpp` in the library; `test_bathy_dem` and `test_tier2_processed_dem` gtest targets (the latter with the `$<TARGET_FILE:>` compile definition) |
-| `marine_sidescan_mosaic/README.md` | Document `--bathy-store`/`--bathy-layers`, the orthorectification step in "Pipeline (per ping)" (line 23-24 still describes only `sqrt(slant²−alt²)`), the datum cross-check, and the D6/D9 flat-bottom-elsewhere design choice |
+| `marine_sidescan_mosaic/README.md` | Document `--bathy-store`/`--bathy-layers`/`--min-dem-coverage`/`--allow-mixed-projection`, the orthorectification step in "Pipeline (per ping)" (line 23-24 still describes only `sqrt(slant²−alt²)`), the datum cross-check, the coverage gate and its exit code, the **"regenerate, don't accumulate, when switching projection mode"** rule + `projection.json` sidecar, and the D6/D9 flat-bottom-elsewhere design choice |
 | `marine_sidescan_mosaic/test/test_projection.cpp` | New `CorrectedGroundRange*` cases (tolerance-based) |
 | `marine_sidescan_mosaic/test/test_bathy_dem.cpp` (new) | Reader round-trip, bilinear, no-data, grid-crossing, multi-level, hard-fail cases |
 | `marine_sidescan_mosaic/test/test_tier2_processed_dem.cpp` (new) | End-to-end synthetic `.sst1` + synthetic bathy store through the built binary |
@@ -353,7 +392,7 @@ below is therefore **new scaffolding**, planned as such.
 | ADR-0006 (sidescan backscatter store) | Yes | Implements D4's deferred bathy-model geometric correction; follows D9 fully — direct GeoTIFF tile read with **no** `marine_bathymetry_store` package dependency **and** the interpolation of the coarser bathy that D9 requires; respects D6 (live draft stays flat-bottom). D4's seabed-**normal** incidence is explicitly deferred with rationale (Approach step 4) |
 | ADR-0002 (bathymetric data store) | Yes (read-only consumer) | Reads the persisted value-tile format (`<level>_<row>_<col>.tif`, 2-band Float64, ellipsoidal height, NaN no-data) as documented in `marine_bathymetry_store/tile_io.hpp`; honours mixed-level stores; no writes, no schema change |
 | ADR-0010 (geospatial world model) | Yes | D3's `survey/`→`processed/` re-classification has not landed in code (`layerDirName` still emits `survey`); the layer search order is a CLI option so the rename is config, not code. D4's "layers encode process, σ encodes trust" is why `reference` is in the default search order (GRANIT-only areas get DEM coverage instead of falling back to flat); `chart` is opt-in because its shoal bias would bias placement |
-| ADR-0005 (provenance registry) | No | Per-cell sidescan provenance (`source-id` + `registry.json`) is unchanged by this work — only sample placement and quality change |
+| ADR-0005 (provenance registry) | Yes (adjacent) | The per-cell source band and `registry.json` schema are **unchanged** — this work changes sample placement and quality, not source identity. But a DEM run and a flat run of the *same* source are no longer interchangeable, so the run's projection mode is recorded in a `projection.json` sidecar and `--accumulate` refuses to mix modes (Approach step 3). D8's "no silent provenance corruption" is the reason; folding the field into the registry itself waits on #179's append-only merge (follow-up d) |
 
 ## Consequences
 
@@ -365,6 +404,8 @@ below is therefore **new scaffolding**, planned as such.
 | The bathy store's layer directory is renamed `survey/`→`processed/` (ADR-0010 D3) | Nothing in code — `--bathy-layers` covers it; README notes it | Yes — Approach step 1 |
 | DEM coverage exists but `nadir_altitude_m` is missing | The DEM could supply the altitude at the nadir point and rescue pings currently dropped by `--no-nadir-policy drop` | **No — follow-up.** It changes which pings are processed (a separate behavioural change from re-placing existing samples) and would need its own before/after comparison |
 | Seabed-normal incidence for radiometry (ADR-0006 D4) | `grazingQuality` signature in `marine_backscatter` | **No — follow-up**, belongs with the GeoCoder radiometry phase |
+| A DEM-corrected run is `--accumulate`d onto a store built flat (the real `massabesic-jun2026` store is exactly that) | Mode must be recorded and mixing refused: `projection.json` sidecar + mismatch guard + `--allow-mixed-projection`; README rule "regenerate, don't accumulate, when switching projection mode" | Yes — Approach step 3, README row |
+| Projection mode belongs in `registry.json`, not a sidecar | `writeRegistry`'s signature in `marine_backscatter` (`registry.hpp:42-45`) | **No — follow-up**, rides #179's append-only registry merge; the sidecar is retired when it lands |
 | `mosaic_node.cpp` live draft / `sidescan_tier2_flat.cpp` | Nothing — out of scope per ADR-0006 D6/D9 | N/A by design |
 
 ## Documentation & Instruction Impact
@@ -377,7 +418,10 @@ below is therefore **new scaffolding**, planned as such.
   dependency) is already captured in ADR-0006 D9.
 - **Follow-up issues to file with the PR**: (a) seabed-normal incidence for D4
   radiometry; (b) DEM-supplied nadir altitude for pings lacking an altimeter return;
-  (c) σ-weighted DEM sampling using the bathy tile's band-1 uncertainty.
+  (c) σ-weighted DEM sampling using the bathy tile's band-1 uncertainty; (d) move
+  `projection_mode` from the `projection.json` sidecar into the per-source registry
+  record when #179's append-only `writeRegistry` merge lands (retires the sidecar);
+  (e) acoustic-shadow / multi-valued-intersection handling (Approach step 2).
 
 ## Open Questions
 
