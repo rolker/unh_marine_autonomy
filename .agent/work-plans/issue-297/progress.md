@@ -83,3 +83,80 @@ the next phase.
 
 ### Next step
 `review-plan` on `plan.md` at `581ee23` — a fresh-context sub-agent re-reviews revision 2 before implementation begins.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-08-17 22:50 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Independence**: fresh-context sub-agent dispatch — a separate session from both the
+plan author (`Claude Sonnet`) and the revision pass. The `Claude Code Agent` name
+matches by workspace convention, not because this is an author self-review.
+
+**Plan**: `.agent/work-plans/issue-297/plan.md` at `581ee23` (revision 2)
+**PR**: PR-less (`--issue` mode; branch `feature/issue-297`, no PR open)
+**Verdict**: changes-requested
+
+### Round-1 verification
+
+All 8 must-fix and 5 suggestions from the 2026-08-17 21:59 `## Plan Review` entry were
+re-checked against source, not taken on the checkbox. All genuinely resolved:
+
+- Datum — `GeoBeam::altitude_m` is documented "Ellipsoidal height of the sensor origin"
+  (`projection.hpp:77`), populated from `geodesy::toMsg(ECEFPoint)` (`projection.cpp:66-69`);
+  `BathyCell::depth` is "Ellipsoidal height (WGS84)" (`bathy_cell.hpp:90`). Same datum on
+  both sides. `Tier1Ping` carries the pose (`tier1.hpp:59-61`). Correct.
+- Degenerate/nadir guard, non-convergence policy — both specified; `groundRange` does clamp
+  to `0.0` (`projection.hpp:108-112`), so the guard is warranted.
+- Contraction derivation — `f'(r) = −tan θ · tan β` checks out algebraically; the
+  contraction condition `θ + β < 90°` is right, and the old claim is gone.
+- `grazingQuality` — confirmed at `marine_backscatter/include/marine_backscatter/quality.hpp:38`
+  with signature `(double altitude, double ground_range)`; feeding the corrected pair needs
+  no API change, and `marine_sidescan_mosaic/package.xml` already depends on
+  `marine_backscatter` and `marine_tiled_raster_store` (no new package dep — D9 holds).
+- Startup hard-fail, bilinear (D9's "interpolates the coarser bathy" quote is verbatim from
+  ADR-0006 §D9), test scaffolding (`CMakeLists.txt:126-152` has no tier2 test and no `.sst1`
+  fixture), `mtrs::saveTile<double>` as the fixture writer, scope count 9 = table rows,
+  tolerance-based assertions — all correct.
+- `marine_tiled_raster_store::loadTile<double>(path, level, band_count)` exists with that
+  signature (`tile_io.hpp:101`), and NaN is the depth-band no-data (`tile_io.cpp:56-62`).
+
+### Evaluation
+
+| Dimension | Verdict | Notes |
+|---|---|---|
+| Scope | Good | One package, 9 files, opt-in flag; at the upper bound for a single PR but coherent |
+| Issue alignment | Good | Orthorectification + slope-induced layback covered; seabed-normal incidence explicitly deferred with rationale |
+| File targeting | Good | Files-to-Change matches the call sites read; `marine_backscatter` correctly excluded |
+| Consequences | Needs work | `--accumulate` interaction with a flat-built store is missing (finding 3) |
+| Documentation & instruction impact | Good | Non-silent; README staleness named with line refs; three follow-ups listed |
+| Principle alignment | Needs work | Two residual silent-degradation paths (findings 2, 3) against the no-stale-data standard |
+| ADR compliance | Good | ADR-0006 D4/D6/D9 quoted accurately; ADR-0002 read-only consumer; ADR-0010 D3 handled as config |
+| ROS conventions | N/A | Offline tool, no node/topic/QoS surface |
+
+### Findings
+- [ ] (must-fix) `gggs::GridIndex(level, row, col)` is a **private** constructor (`grid_index.h:166`, friends `Level`/`GridAreaIterator`/`GridBounds`), so step 1's "parse filenames into `{level, GridIndex}`" cannot be done as written; `marine_bathymetry_store` needs a ~50-line SW-corner-derive + `Level::gridIndex()` round-trip for it, and that helper is in an anonymous namespace in `src/tile_io.cpp:76-125` (not exported). Invert the lookup instead: scan only to discover levels/layers with tiles (level = filename prefix, trivial), then at query time go `gggs::Level(l).gridIndex(lat, lon)` → `marine_tiled_raster_store::tileFilename(grid)` → path. No third copy of the parse helper, no private-ctor problem — `plan.md:90-92`
+- [ ] (must-fix) Zero-coverage run is still a silent no-op: the startup hard-fail catches an absent layer dir or an empty store, but a valid store that does not overlap the survey area gives `n_dem_hit == 0` while the tool exits 0 with a normal-looking summary — the same class of hole as round-1's must-fix #6. Define the policy: `--bathy-store` supplied and a zero (or below-threshold) DEM hit rate ⇒ loud warning and non-zero exit — `plan.md:93-96,215-217`
+- [ ] (must-fix) `--accumulate` consequence missing: the tool folds a run into existing tiles best-source (`sidescan_tier2_processed.cpp:274-290`) and its only guard is a `source_id` match against `registry.json` (`:158-186`), which a DEM-corrected re-run with the same `--source-id` passes. Accumulating a DEM run onto a flat-built store silently interleaves correctly- and incorrectly-placed samples with indistinguishable per-cell provenance. Add a Consequences row + a README rule ("regenerate, don't accumulate, when switching projection mode"), and file a follow-up to record projection mode in `registry.json` (rides #179's registry-merge work; `writeRegistry`'s signature would change, so not this PR) — `plan.md` Consequences / ADR-0005 row
+- [ ] (suggestion) No real-data acceptance step. The driver is the Massabesic object search and the repo's "Iterative, Validated Evolution" principle expects validation beyond synthetic fixtures. Add a manual acceptance run against a real `.sst1` plus the Massabesic L11 survey store, reporting the counters, the datum cross-check statistic, and a before/after look at a known target — `plan.md` Approach step 5
+- [ ] (suggestion) Test assertion (b) "byte-identical to today's output" has no baseline available in-test — the plan deliberately commits no fixture and no golden. Restate it as "the no-`--bathy-store` run reproduces the flat code path" (compare the two runs against each other, or assert the flat path is not entered) or commit a small golden and say so — `plan.md` Approach step 5
+- [ ] (suggestion) Shadow / multi-valued intersection unaddressed: on a steep slope the ray can meet the DEM at more than one range, or at none (acoustic shadow); the fixed-point iteration silently returns whichever fixed point it lands on. State that v1 takes the nearest converged solution and that shadow detection is out of scope (a D4-phase follow-up) — `plan.md` Approach step 2
+- [ ] (suggestion) Cost is asserted, not bounded: up to 4 DEM lookups × 5 iterations per sample over a campaign's sample count is not self-evidently cheap for a tool whose importer perf has been tuned before. Add a coarse budget (or a measured runtime in the acceptance step) and an early-exit when the seed already meets the 0.01 m tolerance — `plan.md` Approach step 2 / Principles Self-Check "Bounded cost"
+- [ ] (suggestion) Bilinear across level boundaries: "resolve the finest available level that has coverage" applied per-neighbour would blend cells of different resolutions and seam. State the rule — resolve the level once at the query point, then take all four neighbours at that level — `plan.md:104-116`
+- [ ] (suggestion) Minor citation drift in a plan that asserts every citation was re-verified: `bathy_cell.hpp:87-89` → `depth` is line 90 (89 is its doc comment); `CMakeLists.txt:128-152` → the gtest block starts at 126 — `plan.md` Context table, Approach step 5
+
+### Summary
+
+Revision 2 is a substantial improvement — the datum error that parked this issue is
+genuinely fixed, the geometry (degeneracy, contraction condition, non-convergence policy)
+is now correct and specified, and D9's interpolation clause is implemented rather than
+finessed. Three items remain: one mechanism in step 1 that will not compile as written
+(private `GridIndex` constructor), and two residual silent-degradation paths (zero DEM
+coverage; `--accumulate` over a flat-built store). All three are small, bounded plan edits
+— no rewrite — after which the plan is ready for implementation.
+
+### Recommended Actions
+- [ ] Replace step 1's filename→`GridIndex` parse with the query-time `Level::gridIndex()` → `tileFilename()` lookup
+- [ ] Define the zero-/low-DEM-coverage exit policy in step 3's summary handling
+- [ ] Add the `--accumulate` × projection-mode consequence row, the README rule, and the registry-provenance follow-up
+- [ ] Fold in the acceptance-run, byte-identical-assertion, shadow, cost, level-boundary, and citation suggestions as the author sees fit
