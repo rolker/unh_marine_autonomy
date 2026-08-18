@@ -476,13 +476,29 @@ TEST_F(Tier2ProcessedDemTest, AccumulateRefusesToMixProjectionModes)
   EXPECT_EQ(readFile(store_out / *tileNames(store_out).begin()), before);
   EXPECT_NE(readFile(store_out / "projection.json").find("\"flat\""), std::string::npos);
 
-  // ...unless the operator explicitly accepts the mix.
+  // ...unless the operator explicitly accepts the mix — and then the store is
+  // marked `mixed` FOREVER. Recording it as pure "dem" would launder the
+  // provenance: every later --accumulate would sail through the guard.
   EXPECT_EQ(
     run(
       store_out,
       "--accumulate --allow-mixed-projection --bathy-store \"" + store_.string() + "\""),
     0) << log();
-  EXPECT_NE(readFile(store_out / "projection.json").find("\"dem\""), std::string::npos);
+  const std::string mixed_sidecar = readFile(store_out / "projection.json");
+  EXPECT_NE(mixed_sidecar.find("\"mixed\""), std::string::npos) << mixed_sidecar;
+  EXPECT_EQ(mixed_sidecar.find("\"dem\""), std::string::npos) << mixed_sidecar;
+
+  // Sticky: a plain DEM --accumulate into the now-mixed store is still refused,
+  // and accepting the mix again leaves it `mixed` rather than promoting it.
+  EXPECT_EQ(
+    run(store_out, "--accumulate --bathy-store \"" + store_.string() + "\""), 2) << log();
+  EXPECT_EQ(
+    run(
+      store_out,
+      "--accumulate --allow-mixed-projection --bathy-store \"" + store_.string() + "\""),
+    0) << log();
+  EXPECT_NE(
+    readFile(store_out / "projection.json").find("\"mixed\""), std::string::npos);
 
   // The mirror case: a flat --accumulate onto a DEM-built store is refused too.
   const fs::path dem_store = dir_ / "dem_store";

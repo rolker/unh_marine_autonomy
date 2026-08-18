@@ -137,11 +137,17 @@ v1: the iteration takes the solution nearest the flat seed.
 `projection.json` sidecar next to `registry.json` recording `flat` or `dem`. Under
 `--accumulate`, a mode mismatch is refused (exit 2) before anything is decoded: the
 per-cell source band records only the source id, so flat and DEM-placed samples
-composited into the same cells cannot be told apart afterwards. A store with no
-sidecar predates the flag and is treated as flat-built. Build into a **fresh**
-output directory instead, or pass `--allow-mixed-projection` to accept the mix
-deliberately. (The mode belongs in `registry.json`; it moves there when #179's
-append-only registry merge lands, and the sidecar retires.)
+composited into the same cells cannot be told apart afterwards. A store with **no**
+sidecar predates the flag and is treated as flat-built; a sidecar that is *present
+but unreadable or carries no `projection_mode`* leaves the mode **unknown**, which is
+refused (exit 2) rather than assumed flat. Build into a **fresh** output directory
+instead, or pass `--allow-mixed-projection` to accept the mix deliberately — which
+marks the store `"projection_mode": "mixed"` **permanently**: a mixed store is never
+re-recorded as pure `flat`/`dem`, and every later `--accumulate` into it needs the
+flag again. A sidecar that cannot be written is an error (exit 1) with the tiles and
+registry already on disk — the store is unmarked and must be repaired or
+regenerated before use. (The mode belongs in `registry.json`; it moves there when
+#179's append-only registry merge lands, and the sidecar retires.)
 
 **Exit codes**: `0` success, `1` I/O or unusable bathy store, `2` argument or
 provenance-guard refusal, `3` DEM coverage below `--min-dem-coverage`.

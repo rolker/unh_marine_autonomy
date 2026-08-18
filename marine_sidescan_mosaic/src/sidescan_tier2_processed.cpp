@@ -63,6 +63,12 @@ using namespace marine_sidescan_mosaic;   // NOLINT(build/namespaces) — local 
 
 namespace
 {
+/// @brief Sticky `projection_mode` for a store an operator deliberately mixed
+///   (`--accumulate --allow-mixed-projection` across modes). It is never
+///   downgraded back to `flat`/`dem`: the store holds samples placed both ways
+///   for good, and a later run must be told so rather than reading a pure mode.
+constexpr char kMixedMode[] = "mixed";
+
 // Presence test for a valueless boolean flag (e.g. --accumulate).
 bool hasFlag(int argc, char ** argv, const std::string & flag)
 {
@@ -281,6 +287,10 @@ int main(int argc, char ** argv)
   const bool allow_mixed_projection = hasFlag(argc, argv, "--allow-mixed-projection");
   const bool dem_mode = !bathy_store.empty();
   const std::string projection_mode = dem_mode ? "dem" : "flat";
+  // What the sidecar will record. It is this run's mode unless the run
+  // deliberately mixes modes into an existing store, which makes the store
+  // permanently `mixed` (set in the guard below) — see kMixedMode.
+  std::string sidecar_mode = projection_mode;
   if (!(min_dem_coverage >= 0.0 && min_dem_coverage <= 1.0)) {
     std::cerr << "error: --min-dem-coverage must be a fraction in [0, 1]\n";
     return 2;
@@ -326,6 +336,18 @@ int main(int argc, char ** argv)
       if (!allow_mixed_projection) {
         return 2;
       }
+      // The mix is accepted, so the store now holds samples placed BOTH ways and
+      // stays that way forever: record `mixed`, not this run's mode. Rewriting it
+      // as pure `dem`/`flat` would launder the provenance — every later
+      // --accumulate would then pass the guard silently (#297 review).
+      sidecar_mode = kMixedMode;
+      std::cerr << "warning: " << out_dir << " is now a MIXED-projection store; its "
+                << "projection.json records '" << kMixedMode << "' permanently, and every "
+                << "later --accumulate into it needs --allow-mixed-projection.\n";
+    } else if (existing_mode == kMixedMode) {
+      // Unreachable while kMixedMode is neither "flat" nor "dem" (the branch above
+      // fires first), but keep the stickiness explicit rather than incidental.
+      sidecar_mode = kMixedMode;
     }
   }
 
@@ -616,7 +638,7 @@ int main(int argc, char ** argv)
   // Every run records its projection mode, flat included — a later --accumulate
   // reads it to refuse mixing modes (#297).
   if (!writeProjectionSidecar(
-      out_dir, projection_mode, bathy_store, dem_mode ? bathy_layers : ""))
+      out_dir, sidecar_mode, bathy_store, dem_mode ? bathy_layers : ""))
   {
     std::cerr << "error: could not write " << out_dir << "/projection.json.\n"
               << "  The tiles and registry ARE written, but the store now carries no record of\n"
@@ -630,7 +652,8 @@ int main(int argc, char ** argv)
             << n_placed << " samples; dropped no-nadir=" << n_no_nadir
             << " bad-pose=" << n_bad_pose << "), best-source into "
             << written << " 3-band tiles + registry.json in " << out_dir
-            << " [projection=" << projection_mode << "]\n";
+            << " [projection=" << projection_mode
+            << (sidecar_mode == projection_mode ? "" : " store=" + sidecar_mode) << "]\n";
   if (dem) {
     std::cerr << "tier2-processed: dem hit=" << n_dem_hit
               << " no-coverage=" << n_dem_no_coverage
