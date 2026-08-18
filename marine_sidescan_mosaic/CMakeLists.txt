@@ -35,6 +35,7 @@ add_library(${PROJECT_NAME}
   src/tier1.cpp
   src/decode.cpp
   src/overview_pyramid.cpp
+  src/bathy_dem.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
@@ -148,6 +149,15 @@ if(BUILD_TESTING)
   ament_add_gtest(test_overview_pyramid test/test_overview_pyramid.cpp)
   target_link_libraries(test_overview_pyramid ${PROJECT_NAME})
   ament_target_dependencies(test_overview_pyramid marine_autonomy marine_tiled_raster_store)
+
+  # DEM reader over synthetic bathy value tiles (#297). Fixtures are written with
+  # marine_tiled_raster_store::saveTile<double> — NOT marine_bathymetry_store's
+  # writer, which would add a test-only package dependency cutting against
+  # ADR-0006 D9's decoupling.
+  ament_add_gtest(test_bathy_dem test/test_bathy_dem.cpp)
+  target_link_libraries(test_bathy_dem ${PROJECT_NAME})
+  ament_target_dependencies(test_bathy_dem marine_autonomy marine_tiled_raster_store)
+
 endif()
 
 ament_package()
