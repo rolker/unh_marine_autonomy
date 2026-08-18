@@ -415,6 +415,9 @@ int main(int argc, char ** argv)
       std::cerr << "error: " << e.what() << "\n";
       return 1;
     }
+    for (const auto & warning : dem->warnings()) {
+      std::cerr << "warning: " << warning << "\n";
+    }
     std::cerr << "bathy DEM: " << dem->describe() << "\n";
   }
 

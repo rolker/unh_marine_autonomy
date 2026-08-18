@@ -103,6 +103,7 @@ BathyDem::BathyDem(
 
   std::set<int> levels_seen;
   std::vector<std::string> missing;
+  std::vector<std::string> empty;
   for (const auto & name : layer_names) {
     const fs::path dir = fs::path(store_root_) / name;
     if (!fs::is_directory(dir)) {
@@ -130,10 +131,30 @@ BathyDem::BathyDem(
     // Finest (highest level number) first: a fine patch wins over the coarse
     // regional surface where both cover a position.
     layer.levels.assign(layer_levels.rbegin(), layer_levels.rend());
-    if (!layer.files.empty()) {
-      layer_names_.push_back(layer.name);
-      layers_.push_back(std::move(layer));
+    if (layer.files.empty()) {
+      empty.push_back(name);
+      continue;
     }
+    layer_names_.push_back(layer.name);
+    layers_.push_back(std::move(layer));
+  }
+
+  // A layer that is absent or holds no tiles while ANOTHER requested layer does
+  // is not an error — reference-only coverage is a legitimate configuration —
+  // but it must never be silent: after ADR-0010 D3 re-classifies `survey/` as
+  // `processed/`, a run asking for `survey,reference` would otherwise quietly
+  // orthorectify against the coarse regional layer alone (#297 review).
+  for (const auto & name : missing) {
+    warnings_.push_back(
+      "requested bathy layer '" + name + "/' does not exist under " + store_root_ +
+      "; continuing with the layer(s) that do. If the store re-classified its layers "
+      "(ADR-0010 D3 renames survey/ to processed/), pass --bathy-layers instead of "
+      "accepting the reduced coverage.");
+  }
+  for (const auto & name : empty) {
+    warnings_.push_back(
+      "requested bathy layer '" + name + "/' exists under " + store_root_ +
+      " but holds no <level>_<row>_<col>.tif tiles; continuing without it.");
   }
 
   if (missing.size() == layer_names.size()) {

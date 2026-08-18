@@ -300,6 +300,45 @@ TEST(BathyDem, UnusableStoreThrows)
   EXPECT_NO_THROW(makeDem(dir.path().string(), {"processed"}));
 }
 
+// A requested layer that is absent — or present but tile-less — while another
+// requested layer HAS tiles is usable but narrower than the operator asked for.
+// It must be reported, never dropped in silence: after ADR-0010 D3's
+// survey/ -> processed/ re-classification, `survey,reference` would otherwise
+// quietly orthorectify against the coarse regional layer alone.
+TEST(BathyDem, PartiallyMissingLayersWarnRatherThanVanish)
+{
+  ScratchDir dir("partial");
+  const auto grid = gggs::Level(kFineLevel).gridIndex(kLat, kLon);
+  writeConstantTile(dir.path(), "reference", grid, -8.0);
+
+  // survey/ absent, reference/ present.
+  {
+    msm::BathyDem dem(dir.path().string(), {"survey", "reference"});
+    ASSERT_EQ(dem.warnings().size(), 1u);
+    EXPECT_NE(dem.warnings()[0].find("survey/"), std::string::npos) << dem.warnings()[0];
+    EXPECT_EQ(dem.layers(), std::vector<std::string>{"reference"});
+    const auto depth = dem.depthAt(kLat, kLon);
+    ASSERT_TRUE(depth.has_value());
+    EXPECT_NEAR(*depth, -8.0, 1e-9);
+  }
+
+  // survey/ present but holding no value tiles: same treatment.
+  fs::create_directories(dir.path() / "survey");
+  {
+    msm::BathyDem dem(dir.path().string(), {"survey", "reference"});
+    ASSERT_EQ(dem.warnings().size(), 1u);
+    EXPECT_NE(dem.warnings()[0].find("no <level>_<row>_<col>.tif"), std::string::npos)
+      << dem.warnings()[0];
+    EXPECT_EQ(dem.layers(), std::vector<std::string>{"reference"});
+  }
+
+  // Everything the caller asked for is there: nothing to say.
+  {
+    msm::BathyDem dem(dir.path().string(), {"reference"});
+    EXPECT_TRUE(dem.warnings().empty());
+  }
+}
+
 TEST(BathyDem, SplitCsvTrimsAndDropsEmpties)
 {
   const auto parts = msm::splitCsv(" survey , reference ,, chart");

@@ -59,10 +59,13 @@ namespace marine_sidescan_mosaic
 /// @brief Default layer search order for @ref BathyDem.
 ///
 /// Mirrors the store's own `source_layers_by_priority` prefix (Survey, then
-/// Reference). `chart` is deliberately **not** in the default: chart soundings are
-/// shoal-biased by design for navigation safety (ADR-0010 D7), and a shoal-biased
-/// vertical term would bias sample placement. It can be opted into explicitly
-/// where it is the only coverage.
+/// Reference). `chart` is deliberately **not** in the default: charted soundings
+/// are cartographically shoal-biased for navigation safety, and a shoal-biased
+/// vertical term would bias sample placement. That bias is wanted in the store's
+/// **safety** query — the shallowest-reliable mode of ADR-0002 D7, refined by
+/// ADR-0010 D4 — not in a geometric placement term. (ADR-0010 D7 is the separate
+/// decision that the chart layer is regenerated wholesale from the ENC corpus.)
+/// `chart` can be opted into explicitly where it is the only coverage.
 extern const char kDefaultBathyLayers[];
 
 /// @brief Split a comma-separated list, trimming whitespace and dropping empties.
@@ -137,6 +140,17 @@ public:
   /// @brief One-line human description of the scanned store (for diagnostics).
   std::string describe() const;
 
+  /// @brief Non-fatal problems found by the startup scan, for the caller to print.
+  ///
+  /// A requested layer directory that is absent, or present with no value tiles,
+  /// while **another** requested layer does have tiles: the store is usable but
+  /// the search order is narrower than the operator asked for. Reported rather
+  /// than thrown (reference-only coverage is legitimate) and never swallowed —
+  /// a silently dropped `survey/` would orthorectify a survey against the coarse
+  /// regional layer alone. Constructed as a library value so the tool owns the
+  /// output stream.
+  const std::vector<std::string> & warnings() const {return warnings_;}
+
 private:
   struct Layer
   {
@@ -172,6 +186,7 @@ private:
   std::map<CacheKey, std::list<std::pair<CacheKey, Tile>>::iterator> cache_index_;
 
   std::map<std::string, std::size_t> hits_by_layer_;
+  std::vector<std::string> warnings_;
 };
 
 }  // namespace marine_sidescan_mosaic
