@@ -26,8 +26,11 @@ and the dirty-region distribution topic (P4) are separate sub-issues.
    offline `sidescan_tier2_processed` build can replace the flat `sqrt(slant²−alt²)`
    with a **DEM-orthorectified** ground range — see
    [DEM orthorectification](#dem-orthorectification-sidescan_tier2_processed-297).
-   The live node and `sidescan_tier2_flat` stay flat-bottom **by design** (ADR-0006
-   D6/D9: "no bathy live").
+   The live node stays flat-bottom **by design** — ADR-0006 D9 ("the live `draft`
+   node uses flat-bottom (no bathy live)") and D6, which builds `draft` "with
+   feasible-at-the-time processing (flat-bottom)". `sidescan_tier2_flat` is flat by
+   its own scope, not by those clauses: it is the cheap no-bathy Tier-2 builder, and
+   #297 deliberately left it alone rather than because an ADR forbids the change.
 4. **Normalize** — rolling AGC (`RollingNormalizer`) maps sample magnitudes to
    `uint16` so the mosaic stays legible (live stand-in for PINGMapper's EGN).
 5. **Splat** — each sample is deposited across its **along-track footprint**

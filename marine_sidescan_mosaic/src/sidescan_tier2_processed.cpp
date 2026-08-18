@@ -435,8 +435,10 @@ int runTool(int argc, char ** argv)
   }
 
   // DEM orthorectification (#297). Omitting --bathy-store keeps the unchanged
-  // flat-bottom code path; ADR-0006 D6/D9 keep the live draft node and
-  // sidescan_tier2_flat flat-bottom by design, so only this tool gains the option.
+  // flat-bottom code path. ADR-0006 D6/D9 keep the LIVE draft node flat-bottom by
+  // design ("no bathy live"); sidescan_tier2_flat is flat by its own scope — the
+  // cheap no-bathy Tier-2 builder — not by those clauses, so only this tool gains
+  // the option here.
   const std::string bathy_store = argValue(argc, argv, "--bathy-store", "");
   const std::string bathy_layers = argValue(argc, argv, "--bathy-layers", kDefaultBathyLayers);
   const double min_dem_coverage =
