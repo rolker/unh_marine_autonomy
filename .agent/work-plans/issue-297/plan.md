@@ -122,6 +122,13 @@ std::optional<double> depthAt(double lat_deg, double lon_deg);   // WGS84 ellips
   the review's silent-total-failure hole: a mistyped `--bathy-store`, a store that has
   been renamed `survey/`→`processed/`, or an empty store now aborts the run at
   startup instead of falling back to flat for every sample while exiting 0.
+  *(Round-1 review correction)* the hard-fail requires **all** requested layers to be
+  absent (or the store to hold no tiles at all); a **partially** available request —
+  one layer missing or tile-less while another has tiles — is legitimate, so the
+  reader records a warning per dropped layer (`BathyDem::warnings()`) that the tool
+  prints, instead of dropping it in silence. The filename parse also requires the
+  whole `<level>_<row>_<col>` stem, so the store's `_time`/`_source` companion
+  rasters are not counted as value tiles.
 - **Resolution order (implementation clarification)**: layer priority is the
   **outer** loop and level the **inner** one — for each layer in the configured
   order, the finest level with data at the position wins; only when a layer has no
@@ -156,8 +163,12 @@ std::optional<double> depthAt(double lat_deg, double lon_deg);   // WGS84 ellips
   no-data, return `nullopt`. (Revision 1 deferred interpolation and mis-attributed
   the requirement to D10 while claiming to follow D9 "exactly" — this revision
   implements it. It is cheap: the tool is offline and the reads are cached.)
-- **Caching**: an LRU of loaded `TiledRasterTile<double>` tiles (default 8) keyed by
-  `{level, GridIndex}` — batch processing revisits neighbouring cells ping-to-ping.
+- **Caching**: an LRU of loaded `TiledRasterTile<double>` tiles (default 8, raisable
+  with `--bathy-cache-tiles`) — batch processing revisits neighbouring cells
+  ping-to-ping. *(Implementation correction)* the key is `{layer, level, row, column}`,
+  not `{level, GridIndex}`: the same grid can hold a tile in more than one layer, so
+  the layer must be part of the key or a `reference/` tile could satisfy a `survey/`
+  lookup. A tile is ~14.7 MB (960x960x2 `double`), so the default is ~118 MB resident.
   Loads go through `marine_tiled_raster_store::loadTile<double>(path, level, 2)`;
   band 0 is depth, band 1 uncertainty (unused in v1 but read so a future σ-weighted
   variant needs no format change).
@@ -245,7 +256,10 @@ the ray) is the same regime the contraction condition `θ + β < 90°` already f
 those samples show up in `n_dem_nonconverged` when the iteration cannot settle.
 
 **Cost budget (asserted bounds, verified in the acceptance run).** Per sample the
-correction costs at most **5 iterations × 4 DEM cell reads = 20 cell reads**, each a
+correction costs at most **5 iterations × 4 DEM cell reads = 20 cell reads** for the
+stencils themselves — plus, per lookup, up to `layers × levels` probes in
+`resolveSource` before the stencil, and one whole extra lookup per ping for the datum
+cross-check *(implementation correction: the original bound omitted both)*. Each is a
 `Level::gridIndex` + set-membership + array index once the tile is resident; tile
 loads are amortised by the LRU (a swath advances a few cells per ping, so
 consecutive pings hit the same tiles). Two bounds keep it honest:
@@ -270,8 +284,18 @@ The durable `processed` build; `sidescan_tier2_flat` and `mosaic_node.cpp` stay
 flat-bottom (ADR-0006 D6/D9).
 
 - New CLI: `--bathy-store <path>` (optional; omitted ⇒ today's flat-bottom behaviour,
-  unchanged) and `--bathy-layers <csv>` (default `survey,reference`).
+  unchanged), `--bathy-layers <csv>` (default `survey,reference`) and
+  `--bathy-cache-tiles <n>` (default 8; *round-1 review addition*, since one lookup's
+  working set can exceed the fixed default). *(Round-1 review correction)* a
+  value-taking flag left **without** its value (`... --bathy-store` at the end of the
+  command line) is an argument error (exit 2), never a silent fall-through to the
+  default — that path would have written a full flat-bottom store and exited 0.
 - Construct the reader once (throws ⇒ the tool prints the diagnostic and returns 1).
+  *(Round-1 review correction)* the DEM exception handler wraps only the **lookup
+  call sites**, not the whole ping loop: a catch-all there would change the flat path
+  this feature must leave untouched, and would report a Tier-1 decode or accumulator
+  failure as a DEM fault. `registry.json` is also verified on disk after the void
+  `writeRegistry` call, since both `--accumulate` guards key on that file existing.
 - Per sample: keep the existing flat `groundRange(slant, altitude)` as the nadir-cone
   gate and the iteration seed, then call `correctedGroundRange(...)` with
   `sensor_height_m = gb.altitude_m` (`GeoBeam` is already computed at line 228).
@@ -295,15 +319,20 @@ flat-bottom (ADR-0006 D6/D9).
   this tool**, needing no other package's API:
 
   - `sidescan_tier2_processed` writes `<out_dir>/projection.json` next to
-    `registry.json`: `{"version":1, "projection_mode":"flat"|"dem",
+    `registry.json`: `{"version":1, "projection_mode":"flat"|"dem"|"mixed",
     "bathy_store":"<path>", "bathy_layers":"survey,reference"}`. Every run writes it,
-    including the default flat run.
+    including the default flat run — on which `bathy_store` and `bathy_layers` are
+    both the empty string, since no store was consulted. A sidecar that cannot be
+    written is an **error** (exit 1, after the tiles and registry have landed): an
+    unmarked store would read as a pre-#297 flat build.
   - Under `--accumulate`, alongside the existing `source_id` check and **before**
     decoding, read the existing sidecar and refuse a mode mismatch with the same
     fail-fast shape as the `source_id` guard (exit 2), naming both modes and telling
     the operator to regenerate into a fresh `out_dir` rather than accumulate.
-  - A **missing** sidecar with `--accumulate` means the store predates mode
-    recording — i.e. it is flat-built (every existing store is) — so a `--bathy-store`
+  - A sidecar that is **present but unreadable** (truncated, or carrying no parseable
+    `projection_mode`) leaves the mode UNKNOWN and is refused (exit 2) rather than
+    read as flat *(round-1 review correction)*. A **missing** sidecar with
+    `--accumulate` means the store predates mode recording — i.e. it is flat-built (every existing store is) — so a `--bathy-store`
     run is refused the same way. A flat run over a sidecar-less store is allowed
     (unchanged behaviour) and writes the sidecar going forward.
     *(Implementation clarification)* "missing sidecar ⇒ flat" applies only where a
@@ -314,6 +343,10 @@ flat-bottom (ADR-0006 D6/D9).
     could never run.
   - `--allow-mixed-projection` is the explicit, documented override for an operator
     who accepts the mix; it prints the refusal text as a warning and continues.
+    *(Round-1 review correction)* such a run records `projection_mode: "mixed"`,
+    **permanently** — never this run's own mode. Rewriting it as pure `dem`/`flat`
+    would launder the provenance and let every later `--accumulate` pass the guard
+    in silence. A `mixed` store keeps needing the flag.
   - When #179 lands the append-only registry, the mode moves into the registry's
     per-source record and the sidecar is retired.
 - **Datum cross-check diagnostic**: for each ping with a valid `nadir_altitude_m`,
@@ -337,13 +370,19 @@ flat-bottom (ADR-0006 D6/D9).
   - `--min-dem-coverage <frac>` (default **0.5**) is checked *after* the ping loop
     and **before** `saveTiles`/`writeRegistry` (both happen after the loop today,
     `sidescan_tier2_processed.cpp:312-321`, so aborting writes nothing).
-  - Coverage fraction = `n_dem_hit / (n_dem_hit + n_dem_no_coverage)` — the share of
-    samples where the DEM was consulted **and** had data. Defined as `0` when the
-    denominator is 0 (no sample ever reached the lookup).
+  - Coverage fraction = `n_dem_hit / (n_dem_hit + n_dem_no_coverage + n_dem_degenerate
+    + n_dem_nonconverged)` — the share of samples the DEM actually placed, over
+    **every** sample that reached the lookup. *(Round-1 review correction: the original
+    denominator counted only hits and no-coverage, so a run that was 40 % degenerate —
+    equally flat-placed — reported coverage 1.0 and passed the gate.)* A zero
+    denominator (empty archive, or every ping dropped) is reported as its own
+    no-usable-input error rather than as `coverage 0 (0 of 0)`, and also exits 3.
   - Below the threshold ⇒ a multi-line error naming the store path, the layer search
     order, the level(s) scanned, the full counter set, and the survey's lat/lon
     bounding box; **no tiles and no registry written**; exit **3** (distinct from the
-    existing `1` I/O and `2` argument codes).
+    existing `1` I/O and `2` argument codes). *(Implementation note)* an **empty**
+    `--bathy-layers` list reaches the reader's constructor and so exits **1** as an
+    unusable-store hard-fail, not 2 — the reader owns that validation.
   - `--min-dem-coverage 0` is the explicit operator opt-in for a deliberately partial
     or non-overlapping run (used by the equivalence test in step 5). Even at `0`, a
     below-50 % fraction still prints the same block as a `warning:` so the condition
