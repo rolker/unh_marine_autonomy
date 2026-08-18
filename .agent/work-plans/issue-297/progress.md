@@ -208,3 +208,130 @@ every finding was actioned — none deferred.
 `review-plan` on `plan.md` at `6801238` — a fresh-context sub-agent re-reviews
 revision 3. The operator has approved proceeding to implementation immediately after
 a clean review.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-17 23:27 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-297 at `61742e7`
+**Plan**: `.agent/work-plans/issue-297/plan.md` revision 3 (`6801238`), implemented as written
+**Commits**: `16e881f`, `ba78b0e`, `4f3ea3f`, `61742e7`
+
+Package code, not a plan pass: the plan's Approach steps 1-5 are implemented,
+built, and tested. Step 6 (the real-data acceptance run) is an **operator-run
+validation step and was deliberately not executed** — see Pending below.
+
+### Actions
+- [x] **Step 1 — bathy value-tile reader** (`16e881f`). New
+  `marine_sidescan_mosaic/{include/marine_sidescan_mosaic/bathy_dem.hpp,src/bathy_dem.cpp}`:
+  `BathyDem::depthAt(lat, lon)` over `<store>/<layer>/<level>_<row>_<col>.tif`,
+  using only `marine_tiled_raster_store` + GGGS — no `marine_bathymetry_store`
+  package dependency (ADR-0006 D9). Query-time lookup as revised:
+  `gggs::Level(l).gridIndex(lat,lon)` → `mtrs::tileFilename(grid)` → membership in
+  the scanned filename set → `CellIndex` → `tile.get(row,col,0)`. The only filename
+  parse is the leading-integer level for level discovery. Startup scan hard-fails
+  (throws) on an absent root, absent layer dirs, or zero tiles; a listed-but-
+  unloadable tile throws rather than reporting no-coverage. Bilinear stencil with
+  the level resolved **once** at the query point; each neighbour resolved from its
+  own lat/lon so a cross-grid neighbour resolves rather than clamping; a missing/NaN
+  neighbour drops to the nearest valid of the four (never a partial blend, whose
+  weights would not sum to 1). LRU tile cache (default 8) over
+  `mtrs::loadTile<double>(path, level, 2)`; band 1 read but unused, so a
+  sigma-weighted variant needs no format change. Per-layer hit counters.
+- [x] **Step 2 — DEM ground-range correction** (`ba78b0e`). `DemCorrection` +
+  `correctedGroundRange<DepthLookup>` in `projection.hpp`, templated on the lookup
+  in the `splatAlongTrack<Deposit>` style so the header stays I/O-free.
+  `sensor_height_m` is the ECEF-derived ellipsoidal height. Fixed-point iteration
+  seeded at the flat range, tolerance 0.01 m, cap 5 (`kDemConvergenceToleranceM`,
+  `kMaxDemIterations`), early exit when the seed already satisfies the tolerance.
+  Degeneracy guard (non-finite / `v <= 0` / `v >= slant`) → `kDegenerate`; cap →
+  `kNotConverged`; no DEM data → `kNoCoverage`. Every degraded status returns the
+  **flat** value; the non-converged iterate is never emitted.
+- [x] **Step 3 — wired into `sidescan_tier2_processed.cpp` only** (`4f3ea3f`).
+  `--bathy-store` / `--bathy-layers` (default `survey,reference`) /
+  `--min-dem-coverage` (default 0.5) / `--datum-check-warn-m` (default 1.0) /
+  `--allow-mixed-projection`. Flat range still gates the nadir cone and seeds the
+  iteration. Coverage gate evaluated after the ping loop and **before**
+  `saveTiles`/`writeRegistry` → exit **3** with nothing written, printing store,
+  layer order, levels, full counters, and the survey lat/lon bbox. `projection.json`
+  sidecar written by every run (flat included); `--accumulate` refuses a mode
+  mismatch (exit 2) before decoding, with a sidecar-less store treated as
+  flat-built. Datum cross-check (altimeter vs sensor-height − DEM at the nadir
+  point) reported as mean/RMS with a warning past the threshold, plus a warning when
+  no ping could be cross-checked at all. New counters and per-layer hits on the
+  summary line. The DEM lookup is wrapped so a corrupt-store throw aborts the run
+  (exit 1) instead of finishing with the remaining samples placed flat.
+- [x] **Step 4 — grazing-angle follow-through** (`4f3ea3f`). Converged samples feed
+  `grazingQuality(vertical_offset, corrected_ground)`; fallback samples keep
+  `(nadir_altitude_m, flat_ground)`. No `marine_backscatter` API change; the
+  seabed-normal incidence of ADR-0006 D4 stays out of scope (follow-up a).
+- [x] **Step 5 — tests, all new scaffolding**. `test_projection.cpp` gains seven
+  tolerance-based `CorrectedGroundRange*` cases (flat equivalence, an analytically
+  solved constant-slope intersection, no-coverage, both degenerate branches, the
+  iteration cap, and the grazing-pair-feeds-quality wiring). New `test_bathy_dem`
+  (10 cases: round-trip, bilinear mid-point, NaN, missing tile, cross-grid stencil,
+  multi-level, layer priority + fall-through, hard-fail construction, CSV parsing,
+  LRU eviction). New `test_tier2_processed_dem` (5 cases) drives the **built
+  binary** via a `SIDESCAN_TIER2_PROCESSED_BINARY="$<TARGET_FILE:>"` compile
+  definition (the `marine_bathymetry_store`/`import_geotiff` precedent), authoring
+  its `.sst1` in-test with `writeTier1Header`/`writeTier1Ping` and its bathy store
+  with `mtrs::saveTile<double>` — **no binary fixture is committed**. It asserts:
+  slope-direction placement shift (>1 m at the swath edge); flat-vs-no-coverage
+  **byte-identical** tiles plus zero `n_dem_*` on the flat run; unusable-store
+  hard-fail; the coverage gate's exit 3 with an empty output dir and the
+  `--min-dem-coverage 0` opt-in; and the full `--accumulate` mode-guard matrix
+  (flat→flat ok, dem→flat refused with tiles untouched, `--allow-mixed-projection`
+  accepted, flat→dem refused, first `--accumulate` into a fresh dir allowed).
+- [x] **README** (`61742e7`) — the orthorectification section, flag table, datum
+  discussion, counted degraded paths, the "regenerate, don't accumulate" rule and
+  sidecar, exit codes, and the D6/D9 flat-bottom-elsewhere note; "Pipeline (per
+  ping)" no longer describes only `sqrt(slant²−alt²)`.
+
+### Plan deviations (edited inline in `plan.md`, same commit as the code)
+Four clarifications, no design changes:
+- Resolution nesting: layer priority is the **outer** loop, finest level the inner
+  one. The plan specified both rules but not their nesting.
+- `DemCorrection::vertical_offset` is **NaN** on every non-converged status, so an
+  accidental use of a degraded value fails loudly.
+- The sub-50 % coverage warning fires at **any** threshold below 0.5, not only at
+  `--min-dem-coverage 0`.
+- The `--accumulate` mode guard applies only where a store already exists
+  (`registry.json` present in `out_dir`). Otherwise the **first** bag of a
+  bag-by-bag DEM ingest — always `--accumulate` into an empty directory — could
+  never run.
+
+### Build & test (actual output)
+`./core_ws/build.sh marine_sidescan_mosaic` → `Finished <<< marine_sidescan_mosaic`.
+`./core_ws/test.sh marine_sidescan_mosaic` → **all gtest suites pass, 0 failures**
+(36 cases across `test_projection` 21, `test_bathy_dem` 10, `test_tier2_processed_dem` 5,
+plus the pre-existing `test_accumulator` / `test_normalizer` / `test_tier1` /
+`test_overview_pyramid`).
+
+Six **pre-existing lint failures** remain and were not introduced by this work —
+verified by running the same linters against the `HEAD` versions of the files:
+`cpplint` line-length ×2 in `src/sidescan_mosaic_bag.cpp` (untouched), and
+`uncrustify` divergence in `src/projection.cpp` and `src/sidescan_mosaic_bag.cpp`
+(untouched) and in the **untouched regions** of `src/sidescan_tier2_processed.cpp`
+(the `--source-id` and `assume_zero` messages) and `test/test_projection.cpp` (the
+`r_mount` ternary). They reproduce byte-for-byte on the pre-change files under this
+host's Uncrustify 0.78.1_f, so they look like linter-version drift versus CI rather
+than a repo defect. Every file and region this PR wrote is clean under
+`ament_uncrustify` and `ament_cpplint`. Nothing was suppressed or reformatted to
+make a check pass.
+
+### Pending (not done by design)
+- **Plan step 6, the real-data acceptance run** against
+  `~/data/stores/sidescan/tier1/2026-06-19.sst1` + `~/data/stores/bathymetry/` — an
+  **operator-run validation step**, deliberately not executed by this sub-agent. Its
+  stated thresholds (coverage ≥ 0.5, datum mean < 1.0 m, non-converged < 1 %, wall
+  clock ≤ 2× flat) and the before/after look at the known contact are still owed
+  before merge.
+- `/review-code` on the diff — the orchestrator's next phase, not run here.
+- The five follow-ups the plan lists ((a) seabed-normal incidence, (b) DEM-supplied
+  nadir altitude, (c) sigma-weighted sampling, (d) projection mode into the registry
+  with #179, (e) acoustic-shadow handling) are still to be filed with the PR.
+
+### Next step
+`review-code` on the four-commit diff `d755e5b..61742e7`, then the operator's
+real-data acceptance run (plan step 6) before the PR is opened.
