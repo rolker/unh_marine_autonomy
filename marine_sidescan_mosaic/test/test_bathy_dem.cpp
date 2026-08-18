@@ -214,6 +214,32 @@ TEST(BathyDem, PartialStencilRenormalisesRatherThanSnappingToNearest)
   EXPECT_GT(std::abs(*value - here), 1e-6);
 }
 
+// A layer named twice in the search order must be scanned once: otherwise the tile
+// count doubles, describe() lists it twice, and two layer entries feed one
+// name-keyed lookup counter.
+TEST(BathyDem, DuplicateLayerNamesAreScannedOnce)
+{
+  ScratchDir dir("duplicate_layers");
+  const gggs::Level level(kFineLevel);
+  writeConstantTile(dir.path(), "survey", level.gridIndex(kLat, kLon), -9.0);
+
+  msm::BathyDem dem(dir.path().string(), {"survey", "survey"});
+  EXPECT_EQ(dem.tileCount(), 1u);
+  EXPECT_EQ(dem.layers().size(), 1u);
+  ASSERT_EQ(dem.warnings().size(), 1u);
+  EXPECT_NE(dem.warnings().front().find("more than once"), std::string::npos)
+    << dem.warnings().front();
+  // describe() names the layer once, not twice.
+  const std::string described = dem.describe();
+  EXPECT_EQ(described.find("survey/", described.find("survey/") + 1), std::string::npos)
+    << described;
+
+  const auto depth = dem.depthAt(kLat, kLon);
+  ASSERT_TRUE(depth.has_value());
+  EXPECT_NEAR(*depth, -9.0, 1e-9);
+  EXPECT_EQ(dem.lookupsByLayer().at("survey"), 1u);
+}
+
 // NaN is the store's no-data sentinel: a cell holding it has no depth to give.
 TEST(BathyDem, NoDataCellYieldsNullopt)
 {

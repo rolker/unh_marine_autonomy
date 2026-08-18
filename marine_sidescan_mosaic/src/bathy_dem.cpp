@@ -128,10 +128,26 @@ BathyDem::BathyDem(
     throw std::runtime_error("BathyDem: bathy store root does not exist: " + store_root_);
   }
 
+  // A name listed twice would otherwise be scanned twice: double-counted
+  // `tile_count_`, described twice, and two `layers_` entries feeding one
+  // name-keyed lookup counter. De-duplicate, keeping the first (highest-priority)
+  // occurrence, and say so rather than silently accepting the list (#297 review).
+  std::vector<std::string> requested;
+  std::set<std::string> requested_seen;
+  for (const auto & name : layer_names) {
+    if (requested_seen.insert(name).second) {
+      requested.push_back(name);
+    } else {
+      warnings_.push_back(
+        "requested bathy layer '" + name + "/' appears more than once in the search order; "
+        "the later occurrence is ignored (the first sets its priority).");
+    }
+  }
+
   std::set<int> levels_seen;
   std::vector<std::string> missing;
   std::vector<std::string> empty;
-  for (const auto & name : layer_names) {
+  for (const auto & name : requested) {
     const fs::path dir = fs::path(store_root_) / name;
     if (!fs::is_directory(dir)) {
       missing.push_back(name);
@@ -184,11 +200,11 @@ BathyDem::BathyDem(
       " but holds no <level>_<row>_<col>.tif tiles; continuing without it.");
   }
 
-  if (missing.size() == layer_names.size()) {
+  if (missing.size() == requested.size()) {
     std::ostringstream msg;
     msg << "BathyDem: none of the requested layer directories exists under " << store_root_
         << " (looked for:";
-    for (const auto & name : layer_names) {
+    for (const auto & name : requested) {
       msg << " " << name << "/";
     }
     msg << "). A bathy store that renamed its layers (ADR-0010 D3 re-classifies";
@@ -199,7 +215,7 @@ BathyDem::BathyDem(
     std::ostringstream msg;
     msg << "BathyDem: no <level>_<row>_<col>.tif tiles found under " << store_root_
         << " in layer(s):";
-    for (const auto & name : layer_names) {
+    for (const auto & name : requested) {
       msg << " " << name << "/";
     }
     throw std::runtime_error(msg.str());
