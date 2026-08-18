@@ -977,12 +977,12 @@ the full-scope `ci_local` attestation (ADR-0018). Nothing is pushed.
   `sidescan_mosaic_bag.cpp`, 4 uncrustify), all outside the round-5 hunks. Zero new lint.
 
 ### Findings
-- [ ] (must-fix) `exists(path, ec) || ec` sets `kMissing` when the stat itself FAILED, and
+- [x] (must-fix) `exists(path, ec) || ec` sets `kMissing` when the stat itself FAILED, and
   `kMissing` is read downstream (857-859) as "a pre-#297 flat build" — an EACCES/ELOOP/ENOTDIR
   on the sidecar makes a `dem` store readable as flat and lets a flat `--accumulate` through at
   exit 0; the fail-safe direction is inverted and must be `kUnreadable`. Cross-pass confirmed
   (Lens A + Lens B) — `src/sidescan_tier2_processed.cpp:597`
-- [ ] (must-fix) The coverage doubles are streamed at `operator<<`'s default 6-significant-digit
+- [x] (must-fix) The coverage doubles are streamed at `operator<<`'s default 6-significant-digit
   precision, so any coverage above ~0.9999995 is written as the literal `1` and reads back as
   perfect DEM coverage — verified empirically (`0.9999995` prints `1`). That is the "rosier than
   the store deserves" laundering the worst-of aggregate exists to prevent, and the re-emitted
@@ -1049,3 +1049,57 @@ full round; the suggestions are candidates for the PR's follow-up filing rather 
 branch. Still owed before merge (unchanged, not findings): the operator-run real-data acceptance
 run, filing the plan follow-ups with the PR (follow-up (d) carries the deferred `bathy_store`
 append-only record), and the full-scope `ci_local` attestation (ADR-0018). Nothing is pushed.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-18 02:34 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Branch**: feature/issue-297 at `28af8a6`
+**Addressed**: `## Local Review (Pre-Push)` round 5, 2026-08-18 02:21 -04:00, at `fd3685b`
+**Commits**: `d208d31`, `28af8a6`
+
+### Actions
+- [x] `exists(path, ec) || ec` set `kMissing` on a stat FAILURE, not just a genuine absence —
+  split into `ec` set → `kUnreadable` (fail-safe) vs. `!path_exists` → `kMissing`, so an
+  EACCES/ELOOP/ENOTDIR on the sidecar no longer reads as a pre-#297 flat build —
+  `src/sidescan_tier2_processed.cpp:614-627` (commit `d208d31`)
+- [x] Coverage doubles streamed at `operator<<`'s default 6-significant-digit precision rounded
+  anything above ~0.9999995 to the literal `1` — added `formatCoverage()` using
+  `std::to_chars` (shortest round-trip decimal) for both `dem_coverage` and each
+  `dem_coverage_history` element, and a new
+  `NearPerfectCoverageSurvivesRewriteWithoutRoundingToOne` test (seeds a v2 sidecar at
+  `0.9999995`, forces a rewrite via a mixed-projection flat `--accumulate`, asserts the
+  reread figure is within `1e-9` of `0.9999995` and never the literal `1`) —
+  `src/sidescan_tier2_processed.cpp:319-333`, `test/test_tier2_processed_dem.cpp:1017-1053`
+  (commit `28af8a6`)
+
+### Deferred to PR follow-up filing (not actioned this pass, per host instruction)
+The round-5 review's 12 suggestions were routed to the PR's follow-up filing rather than
+addressed on this branch; left unchecked in the source review entry above for that filing to
+consume:
+- fsync durability overclaim (`sidescan_tier2_processed.cpp:406-417`, `README.md:229-233`)
+- no run lock / concurrent-`--accumulate` interleave (`:363,369,922,1497`)
+- sidecar committed before `saveTiles`/`writeRegistry` (`:1499-1537`)
+- duplicate flags still first-wins (`:98-119,191-227`)
+- `discardStaging()`'s `remove` deletes an empty directory (`:364-367`,
+  `test/test_tier2_processed_dem.cpp:1033,1044`)
+- `valueFlags()` docstring vs. six untested accepted flags (`:156-159`)
+- `parseCoverageElements` comment names the wrong empty-element case (`:297,311`)
+- `inspectOutputDir` mixes throwing/`error_code` `exists` overloads (`:756-759`)
+- `projection.json.tmp` crash debris uncounted/unlisted (`:835-841,751-763`)
+- test gaps: out-of-range coverage elements, post-`close()` `fail()`, `rename` failure
+  (`test/test_tier2_processed_dem.cpp:955-1005,1022-1045`)
+- README's "every argument is checked" overclaims package-wide (`README.md:152-158`)
+- ADR's append-only claim vs. a pre-#297 `--accumulate`'s empty carried history
+  (`docs/decisions/0006-multi-platform-backscatter-store.md:231-232`)
+
+### Verification
+Build: clean (pre-existing `geodesy` header warnings only, unrelated to this branch). Tests:
+`test_tier2_processed_dem` 24/24 (23 prior + the new precision test), 224 package-wide, 0
+errors — exactly the same **6** pre-existing lint failures noted in round 5 (2 cpplint in
+`sidescan_mosaic_bag.cpp`, 4 uncrustify), none touched by these commits. Zero new lint.
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the two fixes). Dispatch:
+`.agent/scripts/dispatch_subagent.sh --mode in-process --issue 297 --skill review-code`
