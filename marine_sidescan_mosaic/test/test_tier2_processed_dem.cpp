@@ -342,9 +342,15 @@ protected:
   /// to `<out_dir_name>.log` under dir_ (readable via @ref log).
   int run(const fs::path & out_dir, const std::string & args = "")
   {
+    return runWith(tier1_, out_dir, args);
+  }
+
+  /// As @ref run, but over @p tier1 instead of the shared fixture archive.
+  int runWith(const fs::path & tier1, const fs::path & out_dir, const std::string & args = "")
+  {
     last_log_ = dir_ / (out_dir.filename().string() + ".log");
     const std::string cmd = std::string(SIDESCAN_TIER2_PROCESSED_BINARY) +
-      " \"" + tier1_.string() + "\" \"" + out_dir.string() + "\" " + args +
+      " \"" + tier1.string() + "\" \"" + out_dir.string() + "\" " + args +
       " > \"" + last_log_.string() + "\" 2>&1";
     const int rc = std::system(cmd.c_str());
     if (rc == -1 || !WIFEXITED(rc)) {
@@ -706,7 +712,10 @@ TEST_F(Tier2ProcessedDemTest, NonAccumulateReRunIntoAPopulatedDirIsRefused)
   EXPECT_NE(readFile(out / "projection.json").find("\"flat\""), std::string::npos);
 
   // There is no in-tool deleter to reach for: --overwrite is not a flag, and an
-  // unknown flag must not become a way through the refusal.
+  // unknown flag must not become a way through the refusal. Asserted against a
+  // FRESH directory as well as this populated one — in a populated dir the
+  // populated-dir guard exits 2 whether or not the flag was recognised, so that
+  // case alone would pass on a build that silently ignored it (#297 round-4 review).
   EXPECT_EQ(run(out, "--overwrite --bathy-store \"" + store_.string() + "\""), 2) << log();
   EXPECT_EQ(readFile(out / *flat_names.begin()), before);
   EXPECT_TRUE(fs::exists(out / "registry.json"));
@@ -897,4 +906,196 @@ TEST_F(Tier2ProcessedDemTest, SidecarValuesCannotSpoofSidecarKeys)
   EXPECT_EQ(
     run(out, "--accumulate --bathy-store \"" + store_.string() + "\""), 0) << log();
   EXPECT_NE(log().find("was DEM-orthorectified against"), std::string::npos) << log();
+}
+
+// An unrecognised `--` argument is an ARGUMENT error, not something to ignore.
+// `--overwrite` was removed in round 3, and with unknown flags ignored that turned
+// `--accumulate --overwrite` from an explicit refusal into a silent accumulate at
+// exit 0; the same hole makes a mistyped `--bathy-stor` a full FLAT build the
+// operator believes is DEM-corrected.
+TEST_F(Tier2ProcessedDemTest, UnknownFlagsAreArgumentErrors)
+{
+  // A FRESH directory, so nothing but the flag check can produce the refusal.
+  const fs::path out = dir_ / "unknown_flag";
+  EXPECT_EQ(run(out, "--overwrite"), 2) << log();
+  EXPECT_NE(log().find("--overwrite is not a flag"), std::string::npos) << log();
+  EXPECT_FALSE(fs::exists(out / "projection.json"));
+  EXPECT_TRUE(tileNames(out).empty());
+
+  // ...including alongside --accumulate, the combination that used to be refused
+  // explicitly as "opposites" and then silently accumulated.
+  const fs::path fresh = dir_ / "unknown_flag_accumulate";
+  EXPECT_EQ(run(fresh, "--accumulate --overwrite"), 2) << log();
+  EXPECT_FALSE(fs::exists(fresh / "projection.json"));
+
+  // A mistyped value flag: the run must NOT proceed flat-bottom.
+  const fs::path typo = dir_ / "typo_flag";
+  EXPECT_EQ(run(typo, "--bathy-stor \"" + store_.string() + "\""), 2) << log();
+  EXPECT_NE(log().find("unrecognised argument '--bathy-stor'"), std::string::npos) << log();
+  EXPECT_FALSE(fs::exists(typo / "projection.json"));
+
+  // A stray non-flag token is the same class (a lost value or a third positional).
+  const fs::path stray = dir_ / "stray_token";
+  EXPECT_EQ(run(stray, "--accumulate extra"), 2) << log();
+  EXPECT_NE(log().find("unrecognised argument 'extra'"), std::string::npos) << log();
+
+  // The recognised flags still work, so the check has not become a wall.
+  const fs::path good = dir_ / "known_flags";
+  EXPECT_EQ(
+    run(
+      good, "--accumulate --allow-mixed-projection --level 13 --source-id 2 "
+      "--platform bizzyboat --campaign test --bathy-store \"" + store_.string() + "\""),
+    0) << log();
+}
+
+// A v1 sidecar (an intermediate build of #297) recorded a single scalar
+// `dem_coverage` and no history. Reading only the history array made an
+// --accumulate into such a store rewrite it with THIS run's figure alone — the
+// exact laundering the history exists to stop.
+TEST_F(Tier2ProcessedDemTest, V1SidecarCoverageIsCarriedIntoTheHistory)
+{
+  const fs::path out = dir_ / "v1_store";
+  ASSERT_EQ(run(out, "--bathy-store \"" + store_.string() + "\""), 0) << log();
+
+  // Rewrite the sidecar in the v1 shape: no history, a poor scalar figure.
+  {
+    std::ofstream v1(out / "projection.json", std::ios::trunc);
+    v1 << "{\n"
+       << "  \"version\": 1,\n"
+       << "  \"projection_mode\": \"dem\",\n"
+       << "  \"bathy_store\": \"" << store_.string() << "\",\n"
+       << "  \"bathy_layers\": \"survey,reference\",\n"
+       << "  \"dem_coverage\": 0.03\n"
+       << "}\n";
+  }
+
+  // A well-covered fold on top must NOT make the store read 0.03 -> 0.9x.
+  ASSERT_EQ(run(out, "--accumulate --bathy-store \"" + store_.string() + "\""), 0) << log();
+  const std::string migrated = readFile(out / "projection.json");
+  EXPECT_NE(migrated.find("\"version\": 2"), std::string::npos) << migrated;
+  EXPECT_NE(migrated.find("\"dem_coverage\": 0.03,"), std::string::npos) << migrated;
+  EXPECT_NE(migrated.find("\"dem_coverage_history\": [0.03, "), std::string::npos) << migrated;
+
+  // A v1 FLAT store records the scalar as null; that element survives too.
+  const fs::path flat = dir_ / "v1_flat";
+  ASSERT_EQ(run(flat), 0) << log();
+  {
+    std::ofstream v1(flat / "projection.json", std::ios::trunc);
+    v1 << "{\"version\": 1, \"projection_mode\": \"flat\", \"bathy_store\": \"\", "
+       << "\"bathy_layers\": \"\", \"dem_coverage\": null}\n";
+  }
+  ASSERT_EQ(run(flat, "--accumulate"), 0) << log();
+  EXPECT_NE(
+    readFile(flat / "projection.json").find("\"dem_coverage_history\": [null, null]"),
+    std::string::npos) << readFile(flat / "projection.json");
+
+  // A schema this build does not know is UNKNOWN, not v2: refuse rather than read
+  // it with v2 assumptions.
+  const fs::path future = dir_ / "v3_store";
+  ASSERT_EQ(run(future, "--bathy-store \"" + store_.string() + "\""), 0) << log();
+  {
+    std::ofstream v3(future / "projection.json", std::ios::trunc);
+    v3 << "{\"version\": 3, \"projection_mode\": \"dem\", \"dem_coverage_history\": [0.9]}\n";
+  }
+  EXPECT_EQ(run(future, "--accumulate --bathy-store \"" + store_.string() + "\""), 2) << log();
+  EXPECT_NE(log().find("UNKNOWN"), std::string::npos) << log();
+
+  // A history element that is neither a number nor `null` is unreadable too — it
+  // used to be skipped silently, which makes dem_coverage read ROSIER than the
+  // store deserves, and re-emitted forever as invalid JSON.
+  const fs::path bad = dir_ / "bad_history";
+  ASSERT_EQ(run(bad, "--bathy-store \"" + store_.string() + "\""), 0) << log();
+  {
+    std::ofstream broken(bad / "projection.json", std::ios::trunc);
+    broken << "{\"version\": 2, \"projection_mode\": \"dem\", "
+           << "\"dem_coverage_history\": [0.01, foo]}\n";
+  }
+  EXPECT_EQ(run(bad, "--accumulate --bathy-store \"" + store_.string() + "\""), 2) << log();
+  EXPECT_NE(log().find("UNKNOWN"), std::string::npos) << log();
+}
+
+// The sidecar is the sole durable record of the coverage history and the bathy-store
+// provenance, so its rewrite must never destroy the previous one on a failed write.
+// It is staged and swapped: with the staging path blocked, the live sidecar is
+// untouched. (Blocking it with a DIRECTORY rather than permissions works as root
+// too, which the read-only-directory technique does not.)
+TEST_F(Tier2ProcessedDemTest, AFailedSidecarWriteLeavesThePreviousSidecarIntact)
+{
+  const fs::path out = dir_ / "swap_store";
+  ASSERT_EQ(run(out, "--bathy-store \"" + store_.string() + "\""), 0) << log();
+  const std::string before = readFile(out / "projection.json");
+  ASSERT_NE(before.find("\"dem\""), std::string::npos) << before;
+  const auto tiles_before = tileNames(out);
+  ASSERT_FALSE(tiles_before.empty());
+  const std::string tile_before = readFile(out / *tiles_before.begin());
+
+  // Block the staging path: the write cannot land, so the swap never happens.
+  fs::create_directories(out / "projection.json.tmp");
+
+  EXPECT_EQ(
+    run(out, "--accumulate --allow-mixed-projection"), 1) << log();
+  const std::string fail_log = log();
+  EXPECT_NE(fail_log.find("projection.json"), std::string::npos) << fail_log;
+  // The previous record survives in full — mode, store, and coverage history.
+  EXPECT_EQ(readFile(out / "projection.json"), before) << fail_log;
+  // ...and no tile was written over it either.
+  EXPECT_EQ(readFile(out / *tiles_before.begin()), tile_before);
+
+  fs::remove_all(out / "projection.json.tmp");
+}
+
+// A run that places NOTHING must not rewrite the store's provenance. The DEM
+// branch's own "placed nothing" refusal covers only --bathy-store runs, so a FLAT
+// --accumulate --allow-mixed-projection over an empty archive used to relabel a
+// `dem` store `mixed` permanently, and append a null history element, at exit 0.
+TEST_F(Tier2ProcessedDemTest, ARunThatPlacesNothingCannotRelabelTheStore)
+{
+  const fs::path out = dir_ / "no_placement";
+  ASSERT_EQ(run(out, "--bathy-store \"" + store_.string() + "\""), 0) << log();
+  const std::string before = readFile(out / "projection.json");
+  ASSERT_NE(before.find("\"dem\""), std::string::npos) << before;
+  const auto names = tileNames(out);
+  ASSERT_FALSE(names.empty());
+
+  // A valid Tier-1 archive with no pings at all: nothing can be placed from it.
+  const fs::path empty_tier1 = dir_ / "empty.sst1";
+  writeTier1Fixture(empty_tier1, kLat, kLon, 0);
+
+  EXPECT_EQ(runWith(empty_tier1, out, "--accumulate --allow-mixed-projection"), 3) << log();
+  EXPECT_NE(log().find("painted no cell"), std::string::npos) << log();
+  // Unchanged: still `dem`, with its history intact — not `mixed` with a null
+  // appended.
+  EXPECT_EQ(readFile(out / "projection.json"), before) << log();
+  EXPECT_EQ(tileNames(out), names);
+
+  // The same refusal on a FRESH directory: an empty archive leaves no store behind
+  // (a sidecar with no tiles is an interrupted build to every later run).
+  const fs::path fresh = dir_ / "no_placement_fresh";
+  EXPECT_EQ(runWith(empty_tier1, fresh, ""), 3) << log();
+  EXPECT_FALSE(fs::exists(fresh / "projection.json"));
+  EXPECT_FALSE(fs::exists(fresh / "registry.json"));
+}
+
+// `overviews/` is derived, but the refusal message names it among the files to
+// delete — so an operator who deletes the tiles, registry, and sidecar but misses
+// it must not get a fresh store beside a stale pyramid built from the deleted
+// tiles.
+TEST_F(Tier2ProcessedDemTest, AStaleOverviewsDirectoryStillCountsAsPopulated)
+{
+  const fs::path out = dir_ / "stale_overviews";
+  ASSERT_EQ(run(out), 0) << log();
+  for (const auto & name : tileNames(out)) {
+    ASSERT_TRUE(fs::remove(out / name));
+  }
+  ASSERT_TRUE(fs::remove(out / "registry.json"));
+  ASSERT_TRUE(fs::remove(out / "projection.json"));
+  fs::create_directories(out / "overviews");
+
+  EXPECT_EQ(run(out, "--bathy-store \"" + store_.string() + "\""), 2) << log();
+  EXPECT_NE(log().find((out / "overviews").string()), std::string::npos) << log();
+  EXPECT_TRUE(tileNames(out).empty());
+
+  // Removing it as instructed leaves the documented fresh build.
+  fs::remove_all(out / "overviews");
+  EXPECT_EQ(run(out, "--bathy-store \"" + store_.string() + "\""), 0) << log();
 }

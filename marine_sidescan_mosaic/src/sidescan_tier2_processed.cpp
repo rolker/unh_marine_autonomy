@@ -153,12 +153,87 @@ double toDouble(const std::string & s, const std::string & flag)
   std::exit(2);
 }
 
+/// @brief Every flag this tool accepts, split by whether it takes a value.
+///
+/// Kept beside `runTool`'s parsing so an added flag that misses this list fails
+/// loudly in its own test rather than silently (see @ref refuseUnknownArguments).
+const std::vector<std::string> & valueFlags()
+{
+  static const std::vector<std::string> flags{
+    "--level", "--no-nadir-policy", "--tx-beamwidth-fallback-rad", "--source-id",
+    "--platform", "--sensor", "--sensor-class", "--campaign", "--bathy-store",
+    "--bathy-layers", "--min-dem-coverage", "--datum-check-warn-m", "--bathy-cache-tiles"};
+  return flags;
+}
+
+const std::vector<std::string> & booleanFlags()
+{
+  static const std::vector<std::string> flags{"--accumulate", "--allow-mixed-projection"};
+  return flags;
+}
+
+/// @brief Refuse any argument past the two positionals that is not a recognised
+///   flag or that flag's value.
+///
+/// Unknown `--` tokens used to be ignored, which is the same dropped/mistyped
+/// argument class the value and positional checks already cover — and the most
+/// consequential instance of it: removing `--overwrite` in round 3 turned
+/// `--accumulate --overwrite` from an explicit "opposites" refusal into a silent
+/// accumulate at exit 0, and `--bathy-stor /path` runs a full FLAT build the
+/// operator believes is DEM-corrected, recorded as `flat` in a store they will read
+/// as orthorectified (#297 round-4 review).
+///
+/// A stray non-flag token is refused for the same reason: the two positionals come
+/// first, so a third bare word is a mistyped flag or a lost value, never something
+/// this tool has a use for.
+///
+/// @return exit code 2 to return immediately, or nullopt to proceed.
+std::optional<int> refuseUnknownArguments(int argc, char ** argv)
+{
+  const auto known = [](const std::vector<std::string> & flags, const std::string & token) {
+      return std::find(flags.begin(), flags.end(), token) != flags.end();
+    };
+  for (int i = 3; i < argc; ++i) {   // argv[1]/argv[2] are the checked positionals.
+    const std::string token = argv[i];
+    if (known(valueFlags(), token)) {
+      // Consume the value — but only when it looks like one. A missing or
+      // flag-shaped value is argValue's refusal to make, and it names the flag that
+      // lost its argument; swallowing the next token here would report the slip as
+      // an "unrecognised argument" one slot further along instead.
+      if (i + 1 < argc && std::string(argv[i + 1]).rfind("--", 0) != 0) {
+        ++i;
+      }
+      continue;
+    }
+    if (known(booleanFlags(), token)) {
+      continue;
+    }
+    if (token == "--overwrite") {
+      std::cerr << "error: --overwrite is not a flag: this tool never deletes a store.\n"
+                << "  Clearing a previous build is the operator's own explicit act — remove the\n"
+                << "  *.tif tiles, registry.json, projection.json, and the derived overviews/\n"
+                << "  directory by hand, or build into a fresh out_dir. Pass --accumulate to\n"
+                << "  composite into the existing store instead.\n";
+      return 2;
+    }
+    std::cerr << "error: unrecognised argument '" << token << "'.\n"
+              << "  Everything after the two positional arguments must be a flag this tool\n"
+              << "  knows (or that flag's value). An unknown token is a typo or a dropped\n"
+              << "  argument — ignoring it would run something other than what was asked and\n"
+              << "  record THAT in the store's provenance. Run with no arguments for the\n"
+              << "  usage list.\n";
+    return 2;
+  }
+  return std::nullopt;
+}
+
 /// @brief JSON string escape for the values written into the sidecar (store paths
 ///   and the layer list).
 ///
 /// Control characters are escaped too, not merely unexpected: a path holding a
-/// newline would otherwise emit invalid JSON *and* let an injected line be read
-/// back as a `projection_mode` by the line-based reader.
+/// newline or a quote would otherwise emit a file that is not valid JSON at all —
+/// which the reader answers with `kUnreadable`, freezing the store out of every
+/// later `--accumulate` until it is repaired by hand.
 std::string jsonEscape(const std::string & s)
 {
   static const char * const kHex = "0123456789abcdef";
@@ -187,6 +262,58 @@ std::string jsonEscape(const std::string & s)
   return out;
 }
 
+/// @brief One contributing run's DEM coverage: a fraction, or `null` (a flat run).
+using CoverageElement = std::optional<double>;
+
+/// @brief The elements of a recorded coverage list, VALIDATED.
+///
+/// @param text the array's inner text without its brackets ("0.99, null, 0.03"),
+///   or a bare v1 scalar ("0.99" / "null"). Whitespace-only (or empty) is an empty
+///   list, not a failure — `[]` is a well-formed record of "no run yet".
+/// @return nullopt when ANY element is not `null` or a finite fraction in [0, 1].
+///
+/// Validated rather than carried forward verbatim, for two reasons the round-4
+/// review found. An unparseable element used to be silently skipped by the
+/// worst-of aggregation, which makes `dem_coverage` read *rosier* than the store
+/// deserves — the opposite of the absolute floor the field is documented to be.
+/// And a verbatim carry-forward re-emitted whatever it was handed, so a hand-edited
+/// `[0.5,]` or `[ ]` stayed in the file forever, leaving a sidecar that `jq`,
+/// `json.load`, and #179's registry merge all refuse. An invalid list now makes the
+/// sidecar `kUnreadable`, which is the safe answer this reader already commits to.
+std::optional<std::vector<CoverageElement>> parseCoverageElements(const std::string & text)
+{
+  const auto trim = [](const std::string & s) {
+      std::size_t b = 0, e = s.size();
+      while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) {++b;}
+      while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) {--e;}
+      return s.substr(b, e - b);
+    };
+  std::vector<CoverageElement> out;
+  if (trim(text).empty()) {
+    return out;
+  }
+  std::istringstream elements(text);
+  std::string element;
+  while (std::getline(elements, element, ',')) {
+    const std::string value = trim(element);
+    if (value == "null") {
+      out.emplace_back(std::nullopt);
+      continue;
+    }
+    try {
+      std::size_t used = 0;
+      const double parsed = std::stod(value, &used);
+      if (used != value.size() || !std::isfinite(parsed) || parsed < 0.0 || parsed > 1.0) {
+        return std::nullopt;
+      }
+      out.emplace_back(parsed);
+    } catch (const std::exception &) {
+      return std::nullopt;   // empty element ("0.5,") or plain garbage.
+    }
+  }
+  return out;
+}
+
 /// @brief Record this run's projection mode next to `registry.json` (#297).
 ///
 /// The mode cannot live in `registry.json` yet: `writeRegistry` is a fixed-shape
@@ -197,64 +324,98 @@ std::string jsonEscape(const std::string & s)
 /// value preserved verbatim from the previous sidecar can be written straight back
 /// without an unescape/re-escape round trip.
 ///
-/// @param dem_coverage_history the complete per-run coverage list for this store as
-///   raw JSON element text without its brackets — every earlier run's figure plus
-///   this run's, in order. `dem_coverage` is derived from it as the WORST figure
-///   any contributing run achieved, so a single-number reader can never get a
-///   rosier answer than the store deserves.
+/// @param dem_coverage_history the complete per-run coverage list for this store —
+///   every earlier run's figure plus this run's, in order (`nullopt` = a flat run).
+///   `dem_coverage` is derived from it as the WORST figure any contributing run
+///   achieved, so a single-number reader can never get a rosier answer than the
+///   store deserves.
 /// @return true when the sidecar is on disk complete; false on any I/O failure
-///   (open, write, or the flush that close() performs — a full filesystem fails
-///   only there, so the stream state is checked after the close, not before).
+///   (open, write, the flush that close() performs — a full filesystem fails only
+///   there, so the stream state is checked after the close, not before — or the
+///   swap).
+///
+/// The write is STAGE-AND-SWAP: a sibling `projection.json.tmp` is written, closed,
+/// checked, and only then renamed over the live sidecar (an atomic same-directory
+/// rename). Truncating the live file in place put the store one failed `close()` —
+/// exactly the full-filesystem case above — from having no readable sidecar at all,
+/// and under `--accumulate` this file is the sole durable record of the whole
+/// coverage history plus the bathy-store provenance. A store with an unreadable
+/// sidecar is `kUnreadable` forever: every later `--accumulate` into it is refused.
+/// `build_sidescan_overviews` stages-and-swaps its own sidecar for the same reason
+/// (#297 round-4 review).
 bool writeProjectionSidecar(
   const std::string & out_dir, const std::string & mode_json,
   const std::string & bathy_store_json, const std::string & bathy_layers_json,
-  const std::string & dem_coverage_history)
+  const std::vector<CoverageElement> & dem_coverage_history)
 {
   // The worst figure across every run that contributed. An --accumulate used to
   // stamp the sidecar with THIS run's coverage, so folding a 0.99 bag into a 0.03
   // store made the store read 0.99 — laundering the exact hazard the figure exists
   // to record (#297 round-3 review).
   std::optional<double> worst;
-  std::istringstream elements(dem_coverage_history);
-  std::string element;
-  while (std::getline(elements, element, ',')) {
-    try {
-      std::size_t used = 0;
-      const double value = std::stod(element, &used);
-      worst = worst ? std::min(*worst, value) : value;
-    } catch (const std::exception &) {
-      continue;   // "null" (a flat run) and anything unparseable contribute nothing.
+  for (const auto & element : dem_coverage_history) {
+    if (element) {
+      worst = worst ? std::min(*worst, *element) : *element;
     }
   }
 
-  const std::string path = (std::filesystem::path(out_dir) / "projection.json").string();
-  std::ofstream out(path);
-  if (!out) {
+  const std::filesystem::path path = std::filesystem::path(out_dir) / "projection.json";
+  const std::filesystem::path staging = std::filesystem::path(out_dir) / "projection.json.tmp";
+  const auto discardStaging = [&staging]() {
+      std::error_code ec;
+      std::filesystem::remove(staging, ec);   // best-effort: the live file is intact.
+    };
+  {
+    std::ofstream out(staging, std::ios::trunc);
+    if (!out) {
+      discardStaging();
+      return false;
+    }
+    out << "{\n"
+        << "  \"version\": 2,\n"
+        << "  \"projection_mode\": \"" << mode_json << "\",\n"
+        << "  \"bathy_store\": \"" << bathy_store_json << "\",\n"
+        << "  \"bathy_layers\": \"" << bathy_layers_json << "\",\n"
+        // The DEM coverage this store was built at. `--min-dem-coverage 0` is an
+        // explicit opt-in to a partial run, and without a figure a 3 %- and a 99 %-
+        // corrected store both read as plain "dem" downstream (#297 review). `null`
+        // when no contributing run had one (a flat store).
+        << "  \"dem_coverage\": ";
+    if (worst) {
+      out << *worst;
+    } else {
+      out << "null";
+    }
+    // Per-run history, oldest first — one element per run that wrote this store
+    // (`null` for a flat one). The aggregate above is a floor over it; the list is
+    // what survives an --accumulate, so no run's figure is ever dropped.
+    out << ",\n"
+        << "  \"dem_coverage_history\": [";
+    for (std::size_t i = 0; i < dem_coverage_history.size(); ++i) {
+      if (i > 0) {
+        out << ", ";
+      }
+      if (dem_coverage_history[i]) {
+        out << *dem_coverage_history[i];
+      } else {
+        out << "null";
+      }
+    }
+    out << "]\n"
+        << "}\n";
+    out.close();
+    if (out.fail()) {
+      discardStaging();
+      return false;
+    }
+  }
+  std::error_code ec;
+  std::filesystem::rename(staging, path, ec);
+  if (ec) {
+    discardStaging();
     return false;
   }
-  out << "{\n"
-      << "  \"version\": 2,\n"
-      << "  \"projection_mode\": \"" << mode_json << "\",\n"
-      << "  \"bathy_store\": \"" << bathy_store_json << "\",\n"
-      << "  \"bathy_layers\": \"" << bathy_layers_json << "\",\n"
-      // The DEM coverage this store was built at. `--min-dem-coverage 0` is an
-      // explicit opt-in to a partial run, and without a figure a 3 %- and a 99 %-
-      // corrected store both read as plain "dem" downstream (#297 review). `null`
-      // when no contributing run had one (a flat store).
-      << "  \"dem_coverage\": ";
-  if (worst) {
-    out << *worst;
-  } else {
-    out << "null";
-  }
-  // Per-run history, oldest first — one element per run that wrote this store
-  // (`null` for a flat one). The aggregate above is a floor over it; the list is
-  // what survives an --accumulate, so no run's figure is ever dropped.
-  out << ",\n"
-      << "  \"dem_coverage_history\": [" << dem_coverage_history << "]\n"
-      << "}\n";
-  out.close();
-  return !out.fail();
+  return true;
 }
 
 /// @brief What @p out_dir's sidecar says about how its store was projected.
@@ -272,10 +433,11 @@ struct ProjectionSidecar
   std::string mode;           ///< only meaningful when `state == kOk`.
   std::string bathy_store;    ///< as recorded (still JSON-escaped); "" if absent.
   std::string bathy_layers;   ///< as recorded (still JSON-escaped); "" if absent.
-  /// The recorded per-run coverage list, as raw JSON element text WITHOUT its
-  /// brackets ("0.99, null, 0.03"); "" when the store records none. Carried
-  /// forward verbatim so no run's figure is ever dropped.
-  std::string dem_coverage_history;
+  /// The recorded per-run coverage list, oldest first (`nullopt` = a flat run);
+  /// empty when the store records none. Carried forward in full so no run's figure
+  /// is ever dropped — including a **v1** sidecar's single scalar, which is seeded
+  /// in as the first element (see @ref readProjectionSidecar).
+  std::vector<CoverageElement> dem_coverage_history;
 };
 
 /// @brief The escaped inner text of the JSON string starting at @p i (which must
@@ -413,15 +575,41 @@ std::optional<std::map<std::string, std::string>> parseFlatJsonObject(const std:
   return std::nullopt;   // ran off the end: truncated.
 }
 
+/// @brief Read @p out_dir's `projection.json`.
+///
+/// Sidecar SCHEMA VERSIONS. v1 (an intermediate build of #297; `projection.json`
+/// never shipped, so only stores built by such a build are v1) recorded a single
+/// scalar `dem_coverage` and no history. v2 records the full per-run
+/// `dem_coverage_history`, with the scalar derived from it as the worst element.
+/// Reading only the array would have made a v2 `--accumulate` into a v1 store
+/// rewrite the history as *this run alone* — folding a 0.99 run into a store
+/// recorded at 0.03 would read 0.99, which is verbatim the laundering the history
+/// exists to stop. So the scalar SEEDS the history whenever the array is absent
+/// (#297 round-4 review). A version this build does not know is `kUnreadable`
+/// rather than read with v2 assumptions: an unknown schema may mean fields whose
+/// meaning has changed, and "unknown" is the answer this reader is built to give
+/// safely.
 ProjectionSidecar readProjectionSidecar(const std::string & out_dir)
 {
   ProjectionSidecar out;
-  const std::string path = (std::filesystem::path(out_dir) / "projection.json").string();
-  if (!std::filesystem::exists(path)) {
+  const std::filesystem::path path = std::filesystem::path(out_dir) / "projection.json";
+  std::error_code ec;
+  if (!std::filesystem::exists(path, ec) || ec) {
     out.state = SidecarState::kMissing;
     return out;
   }
   out.state = SidecarState::kUnreadable;   // until a mode is actually parsed.
+  // Only a regular file is read, and only up to a cap. A fifo left in the store's
+  // place would otherwise hang the tool with no message, and a huge file would take
+  // it out with bad_alloc; both are "the sidecar cannot be read", which this
+  // function already has a safe answer for (#297 round-4 review).
+  constexpr std::uintmax_t kMaxSidecarBytes = 1u << 20;   // 1 MiB; ours is ~200 B.
+  if (!std::filesystem::is_regular_file(path, ec) || ec) {
+    return out;
+  }
+  if (std::filesystem::file_size(path, ec) > kMaxSidecarBytes || ec) {
+    return out;
+  }
   std::ifstream in(path);
   if (!in) {
     return out;
@@ -437,6 +625,18 @@ ProjectionSidecar readProjectionSidecar(const std::string & out_dir)
     // mode, never "flat".
     return out;
   }
+  const auto version = fields->find("version");
+  if (version != fields->end()) {
+    try {
+      std::size_t used = 0;
+      const int recorded = std::stoi(version->second, &used);
+      if (used != version->second.size() || recorded < 1 || recorded > 2) {
+        return out;   // a schema this build does not know: unknown, not flat.
+      }
+    } catch (const std::exception &) {
+      return out;
+    }
+  }
   const auto store = fields->find("bathy_store");
   if (store != fields->end()) {
     out.bathy_store = store->second;
@@ -446,10 +646,28 @@ ProjectionSidecar readProjectionSidecar(const std::string & out_dir)
     out.bathy_layers = layers->second;
   }
   const auto history = fields->find("dem_coverage_history");
-  if (history != fields->end() && history->second.size() >= 2 &&
-    history->second.front() == '[' && history->second.back() == ']')
-  {
-    out.dem_coverage_history = history->second.substr(1, history->second.size() - 2);
+  const auto scalar = fields->find("dem_coverage");
+  if (history != fields->end()) {
+    if (history->second.size() < 2 || history->second.front() != '[' ||
+      history->second.back() != ']')
+    {
+      return out;   // present but not an array: unreadable, not empty.
+    }
+    const auto elements =
+      parseCoverageElements(history->second.substr(1, history->second.size() - 2));
+    if (!elements) {
+      return out;
+    }
+    out.dem_coverage_history = *elements;
+  } else if (scalar != fields->end()) {
+    // v1 (or a v2 sidecar missing its array): the single figure IS the history so
+    // far. Dropping it would let this run's figure stand alone as the store's whole
+    // provenance — the laundering the history exists to stop.
+    const auto elements = parseCoverageElements(scalar->second);
+    if (!elements) {
+      return out;
+    }
+    out.dem_coverage_history = *elements;
   }
   const auto mode = fields->find("projection_mode");
   // An empty (or absent) mode is present-but-unknown, not a flat store: leave the
@@ -520,17 +738,27 @@ struct OutputDirState
   bool has_tiles = false;
   bool has_registry = false;
   bool has_sidecar = false;
+  bool has_overviews = false;
   bool populated = false;
 };
 
 /// @brief Inspect @p out_dir for the provenance guards (tiles + both sidecars).
+///
+/// `overviews/` counts as populated even though it is derived: the refusal message
+/// names it among the files to delete, and an operator who follows those
+/// instructions but misses the directory would otherwise get a fresh store beside a
+/// stale pyramid built from the deleted tiles, at exit 0 (#297 round-4 review).
 OutputDirState inspectOutputDir(const std::string & out_dir)
 {
   OutputDirState state;
+  const std::filesystem::path dir(out_dir);
   state.has_tiles = hasTileFiles(out_dir);
-  state.has_registry = std::filesystem::exists(std::filesystem::path(out_dir) / "registry.json");
-  state.has_sidecar = std::filesystem::exists(std::filesystem::path(out_dir) / "projection.json");
-  state.populated = state.has_tiles || state.has_registry || state.has_sidecar;
+  state.has_registry = std::filesystem::exists(dir / "registry.json");
+  state.has_sidecar = std::filesystem::exists(dir / "projection.json");
+  std::error_code ec;
+  state.has_overviews = std::filesystem::is_directory(dir / "overviews", ec) && !ec;
+  state.populated =
+    state.has_tiles || state.has_registry || state.has_sidecar || state.has_overviews;
   return state;
 }
 
@@ -542,8 +770,9 @@ struct SidecarCarryForward
   std::string mode;                  ///< this run's mode, or `mixed` once promoted.
   std::string bathy_store_json;      ///< JSON-escaped; see @ref jsonEscape.
   std::string bathy_layers_json;     ///< JSON-escaped.
-  /// Earlier runs' `dem_coverage` elements (raw JSON text, no brackets); "" if none.
-  std::string dem_coverage_history;
+  /// Earlier runs' coverage elements, oldest first; empty if none (this run's is
+  /// appended at write time).
+  std::vector<CoverageElement> dem_coverage_history;
 };
 
 /// @brief The output-directory provenance guards, run before anything is decoded.
@@ -595,7 +824,7 @@ std::optional<int> checkOutputDirGuards(
   if (!accumulate && out_dir_populated) {
     const std::filesystem::path dir(out_dir);
     std::cerr << "error: " << out_dir << " already holds a build (tiles/registry/"
-              << "projection.json) and this run does not pass --accumulate.\n"
+              << "projection.json/overviews) and this run does not pass --accumulate.\n"
               << "  Writing into it would leave the previous build's untouched tiles beside\n"
               << "  this run's, so the store would hold samples placed two different ways\n"
               << "  while projection.json recorded a single pure mode. Per-cell provenance\n"
@@ -797,6 +1026,9 @@ int runTool(int argc, char ** argv)
                 << "  flag itself still took effect.\n";
       return 2;
     }
+  }
+  if (const auto argument_exit = refuseUnknownArguments(argc, argv)) {
+    return *argument_exit;
   }
   const std::string tier1_path = argv[1];
   const std::string out_dir = argv[2];
@@ -1185,6 +1417,25 @@ int runTool(int argc, char ** argv)
     }
   }
 
+  // A run that placed NOTHING must not touch the store's provenance. The DEM
+  // branch's "no sample reached the lookup" refusal above covers only `if (dem)`,
+  // so a FLAT --accumulate --allow-mixed-projection over an empty (or
+  // altimeter-less) .sst1 contributed no sample yet still rewrote the sidecar —
+  // permanently relabelling a `dem` store `mixed` and appending a `null` history
+  // element, at exit 0. Same failure class as the run-that-placed-nothing-still-
+  // cleared path that got `--overwrite` removed, so gate on the tiles themselves:
+  // no cell painted, nothing recorded (#297 round-4 review).
+  if (acc.tiles().empty()) {
+    std::cerr << "error: this run painted no cell, so it has nothing to record.\n"
+              << "  read " << n_in << " ping(s), projected " << n_proj
+              << "; dropped no-nadir=" << n_no_nadir << " bad-pose=" << n_bad_pose << "\n"
+              << "  Check the Tier-1 archive: an empty .sst1, or pings without an altimeter\n"
+              << "  return under --no-nadir-policy drop, produce this. Nothing was written and\n"
+              << "  no existing store was touched — in particular its projection.json keeps\n"
+              << "  the mode and coverage history it already had.\n";
+    return 3;
+  }
+
   // Accumulate into an existing store: reload each tile this run touched and fold
   // it back in (best-source) before saving, so bag-by-bag ingestion composites
   // instead of overwriting (issue #253) — bounded RAM/disk vs one whole-campaign
@@ -1243,24 +1494,18 @@ int runTool(int argc, char ** argv)
   }
   // This run's element appended to the history the prior sidecar recorded, so the
   // list holds one figure per run that ever wrote this store.
-  std::ostringstream coverage_history;
-  coverage_history << carry.dem_coverage_history;
-  if (!carry.dem_coverage_history.empty()) {
-    coverage_history << ", ";
-  }
-  if (dem_coverage) {
-    coverage_history << *dem_coverage;
-  } else {
-    coverage_history << "null";
-  }
+  std::vector<CoverageElement> coverage_history = carry.dem_coverage_history;
+  coverage_history.push_back(dem_coverage);
   if (!writeProjectionSidecar(
       out_dir, jsonEscape(carry.mode), carry.bathy_store_json, carry.bathy_layers_json,
-      coverage_history.str()))
+      coverage_history))
   {
     std::cerr << "error: could not write " << out_dir << "/projection.json.\n"
               << "  It records how this run placed its samples, and it is written before the\n"
-              << "  tiles precisely so no tile can exist without it. Nothing was written:\n"
-              << "  fix the output directory's permissions/space and re-run.\n";
+              << "  tiles precisely so no tile can exist without it. This run wrote no tile\n"
+              << "  and no registry, and the write is staged-and-swapped, so any sidecar the\n"
+              << "  store already had is intact: fix the output directory's permissions/space\n"
+              << "  and re-run.\n";
     return 1;
   }
 
