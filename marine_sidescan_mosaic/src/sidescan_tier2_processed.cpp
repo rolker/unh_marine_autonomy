@@ -594,7 +594,16 @@ ProjectionSidecar readProjectionSidecar(const std::string & out_dir)
   ProjectionSidecar out;
   const std::filesystem::path path = std::filesystem::path(out_dir) / "projection.json";
   std::error_code ec;
-  if (!std::filesystem::exists(path, ec) || ec) {
+  const bool path_exists = std::filesystem::exists(path, ec);
+  if (ec) {
+    // The stat itself failed (EACCES/ELOOP/ENOTDIR/...), not "no file here" —
+    // fail-safe as unreadable, never as missing: kMissing reads downstream as
+    // "a pre-#297 flat build", which would let an unreadable `dem` store's
+    // flat `--accumulate` through at exit 0 (#297 round-5 review).
+    out.state = SidecarState::kUnreadable;
+    return out;
+  }
+  if (!path_exists) {
     out.state = SidecarState::kMissing;
     return out;
   }
