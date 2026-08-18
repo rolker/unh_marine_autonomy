@@ -74,10 +74,19 @@ bool hasFlag(int argc, char ** argv, const std::string & flag)
   return false;
 }
 
+/// @brief The value following @p flag, or @p dflt when the flag is absent.
+///
+/// A flag in the **last** argv slot has no value: exit 2 rather than silently
+/// falling through to the default. `... --bathy-store` with the path lost to a
+/// shell slip must not run a full flat-bottom build and exit 0 (#297 review).
 std::string argValue(int argc, char ** argv, const std::string & flag, const std::string & dflt)
 {
-  for (int i = 1; i + 1 < argc; ++i) {
+  for (int i = 1; i < argc; ++i) {
     if (flag == argv[i]) {
+      if (i + 1 >= argc) {
+        std::cerr << "error: " << flag << " requires a value, but none followed it\n";
+        std::exit(2);
+      }
       return argv[i + 1];
     }
   }

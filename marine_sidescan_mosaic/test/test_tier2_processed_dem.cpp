@@ -401,6 +401,19 @@ TEST_F(Tier2ProcessedDemTest, UnusableBathyStoreFailsFast)
   EXPECT_TRUE(tileNames(out2).empty());
 }
 
+// A value-taking flag left without its value (a shell slip that ate the path)
+// must fail loudly: the operator asked for orthorectification, and a silent
+// fall-through to the default would write a full flat-bottom store, exit 0, and
+// mark it "flat" in the sidecar.
+TEST_F(Tier2ProcessedDemTest, ValueFlagWithoutItsValueIsAnArgumentError)
+{
+  const fs::path out = dir_ / "truncated";
+  EXPECT_EQ(run(out, "--bathy-store"), 2) << log();
+  EXPECT_NE(log().find("requires a value"), std::string::npos) << log();
+  EXPECT_TRUE(tileNames(out).empty());
+  EXPECT_FALSE(fs::exists(out / "registry.json"));
+}
+
 // The coverage gate: a valid store that does not overlap the survey exits 3 and
 // writes NOTHING, and --min-dem-coverage 0 is the documented opt-in.
 TEST_F(Tier2ProcessedDemTest, CoverageGateAbortsBeforeAnyWrite)
