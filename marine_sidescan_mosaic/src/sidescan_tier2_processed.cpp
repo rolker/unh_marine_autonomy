@@ -314,9 +314,12 @@ std::optional<std::size_t> removePriorStore(const std::string & out_dir, std::st
   return removed;
 }
 
-}  // namespace
-
-int main(int argc, char ** argv)
+/// @brief The tool body. `main` wraps it in a last-resort handler (below): the DEM
+///   call sites catch their own faults, but `gggs::Level::gridIndex`'s
+///   `std::out_of_range` and the throwing `std::filesystem` overloads used around
+///   the store can still escape, and `std::terminate` with no diagnostic is not an
+///   acceptable ending for a store writer (#297 review).
+int runTool(int argc, char ** argv)
 {
   if (argc < 3) {
     std::cerr <<
@@ -943,4 +946,22 @@ int main(int argc, char ** argv)
     std::cerr << "\n";
   }
   return 0;
+}
+
+}  // namespace
+
+int main(int argc, char ** argv)
+{
+  try {
+    return runTool(argc, argv);
+  } catch (const std::exception & e) {
+    std::cerr << "error: unhandled exception: " << e.what() << "\n"
+              << "  The run aborted. If the store had already begun writing, treat it as\n"
+              << "  incomplete and regenerate it into a fresh output directory.\n";
+    return 1;
+  } catch (...) {
+    std::cerr << "error: unhandled non-standard exception; the run aborted. Treat any\n"
+              << "  partially written store as incomplete and regenerate it.\n";
+    return 1;
+  }
 }
