@@ -160,3 +160,51 @@ coverage; `--accumulate` over a flat-built store). All three are small, bounded 
 - [x] Define the zero-/low-DEM-coverage exit policy in step 3's summary handling
 - [x] Add the `--accumulate` × projection-mode consequence row, the README rule, and the registry-provenance follow-up
 - [x] Fold in the acceptance-run, byte-identical-assertion, shadow, cost, level-boundary, and citation suggestions as the author sees fit
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-17 23:00 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-297 at `6801238`
+**Addressed**: the `## Plan Review` entry (2026-08-17 22:50 -04:00, plan at `581ee23`, verdict changes-requested — 3 must-fix / 6 suggestions / 4 recommended actions)
+**Commits**: `6797904`, `4f8d23b`, `cb5d209`, `338b5dd`, `9e7d679`, `8f0a4e7`, `6801238`
+
+**Nature of this pass**: plan-revision only, per the operator decision at the
+`run-issue` checkpoint — no package code was written. The deliverable is
+**revision 3** of `.agent/work-plans/issue-297/plan.md`. Every reviewer-suggested
+fix direction was verified against source before adoption (results below), and
+every finding was actioned — none deferred.
+
+### Actions
+- [x] (must-fix) Tile lookup inverted — verified `GridIndex(level,row,col)` is private at `grid_index.h:165-171` (friends `Level`/`GridAreaIterator`/`GridBounds`) and that `marine_bathymetry_store`'s derive helper is in an anonymous namespace in `src/tile_io.cpp`. Step 1 now goes `gggs::Level(l).gridIndex(lat,lon)` (`level.h:89`) → `marine_tiled_raster_store::tileFilename(grid)` (`tile_io.hpp:65`, emits `<l>_<row>_<col>.tif`, `src/tile_io.cpp:96-100`) → filename-set membership → `Level::cellIndex()` (`level.h:114`) → `tile.get(row,col,0)` (`tiled_raster_tile.hpp:99`). The only filename parse left is the leading-integer level for level discovery — `plan.md` Approach step 1 + Files to Change
+- [x] (must-fix) Zero-coverage silent no-op closed — `--min-dem-coverage <frac>` (default 0.5), evaluated after the ping loop and **before** `saveTiles`/`writeRegistry` (verified both are post-loop, `sidescan_tier2_processed.cpp:312-321`, so an abort writes nothing). Below threshold ⇒ multi-line error naming store/layers/levels/counters/survey bbox, exit **3**; `--min-dem-coverage 0` is the documented opt-in and still warns below 50 %; gate applies only when `--bathy-store` is given — `plan.md` Approach step 3, Principles Self-Check, test case (d)
+- [x] (must-fix) `--accumulate` × projection mode specified — verified the fold path (`:277-310`) and that the only guard is the `source_id` match (`:155-189`), which a same-`--source-id` DEM re-run passes, and that the **real** store on disk (`~/data/stores/sidescan/processed/`, `registry.json` source 1, `campaign: massabesic-jun2026`, ~1070 L13 tiles) is flat-built under exactly that flag. Also verified `writeRegistry` is a fixed-shape single-source writer in `marine_backscatter` (`registry.hpp:42-45`, `registry.cpp:56-72`), so the registry field cannot land here. Plan adds a tool-written `projection.json` sidecar, an `--accumulate` mode-mismatch refusal (missing sidecar ⇒ treated as flat-built), `--allow-mixed-projection` override, a Consequences row, the README rule, and follow-up (d) riding #179 — `plan.md` Approach step 3, Consequences, ADR-0005 row, test case (e)
+- [x] (suggestion) Real-data acceptance run added as Approach step 6, against inputs verified present on this machine: `~/data/stores/sidescan/tier1/2026-06-19.sst1`, `~/data/stores/bathymetry/{survey,reference,chart}` (level-10 tiles by filename prefix), and the flat reference store above. States the procedure (fresh out-dirs, never `--accumulate` onto the flat store) and up-front pass thresholds: coverage ≥ 0.5, datum cross-check mean < 1.0 m, non-converged < 1 %, wall clock ≤ 2× flat — `plan.md` Approach step 6
+- [x] (suggestion) Baseline-less "byte-identical" assertion replaced — assertion (b) is now a live-run equivalence: the no-`--bathy-store` run and a `--bathy-store` run over a **non-overlapping** store (`--min-dem-coverage 0`, every sample `kNoCoverage`) must produce byte-identical tiles, and the flat run must report zero `n_dem_*`. Backward-compatibility row reworded to match — `plan.md` Approach step 5, Principles Self-Check
+- [x] (suggestion) Shadow / multi-valued intersection scoped — v1 takes the **nearest converged solution** (seeded at the flat range); ray-march shadow detection is out of scope with rationale and is follow-up (e); notes the double-valued regime coincides with the `θ + β < 90°` contraction failure already counted by `n_dem_nonconverged` — `plan.md` Approach step 2
+- [x] (suggestion) Cost bounded — ≤ 5 iterations × 4 neighbours = 20 cell reads per sample, LRU-amortised tile loads, plus an **early exit** when the flat seed already meets the 0.01 m tolerance, and a measured ≤ 2× flat-run wall-clock budget enforced by the acceptance run — `plan.md` Approach step 2, Principles Self-Check "Bounded cost"
+- [x] (suggestion) Bilinear level-boundary rule stated — level is resolved **once at the query point** and held for the whole four-cell stencil; a neighbour missing at that level is treated as no-data rather than substituted from a coarser level, so no cross-resolution blending or seam — `plan.md` Approach step 1
+- [x] (suggestion) Citations corrected against source — `bathy_cell.hpp:90` for `depth` (struct at `:87`), `CMakeLists.txt:127-151` for the gtest block, `marine_bathymetry_store/CMakeLists.txt:153-159` for the `$<TARGET_FILE:>` pattern, and `tile_io.hpp:71` for `tileFilename` in the decoupling bullet — `plan.md` Context table, Approach steps 1 and 5
+- [x] Recommended action 1 (query-time lookup) — see must-fix 1
+- [x] Recommended action 2 (coverage exit policy) — see must-fix 2
+- [x] Recommended action 3 (accumulate consequence + README rule + registry follow-up) — see must-fix 3
+- [x] Recommended action 4 (fold in the six suggestions) — all six adopted; none deferred
+
+### Also updated
+- Revision note rewritten to describe revision 3 alongside revision 2, so the plan's
+  own header matches the review round it answers.
+- Estimated Scope: still **9 files** — the coverage gate, sidecar, and accumulate
+  guard all land in `sidescan_tier2_processed.cpp`, and the new assertions extend the
+  two already-planned test targets. The acceptance run is a PR-report artifact.
+- Follow-up list grew to five: (a) seabed-normal incidence, (b) DEM-supplied nadir
+  altitude, (c) σ-weighted sampling, (d) projection mode into the registry with #179,
+  (e) acoustic-shadow handling.
+- The three unchecked boxes remaining in the file belong to the `## Plan Authored`
+  entry's Open Questions (all answered in the plan's Open Questions section); this
+  skill acts only on the source review entry, so they are left as they are.
+
+### Next step
+`review-plan` on `plan.md` at `6801238` — a fresh-context sub-agent re-reviews
+revision 3. The operator has approved proceeding to implementation immediately after
+a clean review.
