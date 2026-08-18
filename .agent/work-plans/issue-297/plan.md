@@ -128,7 +128,14 @@ std::optional<double> depthAt(double lat_deg, double lon_deg);   // WGS84 ellips
   reader records a warning per dropped layer (`BathyDem::warnings()`) that the tool
   prints, instead of dropping it in silence. The filename parse also requires the
   whole `<level>_<row>_<col>` stem, so the store's `_time`/`_source` companion
-  rasters are not counted as value tiles.
+  rasters are not counted as value tiles. A name repeated in the search order is
+  scanned once, with a warning *(round-2 review correction)*.
+  *(Implementation note)* the hard-fail is not the only throw: `depthAt` also throws
+  at **query** time when a tile the startup scan listed cannot be loaded — a corrupt
+  or truncated store — because silently degrading such a store to flat placement is
+  the stale-data path the quality standard forbids. The tool catches that at the two
+  DEM call sites (and a `std::bad_alloc` separately, as a `--bathy-cache-tiles`
+  sizing fault rather than a corrupt store) and aborts before writing anything.
 - **Resolution order (implementation clarification)**: layer priority is the
   **outer** loop and level the **inner** one — for each layer in the configured
   order, the finest level with data at the position wins; only when a layer has no
@@ -140,8 +147,12 @@ std::optional<double> depthAt(double lat_deg, double lon_deg);   // WGS84 ellips
   `--bathy-layers`. `chart` is **not** in the default: chart soundings are
   shoal-biased by design for navigation safety (ADR-0010 D7), and a shoal-biased
   vertical term would bias sample placement — it can be opted into explicitly where
-  it is the only coverage. A per-layer hit counter is reported in the summary so the
-  operator can see which layer actually supplied the DEM.
+  it is the only coverage. A per-layer **lookup** counter is reported in the summary
+  so the operator can see which layer actually supplied the DEM. *(Implementation
+  correction)* it counts store **probes that returned data**, not placed samples —
+  one sample costs up to a bilinear stencil per iteration and each ping adds a
+  datum-check probe — so it is named "lookups", never "hits", and is not comparable
+  one-for-one with the per-sample `hit=` counter.
 - **Multi-level stores**: ADR-0002 permits mixed levels; the sidescan target level
   (L13 ≈ 0.11 m) is generally finer than the bathy store's (Massabesic L11 ≈ 0.45 m).
   A lookup resolves the finest available level that has coverage at that position,
@@ -159,8 +170,18 @@ std::optional<double> depthAt(double lat_deg, double lon_deg);   // WGS84 ellips
   `Level::cellIndex()` on its own lat/lon, which makes a neighbour that falls in an
   adjoining **grid** resolve correctly rather than clamping at the tile edge.
   Degraded cases: if any of the four is NaN/no-data or lies in a tile that is absent,
-  fall back to the nearest valid of the four; if the containing cell itself is
-  no-data, return `nullopt`. (Revision 1 deferred interpolation and mis-attributed
+  it drops out of the blend, which is then **renormalised by the weights that remain**
+  *(round-2 review correction: revision 3 said "fall back to the nearest valid of the
+  four", which throws away an almost-exact interpolation when the missing neighbour
+  carries a negligible weight; an un-renormalised partial blend would instead bias
+  toward zero, i.e. toward the ellipsoid)*; if the containing cell itself is
+  no-data, return `nullopt`.
+  *(Implementation note)* the stencil offsets the neighbours by the **query cell's**
+  angular spans. GGGS longitudinal spans step by 3x at the 72-deg and 80-deg bands,
+  so a probe across one of those two parallels can re-sample the query cell or skip
+  one — the blend stays well-formed (it degrades toward nearest-cell along that
+  axis), so it is an accuracy caveat at two parallels, far from any survey here, not
+  a correctness hole. (Revision 1 deferred interpolation and mis-attributed
   the requirement to D10 while claiming to follow D9 "exactly" — this revision
   implements it. It is cheap: the tool is offline and the reads are cached.)
 - **Caching**: an LRU of loaded `TiledRasterTile<double>` tiles (default 8, raisable
@@ -320,11 +341,20 @@ flat-bottom (ADR-0006 D6/D9).
 
   - `sidescan_tier2_processed` writes `<out_dir>/projection.json` next to
     `registry.json`: `{"version":1, "projection_mode":"flat"|"dem"|"mixed",
-    "bathy_store":"<path>", "bathy_layers":"survey,reference"}`. Every run writes it,
-    including the default flat run — on which `bathy_store` and `bathy_layers` are
-    both the empty string, since no store was consulted. A sidecar that cannot be
-    written is an **error** (exit 1, after the tiles and registry have landed): an
-    unmarked store would read as a pre-#297 flat build.
+    "bathy_store":"<path>", "bathy_layers":"survey,reference",
+    "dem_coverage":<frac>|null}`. Every run writes it, including the default flat run
+    — on which `bathy_store` and `bathy_layers` are both the empty string and
+    `dem_coverage` is `null`, since no store was consulted.
+    *(Round-2 review correction)* the sidecar is written **before the first tile**,
+    not last: written last, a crash or a full filesystem between the tile write and
+    the sidecar write leaves a DEM store with no `projection.json`, which every later
+    run reads as a pre-#297 FLAT build. A sidecar that cannot be written is therefore
+    an **error (exit 1) before anything else is written**, and the only residue a
+    crash can leave is the harmless one — a sidecar with no tiles beside it.
+    *(Round-2 review correction)* `dem_coverage` records the run's **achieved**
+    coverage, because `--min-dem-coverage 0` is an explicit opt-in to a partial run
+    and without the figure a 3 %- and a 99 %-corrected store both read as plain
+    `"dem"` downstream.
   - Under `--accumulate`, alongside the existing `source_id` check and **before**
     decoding, read the existing sidecar and refuse a mode mismatch with the same
     fail-fast shape as the `source_id` guard (exit 2), naming both modes and telling
@@ -336,13 +366,37 @@ flat-bottom (ADR-0006 D6/D9).
     run is refused the same way. A flat run over a sidecar-less store is allowed
     (unchanged behaviour) and writes the sidecar going forward.
     *(Implementation clarification)* "missing sidecar ⇒ flat" applies only where a
-    store **exists**, detected by `registry.json` in `out_dir` (every run writes
-    one). An `--accumulate` run into a directory with no registry has nothing to
+    store **exists**. An `--accumulate` run into an EMPTY directory has nothing to
     accumulate onto and is not refused — otherwise the **first** bag of a
     bag-by-bag DEM ingest, which is always `--accumulate` into an empty directory,
     could never run.
+    *(Round-2 review correction)* "a store exists" is decided by the **tiles** (or
+    either provenance file), not by `registry.json` alone: the fold loop keys on tile
+    files, so a build interrupted before its registry landed would otherwise be folded
+    into with both guards skipped and then re-stamped with a pure mode. A store that
+    holds tiles but **no** `registry.json` is refused outright under `--accumulate`:
+    its per-cell source indices are unresolvable, so the `source_id` guard has
+    nothing to check and a fresh single-source registry would assert a provenance the
+    tiles do not have.
+  - **A re-run WITHOUT `--accumulate` into a populated directory is refused too**
+    *(round-2 review correction)*. `saveTiles` rewrites only the tiles this run
+    touches, so a plain re-run leaves the previous build's other tiles in place — a
+    materially mixed store stamped with a single pure mode, at exit 0 and with no
+    flag. Exit 2, naming the three ways forward: `--accumulate`, a fresh `out_dir`,
+    or the new **`--overwrite`**, which deletes the prior build's tiles,
+    `registry.json`, and `projection.json` (nothing else in the directory) before
+    writing, and which is mutually exclusive with `--accumulate`. The deletion happens
+    late — after the coverage gate — so a gated failure never destroys the old store.
   - `--allow-mixed-projection` is the explicit, documented override for an operator
     who accepts the mix; it prints the refusal text as a warning and continues.
+    *(Implementation note)* it covers **only** the mode-mismatch refusal — not the
+    unreadable-sidecar refusal, not the `source_id` mismatch, and not the
+    populated-directory refusal, each of which stands on its own.
+    *(Round-2 review addition)* two `dem` runs against **different** bathy stores (or
+    a different layer order) pass the mode guard by construction, so the sidecar's
+    recorded `bathy_store`/`bathy_layers` are compared as well and a difference
+    **warns** — a re-run against an updated store is legitimate, and only the
+    operator knows whether the two surfaces agree.
     *(Round-1 review correction)* such a run records `projection_mode: "mixed"`,
     **permanently** — never this run's own mode. Rewriting it as pure `dem`/`flat`
     would launder the provenance and let every later `--accumulate` pass the guard
@@ -356,10 +410,17 @@ flat-bottom (ADR-0006 D6/D9).
   arm error, an unexpected tide frame). Accumulate the mean/RMS discrepancy and
   **warn** on the summary line when the mean exceeds a threshold (default 1.0 m,
   `--datum-check-warn-m`). This is the cheap guard against being *confidently wrong*
-  rather than merely uncorrected.
+  rather than merely uncorrected. *(Round-2 review correction)* it is reported
+  **first** inside the DEM post-loop block — before the coverage gate's own `return
+  3` paths and before any write — because a wrong vertical datum is exactly what
+  drives coverage down, so a check that printed after the gate would be silent on the
+  runs that need it most.
 - Counters on the existing `n_no_nadir`-style summary line: `n_dem_hit`,
-  `n_dem_no_coverage`, `n_dem_degenerate`, `n_dem_nonconverged`, plus per-layer hit
-  counts and the datum-check statistic.
+  `n_dem_no_coverage`, `n_dem_degenerate`, `n_dem_nonconverged`, plus per-layer
+  lookup (probe) counts, the achieved coverage, and the datum-check statistic.
+  *(Implementation note)* a run **without** `--bathy-store` prints no DEM line at
+  all — the flat summary is unchanged, which is what the flat-path-equivalence test
+  asserts.
 - **Coverage gate (no silent zero-coverage run)**: the startup hard-fail proves the
   store *exists and holds tiles*; it cannot prove the store **overlaps this survey**.
   A valid store for a different lake yields `n_dem_hit == 0` while every sample
@@ -380,9 +441,10 @@ flat-bottom (ADR-0006 D6/D9).
   - Below the threshold ⇒ a multi-line error naming the store path, the layer search
     order, the level(s) scanned, the full counter set, and the survey's lat/lon
     bounding box; **no tiles and no registry written**; exit **3** (distinct from the
-    existing `1` I/O and `2` argument codes). *(Implementation note)* an **empty**
-    `--bathy-layers` list reaches the reader's constructor and so exits **1** as an
-    unusable-store hard-fail, not 2 — the reader owns that validation.
+    existing `1` I/O and `2` argument codes). *(Round-2 review correction)* an
+    **empty** `--bathy-layers` list is now caught in argument parsing and exits **2**,
+    matching the README's exit-code contract, instead of reaching the reader's
+    constructor and exiting 1 as an unusable-store hard-fail.
   - `--min-dem-coverage 0` is the explicit operator opt-in for a deliberately partial
     or non-overlapping run (used by the equivalence test in step 5). Even at `0`, a
     below-50 % fraction still prints the same block as a `warning:` so the condition
@@ -491,7 +553,7 @@ flat store; that is the case step 3 now refuses):
 2. DEM run into `/tmp/tier2_dem/` with `--bathy-store ~/data/stores/bathymetry
    --bathy-layers survey,reference`.
 3. Report in the PR: the full counter set (`n_dem_hit`, `n_dem_no_coverage`,
-   `n_dem_degenerate`, `n_dem_nonconverged`, per-layer hits), the DEM coverage
+   `n_dem_degenerate`, `n_dem_nonconverged`, per-layer lookups/probes), the DEM coverage
    fraction, the datum cross-check mean/RMS, wall-clock for both runs, and a
    before/after look at a known target (the object-search contact this issue is
    driven by) showing the displacement direction is down-slope-consistent.
@@ -508,12 +570,14 @@ flat store; that is the case step 3 now refuses):
 | `marine_sidescan_mosaic/include/marine_sidescan_mosaic/bathy_dem.hpp` (new) | `BathyDem` reader: `depthAt(lat, lon)`, layer/level index, hard-fail construction |
 | `marine_sidescan_mosaic/src/bathy_dem.cpp` (new) | Layer scan (filename set + level set), query-time `Level::gridIndex()`→`tileFilename()` lookup, bilinear sampling, LRU tile cache over `marine_tiled_raster_store::loadTile<double>` |
 | `marine_sidescan_mosaic/include/marine_sidescan_mosaic/projection.hpp` | Add `DemCorrection` + `correctedGroundRange<DepthLookup>` |
-| `marine_sidescan_mosaic/src/sidescan_tier2_processed.cpp` | `--bathy-store` / `--bathy-layers` / `--datum-check-warn-m` / `--min-dem-coverage` / `--allow-mixed-projection`; `sensor_height_m` from `GeoBeam::altitude_m`; corrected `(vertical_offset, ground)` into `grazingQuality`; new counters + datum cross-check in the summary; coverage gate before the writes; `projection.json` sidecar write + `--accumulate` mode guard |
+| `marine_sidescan_mosaic/src/sidescan_tier2_processed.cpp` | `--bathy-store` / `--bathy-layers` / `--datum-check-warn-m` / `--min-dem-coverage` / `--bathy-cache-tiles` / `--allow-mixed-projection` / `--overwrite` (the last two added by the round-1 and round-2 reviews); `sensor_height_m` from `GeoBeam::altitude_m`; corrected `(vertical_offset, ground)` into `grazingQuality`; new counters + datum cross-check in the summary; coverage gate before the writes; `projection.json` sidecar write (before the first tile) + `--accumulate` mode/registry guards + the populated-`out_dir` refusal |
 | `marine_sidescan_mosaic/CMakeLists.txt` | `bathy_dem.cpp` in the library; `test_bathy_dem` and `test_tier2_processed_dem` gtest targets (the latter with the `$<TARGET_FILE:>` compile definition) |
-| `marine_sidescan_mosaic/README.md` | Document `--bathy-store`/`--bathy-layers`/`--min-dem-coverage`/`--allow-mixed-projection`, the orthorectification step in "Pipeline (per ping)" (line 23-24 still describes only `sqrt(slant²−alt²)`), the datum cross-check, the coverage gate and its exit code, the **"regenerate, don't accumulate, when switching projection mode"** rule + `projection.json` sidecar, and the D6/D9 flat-bottom-elsewhere design choice |
+| `marine_sidescan_mosaic/README.md` | Document `--bathy-store`/`--bathy-layers`/`--min-dem-coverage`/`--allow-mixed-projection`, the orthorectification step in "Pipeline (per ping)" (line 23-24 still describes only `sqrt(slant²−alt²)`), the datum cross-check, the coverage gate and its exit code, the **"regenerate, don't accumulate, when switching projection mode"** rule + `projection.json` sidecar, the populated-`out_dir` refusal + `--overwrite`, and the flat-bottom-by-design choice — scoped, per the round-2 review, to the LIVE draft path (ADR-0006 D6/D9); `sidescan_tier2_flat` is flat by its own scope, not by those clauses |
 | `marine_sidescan_mosaic/test/test_projection.cpp` | New `CorrectedGroundRange*` cases (tolerance-based) |
-| `marine_sidescan_mosaic/test/test_bathy_dem.cpp` (new) | Reader round-trip, bilinear, no-data, grid-crossing, multi-level, hard-fail cases |
+| `marine_sidescan_mosaic/test/test_bathy_dem.cpp` (new) | Reader round-trip, bilinear, partial-stencil renormalisation, no-data, grid-crossing, multi-level, duplicate-layer, hard-fail cases |
 | `marine_sidescan_mosaic/test/test_tier2_processed_dem.cpp` (new) | End-to-end synthetic `.sst1` + synthetic bathy store through the built binary |
+| `docs/decisions/0006-multi-platform-backscatter-store.md` | D9 amendment recording the interim `projection.json` sidecar (added during implementation — the sidecar is a schema statement, so the ADR had to carry it) |
+| `docs/sonar_ecosystem.md`, `.agents/README.md` | Ecosystem row refresh; agent-guide pitfall for the new cross-store file-format coupling |
 
 ## Principles Self-Check
 
@@ -523,7 +587,7 @@ flat store; that is the case step 3 now refuses):
 | Datum discipline | The vertical term is WGS84 ellipsoidal height on both sides (sensor from the ECEF pose, bottom from `BathyCell::depth`); `nadir_altitude_m` is used only where it means height above bottom (seed + flat fallback + cross-check) |
 | No silent failure / stale data | Hard-fail on an unusable bathy store (absent/empty) **and** on a store that does not actually cover the survey (`--min-dem-coverage`, exit 3, nothing written); a non-converged iterate is **never emitted** (flat fallback + counter); every degraded path is counted and printed; an independent datum cross-check warns on a systematic offset; `--accumulate` refuses to mix projection modes |
 | Backward compatibility | `--bathy-store` is opt-in; omitting it takes the unchanged flat code path — asserted by the end-to-end test's flat-vs-no-coverage byte-identity comparison (no golden fixture is committed, so the equivalence is proven between two live runs) |
-| Bounded cost | ≤ 20 DEM cell reads per sample (5 iterations × 4 neighbours), with an early exit when the flat seed already meets tolerance and an LRU tile cache; confined to the offline batch tool (the live `mosaic_node` hot path and `sidescan_tier2_flat` are untouched); the bound is **measured** in the acceptance run against a ≤ 2× flat-run wall-clock budget |
+| Bounded cost | ≤ 20 DEM **stencil** cell reads per sample (5 iterations × 4 neighbours) — plus, per lookup, up to `layers × levels` `resolveSource` probes before the stencil and one extra lookup per ping for the datum cross-check, as the cost budget in Approach step 2 records — with an early exit when the flat seed already meets tolerance and an LRU tile cache; confined to the offline batch tool (the live `mosaic_node` hot path and `sidescan_tier2_flat` are untouched); the bound is **measured** in the acceptance run against a ≤ 2× flat-run wall-clock budget |
 | Fix it completely | Bilinear interpolation is implemented rather than deferred (D9 requires it and the offline context makes it cheap); the degenerate and non-convergent branches are specified, not left to chance |
 
 ## ADR Compliance
@@ -533,7 +597,7 @@ flat store; that is the case step 3 now refuses):
 | ADR-0006 (sidescan backscatter store) | Yes | Implements D4's deferred bathy-model geometric correction; follows D9 fully — direct GeoTIFF tile read with **no** `marine_bathymetry_store` package dependency **and** the interpolation of the coarser bathy that D9 requires; respects D6 (live draft stays flat-bottom). D4's seabed-**normal** incidence is explicitly deferred with rationale (Approach step 4) |
 | ADR-0002 (bathymetric data store) | Yes (read-only consumer) | Reads the persisted value-tile format (`<level>_<row>_<col>.tif`, 2-band Float64, ellipsoidal height, NaN no-data) as documented in `marine_bathymetry_store/tile_io.hpp`; honours mixed-level stores; no writes, no schema change |
 | ADR-0010 (geospatial world model) | Yes | D3's `survey/`→`processed/` re-classification has not landed in code (`layerDirName` still emits `survey`); the layer search order is a CLI option so the rename is config, not code. D4's "layers encode process, σ encodes trust" is why `reference` is in the default search order (GRANIT-only areas get DEM coverage instead of falling back to flat); `chart` is opt-in because its shoal bias would bias placement |
-| ADR-0005 (provenance registry) | Yes (adjacent) | The per-cell source band and `registry.json` schema are **unchanged** — this work changes sample placement and quality, not source identity. But a DEM run and a flat run of the *same* source are no longer interchangeable, so the run's projection mode is recorded in a `projection.json` sidecar and `--accumulate` refuses to mix modes (Approach step 3). D8's "no silent provenance corruption" is the reason; folding the field into the registry itself waits on #179's append-only merge (follow-up d) |
+| ADR-0005 (provenance registry) | Yes (adjacent) | The per-cell source band and `registry.json` schema are **unchanged** — this work changes sample placement and quality, not source identity. But a DEM run and a flat run of the *same* source are no longer interchangeable, so the run's projection mode is recorded in a `projection.json` sidecar and `--accumulate` refuses to mix modes (Approach step 3). D2/D6 are the reason — per-cell provenance is one interned source index and nothing per cell records HOW a sample was placed (D8 is the "both stores adopt this" decision, not a corruption rule); folding the field into the registry itself waits on #179's append-only merge (follow-up d) |
 
 ## Consequences
 
@@ -578,8 +642,11 @@ answers so the decision trail is visible.
 - ~~What does "layback" mean here?~~ The along-beam positional shift on a sloped
   bottom, which the DEM iteration inherently produces. Hull-mounted GCV sidescan has
   no towfish cable, so classic tow layback does not apply.
-- ~~Do `sidescan_tier2_flat` / `mosaic_node.cpp` stay flat-bottom?~~ **Yes, by
-  design** (ADR-0006 D6/D9: "no bathy live").
+- ~~Do `sidescan_tier2_flat` / `mosaic_node.cpp` stay flat-bottom?~~ **Yes.** For
+  `mosaic_node.cpp` that is by ADR-0006 design (D6/D9: "no bathy live"); for
+  `sidescan_tier2_flat` it is this plan's own scope decision — it is the cheap
+  no-bathy Tier-2 builder — not an ADR prohibition *(round-2 review correction: the
+  earlier wording over-extended D6/D9 to it)*.
 
 Related but **not blocking**: the URDF grazing-tilt correction is tracked as
 [rolker/unh_echoboats_project11#433](https://github.com/rolker/unh_echoboats_project11/issues/433).
@@ -591,11 +658,13 @@ inputs to the same code. Note for whoever consumes `tx_beamwidths`: it carries t
 
 ## Estimated Scope
 
-Single PR. **9 new/changed files**, all in `marine_sidescan_mosaic` (4 new: 2 source,
-2 tests; 5 changed) — matching the Files to Change table. No schema or interface
+Single PR. **12 new/changed files** — 9 in `marine_sidescan_mosaic` (4 new: 2 source,
+2 tests; 5 changed) plus, added during implementation, `docs/decisions/0006-...md`,
+`docs/sonar_ecosystem.md`, and `.agents/README.md` — matching the Files to Change table. No schema or interface
 changes to `marine_bathymetry_store`, `marine_tiled_raster_store`, or
 `marine_backscatter` (the projection-mode provenance is a tool-written sidecar for
-exactly that reason — the registry field waits on #179). Revision 3 adds no files:
+exactly that reason — the registry field waits on #179). Revision 3 added no files:
 the coverage gate, the sidecar, and the accumulate guard all land in
 `sidescan_tier2_processed.cpp`, and the new cases extend the two planned test
-targets. The manual acceptance run (step 6) is a PR-report artifact, not a file.
+targets. Implementation added the three documentation files above; the round-1 and
+round-2 review fixes added no files either. The manual acceptance run (step 6) is a PR-report artifact, not a file.
