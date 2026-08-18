@@ -205,6 +205,18 @@ different levels (e.g. sidescan L13 ≈ 0.11 m vs Massabesic bathy L11 ≈ 0.45 
 projection interpolates the coarser bathy. The live `draft` node uses flat-bottom
 (no bathy live). A query-service coupling may be added later if a need appears.
 
+**Amendment (#297) — interim `projection.json` sidecar.** A Tier-2 store's
+samples are placed either flat-bottom or DEM-orthorectified (D9), and the tile
+schema above cannot say which: the per-cell `source-index` band resolves to the
+same source either way, so compositing the two placements into one cell is
+unrecoverable. Until #179's append-only registry merge can widen `registry.json`
+to carry it, `sidescan_tier2_processed` writes a sibling `projection.json`
+(`{version, projection_mode, bathy_store, bathy_layers}`) on **every** run, flat
+included, and refuses an `--accumulate` across modes. `projection_mode` is
+`flat`, `dem`, or `mixed` — the last being sticky for a store an operator
+deliberately mixed. The sidecar is an interim artifact of this schema, not a new
+long-lived one: it retires when the mode moves into the registry with #179.
+
 ### D10 — Resolution model (PROPOSED POSITION — decide in review)
 
 Use a **fixed target level** (L13 ≈ 0.11 m, as the live node) plus GeoCoder
