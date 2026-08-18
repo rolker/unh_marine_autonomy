@@ -118,24 +118,39 @@ std::string argValue(int argc, char ** argv, const std::string & flag, const std
   return dflt;
 }
 
+// Both parsers refuse TRAILING GARBAGE, not merely an unparseable value: `stoi`/
+// `stod` stop at the first character they cannot use, so `--min-dem-coverage 0.9,`
+// (a stray separator) silently became 0.9 and `--level 13x` became 13 — the same
+// dropped/mistyped-argument class `argValue`'s flag-shaped-value refusal covers,
+// and it would be recorded in the store's provenance (#297 round-3 review).
 int toInt(const std::string & s, const std::string & flag)
 {
   try {
-    return std::stoi(s);
+    std::size_t used = 0;
+    const int value = std::stoi(s, &used);
+    if (used == s.size()) {
+      return value;
+    }
   } catch (const std::exception &) {
-    std::cerr << "error: expected an integer for " << flag << ", got '" << s << "'\n";
-    std::exit(2);
+    // fall through to the same refusal.
   }
+  std::cerr << "error: expected an integer for " << flag << ", got '" << s << "'\n";
+  std::exit(2);
 }
 
 double toDouble(const std::string & s, const std::string & flag)
 {
   try {
-    return std::stod(s);
+    std::size_t used = 0;
+    const double value = std::stod(s, &used);
+    if (used == s.size()) {
+      return value;
+    }
   } catch (const std::exception &) {
-    std::cerr << "error: expected a number for " << flag << ", got '" << s << "'\n";
-    std::exit(2);
+    // fall through to the same refusal.
   }
+  std::cerr << "error: expected a number for " << flag << ", got '" << s << "'\n";
+  std::exit(2);
 }
 
 /// @brief JSON string escape for the values written into the sidecar (store paths
@@ -464,9 +479,18 @@ bool hasTileFiles(const std::string & out_dir)
   if (ec) {
     return false;
   }
-  for (const auto & entry : it) {
+  // Stepped by hand: a range-`for` uses the THROWING `operator++`, so a directory
+  // that becomes unreadable mid-walk would escape as an exception instead of the
+  // documented "any read problem answers no tiles" (#297 round-3 review).
+  const std::filesystem::directory_iterator end;
+  while (it != end) {
+    const auto & entry = *it;
     if (entry.is_regular_file(ec) && !ec && entry.path().extension() == ".tif") {
       return true;
+    }
+    it.increment(ec);
+    if (ec) {
+      return false;
     }
   }
   return false;
@@ -747,14 +771,32 @@ int runTool(int argc, char ** argv)
       "                        # clear the previous build by hand or use a fresh dir\n"
       "       [--bathy-store PATH]        # DEM-orthorectify against a bathy store\n"
       "                                   # (omitted = flat-bottom, unchanged)\n"
-      "       [--bathy-layers CSV]        # layer search order (default survey,reference)\n"
+      "       [--bathy-layers CSV]        # layer search order (default survey,reference;\n"
+      "                                   # naming no layer at all is an error)\n"
       "       [--min-dem-coverage FRAC]   # abort (exit 3) below this DEM hit share\n"
-      "                                   # (default 0.5; 0 = explicit opt-in, warns)\n"
+      "                                   # (in [0, 1]; default 0.5; 0 = opt-in, warns)\n"
       "       [--datum-check-warn-m M]    # warn above this mean nadir-vs-DEM offset\n"
-      "                                   # (default 1.0)\n"
-      "       [--bathy-cache-tiles N]     # resident bathy tiles (default 8, ~14.7 MB each)\n"
+      "                                   # (positive metres; default 1.0)\n"
+      "       [--bathy-cache-tiles N]     # resident bathy tiles, in [1, 1024]\n"
+      "                                   # (default 8, ~14.7 MB each)\n"
       "       [--allow-mixed-projection]  # --accumulate across projection modes anyway\n";
     return 2;
+  }
+  // The same dropped-argument refusal `argValue` applies to flag VALUES, applied to
+  // the two positional slots. `sidescan_tier2_processed in.sst1 --accumulate` would
+  // otherwise create a store directory literally named `--accumulate` *and* turn
+  // accumulate on, at exit 0 (#297 round-3 review).
+  for (const int slot : {1, 2}) {
+    if (std::string(argv[slot]).rfind("--", 0) == 0) {
+      std::cerr << "error: the " << (slot == 1 ? "tier1.sst1 input" : "out_dir output")
+                << " argument is '" << argv[slot] << "', which is a flag, not a path.\n"
+                << "  Both positional arguments come first and neither may begin with '--':\n"
+                << "  taking this literally would "
+                << (slot == 1 ? "look for an archive" : "create a store directory")
+                << " by that name while the\n"
+                << "  flag itself still took effect.\n";
+      return 2;
+    }
   }
   const std::string tier1_path = argv[1];
   const std::string out_dir = argv[2];

@@ -477,6 +477,33 @@ TEST_F(Tier2ProcessedDemTest, ValueFlagWithoutItsValueIsAnArgumentError)
   EXPECT_TRUE(tileNames(out3).empty());
 }
 
+// The same dropped-argument class in the two slots the flag-value check does not
+// cover: a POSITIONAL that is really a flag, and a numeric value with trailing
+// garbage. Both used to succeed at exit 0 and be recorded in the store.
+TEST_F(Tier2ProcessedDemTest, FlagShapedPositionalsAndTrailingGarbageAreArgumentErrors)
+{
+  // `sidescan_tier2_processed in.sst1 --accumulate` created a directory literally
+  // named "--accumulate" *and* turned accumulate on.
+  const fs::path positional_log = dir_ / "flag_positional.log";
+  const std::string cmd = "cd \"" + dir_.string() + "\" && " +
+    std::string(SIDESCAN_TIER2_PROCESSED_BINARY) + " \"" + tier1_.string() +
+    "\" --accumulate > \"" + positional_log.string() + "\" 2>&1";
+  const int rc = std::system(cmd.c_str());
+  ASSERT_TRUE(rc != -1 && WIFEXITED(rc));
+  const std::string captured = readFile(positional_log);
+  EXPECT_EQ(WEXITSTATUS(rc), 2) << captured;
+  EXPECT_NE(captured.find("which is a flag, not a path"), std::string::npos) << captured;
+  EXPECT_FALSE(fs::exists(dir_ / "--accumulate"));
+
+  // Trailing garbage on a numeric value is refused, not silently truncated.
+  const fs::path out = dir_ / "trailing_garbage";
+  EXPECT_EQ(run(out, "--min-dem-coverage 0.9,"), 2) << log();
+  EXPECT_NE(log().find("expected a number"), std::string::npos) << log();
+  EXPECT_EQ(run(out, "--level 13x"), 2) << log();
+  EXPECT_NE(log().find("expected an integer"), std::string::npos) << log();
+  EXPECT_TRUE(tileNames(out).empty());
+}
+
 // The coverage gate: a valid store that does not overlap the survey exits 3 and
 // writes NOTHING, and --min-dem-coverage 0 is the documented opt-in.
 TEST_F(Tier2ProcessedDemTest, CoverageGateAbortsBeforeAnyWrite)
