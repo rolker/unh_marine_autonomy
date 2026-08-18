@@ -641,8 +641,10 @@ TEST_F(Tier2ProcessedDemTest, StoreWithTilesButNoRegistryIsStillGuarded)
 
 // Without --accumulate, saveTiles rewrites only the tiles this run touches — so a
 // re-run into a populated directory leaves the previous build's other tiles beside
-// this one's while the sidecar records a single pure mode. Refuse it; --overwrite
-// is the explicit way through, and it clears the prior build first.
+// this one's while the sidecar records a single pure mode. Refuse it — and the
+// refusal is PLAIN: the tool has no store deleter (the round-3 `--overwrite` flag
+// was removed rather than hardened; stores are data-of-record and clearing one is
+// the operator's own explicit act). The message must name the files to remove.
 TEST_F(Tier2ProcessedDemTest, NonAccumulateReRunIntoAPopulatedDirIsRefused)
 {
   const fs::path out = dir_ / "populated";
@@ -653,18 +655,29 @@ TEST_F(Tier2ProcessedDemTest, NonAccumulateReRunIntoAPopulatedDirIsRefused)
 
   // A DEM re-run into it is refused, and nothing on disk changes.
   EXPECT_EQ(run(out, "--bathy-store \"" + store_.string() + "\""), 2) << log();
-  EXPECT_NE(log().find("--accumulate"), std::string::npos) << log();
-  EXPECT_NE(log().find("--overwrite"), std::string::npos) << log();
+  const std::string refusal = log();
+  EXPECT_NE(refusal.find("--accumulate"), std::string::npos) << refusal;
+  // The two ways forward, and the paths the operator would delete by hand.
+  EXPECT_NE(refusal.find("fresh out_dir"), std::string::npos) << refusal;
+  EXPECT_NE(refusal.find("delete the previous build yourself"), std::string::npos) << refusal;
+  EXPECT_NE(refusal.find((out / "registry.json").string()), std::string::npos) << refusal;
+  EXPECT_NE(refusal.find((out / "projection.json").string()), std::string::npos) << refusal;
   EXPECT_EQ(readFile(out / *flat_names.begin()), before);
   EXPECT_NE(readFile(out / "projection.json").find("\"flat\""), std::string::npos);
 
-  // --accumulate and --overwrite are opposites.
-  EXPECT_EQ(run(out, "--accumulate --overwrite"), 2) << log();
+  // There is no in-tool deleter to reach for: --overwrite is not a flag, and an
+  // unknown flag must not become a way through the refusal.
+  EXPECT_EQ(run(out, "--overwrite --bathy-store \"" + store_.string() + "\""), 2) << log();
+  EXPECT_EQ(readFile(out / *flat_names.begin()), before);
+  EXPECT_TRUE(fs::exists(out / "registry.json"));
 
-  // --overwrite clears the prior build, so the result is exactly a fresh DEM run:
-  // no stale flat tile survives to contradict the "dem" the sidecar now records.
-  EXPECT_EQ(
-    run(out, "--overwrite --bathy-store \"" + store_.string() + "\""), 0) << log();
+  // The documented way through, done by hand, then leaves a fresh DEM build.
+  for (const auto & name : flat_names) {
+    ASSERT_TRUE(fs::remove(out / name));
+  }
+  ASSERT_TRUE(fs::remove(out / "registry.json"));
+  ASSERT_TRUE(fs::remove(out / "projection.json"));
+  EXPECT_EQ(run(out, "--bathy-store \"" + store_.string() + "\""), 0) << log();
   EXPECT_NE(readFile(out / "projection.json").find("\"dem\""), std::string::npos);
 
   const fs::path fresh = dir_ / "fresh_dem";

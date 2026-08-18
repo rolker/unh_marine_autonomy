@@ -325,44 +325,6 @@ bool hasTileFiles(const std::string & out_dir)
   return false;
 }
 
-/// @brief Delete a prior build's tiles and provenance files from @p out_dir.
-///
-/// Only the files this tool writes are removed — `<...>.tif` value tiles,
-/// `registry.json`, `projection.json`. Anything else in the directory (a derived
-/// `overviews/` sidecar, operator notes) is left alone for its owner to rebuild.
-/// @return the number of files removed, or `nullopt` with @p error set on the
-///   first failure (a partially cleared store must not then be written into).
-std::optional<std::size_t> removePriorStore(const std::string & out_dir, std::string * error)
-{
-  std::error_code ec;
-  std::vector<std::filesystem::path> victims;
-  std::filesystem::directory_iterator it(out_dir, ec);
-  if (ec) {
-    *error = "cannot list " + out_dir + ": " + ec.message();
-    return std::nullopt;
-  }
-  for (const auto & entry : it) {
-    if (!entry.is_regular_file(ec) || ec) {
-      continue;
-    }
-    const std::string name = entry.path().filename().string();
-    if (entry.path().extension() == ".tif" || name == "registry.json" ||
-      name == "projection.json")
-    {
-      victims.push_back(entry.path());
-    }
-  }
-  std::size_t removed = 0;
-  for (const auto & victim : victims) {
-    if (!std::filesystem::remove(victim, ec) || ec) {
-      *error = "cannot remove " + victim.string() + ": " + ec.message();
-      return std::nullopt;
-    }
-    ++removed;
-  }
-  return removed;
-}
-
 /// @brief Everything the provenance guards need to know about `out_dir`.
 struct OutputDirState
 {
@@ -389,7 +351,7 @@ OutputDirState inspectOutputDir(const std::string & out_dir)
 ///   operator accepts a deliberate mix.
 /// @return an exit code to return from the tool immediately, or `nullopt` to proceed.
 std::optional<int> checkOutputDirGuards(
-  const std::string & out_dir, const OutputDirState & state, bool accumulate, bool overwrite,
+  const std::string & out_dir, const OutputDirState & state, bool accumulate,
   bool dem_mode, const std::string & projection_mode, bool allow_mixed_projection,
   const std::string & bathy_store, const std::string & bathy_layers, int source_id_arg,
   std::string * sidecar_mode)
@@ -421,13 +383,16 @@ std::optional<int> checkOutputDirGuards(
   // leaves the previous build's untouched tiles in place — a store that is
   // materially mixed (this run's placement in some cells, the previous run's in
   // others) while the sidecar is re-stamped with this run's pure mode, at exit 0
-  // and with no flag. Refuse, and make clearing the prior build explicit (#297
-  // round-2 review).
-  if (!accumulate && overwrite && !out_dir_populated) {
-    std::cerr << "warning: --overwrite: " << out_dir << " holds no previous build; "
-              << "nothing to clear.\n";
-  }
-  if (!accumulate && out_dir_populated && !overwrite) {
+  // and with no flag. Refuse (#297 round-2 review).
+  //
+  // The refusal is PLAIN — the tool has no store deleter, by design. A `--overwrite`
+  // flag was written and then removed in round 3: every in-tool deletion path found
+  // a way to destroy a store the operator did not mean to lose (a run that placed
+  // nothing still cleared; a transposed path argument matched another store's tile
+  // names). Stores are data-of-record here, so removing one is the operator's own
+  // explicit act, outside this tool. Name the files instead (#297 round-3 review).
+  if (!accumulate && out_dir_populated) {
+    const std::filesystem::path dir(out_dir);
     std::cerr << "error: " << out_dir << " already holds a build (tiles/registry/"
               << "projection.json) and this run does not pass --accumulate.\n"
               << "  Writing into it would leave the previous build's untouched tiles beside\n"
@@ -435,8 +400,15 @@ std::optional<int> checkOutputDirGuards(
               << "  while projection.json recorded a single pure mode. Per-cell provenance\n"
               << "  cannot tell them apart afterwards (ADR-0005 D2/D6). Choose one:\n"
               << "    --accumulate   composite into the existing store (mode-guarded), or\n"
-              << "    --overwrite    delete the prior tiles + registry + sidecar first, or\n"
-              << "    a fresh out_dir.\n";
+              << "    a fresh out_dir, or\n"
+              << "    delete the previous build yourself first — this tool never removes a\n"
+              << "    store. It is these files, and nothing else in the directory:\n"
+              << "      " << (dir / "*.tif").string() << "\n"
+              << "      " << (dir / "registry.json").string() << "\n"
+              << "      " << (dir / "projection.json").string() << "\n"
+              << "    (a derived " << (dir / "overviews").string()
+              << " sidecar is rebuilt from the tiles, so\n"
+              << "    delete it too when you clear the store by hand).\n";
     return 2;
   }
   if (accumulate && out_dir_populated) {
@@ -567,9 +539,9 @@ int runTool(int argc, char ** argv)
       "                                          lacks tx_beamwidths; 0=point-deposit)\n"
       "       [--source-id N] [--platform P] [--sensor S] [--sensor-class C] [--campaign X]\n"
       "       [--accumulate]   # composite INTO an existing store (reload+fold each\n"
-      "                        # touched tile) instead of overwriting it\n"
-      "       [--overwrite]    # a populated out_dir is refused without one of these:\n"
-      "                        # delete the previous build's tiles/registry/sidecar first\n"
+      "                        # touched tile). A populated out_dir is refused\n"
+      "                        # without it: this tool never deletes a store, so\n"
+      "                        # clear the previous build by hand or use a fresh dir\n"
       "       [--bathy-store PATH]        # DEM-orthorectify against a bathy store\n"
       "                                   # (omitted = flat-bottom, unchanged)\n"
       "       [--bathy-layers CSV]        # layer search order (default survey,reference)\n"
@@ -616,12 +588,6 @@ int runTool(int argc, char ** argv)
   const std::string sensor_class = argValue(argc, argv, "--sensor-class", "sidescan");
   const std::string campaign = argValue(argc, argv, "--campaign", "unknown");
   const bool accumulate = hasFlag(argc, argv, "--accumulate");
-  const bool overwrite = hasFlag(argc, argv, "--overwrite");
-  if (accumulate && overwrite) {
-    std::cerr << "error: --accumulate and --overwrite are opposites: one composites into "
-              << "the existing store, the other deletes it first. Pass at most one.\n";
-    return 2;
-  }
 
   // DEM orthorectification (#297). Omitting --bathy-store keeps the unchanged
   // flat-bottom code path. ADR-0006 D6/D9 keep the LIVE draft node flat-bottom by
@@ -678,7 +644,7 @@ int runTool(int argc, char ** argv)
 
   const OutputDirState out_dir_state = inspectOutputDir(out_dir);
   if (const auto guard_exit = checkOutputDirGuards(
-      out_dir, out_dir_state, accumulate, overwrite, dem_mode, projection_mode,
+      out_dir, out_dir_state, accumulate, dem_mode, projection_mode,
       allow_mixed_projection, bathy_store, bathy_layers, source_id_arg, &sidecar_mode))
   {
     return *guard_exit;
@@ -973,7 +939,8 @@ int runTool(int argc, char ** argv)
   // Accumulate into an existing store: reload each tile this run touched and fold
   // it back in (best-source) before saving, so bag-by-bag ingestion composites
   // instead of overwriting (issue #253) — bounded RAM/disk vs one whole-campaign
-  // pass. Without --accumulate, saveTiles overwrites (the prior behavior).
+  // pass. Without --accumulate a populated out_dir is refused outright (the guard
+  // above), so saveTiles only ever writes into an empty or fresh directory here.
   if (accumulate) {
     std::vector<gggs::GridIndex> grids;
     grids.reserve(acc.tiles().size());
@@ -1001,30 +968,12 @@ int runTool(int argc, char ** argv)
         std::cerr << "error: --accumulate could not reload existing tile " << path
                   << ": " << e.what() << "\n"
                   << "  refusing to continue: saving now would OVERWRITE this tile and lose its\n"
-                  << "  prior coverage. Inspect/remove the tile, or re-run WITHOUT --accumulate\n"
-                  << "  to intentionally overwrite. No tiles were written.\n";
+                  << "  prior coverage. Inspect and repair the tile, or regenerate the store\n"
+                  << "  into a fresh out_dir. No tiles were written.\n";
         return 1;
       }
     }
     std::cerr << "accumulate: folded " << folded << " existing tile(s) from " << out_dir << "\n";
-  }
-
-  // Clear the prior build BEFORE anything of this run's is written, and only on the
-  // explicit --overwrite (the refusal above is what an unflagged re-run gets). A
-  // partial clear must not be written into, so a failure here aborts.
-  if (!accumulate && overwrite && out_dir_state.populated) {
-    std::string remove_error;
-    const auto removed = removePriorStore(out_dir, &remove_error);
-    if (!removed) {
-      std::cerr << "error: --overwrite could not clear the previous build in " << out_dir
-                << ": " << remove_error << "\n"
-                << "  Refusing to write into a half-cleared store. Nothing of this run was\n"
-                << "  written; the directory may now hold a partial mix of the previous\n"
-                << "  build — remove it by hand or use a fresh out_dir.\n";
-      return 1;
-    }
-    std::cerr << "overwrite: removed " << *removed << " file(s) of the previous build in "
-              << out_dir << "\n";
   }
 
   // The projection sidecar is written FIRST — before any tile — so there is no

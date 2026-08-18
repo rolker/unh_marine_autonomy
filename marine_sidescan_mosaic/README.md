@@ -119,7 +119,6 @@ ros2 run marine_sidescan_mosaic sidescan_tier2_processed \
 | `--datum-check-warn-m` | `1.0` | Warn when the mean nadir-altimeter-vs-DEM discrepancy exceeds this |
 | `--bathy-cache-tiles` | `8` | Resident bathy tiles in the reader's LRU, in `[1, 1024]`. A tile is 960×960×2 `double` ≈ **14.7 MB**, so the default costs ~118 MB and the cap ~15 GB. One lookup can touch `layers × levels` tiles resolving its source plus 4 for the bilinear stencil — raise this when the search order is deep, or the cache thrashes. Out-of-range is an argument error (exit 2); an out-of-memory *during* a lookup is reported as a sizing fault, not as a corrupt store |
 | `--allow-mixed-projection` | off | Accept an `--accumulate` across projection modes (see below) |
-| `--overwrite` | off | Delete the previous build's tiles, `registry.json`, and `projection.json` from the output directory before writing. Required (or `--accumulate`, or a fresh directory) whenever the output directory is already populated — see below. Mutually exclusive with `--accumulate` |
 
 **Datum.** The vertical term is a WGS84 **ellipsoidal height on both sides**: the
 sensor's from the Tier-1 baked `earth`→transducer pose (`GeoBeam::altitude_m`), the
@@ -146,9 +145,18 @@ rewrites only the tiles a run touches, so a plain re-run into an existing store
 would leave the previous build's other tiles in place — a materially **mixed** store
 stamped with a single pure mode, at exit 0. A run without `--accumulate` therefore
 **refuses** (exit 2) a directory that already holds tiles, a `registry.json`, or a
-`projection.json`; pass `--overwrite` to delete the previous build's tiles,
-registry, and sidecar first (nothing else in the directory is touched), or choose a
-fresh output directory. `--accumulate` and `--overwrite` are mutually exclusive.
+`projection.json`. There are two ways forward, and the refusal names both: pass
+`--accumulate`, or use a fresh output directory.
+
+**This tool never deletes a store.** There is deliberately no `--overwrite` flag:
+clearing a previous build is the operator's own explicit act, done by hand. (One was
+written during #297 and removed in the same PR — every in-tool deletion path found a
+way to destroy a store nobody meant to lose: a run that placed nothing still cleared
+the directory, and a transposed path argument matched another store's tile names.)
+To rebuild in place, delete the previous build's `*.tif` tiles, `registry.json`,
+`projection.json`, and its derived `overviews/` sidecar yourself; the refusal message
+prints those paths.
+
 Under `--accumulate`, the provenance guards key on the **tiles** as well as on
 `registry.json`, so a build interrupted before its registry landed is guarded too
 (and a tiles-without-registry store is refused outright: its per-cell source indices
