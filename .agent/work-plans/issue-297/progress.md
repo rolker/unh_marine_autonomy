@@ -1103,3 +1103,23 @@ errors — exactly the same **6** pre-existing lint failures noted in round 5 (2
 ### Next step
 Lifecycle: **Implementation** → **review-code** (re-review the two fixes). Dispatch:
 `.agent/scripts/dispatch_subagent.sh --mode in-process --issue 297 --skill review-code`
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-18 02:49 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #302 at `0ea58da`
+**Sources**: 3 (Copilot PR auto-review @ `0ea58da`, Local Review (Pre-Push) R5 @ `fd3685b`, CI rollup)
+**Cross-source confirmations**: 1
+**CI**: hosted `build` pending (does not build this package — merge gate is the ADR-0018 full-scope ci_local attestation); copilot check success
+
+### Findings
+- [x] (cross-confirmed: Copilot inline + Local Review (Pre-Push) R5 suggestion) `inspectOutputDir()` uses throwing `std::filesystem::exists` overloads — an unreadable `out_dir` (EACCES/ELOOP) lands in the generic top-level handler instead of the precise exit-2 guard diagnostic — `marine_sidescan_mosaic/src/sidescan_tier2_processed.cpp:781-792`. **Already triaged and tracked in #305** (round-5 follow-up filing): the top-level `catch` at main scope contains the failure *before any write*, so the impact is diagnostic quality only — no guard bypass that proceeds, no data path. Not blocking merge; fix rides #305.
+
+### False positives
+- (none) — Copilot's single inline comment is valid (see above); its review body is a descriptive summary with no other findings.
+
+### Notes
+- The one conversation comment is this lifecycle's own follow-up-filing comment (posted at the publish checkpoint) — informational, no action.
+- No open must-fix findings ⇒ PR is merge-ready **once the standing gates clear**: operator-run Massabesic acceptance run (plan step 6) and full-scope `ci_local` attestation (ADR-0018). Never merge past a red hosted signal either way.
