@@ -105,7 +105,7 @@ ros2 run marine_sidescan_mosaic sidescan_tier2_processed \
     ~/data/stores/sidescan/tier1/2026-06-19.sst1 /tmp/tier2_dem \
     --bathy-store ~/data/stores/bathymetry \
     [--bathy-layers survey,reference] [--min-dem-coverage 0.5] \
-    [--datum-check-warn-m 1.0] [--allow-mixed-projection]
+    [--datum-check-warn-m 1.0] [--bathy-cache-tiles 8] [--allow-mixed-projection]
 ```
 
 | Flag | Default | Meaning |
@@ -114,6 +114,7 @@ ros2 run marine_sidescan_mosaic sidescan_tier2_processed \
 | `--bathy-layers` | `survey,reference` | Layer directory search order, highest priority first. `chart` is **not** in the default: charted soundings are cartographically shoal-biased for navigation safety, and a shoal-biased vertical term would bias placement (the store's safety query — ADR-0002 D7's shallowest-reliable mode, refined by ADR-0010 D4 — is where that bias is *wanted*); opt in only where it is the only coverage. ADR-0010 D3's `survey/`→`processed/` re-classification is a change to this flag, not to code — and a requested layer that is missing only **warns** if another requested layer still has tiles |
 | `--min-dem-coverage` | `0.5` | Minimum share of DEM-consulted samples that must actually be placed against the DEM. The denominator is **every** sample that reached the lookup — `hit + no-coverage + degenerate + non-converged` — because every non-`hit` status falls back to flat placement. Below the threshold the run **exits 3 having written nothing** — no tiles, no registry. `0` is the explicit opt-in for a deliberately partial run; a below-50 % fraction still prints the same diagnostic block as a warning |
 | `--datum-check-warn-m` | `1.0` | Warn when the mean nadir-altimeter-vs-DEM discrepancy exceeds this |
+| `--bathy-cache-tiles` | `8` | Resident bathy tiles in the reader's LRU. A tile is 960×960×2 `double` ≈ **14.7 MB**, so the default costs ~118 MB. One lookup can touch `layers × levels` tiles resolving its source plus 4 for the bilinear stencil — raise this when the search order is deep, or the cache thrashes |
 | `--allow-mixed-projection` | off | Accept an `--accumulate` across projection modes (see below) |
 
 **Datum.** The vertical term is a WGS84 **ellipsoidal height on both sides**: the

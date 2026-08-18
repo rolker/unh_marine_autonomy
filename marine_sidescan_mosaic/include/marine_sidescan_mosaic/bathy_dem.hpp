@@ -88,7 +88,15 @@ public:
   static constexpr std::size_t kDepthBand = 0;
   /// @brief Bands read from each value tile (depth + uncertainty).
   static constexpr std::size_t kBands = 2;
-  /// @brief Default resident-tile budget (one tile is ~7 MB of `double`).
+  /// @brief Default resident-tile budget.
+  ///
+  /// A tile is 960×960 cells × @ref kBands `double` = **~14.7 MB**, so this
+  /// default costs ~118 MB resident. Both bands are loaded even though v1 reads
+  /// only @ref kDepthBand — the store's on-disk tile is 2-band, and a future
+  /// sigma-weighted variant wants band 1 anyway. Size the budget against one
+  /// lookup's working set: `resolveSource` probes up to `layers × levels` tiles
+  /// before the 4-cell stencil, so a deep search order needs more than this
+  /// (`sidescan_tier2_processed --bathy-cache-tiles N`).
   static constexpr std::size_t kDefaultCacheTiles = 8;
 
   /// @brief Scan @p store_root for the requested layers' tiles.
@@ -115,6 +123,12 @@ public:
   /// stencil: all four neighbours are read at that level, because resolving
   /// per-neighbour would blend cells of different resolutions and seam wherever a
   /// fine patch ends.
+  ///
+  /// @note The stencil offsets the neighbours by the **query cell's** angular
+  ///   spans. GGGS longitudinal spans step by 3x at the 72-deg and 80-deg bands, so
+  ///   a probe across one of those parallels can re-sample the query cell (or skip
+  ///   one). The blend stays well-formed — it degrades toward nearest-cell along
+  ///   that axis — but the interpolation is only exact away from those two bands.
   ///
   /// Degraded cases: a neighbour that is NaN or lies in an absent tile drops out
   /// of the blend and the nearest valid of the four is returned instead; when the

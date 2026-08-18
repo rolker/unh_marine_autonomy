@@ -23,6 +23,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <string>
@@ -337,6 +338,35 @@ TEST(BathyDem, PartiallyMissingLayersWarnRatherThanVanish)
     msm::BathyDem dem(dir.path().string(), {"reference"});
     EXPECT_TRUE(dem.warnings().empty());
   }
+}
+
+// The store's companion rasters (`<level>_<row>_<col>_time.tif` / `_source.tif`,
+// pre-#248) carry no depth band. Counting them would inflate the tile count and
+// could satisfy the zero-tile hard-fail for a store whose value tiles are all
+// gone, while every lookup missed.
+TEST(BathyDem, CompanionRastersAreNotValueTiles)
+{
+  ScratchDir dir("companions");
+  const auto grid = gggs::Level(kFineLevel).gridIndex(kLat, kLon);
+  const fs::path layer = dir.path() / "survey";
+  fs::create_directories(layer);
+  const std::string value_name = mtrs::tileFilename(grid);
+  const std::string stem = value_name.substr(0, value_name.size() - 4);
+  for (const std::string & suffix : {"_time.tif", "_source.tif"}) {
+    std::ofstream companion(layer / (stem + suffix), std::ios::binary);
+    companion << "companion raster";
+  }
+
+  // Only companions: the store has no value tiles, so construction hard-fails.
+  EXPECT_THROW(makeDem(dir.path().string(), {"survey"}), std::runtime_error);
+
+  // With a real value tile alongside them, exactly one tile is counted.
+  writeConstantTile(dir.path(), "survey", grid, -4.0);
+  msm::BathyDem dem(dir.path().string(), {"survey"});
+  EXPECT_EQ(dem.tileCount(), 1u);
+  const auto depth = dem.depthAt(kLat, kLon);
+  ASSERT_TRUE(depth.has_value());
+  EXPECT_NEAR(*depth, -4.0, 1e-9);
 }
 
 TEST(BathyDem, SplitCsvTrimsAndDropsEmpties)

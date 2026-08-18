@@ -236,6 +236,7 @@ int main(int argc, char ** argv)
       "                                   # (default 0.5; 0 = explicit opt-in, warns)\n"
       "       [--datum-check-warn-m M]    # warn above this mean nadir-vs-DEM offset\n"
       "                                   # (default 1.0)\n"
+      "       [--bathy-cache-tiles N]     # resident bathy tiles (default 8, ~14.7 MB each)\n"
       "       [--allow-mixed-projection]  # --accumulate across projection modes anyway\n";
     return 2;
   }
@@ -284,6 +285,14 @@ int main(int argc, char ** argv)
     toDouble(argValue(argc, argv, "--min-dem-coverage", "0.5"), "--min-dem-coverage");
   const double datum_check_warn_m =
     toDouble(argValue(argc, argv, "--datum-check-warn-m", "1.0"), "--datum-check-warn-m");
+  const int bathy_cache_tiles = toInt(
+    argValue(
+      argc, argv, "--bathy-cache-tiles",
+      std::to_string(BathyDem::kDefaultCacheTiles)), "--bathy-cache-tiles");
+  if (bathy_cache_tiles < 1) {
+    std::cerr << "error: --bathy-cache-tiles must be at least 1\n";
+    return 2;
+  }
   const bool allow_mixed_projection = hasFlag(argc, argv, "--allow-mixed-projection");
   const bool dem_mode = !bathy_store.empty();
   const std::string projection_mode = dem_mode ? "dem" : "flat";
@@ -410,7 +419,8 @@ int main(int argc, char ** argv)
   std::unique_ptr<BathyDem> dem;
   if (dem_mode) {
     try {
-      dem = std::make_unique<BathyDem>(bathy_store, splitCsv(bathy_layers));
+      dem = std::make_unique<BathyDem>(
+        bathy_store, splitCsv(bathy_layers), static_cast<std::size_t>(bathy_cache_tiles));
     } catch (const std::exception & e) {
       std::cerr << "error: " << e.what() << "\n";
       return 1;

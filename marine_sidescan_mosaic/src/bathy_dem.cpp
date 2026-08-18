@@ -41,6 +41,18 @@ const char kDefaultBathyLayers[] = "survey,reference";
 namespace
 {
 
+/// @brief Split @p s on @p sep, keeping empty fields (unlike @ref splitCsv).
+std::vector<std::string> splitOn(const std::string & s, char sep)
+{
+  std::vector<std::string> out;
+  std::string item;
+  std::istringstream stream(s);
+  while (std::getline(stream, item, sep)) {
+    out.push_back(item);
+  }
+  return out;
+}
+
 /// @brief The GGGS level encoded as the leading integer of a tile filename
 ///   (`<level>_<row>_<col>.tif`), or `nullopt` if the name is not one.
 ///
@@ -50,20 +62,35 @@ namespace
 /// keeps its derive helper in an anonymous namespace. The lookup therefore runs
 /// the other way — `Level::gridIndex(lat,lon)` → `tileFilename()` → membership
 /// test against the scanned name set (see `BathyDem::tileFor`).
+/// The whole stem must be exactly three unsigned integer fields. A looser prefix
+/// test also accepts the store's companion rasters (`<level>_<row>_<col>_time.tif`,
+/// `..._source.tif`) that `marine_bathymetry_store` itself skips: those carry no
+/// depth band, so counting them would inflate the tile count — enough to satisfy
+/// the zero-tile hard-fail for a store whose every VALUE tile is missing, while
+/// every lookup misses (#297 review).
 std::optional<int> levelFromName(const std::string & name)
 {
   if (name.size() < 5 || name.compare(name.size() - 4, 4, ".tif") != 0) {
     return std::nullopt;
   }
-  const auto underscore = name.find('_');
-  if (underscore == std::string::npos || underscore == 0) {
+  const std::string stem = name.substr(0, name.size() - 4);
+  const auto fields = splitOn(stem, '_');
+  if (fields.size() != 3) {
     return std::nullopt;
   }
-  const std::string prefix = name.substr(0, underscore);
-  if (prefix.find_first_not_of("0123456789") != std::string::npos) {
+  for (const auto & field : fields) {
+    if (field.empty() || field.find_first_not_of("0123456789") != std::string::npos) {
+      return std::nullopt;
+    }
+  }
+  // `stoi` rather than `atoi`: an overflowing digit run is UB in `atoi`, while
+  // `stoi` throws — and a 30-digit "level" is a name we simply do not recognise.
+  int level = 0;
+  try {
+    level = std::stoi(fields[0]);
+  } catch (const std::exception &) {
     return std::nullopt;
   }
-  const int level = std::atoi(prefix.c_str());
   if (level < 0 || level >= static_cast<int>(gggs::levels.size())) {
     return std::nullopt;
   }
@@ -288,6 +315,15 @@ std::optional<double> BathyDem::depthAt(double lat_deg, double lon_deg)
   // side the query point falls toward. Each neighbour is resolved from its own
   // lat/lon (`cellValue` → `Level::gridIndex`), so one falling into an adjoining
   // GRID resolves there rather than clamping at the tile edge.
+  //
+  // The offsets are the QUERY cell's spans, which assumes the neighbour shares
+  // them. GGGS longitudinal spans step by 3x at the 72-deg and 80-deg latitude
+  // bands, so a probe across one of those two parallels can land back inside the
+  // query cell (wider neighbour) or skip a cell (narrower one). The blend stays
+  // well-formed either way — a re-sampled centre just contributes no gradient
+  // along that axis, degrading toward nearest-cell — so this is an accuracy
+  // caveat at two parallels, not a correctness hole. No survey here is near
+  // them; a general reader would want per-neighbour spans.
   const double lat_dir = (lat_deg >= centre_lat) ? 1.0 : -1.0;
   const double lon_dir = (lon_deg >= centre_lon) ? 1.0 : -1.0;
   const double t = std::min(1.0, std::abs(lat_deg - centre_lat) / lat_span);
