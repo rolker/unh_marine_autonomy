@@ -12,6 +12,11 @@ the processed layer gains a regenerable `overviews/` sidecar for LOD — layout 
 fold-policy contract in **[ADR-0011](0011-overview-pyramid.md)** (imagery fold:
 mean; source band 0 in overviews; fine-tile format unchanged).
 
+**Amended 2026-08-18 ([#297](https://github.com/rolker/unh_marine_autonomy/issues/297)):**
+the Tier-2 `processed` build can DEM-orthorectify its sample placement against the
+bathy store (D9), and records how it placed them in an interim `projection.json`
+sidecar — see the amendment under **[D9](#d9--bathy-coupling-is-a-direct-tile-file-read-not-a-package-dependency)**.
+
 **Amended 2026-06-20 ([#190](https://github.com/rolker/unh_marine_autonomy/issues/190)):
 this ADR is the *sidescan* backscatter store only.** It originally framed itself as
 the single backscatter store for *all* sensors (Garmin side-scan first, EM2040 / M3
@@ -204,6 +209,36 @@ package dependency, keeping the importer decoupled. Where the stores sit at
 different levels (e.g. sidescan L13 ≈ 0.11 m vs Massabesic bathy L11 ≈ 0.45 m) the
 projection interpolates the coarser bathy. The live `draft` node uses flat-bottom
 (no bathy live). A query-service coupling may be added later if a need appears.
+
+**Amendment (#297) — interim `projection.json` sidecar.** Each Tier-2 sample is
+placed either flat-bottom or DEM-orthorectified (D9), and the tile schema above
+cannot say which: the per-cell `source-index` band resolves to the same source
+either way, so compositing the two placements into one cell is unrecoverable. Until
+#179's append-only registry merge can widen `registry.json` to carry it,
+`sidescan_tier2_processed` writes a sibling `projection.json` (`{version,
+projection_mode, bathy_store, bathy_layers, dem_coverage, dem_coverage_history}`) on
+**every** run, flat included, and refuses an `--accumulate` across modes.
+
+`projection_mode` is `flat`, `dem`, or `mixed` — the last being sticky for a store
+an operator deliberately mixed. It is a statement about the **run** that produced
+the store, not a guarantee of per-sample purity: a `dem` store still contains
+flat-placed samples wherever the DEM had no coverage or the geometry was degenerate
+or non-convergent, which is why the same sidecar records the DEM coverage achieved.
+`flat` alone is a purity claim (no sample in a flat run was DEM-placed).
+
+Because `--accumulate` composites bag after bag into one store, the coverage record
+is **per contributing run**, not per write (sidecar `version: 2`).
+`dem_coverage_history` holds one element per run that has written the store, oldest
+first (`null` for a flat run) and append-only; `dem_coverage` is the **worst**
+element in it (`null` when no run had one). A single-number reader therefore never
+gets a rosier answer than the store deserves — folding a 99 %-corrected bag into a
+3 %-corrected store leaves the store reading 3 %, which is the hazard the figure
+exists to record. (v1, written only by an intermediate build of #297, carried the
+scalar alone; the reader seeds it in as the history's first element rather than
+letting the folding run's figure stand as the store's whole provenance.) The sidecar
+is an interim artifact of this schema, not a new long-lived one: it retires when the
+mode moves into the registry with #179, which should carry the coverage history with
+it.
 
 ### D10 — Resolution model (PROPOSED POSITION — decide in review)
 

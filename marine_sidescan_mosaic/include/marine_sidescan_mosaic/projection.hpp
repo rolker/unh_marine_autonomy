@@ -24,6 +24,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <optional>
 
 #include "geodesy/geodesics.h"
 #include "geographic_msgs/msg/geo_point.hpp"
@@ -109,6 +111,132 @@ inline double groundRange(double slant_range, double altitude)
 {
   const double d2 = slant_range * slant_range - altitude * altitude;
   return d2 > 0.0 ? std::sqrt(d2) : 0.0;
+}
+
+/// @brief Outcome of a DEM-based across-track range correction (@ref correctedGroundRange).
+struct DemCorrection
+{
+  /// @brief Which fixed point (if any) the iteration reached.
+  enum class Status
+  {
+    kConverged,      ///< Settled within tolerance; @ref ground_range is DEM-corrected.
+    kNoCoverage,     ///< The DEM had no data at a probed position; flat-bottom result.
+    kDegenerate,     ///< Bottom at/above the sensor, or the sample inside the nadir
+                     ///<   cone for the probed depth; flat-bottom result.
+    kNotConverged,   ///< Hit the iteration cap without meeting tolerance; flat-bottom
+                     ///<   result (the non-converged iterate is never emitted).
+  };
+
+  /// @brief Corrected horizontal range (m) when @ref status is `kConverged`,
+  ///   otherwise the caller's flat-bottom seed, unchanged.
+  double ground_range = 0.0;
+
+  /// @brief Sensor ellipsoidal height − bottom ellipsoidal height (m, positive
+  ///   down to the seafloor) at the converged sample position. **Only meaningful
+  ///   when @ref status is `kConverged`**; NaN otherwise — a caller taking the
+  ///   flat-bottom fallback keeps its own `(nadir_altitude_m, flat_ground)` pair.
+  double vertical_offset = std::numeric_limits<double>::quiet_NaN();
+
+  Status status = Status::kNoCoverage;
+};
+
+/// @brief Convergence tolerance (m) for @ref correctedGroundRange — a tenth of the
+///   L13 cell size (~0.11 m), so the iteration stops well inside one output cell.
+constexpr double kDemConvergenceToleranceM = 0.01;
+
+/// @brief Hard cap on @ref correctedGroundRange fixed-point iterations. Bounds the
+///   per-sample DEM cost at `kMaxDemIterations × 4` cell reads (four per bilinear
+///   stencil); a seed already within tolerance costs one stencil, not five.
+constexpr int kMaxDemIterations = 5;
+
+/// @brief DEM-corrected (orthorectified) ground range for one sidescan sample.
+///
+/// Replaces the flat-bottom `groundRange(slant, held_nadir_altitude)` placement,
+/// which mis-places every off-nadir sample on a sloping or irregular bottom
+/// (issue #297; the geometric correction ADR-0006 D4 defers to this phase).
+///
+/// Fixed-point iteration seeded at the flat-bottom range: step to the candidate
+/// ground position, read the DEM there, recompute the vertical offset, and take
+/// the flat formula's range for **that** offset — which is exact for the local
+/// tangent-plane distance at the candidate point.
+///
+/// **Convergence.** With bottom height `z(r)` along the beam azimuth and
+/// `v(r) = sensor_height − z(r)`, the map is `f(r) = sqrt(R² − v(r)²)`, so
+/// `f'(r) = −tan(θ)·tan(β)` where `θ` is the ray's local grazing angle and `β` the
+/// bottom slope along the beam. The iteration contracts iff `θ + β < 90°`: it
+/// degrades for steep slopes and (because `tan θ → ∞`) near nadir. The near-nadir
+/// regime is excluded by the caller's nadir-cone gate plus the degeneracy guard
+/// below; anything still unsettled at the cap returns `kNotConverged`.
+///
+/// **Multi-valued intersections / acoustic shadow (v1 scope).** On a steep slope
+/// the ray can meet the bottom at more than one range, or at none (the sample lies
+/// in shadow). The iteration converges to whichever fixed point its seed leads to
+/// — seeded flat, that is the one nearest the flat solution. v1 accepts the
+/// nearest converged solution; shadow detection (a ray-march along the DEM
+/// profile) is out of scope. That regime coincides with the `θ + β < 90°`
+/// contraction failure, so those samples surface as `kNotConverged`.
+///
+/// @param slant_range Slant range to the sample (m).
+/// @param sensor_height_m **WGS84 ellipsoidal height of the sensor** (m,
+///   up-positive) — `GeoBeam::altitude_m`, from the Tier-1 baked `earth`→transducer
+///   pose (ADR-0006 D2). Never `nadir_altitude_m`, which is a height above bottom;
+///   the DEM's `depth` is an ellipsoidal height, so both sides of the subtraction
+///   must be the same datum.
+/// @param origin Sensor ground position — **altitude must be 0** (the
+///   `geodesy::wgs84::direct` precondition).
+/// @param azimuth_rad Across-track azimuth to the sample (clockwise from north).
+/// @param flat_ground_range Flat-bottom seed, i.e. `groundRange(slant,
+///   nadir_altitude_m)`; also the value returned on every degraded status.
+/// @param depth_at Callback `(lat_deg, lon_deg) -> std::optional<double>` returning
+///   the bottom's **ellipsoidal height** (up-positive), `nullopt` where the DEM has
+///   no data. Templated (like @ref splatAlongTrack's `Deposit`) so this header
+///   stays free of file I/O.
+template<typename DepthLookup>
+DemCorrection correctedGroundRange(
+  double slant_range,
+  double sensor_height_m,
+  const geographic_msgs::msg::GeoPoint & origin,
+  double azimuth_rad,
+  double flat_ground_range,
+  DepthLookup && depth_at)
+{
+  DemCorrection result;
+  result.ground_range = flat_ground_range;
+
+  double range = flat_ground_range;
+  for (int i = 0; i < kMaxDemIterations; ++i) {
+    const auto candidate = geodesy::wgs84::direct(origin, azimuth_rad, range);
+    const std::optional<double> bottom = depth_at(candidate.latitude, candidate.longitude);
+    if (!bottom) {
+      result.status = DemCorrection::Status::kNoCoverage;
+      return result;   // D4-documented degenerate fallback: flat-bottom placement.
+    }
+    // Both terms are up-positive WGS84 ellipsoidal heights, so v > 0 means the
+    // seafloor lies below the sensor.
+    const double vertical = sensor_height_m - *bottom;
+    // Degeneracy guard: a bottom at or above the sensor (bad DEM cell or bad pose)
+    // or a sample inside the nadir cone for this depth would drive the next iterate
+    // to 0 — which re-probes the DEM at the sensor's own nadir point and oscillates.
+    if (!std::isfinite(vertical) || vertical <= 0.0 || vertical >= slant_range) {
+      result.status = DemCorrection::Status::kDegenerate;
+      result.ground_range = flat_ground_range;
+      return result;
+    }
+    const double next = groundRange(slant_range, vertical);
+    const double delta = std::abs(next - range);
+    range = next;
+    if (delta < kDemConvergenceToleranceM) {
+      result.ground_range = range;
+      result.vertical_offset = vertical;
+      result.status = DemCorrection::Status::kConverged;
+      return result;
+    }
+  }
+  // Cap reached. The non-converged iterate's error is unbounded, so it is never
+  // emitted — fall back to flat and let the caller count the condition.
+  result.ground_range = flat_ground_range;
+  result.status = DemCorrection::Status::kNotConverged;
+  return result;
 }
 
 /// @brief Across-track azimuth (radians, clockwise from north) for a @p side.

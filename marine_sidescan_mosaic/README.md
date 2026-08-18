@@ -22,7 +22,15 @@ and the dirty-region distribution topic (P4) are separate sub-issues.
    residual gap the `no_nadir_policy` applies (`drop` default, or `assume_zero`).
 3. **Per-sample projection** — slant range `(sample0+j)·c/2f` → ground range
    `sqrt(slant²−alt²)` → geodetic via `geodesy::wgs84::direct` at the across-track
-   azimuth → GGGS `CellIndex` (grid resolved per sample, no edge clamp).
+   azimuth → GGGS `CellIndex` (grid resolved per sample, no edge clamp). The
+   offline `sidescan_tier2_processed` build can replace the flat `sqrt(slant²−alt²)`
+   with a **DEM-orthorectified** ground range — see
+   [DEM orthorectification](#dem-orthorectification-sidescan_tier2_processed-297).
+   The live node stays flat-bottom **by design** — ADR-0006 D9 ("the live `draft`
+   node uses flat-bottom (no bathy live)") and D6, which builds `draft` "with
+   feasible-at-the-time processing (flat-bottom)". `sidescan_tier2_flat` is flat by
+   its own scope, not by those clauses: it is the cheap no-bathy Tier-2 builder, and
+   #297 deliberately left it alone rather than because an ADR forbids the change.
 4. **Normalize** — rolling AGC (`RollingNormalizer`) maps sample magnitudes to
    `uint16` so the mosaic stays legible (live stand-in for PINGMapper's EGN).
 5. **Splat** — each sample is deposited across its **along-track footprint**
@@ -86,6 +94,155 @@ ros2 launch marine_sidescan_mosaic sidescan_mosaic.launch.py \
 
 The resulting WGS84 GeoTIFF tiles load directly in QGIS / a CAMP `RasterLayer`.
 
+### DEM orthorectification (`sidescan_tier2_processed`, #297)
+
+The flat-bottom `sqrt(slant² − alt²)` applies one held nadir altitude across the
+whole swath, which mis-places every off-nadir sample on a sloping or irregular
+bottom. Pass `--bathy-store` and the durable `processed` build instead solves for
+where the ray actually meets the seafloor, reading the bathymetry store's GeoTIFF
+value tiles directly (ADR-0006 D9 — a file-level dependency, no
+`marine_bathymetry_store` package dependency) and bilinearly interpolating them.
+
+```bash
+ros2 run marine_sidescan_mosaic sidescan_tier2_processed \
+    ~/data/stores/sidescan/tier1/2026-06-19.sst1 /tmp/tier2_dem \
+    --bathy-store ~/data/stores/bathymetry \
+    [--bathy-layers survey,reference] [--min-dem-coverage 0.5] \
+    [--datum-check-warn-m 1.0] [--bathy-cache-tiles 8] [--allow-mixed-projection]
+```
+
+`/tmp/tier2_dem` must be **empty or absent**: re-running this line into the store it
+just built is refused (exit 2) unless it adds `--accumulate`. Choose a fresh output
+directory per build, or delete the previous one yourself — see below.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--bathy-store` | *(unset)* | Bathy store root. **Omitted ⇒ the unchanged flat-bottom path.** An absent root, *all* requested layer directories absent, or a store with no tiles at all is a hard failure at startup (exit 1) — never a silent whole-run fallback to flat. A **partially** available request (one requested layer absent or tile-less while another has tiles) continues on the layers that do exist and **warns** for each one dropped |
+| `--bathy-layers` | `survey,reference` | Layer directory search order, highest priority first. `chart` is **not** in the default: charted soundings are cartographically shoal-biased for navigation safety, and a shoal-biased vertical term would bias placement (the store's safety query — ADR-0002 D7's shallowest-reliable mode, refined by ADR-0010 D4 — is where that bias is *wanted*); opt in only where it is the only coverage. ADR-0010 D3's `survey/`→`processed/` re-classification is a change to this flag, not to code — and a requested layer that is missing only **warns** if another requested layer still has tiles. A list naming **no** layer at all (empty, or all separators) is an argument error (exit 2), not a fall-back to the default |
+| `--min-dem-coverage` | `0.5` | Minimum share of DEM-consulted samples that must actually be placed against the DEM. The denominator is **every** sample that reached the lookup — `hit + no-coverage + degenerate + non-converged` — because every non-`hit` status falls back to flat placement. Below the threshold the run **exits 3 having written nothing** — no tiles, no registry. `0` is the explicit opt-in for a deliberately partial run; a below-50 % fraction still prints the same diagnostic block as a warning |
+| `--datum-check-warn-m` | `1.0` | Warn when the mean nadir-altimeter-vs-DEM discrepancy exceeds this |
+| `--bathy-cache-tiles` | `8` | Resident bathy tiles in the reader's LRU, in `[1, 1024]`. A tile is 960×960×2 `double` ≈ **14.7 MB**, so the default costs ~118 MB and the cap ~15 GB. One lookup can touch `layers × levels` tiles resolving its source plus 4 for the bilinear stencil — raise this when the search order is deep, or the cache thrashes. Out-of-range is an argument error (exit 2); an out-of-memory *during* a lookup is reported as a sizing fault, not as a corrupt store |
+| `--allow-mixed-projection` | off | Accept an `--accumulate` across projection modes (see below) |
+
+**Datum.** The vertical term is a WGS84 **ellipsoidal height on both sides**: the
+sensor's from the Tier-1 baked `earth`→transducer pose (`GeoBeam::altitude_m`), the
+bottom's from the store's depth band. `nadir_altitude_m` is a *height above bottom*,
+not a height datum, and is used only as the nadir-cone gate, the iteration seed, and
+the fallback. As an independent check, each ping compares its altimeter reading
+against `sensor height − DEM height` at the nadir point; a persistent offset means a
+datum mismatch (an orthometric store, a lever-arm error, an unexpected tide frame)
+and is reported as mean/RMS with a warning past `--datum-check-warn-m`.
+
+**Degraded samples are counted, never guessed.** The summary reports
+`hit / no-coverage / degenerate / non-converged` per sample, plus per-layer counts
+of DEM *probes that returned data* — a probe count, not a sample count (one sample
+costs up to one bilinear stencil per iteration, and each ping adds a datum-check
+probe), so the two are not comparable one-for-one. A sample
+whose iteration does not settle within its 5-iteration cap falls back to the flat
+placement and is counted — the non-converged iterate is never emitted. Same for a
+DEM cell at or above the sensor, or one that would put the sample inside the nadir
+cone. Acoustic shadow and multi-valued ray/bottom intersections are out of scope in
+v1: the iteration takes the solution nearest the flat seed.
+
+**A populated output directory is never written into by accident.** `saveTiles`
+rewrites only the tiles a run touches, so a plain re-run into an existing store
+would leave the previous build's other tiles in place — a materially **mixed** store
+stamped with a single pure mode, at exit 0. A run without `--accumulate` therefore
+**refuses** (exit 2) a directory that already holds tiles, a `registry.json`, a
+`projection.json`, or a derived `overviews/` pyramid. There are two ways forward,
+and the refusal names both: pass `--accumulate`, or use a fresh output directory.
+
+Every argument is checked too, and an **unrecognised** one is refused (exit 2)
+rather than ignored: an ignored `--bathy-stor /path` is a full flat-bottom build the
+operator believes is DEM-corrected, and an ignored `--overwrite` (see below) is a
+deletion that silently did not happen. A run that ends up painting **no cell at all**
+is likewise a refusal (exit 3) rather than a write: it has nothing to record, and
+rewriting the sidecar from it would relabel an existing store's provenance on the
+strength of a run that contributed nothing.
+
+**This tool never deletes a store.** There is deliberately no `--overwrite` flag:
+clearing a previous build is the operator's own explicit act, done by hand. Passing
+`--overwrite` is refused by name (exit 2) rather than ignored — an ignored deletion
+flag is a deletion the operator believes happened. (One was
+written during #297 and removed in the same PR — every in-tool deletion path found a
+way to destroy a store nobody meant to lose: a run that placed nothing still cleared
+the directory, and a transposed path argument matched another store's tile names.)
+To rebuild in place, delete the previous build's `*.tif` tiles, `registry.json`,
+`projection.json`, and its derived `overviews/` sidecar yourself; the refusal message
+prints those paths.
+
+Under `--accumulate`, the provenance guards key on the **tiles** as well as on
+`registry.json`, so a build interrupted before its registry landed is guarded too
+(and a tiles-without-registry store is refused outright: its per-cell source indices
+are unresolvable).
+
+The sidecar records the **achieved** DEM coverage. `--min-dem-coverage 0` is an
+explicit opt-in to a partial run, and without the figure a 3 %-corrected and a
+99 %-corrected store both read as plain `"dem"` downstream. Two fields carry it
+(sidecar `version: 2`):
+
+- `dem_coverage_history` — one element per run that has written this store, oldest
+  first, `null` for a flat run. An `--accumulate` **appends**; no run's figure is
+  ever dropped.
+- `dem_coverage` — the **worst** figure in that history (`null` when no run had
+  one). A single-number reader therefore never gets a rosier answer than the store
+  deserves: folding a 99 %-corrected bag into a 3 %-corrected store leaves the store
+  reading 3 %, which is the hazard the figure exists to record.
+
+A `version: 1` sidecar (written only by an intermediate build of #297) carried the
+scalar alone; its figure is **seeded into the history** on the first `--accumulate`,
+so the migration cannot drop it. A `version` this build does not know leaves the
+mode unknown — refused, like any unreadable sidecar — and so does a history element
+that is neither a number in `[0, 1]` nor `null`.
+
+The sidecar also records **which** bathy store and layer order a `dem` run used, so
+an `--accumulate` against a *different* store (or layer order) **warns**: the mode
+guard cannot see that difference, and two bathymetric surfaces of different vintage,
+extent, or vertical datum place samples differently. Paths are compared normalised,
+so a relative and an absolute spelling of the same store do not warn — the
+normalisation resolves against the *reading* run's working directory, so a store
+recorded by its relative path can still warn if a later run is launched from
+somewhere else (record and pass absolute store paths to avoid it); a store
+*re-imported in place with new content* is what the check cannot see (that needs a
+store fingerprint, which belongs with #179). It is a warning rather than a refusal —
+re-running against an updated store is a legitimate workflow, and only the operator
+knows whether the surfaces agree. A run that names **no** `--bathy-store` (a flat
+run accepted into a store as a deliberate mix) leaves the recorded store name in
+place rather than blanking it: that record is permanent provenance.
+
+**Regenerate, don't accumulate, when switching projection mode.** Every run writes a
+`projection.json` sidecar next to `registry.json` recording `flat` or `dem`. The
+sidecar is written **before the first tile**, so a crash or a full filesystem can
+never leave a DEM store that reads as a pre-#297 flat build; the harmless residue —
+a sidecar with no tiles — is what the guards then see. Under
+`--accumulate`, a mode mismatch is refused (exit 2) before anything is decoded: the
+per-cell source band records only the source id, so flat and DEM-placed samples
+composited into the same cells cannot be told apart afterwards. A store with **no**
+sidecar predates the flag and is treated as flat-built; a sidecar that is *present
+but unreadable or carries no `projection_mode`* leaves the mode **unknown**, which is
+refused (exit 2) rather than assumed flat. Build into a **fresh** output directory
+instead, or pass `--allow-mixed-projection` to accept the mix deliberately — which
+marks the store `"projection_mode": "mixed"` **permanently**: a mixed store is never
+re-recorded as pure `flat`/`dem`, and every later `--accumulate` into it needs the
+flag again. A sidecar that cannot be written is an error (exit 1) **before any tile
+is written**, so the output directory is left without a store rather than with an
+unmarked one. The rewrite is **staged and swapped** (a sibling `projection.json.tmp`
+renamed into place once it is written and closed cleanly), so a failed write or a
+crash never destroys the sidecar already there — under `--accumulate` that file is
+the store's only record of its coverage history and bathy provenance, and losing it
+makes the store unreadable to every later run. (The mode belongs in `registry.json`;
+it moves there when
+#179's append-only registry merge lands, and the sidecar retires.)
+
+**Exit codes**:
+
+| Code | Meaning |
+|---|---|
+| `0` | Success — tiles, `registry.json`, and `projection.json` all written |
+| `1` | A run-time failure, always reported with what (if anything) reached the disk: the Tier-1 archive cannot be opened or carries the wrong magic/version; the bathy store is unusable at startup, or a tile it listed cannot be read mid-run (a corrupt/truncated store); **out of memory** loading a bathy tile, reported as a `--bathy-cache-tiles` **sizing** fault rather than as a corrupt store; `--accumulate` cannot reload an existing tile (refused, so the tile's prior coverage is never overwritten); the output directory cannot be created; `projection.json` cannot be written (before any tile); `saveTiles` throws; `registry.json` is missing or empty after the tiles were saved; or **any other exception** reaching `main`'s last-resort handler, which reports it rather than letting `std::terminate` end a store writer with no diagnostic |
+| `2` | An argument or provenance-guard refusal, always **before** anything is decoded: a bad/missing/flag-shaped flag value, an **unrecognised** flag or stray token (`--overwrite` is named explicitly), a flag-shaped positional, an out-of-range `--source-id`, `--bathy-cache-tiles`, `--min-dem-coverage`, or `--datum-check-warn-m`, an empty `--bathy-layers`, a populated `out_dir` without `--accumulate`, an `--accumulate` across projection modes without `--allow-mixed-projection`, into a store whose sidecar is unreadable (unparseable, an unknown `version`, or an invalid coverage element), into tiles with no `registry.json`, or with a `--source-id` the existing registry does not name |
+| `3` | The DEM coverage gate: coverage below `--min-dem-coverage`. Reported separately under the same code: no sample reached the DEM lookup at all, and — on any run, `dem` or `flat` — no cell painted at all (an empty archive / every ping dropped) — no-usable-input failures rather than coverage verdicts. All exit **having written nothing**, leaving any existing store's tiles and `projection.json` exactly as they were |
+
 ### Overview pyramid (post-ingest, #188 / ADR-0011)
 
 The live mosaic is single-level (L13), so a zoomed-out consumer must open every
@@ -114,11 +271,19 @@ colcon build --symlink-install --packages-select marine_sidescan_mosaic
 colcon test --packages-select marine_sidescan_mosaic
 ```
 
-Unit tests cover the projection geometry (`test_projection`), the splat
-accumulator (`test_accumulator`), the normalizer (`test_normalizer`), and the
-overview-pyramid builder's production path (`test_overview_pyramid` — argument
-parsing, on-disk fold, level-distinguished sidecar, mean/value-idempotency, and
-the empty-layer / partial-pyramid guards).
+Unit tests cover the projection geometry including the DEM correction
+(`test_projection`), the splat accumulator (`test_accumulator`), the normalizer
+(`test_normalizer`), the overview-pyramid builder's production path
+(`test_overview_pyramid` — argument parsing, on-disk fold, level-distinguished
+sidecar, mean/value-idempotency, and the empty-layer / partial-pyramid guards), the
+bathy DEM reader over synthetic value tiles (`test_bathy_dem` — bilinear blend,
+no-data, grid-crossing stencil, multi-level and layer priority, hard-fail
+construction), and the `sidescan_tier2_processed` DEM path end to end through the
+built binary (`test_tier2_processed_dem` — slope-direction placement, flat-path
+equivalence, store hard-fail, coverage gate, `--accumulate` mode guard). Both new
+suites author their own fixtures (`.sst1` via `writeTier1Header`/`writeTier1Ping`,
+value tiles via `marine_tiled_raster_store::saveTile<double>`), so no binary
+fixture is committed.
 
 ## Dependencies
 

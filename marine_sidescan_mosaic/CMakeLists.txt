@@ -35,6 +35,7 @@ add_library(${PROJECT_NAME}
   src/tier1.cpp
   src/decode.cpp
   src/overview_pyramid.cpp
+  src/bathy_dem.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
@@ -131,7 +132,8 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_projection test/test_projection.cpp)
   target_link_libraries(test_projection ${PROJECT_NAME})
-  ament_target_dependencies(test_projection geographic_msgs geodesy marine_autonomy)
+  ament_target_dependencies(test_projection
+    geographic_msgs geodesy marine_autonomy marine_backscatter)
 
   ament_add_gtest(test_accumulator test/test_accumulator.cpp)
   target_link_libraries(test_accumulator ${PROJECT_NAME})
@@ -148,6 +150,27 @@ if(BUILD_TESTING)
   ament_add_gtest(test_overview_pyramid test/test_overview_pyramid.cpp)
   target_link_libraries(test_overview_pyramid ${PROJECT_NAME})
   ament_target_dependencies(test_overview_pyramid marine_autonomy marine_tiled_raster_store)
+
+  # DEM reader over synthetic bathy value tiles (#297). Fixtures are written with
+  # marine_tiled_raster_store::saveTile<double> — NOT marine_bathymetry_store's
+  # writer, which would add a test-only package dependency cutting against
+  # ADR-0006 D9's decoupling.
+  ament_add_gtest(test_bathy_dem test/test_bathy_dem.cpp)
+  target_link_libraries(test_bathy_dem ${PROJECT_NAME})
+  ament_target_dependencies(test_bathy_dem marine_autonomy marine_tiled_raster_store)
+
+  # End-to-end subprocess test of the built sidescan_tier2_processed binary over a
+  # synthetic .sst1 + synthetic bathy store (#297): DEM placement vs flat, the
+  # flat-path equivalence, the store hard-fail, the coverage gate, and the
+  # --accumulate projection-mode guard. The binary path is injected as a compile
+  # definition, the pattern marine_bathymetry_store uses for import_geotiff.
+  ament_add_gtest(test_tier2_processed_dem test/test_tier2_processed_dem.cpp)
+  target_link_libraries(test_tier2_processed_dem ${PROJECT_NAME})
+  ament_target_dependencies(test_tier2_processed_dem
+    geographic_msgs geodesy marine_autonomy marine_tiled_raster_store)
+  target_compile_definitions(test_tier2_processed_dem PRIVATE
+    SIDESCAN_TIER2_PROCESSED_BINARY="$<TARGET_FILE:sidescan_tier2_processed>")
+  add_dependencies(test_tier2_processed_dem sidescan_tier2_processed)
 endif()
 
 ament_package()

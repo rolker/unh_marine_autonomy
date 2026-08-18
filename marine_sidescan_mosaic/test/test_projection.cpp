@@ -23,11 +23,14 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <optional>
 #include <set>
 
 #include "geodesy/ecef.h"
 #include "geographic_msgs/msg/geo_point.hpp"
 #include "marine_autonomy/gggs.h"
+#include "marine_backscatter/quality.hpp"
 #include "marine_sidescan_mosaic/projection.hpp"
 
 namespace msm = marine_sidescan_mosaic;
@@ -430,4 +433,172 @@ TEST(Projection, SplatStepsAlongHeading)
   const double cell_deg = level.cellSize() / 111320.0;   // ~m per deg latitude
   const double lon_span = *lons.rbegin() - *lons.begin();
   EXPECT_LT(lon_span, 2.0 * cell_deg);
+}
+
+// ---------------------------------------------------------------------------
+// DEM orthorectification (#297): correctedGroundRange.
+//
+// Every assertion is tolerance-based — the routine is an iterative
+// floating-point computation, so bit-identity is not a property it has.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+constexpr double kDemLat = 43.07, kDemLon = -71.42;
+
+// A synthetic bottom that is a constant-gradient plane along the beam azimuth:
+// ellipsoidal height `z0 + dz_dr * r`, where r is the ground distance from
+// @p origin. Returned as the DepthLookup callback signature.
+class SlopeBottom
+{
+public:
+  SlopeBottom(const geographic_msgs::msg::GeoPoint & origin, double z0, double dz_dr)
+  : origin_(origin), z0_(z0), dz_dr_(dz_dr) {}
+
+  std::optional<double> operator()(double lat, double lon) const
+  {
+    geographic_msgs::msg::GeoPoint p;
+    p.latitude = lat;
+    p.longitude = lon;
+    p.altitude = 0.0;
+    const double r = geodesy::wgs84::inverse(origin_, p).distance;
+    return z0_ + dz_dr_ * r;
+  }
+
+  // Ground range where the ray of slant range @p slant meets this plane, from
+  // (1 + m²)r² − 2·v0·m·r + (v0² − R²) = 0 with v0 = sensor_height − z0,
+  // m = dz_dr. The + root is the one the flat-seeded iteration converges to.
+  double analyticRange(double slant, double sensor_height) const
+  {
+    const double v0 = sensor_height - z0_;
+    const double m = dz_dr_;
+    const double a = 1.0 + m * m;
+    const double disc = v0 * v0 * m * m - a * (v0 * v0 - slant * slant);
+    return (v0 * m + std::sqrt(disc)) / a;
+  }
+
+private:
+  geographic_msgs::msg::GeoPoint origin_;
+  double z0_, dz_dr_;
+};
+}  // namespace
+
+// A constant-depth DEM must reproduce the flat formula exactly: the correction
+// is a generalization of groundRange, not a different geometry.
+TEST(Projection, CorrectedGroundRangeFlatBottom)
+{
+  const auto origin = geoPoint(kDemLat, kDemLon);
+  const double slant = 50.0, sensor_height = 0.0, vertical = 10.0;
+  const double seed = msm::groundRange(slant, 12.0);   // deliberately a wrong seed
+  const auto result = msm::correctedGroundRange(
+    slant, sensor_height, origin, M_PI / 2.0, seed,
+    [vertical, sensor_height](double, double) {
+      return std::optional<double>(sensor_height - vertical);
+    });
+  EXPECT_EQ(result.status, msm::DemCorrection::Status::kConverged);
+  EXPECT_NEAR(result.ground_range, msm::groundRange(slant, vertical), 1e-9);
+  EXPECT_NEAR(result.vertical_offset, vertical, 1e-9);
+}
+
+// On a constant-gradient bottom the iteration must reach the analytically known
+// intersection — this is the mis-placement issue #297 exists to fix.
+TEST(Projection, CorrectedGroundRangeSlope)
+{
+  const auto origin = geoPoint(kDemLat, kDemLon);
+  const double slant = 50.0, sensor_height = 0.0;
+  const SlopeBottom bottom(origin, -10.0, -0.2);   // deepens 0.2 m per metre of range
+  const double seed = msm::groundRange(slant, 10.0);
+  const auto result = msm::correctedGroundRange(
+    slant, sensor_height, origin, M_PI / 2.0, seed, bottom);
+  EXPECT_EQ(result.status, msm::DemCorrection::Status::kConverged);
+  EXPECT_NEAR(result.ground_range, bottom.analyticRange(slant, sensor_height), 1e-3);
+  // A deepening bottom pulls the sample IN from the flat placement; the flat
+  // range is wrong by metres, which is tens of L13 cells.
+  EXPECT_LT(result.ground_range, seed - 2.0);
+  // The returned pair is consistent: r² + v² = R².
+  EXPECT_NEAR(
+    std::hypot(result.ground_range, result.vertical_offset), slant, 1e-6);
+}
+
+// No DEM data anywhere ⇒ the flat seed is returned untouched. This is the path
+// every sample takes when --bathy-store is omitted, so it must be exact.
+TEST(Projection, CorrectedGroundRangeNoDemFallsBackToFlat)
+{
+  const auto origin = geoPoint(kDemLat, kDemLon);
+  const double seed = msm::groundRange(50.0, 10.0);
+  const auto result = msm::correctedGroundRange(
+    50.0, 0.0, origin, M_PI / 2.0, seed,
+    [](double, double) {return std::optional<double>();});
+  EXPECT_EQ(result.status, msm::DemCorrection::Status::kNoCoverage);
+  EXPECT_DOUBLE_EQ(result.ground_range, seed);
+  EXPECT_TRUE(std::isnan(result.vertical_offset));
+}
+
+// A DEM cell above the sensor (bad cell or bad pose) must not drive the iterate
+// to zero and oscillate about the sensor's own nadir point.
+TEST(Projection, CorrectedGroundRangeDegenerateBottomAboveSensor)
+{
+  const auto origin = geoPoint(kDemLat, kDemLon);
+  const double seed = msm::groundRange(50.0, 10.0);
+  const auto result = msm::correctedGroundRange(
+    50.0, 0.0, origin, M_PI / 2.0, seed,
+    [](double, double) {return std::optional<double>(5.0);});   // bottom ABOVE the sensor
+  EXPECT_EQ(result.status, msm::DemCorrection::Status::kDegenerate);
+  EXPECT_DOUBLE_EQ(result.ground_range, seed);
+}
+
+// A depth that puts the sample inside the nadir cone is the other degenerate
+// branch — groundRange would clamp to 0 and the next probe would re-read the
+// sensor's own nadir cell.
+TEST(Projection, CorrectedGroundRangeDegenerateInsideNadirCone)
+{
+  const auto origin = geoPoint(kDemLat, kDemLon);
+  const double seed = msm::groundRange(50.0, 10.0);
+  const auto result = msm::correctedGroundRange(
+    50.0, 0.0, origin, M_PI / 2.0, seed,
+    [](double, double) {return std::optional<double>(-60.0);});   // v = 60 >= slant 50
+  EXPECT_EQ(result.status, msm::DemCorrection::Status::kDegenerate);
+  EXPECT_DOUBLE_EQ(result.ground_range, seed);
+}
+
+// A pathological DEM the iteration cannot settle on must terminate at the cap
+// and return the FLAT value — a non-converged iterate's error is unbounded and
+// is never emitted.
+TEST(Projection, CorrectedGroundRangeCapsIterations)
+{
+  const auto origin = geoPoint(kDemLat, kDemLon);
+  const double seed = msm::groundRange(50.0, 10.0);
+  int calls = 0;
+  const auto result = msm::correctedGroundRange(
+    50.0, 0.0, origin, M_PI / 2.0, seed,
+    [&calls](double, double) {
+      ++calls;
+      // Neither depth agrees with the seed's, so the very first step already
+      // moves — and the two alternate far apart forever.
+      return std::optional<double>((calls % 2) ? -20.0 : -45.0);
+    });
+  EXPECT_EQ(result.status, msm::DemCorrection::Status::kNotConverged);
+  EXPECT_DOUBLE_EQ(result.ground_range, seed);
+  EXPECT_TRUE(std::isnan(result.vertical_offset));
+  EXPECT_EQ(calls, msm::kMaxDemIterations);   // bounded cost, no hang
+}
+
+// The correction's (vertical_offset, ground_range) pair is what feeds the
+// best-source quality score. On a slope it must beat the flat pair — this is
+// the wiring the tool relies on, with no marine_backscatter API change.
+TEST(Projection, CorrectedGroundRangeGrazingPairFeedsQuality)
+{
+  const auto origin = geoPoint(kDemLat, kDemLon);
+  const double slant = 50.0, sensor_height = 0.0, nadir_altitude = 10.0;
+  const SlopeBottom bottom(origin, -10.0, -0.2);
+  const double flat_ground = msm::groundRange(slant, nadir_altitude);
+  const auto result = msm::correctedGroundRange(
+    slant, sensor_height, origin, M_PI / 2.0, flat_ground, bottom);
+  ASSERT_EQ(result.status, msm::DemCorrection::Status::kConverged);
+
+  const std::uint16_t flat_quality =
+    marine_backscatter::grazingQuality(nadir_altitude, flat_ground);
+  const std::uint16_t dem_quality =
+    marine_backscatter::grazingQuality(result.vertical_offset, result.ground_range);
+  EXPECT_GT(dem_quality, flat_quality);
 }
