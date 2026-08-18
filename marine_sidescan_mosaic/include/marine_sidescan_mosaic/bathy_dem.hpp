@@ -131,9 +131,12 @@ public:
   ///   that axis — but the interpolation is only exact away from those two bands.
   ///
   /// Degraded cases: a neighbour that is NaN or lies in an absent tile drops out
-  /// of the blend and the nearest valid of the four is returned instead; when the
-  /// cell containing the query point has no data anywhere in the store, the result
-  /// is `nullopt`.
+  /// of the blend, which is then **renormalised by the weights that remain** — the
+  /// bilinear interpolation over the neighbours that do exist, so a missing corner
+  /// of negligible weight barely moves the result (an un-renormalised partial sum
+  /// would instead bias toward zero, i.e. toward the ellipsoid). When the cell
+  /// containing the query point has no data anywhere in the store, the result is
+  /// `nullopt`.
   ///
   /// @throws std::runtime_error if a tile the scan listed cannot be loaded (a
   ///   corrupt or truncated tile is an error, never a silent no-coverage).

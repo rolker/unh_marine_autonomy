@@ -176,6 +176,44 @@ TEST(BathyDem, BilinearBlendsBetweenCellCentres)
   EXPECT_NEAR(*midway, 0.5 * (here + east), 1e-9);
 }
 
+// One missing neighbour must not throw the interpolation away: the blend is
+// renormalised over the cells that ARE present, so a negligible-weight corner
+// dropping out barely moves the result (snapping to the nearest cell would
+// discard an almost-exact interpolation, and an un-renormalised partial sum would
+// bias toward zero).
+TEST(BathyDem, PartialStencilRenormalisesRatherThanSnappingToNearest)
+{
+  ScratchDir dir("partial_stencil");
+  const gggs::Level level(kFineLevel);
+  const auto geom = cellGeometry(kFineLevel, kLat, kLon);
+  const gggs::CellIndex cell =
+    level.cellIndex(gggs::geoPoint(geom.centre_lat, geom.centre_lon));
+  const uint16_t r0 = cell.row(), c0 = cell.column();
+  const auto depth_of = [](uint16_t r, uint16_t c) {
+      return -20.0 + static_cast<double>(c) * 0.01 + static_cast<double>(r) * 0.005;
+    };
+  // Everything ramps except the NE diagonal neighbour, which is no-data.
+  writeDepthTile(
+    dir.path(), "survey", geom.grid,
+    [&](uint16_t r, uint16_t c) {
+      return (r == r0 + 1 && c == c0 + 1) ? kNaN : depth_of(r, c);
+    });
+
+  msm::BathyDem dem(dir.path().string(), {"survey"});
+  // A tenth of a cell toward the NE corner: the missing diagonal carries weight
+  // 0.01 of the stencil, the three present cells 0.99 between them.
+  const auto value = dem.depthAt(
+    geom.centre_lat + 0.1 * geom.lat_span, geom.centre_lon + 0.1 * geom.lon_span);
+  ASSERT_TRUE(value.has_value());
+  const double here = depth_of(r0, c0);
+  const double expected =
+    (0.81 * here + 0.09 * depth_of(r0 + 1, c0) + 0.09 * depth_of(r0, c0 + 1)) / 0.99;
+  EXPECT_NEAR(*value, expected, 1e-9);
+  // ...and that is NOT the nearest cell's value, which the earlier all-or-nothing
+  // fallback returned.
+  EXPECT_GT(std::abs(*value - here), 1e-6);
+}
+
 // NaN is the store's no-data sentinel: a cell holding it has no depth to give.
 TEST(BathyDem, NoDataCellYieldsNullopt)
 {

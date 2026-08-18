@@ -334,32 +334,34 @@ std::optional<double> BathyDem::depthAt(double lat_deg, double lon_deg)
   const double lon_weight[2] = {1.0 - u, u};
 
   double blended = 0.0;
-  bool all_valid = true;
-  double nearest_weight = -1.0;
-  double nearest_value = 0.0;
+  double weight_sum = 0.0;
   for (int i = 0; i < 2; ++i) {
     for (int j = 0; j < 2; ++j) {
       const double weight = lat_weight[i] * lon_weight[j];
       const auto value = cellValue(source->layer, source->level, lats[i], lons[j]);
       if (!value) {
-        all_valid = false;
         continue;
       }
       blended += weight * *value;
-      if (weight > nearest_weight) {
-        nearest_weight = weight;
-        nearest_value = *value;
-      }
+      weight_sum += weight;
     }
   }
-  if (nearest_weight < 0.0) {
-    return std::nullopt;   // unreachable: resolveSource proved the centre cell valid.
+  if (!(weight_sum > 0.0)) {
+    // Unreachable: `resolveSource` proved the centre cell (i=j=0) has data, and
+    // its weight (1-t)(1-u) >= 0.25 because t,u <= 0.5 by construction. Kept as a
+    // guard so a future change to the stencil cannot divide by zero silently.
+    return std::nullopt;
   }
   ++lookups_by_layer_[layers_[source->layer].name];
-  // All four present ⇒ the weights sum to 1 and `blended` is the bilinear value.
-  // Otherwise fall back to the nearest valid of the four (never a partial blend,
-  // whose weights would not sum to 1 and would bias the result toward zero).
-  return all_valid ? blended : nearest_value;
+  // All four present ⇒ the weights sum to 1 and this is the plain bilinear value.
+  // With one or more missing, the SAME expression renormalised by the weights
+  // actually present is the bilinear interpolation over the neighbours that exist:
+  // a missing far corner carrying a negligible weight barely moves the result,
+  // where snapping to the nearest cell would discard an almost-exact
+  // interpolation. Dividing is also what keeps a partial sum unbiased — an
+  // un-renormalised partial blend pulls toward zero, which for ellipsoidal heights
+  // means toward the ellipsoid, not toward a neighbouring depth.
+  return blended / weight_sum;
 }
 
 }  // namespace marine_sidescan_mosaic
