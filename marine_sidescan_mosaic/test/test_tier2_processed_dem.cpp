@@ -554,6 +554,85 @@ TEST_F(Tier2ProcessedDemTest, DegenerateSamplesCountAgainstTheCoverageGate)
   EXPECT_FALSE(tileNames(allowed).empty());
 }
 
+// The sidecar is written BEFORE the first tile, so a store can never exist without
+// its mode record (a DEM store with no projection.json reads as a pre-#297 FLAT
+// build). Proven by making the sidecar write fail: nothing else may be on disk.
+TEST_F(Tier2ProcessedDemTest, SidecarIsWrittenBeforeAnyTile)
+{
+  const fs::path out = dir_ / "no_sidecar_write";
+  fs::create_directories(out);
+  fs::permissions(
+    out, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
+
+  const int rc = run(out, "--bathy-store \"" + store_.string() + "\"");
+  const std::string fail_log = log();
+  fs::permissions(out, fs::perms::owner_all, fs::perm_options::replace);
+
+  EXPECT_EQ(rc, 1) << fail_log;
+  EXPECT_NE(fail_log.find("projection.json"), std::string::npos) << fail_log;
+  EXPECT_TRUE(tileNames(out).empty()) << fail_log;
+  EXPECT_FALSE(fs::exists(out / "registry.json")) << fail_log;
+}
+
+// A build interrupted between its tiles and its registry leaves tiles with no
+// registry.json. Both --accumulate guards used to key on registry.json alone, so
+// such a store was folded into unguarded and then re-stamped with a pure mode.
+TEST_F(Tier2ProcessedDemTest, StoreWithTilesButNoRegistryIsStillGuarded)
+{
+  // (a) the projection-mode guard must still see a DEM store's mode.
+  const fs::path dem_store = dir_ / "dem_no_registry";
+  ASSERT_EQ(run(dem_store, "--bathy-store \"" + store_.string() + "\""), 0) << log();
+  ASSERT_FALSE(tileNames(dem_store).empty());
+  ASSERT_TRUE(fs::remove(dem_store / "registry.json"));
+  const auto before = readFile(dem_store / *tileNames(dem_store).begin());
+
+  EXPECT_EQ(run(dem_store, "--accumulate"), 2) << log();
+  EXPECT_NE(log().find("projection_mode 'dem'"), std::string::npos) << log();
+  EXPECT_EQ(readFile(dem_store / *tileNames(dem_store).begin()), before);
+  EXPECT_FALSE(fs::exists(dem_store / "registry.json"));
+
+  // (b) with the mode matching, the source-id guard has no registry to check
+  // against, so the fold is refused rather than run unverified.
+  const fs::path flat_store = dir_ / "flat_no_registry";
+  ASSERT_EQ(run(flat_store), 0) << log();
+  ASSERT_TRUE(fs::remove(flat_store / "registry.json"));
+  EXPECT_EQ(run(flat_store, "--accumulate"), 2) << log();
+  EXPECT_NE(log().find("no registry.json"), std::string::npos) << log();
+}
+
+// Without --accumulate, saveTiles rewrites only the tiles this run touches — so a
+// re-run into a populated directory leaves the previous build's other tiles beside
+// this one's while the sidecar records a single pure mode. Refuse it; --overwrite
+// is the explicit way through, and it clears the prior build first.
+TEST_F(Tier2ProcessedDemTest, NonAccumulateReRunIntoAPopulatedDirIsRefused)
+{
+  const fs::path out = dir_ / "populated";
+  ASSERT_EQ(run(out), 0) << log();
+  const auto flat_names = tileNames(out);
+  ASSERT_FALSE(flat_names.empty());
+  const auto before = readFile(out / *flat_names.begin());
+
+  // A DEM re-run into it is refused, and nothing on disk changes.
+  EXPECT_EQ(run(out, "--bathy-store \"" + store_.string() + "\""), 2) << log();
+  EXPECT_NE(log().find("--accumulate"), std::string::npos) << log();
+  EXPECT_NE(log().find("--overwrite"), std::string::npos) << log();
+  EXPECT_EQ(readFile(out / *flat_names.begin()), before);
+  EXPECT_NE(readFile(out / "projection.json").find("\"flat\""), std::string::npos);
+
+  // --accumulate and --overwrite are opposites.
+  EXPECT_EQ(run(out, "--accumulate --overwrite"), 2) << log();
+
+  // --overwrite clears the prior build, so the result is exactly a fresh DEM run:
+  // no stale flat tile survives to contradict the "dem" the sidecar now records.
+  EXPECT_EQ(
+    run(out, "--overwrite --bathy-store \"" + store_.string() + "\""), 0) << log();
+  EXPECT_NE(readFile(out / "projection.json").find("\"dem\""), std::string::npos);
+
+  const fs::path fresh = dir_ / "fresh_dem";
+  ASSERT_EQ(run(fresh, "--bathy-store \"" + store_.string() + "\""), 0) << log();
+  EXPECT_EQ(tileNames(out), tileNames(fresh));
+}
+
 // The datum cross-check must be REPORTED on a run the coverage gate then kills:
 // a store in the wrong vertical frame is exactly what drives coverage down, so a
 // check that only prints on successful runs is silent when it matters most.

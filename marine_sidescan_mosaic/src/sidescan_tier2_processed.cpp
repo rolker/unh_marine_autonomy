@@ -236,6 +236,70 @@ ProjectionSidecar readProjectionMode(const std::string & out_dir)
   return {SidecarState::kUnreadable, ""};
 }
 
+/// @brief Does @p out_dir already hold value tiles from an earlier build?
+///
+/// The provenance guards must key on the **tiles**, not on `registry.json` alone:
+/// the fold loop reads tile files, so a store whose registry never landed (an
+/// interrupted or failed run) still has coverage that a later run would composite
+/// into or overwrite (#297 round-2 review). Any read problem answers "no tiles" —
+/// the caller's other checks still apply, and a directory that cannot be listed
+/// fails loudly at `saveTiles` anyway.
+bool hasTileFiles(const std::string & out_dir)
+{
+  std::error_code ec;
+  if (!std::filesystem::is_directory(out_dir, ec) || ec) {
+    return false;
+  }
+  std::filesystem::directory_iterator it(out_dir, ec);
+  if (ec) {
+    return false;
+  }
+  for (const auto & entry : it) {
+    if (entry.is_regular_file(ec) && !ec && entry.path().extension() == ".tif") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// @brief Delete a prior build's tiles and provenance files from @p out_dir.
+///
+/// Only the files this tool writes are removed — `<...>.tif` value tiles,
+/// `registry.json`, `projection.json`. Anything else in the directory (a derived
+/// `overviews/` sidecar, operator notes) is left alone for its owner to rebuild.
+/// @return the number of files removed, or `nullopt` with @p error set on the
+///   first failure (a partially cleared store must not then be written into).
+std::optional<std::size_t> removePriorStore(const std::string & out_dir, std::string * error)
+{
+  std::error_code ec;
+  std::vector<std::filesystem::path> victims;
+  std::filesystem::directory_iterator it(out_dir, ec);
+  if (ec) {
+    *error = "cannot list " + out_dir + ": " + ec.message();
+    return std::nullopt;
+  }
+  for (const auto & entry : it) {
+    if (!entry.is_regular_file(ec) || ec) {
+      continue;
+    }
+    const std::string name = entry.path().filename().string();
+    if (entry.path().extension() == ".tif" || name == "registry.json" ||
+      name == "projection.json")
+    {
+      victims.push_back(entry.path());
+    }
+  }
+  std::size_t removed = 0;
+  for (const auto & victim : victims) {
+    if (!std::filesystem::remove(victim, ec) || ec) {
+      *error = "cannot remove " + victim.string() + ": " + ec.message();
+      return std::nullopt;
+    }
+    ++removed;
+  }
+  return removed;
+}
+
 }  // namespace
 
 int main(int argc, char ** argv)
@@ -249,6 +313,8 @@ int main(int argc, char ** argv)
       "       [--source-id N] [--platform P] [--sensor S] [--sensor-class C] [--campaign X]\n"
       "       [--accumulate]   # composite INTO an existing store (reload+fold each\n"
       "                        # touched tile) instead of overwriting it\n"
+      "       [--overwrite]    # a populated out_dir is refused without one of these:\n"
+      "                        # delete the previous build's tiles/registry/sidecar first\n"
       "       [--bathy-store PATH]        # DEM-orthorectify against a bathy store\n"
       "                                   # (omitted = flat-bottom, unchanged)\n"
       "       [--bathy-layers CSV]        # layer search order (default survey,reference)\n"
@@ -295,6 +361,12 @@ int main(int argc, char ** argv)
   const std::string sensor_class = argValue(argc, argv, "--sensor-class", "sidescan");
   const std::string campaign = argValue(argc, argv, "--campaign", "unknown");
   const bool accumulate = hasFlag(argc, argv, "--accumulate");
+  const bool overwrite = hasFlag(argc, argv, "--overwrite");
+  if (accumulate && overwrite) {
+    std::cerr << "error: --accumulate and --overwrite are opposites: one composites into "
+              << "the existing store, the other deletes it first. Pass at most one.\n";
+    return 2;
+  }
 
   // DEM orthorectification (#297). Omitting --bathy-store keeps the unchanged
   // flat-bottom code path; ADR-0006 D6/D9 keep the live draft node and
@@ -337,7 +409,44 @@ int main(int argc, char ** argv)
   // records the same source either way. So refuse the mix, fail-fast before
   // decoding. A store with no sidecar predates mode recording and is therefore
   // flat-built (every store built before this flag existed is).
-  if (accumulate && std::filesystem::exists(std::filesystem::path(out_dir) / "registry.json")) {
+  //
+  // "Already a store" is decided by the TILES (plus either provenance file), not by
+  // registry.json alone: a run interrupted between the tile write and the registry
+  // write leaves coverage on disk that a later --accumulate would otherwise fold
+  // into with both guards skipped, and then re-stamp with a pure mode (#297 round-2
+  // review).
+  const std::filesystem::path registry_file = std::filesystem::path(out_dir) / "registry.json";
+  const std::filesystem::path sidecar_file = std::filesystem::path(out_dir) / "projection.json";
+  const bool out_dir_has_tiles = hasTileFiles(out_dir);
+  const bool out_dir_has_registry = std::filesystem::exists(registry_file);
+  const bool out_dir_has_sidecar = std::filesystem::exists(sidecar_file);
+  const bool out_dir_populated =
+    out_dir_has_tiles || out_dir_has_registry || out_dir_has_sidecar;
+
+  // The same protection for a re-run WITHOUT --accumulate. saveTiles overwrites
+  // only the tiles this run touches, so a plain re-run into a populated directory
+  // leaves the previous build's untouched tiles in place — a store that is
+  // materially mixed (this run's placement in some cells, the previous run's in
+  // others) while the sidecar is re-stamped with this run's pure mode, at exit 0
+  // and with no flag. Refuse, and make clearing the prior build explicit (#297
+  // round-2 review).
+  if (!accumulate && overwrite && !out_dir_populated) {
+    std::cerr << "warning: --overwrite: " << out_dir << " holds no previous build; "
+              << "nothing to clear.\n";
+  }
+  if (!accumulate && out_dir_populated && !overwrite) {
+    std::cerr << "error: " << out_dir << " already holds a build (tiles/registry/"
+              << "projection.json) and this run does not pass --accumulate.\n"
+              << "  Writing into it would leave the previous build's untouched tiles beside\n"
+              << "  this run's, so the store would hold samples placed two different ways\n"
+              << "  while projection.json recorded a single pure mode. Per-cell provenance\n"
+              << "  cannot tell them apart afterwards (ADR-0005 D2/D6). Choose one:\n"
+              << "    --accumulate   composite into the existing store (mode-guarded), or\n"
+              << "    --overwrite    delete the prior tiles + registry + sidecar first, or\n"
+              << "    a fresh out_dir.\n";
+    return 2;
+  }
+  if (accumulate && out_dir_populated) {
     const ProjectionSidecar recorded = readProjectionMode(out_dir);
     if (recorded.state == SidecarState::kUnreadable) {
       std::cerr << "error: --accumulate: the store in " << out_dir << " has a projection.json "
@@ -388,8 +497,17 @@ int main(int argc, char ** argv)
   // append-only merge (#179), refuse the mismatch rather than corrupt it. Fail
   // fast, before decoding.
   if (accumulate) {
-    const std::string reg_path =
-      (std::filesystem::path(out_dir) / "registry.json").string();
+    const std::string reg_path = registry_file.string();
+    if (out_dir_has_tiles && !out_dir_has_registry) {
+      std::cerr << "error: --accumulate: " << out_dir << " holds value tiles but no "
+                << "registry.json.\n"
+                << "  The tiles' per-cell source indices are unresolvable without it, so this\n"
+                << "  run cannot check that its --source-id matches theirs — and writing a\n"
+                << "  fresh single-source registry over folded foreign coverage would assert a\n"
+                << "  provenance the tiles do not have (ADR-0005 D2/D6). A store in this state\n"
+                << "  is an interrupted build: remove it, or regenerate into a fresh out_dir.\n";
+      return 2;
+    }
     std::ifstream reg(reg_path);
     std::string line;
     while (std::getline(reg, line)) {
@@ -720,6 +838,50 @@ int main(int argc, char ** argv)
     std::cerr << "accumulate: folded " << folded << " existing tile(s) from " << out_dir << "\n";
   }
 
+  // Clear the prior build BEFORE anything of this run's is written, and only on the
+  // explicit --overwrite (the refusal above is what an unflagged re-run gets). A
+  // partial clear must not be written into, so a failure here aborts.
+  if (!accumulate && overwrite && out_dir_populated) {
+    std::string remove_error;
+    const auto removed = removePriorStore(out_dir, &remove_error);
+    if (!removed) {
+      std::cerr << "error: --overwrite could not clear the previous build in " << out_dir
+                << ": " << remove_error << "\n"
+                << "  Refusing to write into a half-cleared store. Nothing of this run was\n"
+                << "  written; the directory may now hold a partial mix of the previous\n"
+                << "  build — remove it by hand or use a fresh out_dir.\n";
+      return 1;
+    }
+    std::cerr << "overwrite: removed " << *removed << " file(s) of the previous build in "
+              << out_dir << "\n";
+  }
+
+  // The projection sidecar is written FIRST — before any tile — so there is no
+  // window in which tiles exist without a mode record. Written last, a crash or a
+  // full filesystem between the tile write and the sidecar write would leave a
+  // DEM-orthorectified store with no projection.json, which every later run reads
+  // as a pre-#297 FLAT build and happily accumulates flat samples into (#297
+  // round-2 review). The failure mode is now the harmless one instead: a sidecar
+  // with no tiles beside it, which the guards treat as an interrupted build.
+  // `saveTiles` creates out_dir lazily (and not at all when nothing is dirty), so
+  // create it here.
+  std::error_code mkdir_ec;
+  std::filesystem::create_directories(out_dir, mkdir_ec);
+  if (mkdir_ec && !std::filesystem::is_directory(out_dir)) {
+    std::cerr << "error: cannot create output directory " << out_dir << ": "
+              << mkdir_ec.message() << "\n";
+    return 1;
+  }
+  if (!writeProjectionSidecar(
+      out_dir, sidecar_mode, bathy_store, dem_mode ? bathy_layers : ""))
+  {
+    std::cerr << "error: could not write " << out_dir << "/projection.json.\n"
+              << "  It records how this run placed its samples, and it is written before the\n"
+              << "  tiles precisely so no tile can exist without it. Nothing was written:\n"
+              << "  fix the output directory's permissions/space and re-run.\n";
+    return 1;
+  }
+
   std::size_t written = 0;
   try {
     const std::vector<std::optional<std::uint16_t>> nodata(
@@ -729,7 +891,7 @@ int main(int argc, char ** argv)
     std::cerr << "saveTiles failed: " << e.what() << "\n";
     return 1;
   }
-  const std::string registry_path = out_dir + "/registry.json";
+  const std::string registry_path = registry_file.string();
   writeRegistry(registry_path, source_id, platform, sensor, sensor_class, campaign);
   // `writeRegistry` returns void, and BOTH --accumulate provenance guards key on
   // registry.json being present — an interrupted or failed write would leave tiles
@@ -743,18 +905,6 @@ int main(int argc, char ** argv)
               << "  The tiles carry per-cell source indices that only the registry resolves,\n"
               << "  and both --accumulate provenance guards look for this file — without it a\n"
               << "  later run would fold into the store unchecked. Regenerate the store.\n";
-    return 1;
-  }
-  // Every run records its projection mode, flat included — a later --accumulate
-  // reads it to refuse mixing modes (#297).
-  if (!writeProjectionSidecar(
-      out_dir, sidecar_mode, bathy_store, dem_mode ? bathy_layers : ""))
-  {
-    std::cerr << "error: could not write " << out_dir << "/projection.json.\n"
-              << "  The tiles and registry ARE written, but the store now carries no record of\n"
-              << "  how its samples were placed, so a later --accumulate cannot check the mode\n"
-              << "  (and a missing sidecar reads as a pre-#297 FLAT build). Write the sidecar by\n"
-              << "  hand or regenerate the store into a writable directory before using it.\n";
     return 1;
   }
 

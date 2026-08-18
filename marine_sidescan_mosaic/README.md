@@ -116,6 +116,7 @@ ros2 run marine_sidescan_mosaic sidescan_tier2_processed \
 | `--datum-check-warn-m` | `1.0` | Warn when the mean nadir-altimeter-vs-DEM discrepancy exceeds this |
 | `--bathy-cache-tiles` | `8` | Resident bathy tiles in the reader's LRU. A tile is 960×960×2 `double` ≈ **14.7 MB**, so the default costs ~118 MB. One lookup can touch `layers × levels` tiles resolving its source plus 4 for the bilinear stencil — raise this when the search order is deep, or the cache thrashes |
 | `--allow-mixed-projection` | off | Accept an `--accumulate` across projection modes (see below) |
+| `--overwrite` | off | Delete the previous build's tiles, `registry.json`, and `projection.json` from the output directory before writing. Required (or `--accumulate`, or a fresh directory) whenever the output directory is already populated — see below. Mutually exclusive with `--accumulate` |
 
 **Datum.** The vertical term is a WGS84 **ellipsoidal height on both sides**: the
 sensor's from the Tier-1 baked `earth`→transducer pose (`GeoBeam::altitude_m`), the
@@ -137,8 +138,24 @@ DEM cell at or above the sensor, or one that would put the sample inside the nad
 cone. Acoustic shadow and multi-valued ray/bottom intersections are out of scope in
 v1: the iteration takes the solution nearest the flat seed.
 
+**A populated output directory is never written into by accident.** `saveTiles`
+rewrites only the tiles a run touches, so a plain re-run into an existing store
+would leave the previous build's other tiles in place — a materially **mixed** store
+stamped with a single pure mode, at exit 0. A run without `--accumulate` therefore
+**refuses** (exit 2) a directory that already holds tiles, a `registry.json`, or a
+`projection.json`; pass `--overwrite` to delete the previous build's tiles,
+registry, and sidecar first (nothing else in the directory is touched), or choose a
+fresh output directory. `--accumulate` and `--overwrite` are mutually exclusive.
+Under `--accumulate`, the provenance guards key on the **tiles** as well as on
+`registry.json`, so a build interrupted before its registry landed is guarded too
+(and a tiles-without-registry store is refused outright: its per-cell source indices
+are unresolvable).
+
 **Regenerate, don't accumulate, when switching projection mode.** Every run writes a
-`projection.json` sidecar next to `registry.json` recording `flat` or `dem`. Under
+`projection.json` sidecar next to `registry.json` recording `flat` or `dem`. The
+sidecar is written **before the first tile**, so a crash or a full filesystem can
+never leave a DEM store that reads as a pre-#297 flat build; the harmless residue —
+a sidecar with no tiles — is what the guards then see. Under
 `--accumulate`, a mode mismatch is refused (exit 2) before anything is decoded: the
 per-cell source band records only the source id, so flat and DEM-placed samples
 composited into the same cells cannot be told apart afterwards. A store with **no**
@@ -148,9 +165,9 @@ refused (exit 2) rather than assumed flat. Build into a **fresh** output directo
 instead, or pass `--allow-mixed-projection` to accept the mix deliberately — which
 marks the store `"projection_mode": "mixed"` **permanently**: a mixed store is never
 re-recorded as pure `flat`/`dem`, and every later `--accumulate` into it needs the
-flag again. A sidecar that cannot be written is an error (exit 1) with the tiles and
-registry already on disk — the store is unmarked and must be repaired or
-regenerated before use. (The mode belongs in `registry.json`; it moves there when
+flag again. A sidecar that cannot be written is an error (exit 1) **before any tile
+is written**, so the output directory is left without a store rather than with an
+unmarked one. (The mode belongs in `registry.json`; it moves there when
 #179's append-only registry merge lands, and the sidecar retires.)
 
 **Exit codes**: `0` success, `1` I/O, unusable bathy store, or an unwritable
