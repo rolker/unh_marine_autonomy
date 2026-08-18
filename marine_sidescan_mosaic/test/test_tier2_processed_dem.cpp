@@ -460,6 +460,13 @@ TEST_F(Tier2ProcessedDemTest, ValueFlagWithoutItsValueIsAnArgumentError)
   EXPECT_NE(log().find("requires a value"), std::string::npos) << log();
   EXPECT_TRUE(tileNames(out).empty());
   EXPECT_FALSE(fs::exists(out / "registry.json"));
+
+  // The same slip one slot along: the next argument is another flag, which must
+  // not be recorded as the value (a campaign named "--platform" in registry.json).
+  const fs::path out2 = dir_ / "flag_as_value";
+  EXPECT_EQ(run(out2, "--campaign --platform bizzyboat"), 2) << log();
+  EXPECT_NE(log().find("another flag"), std::string::npos) << log();
+  EXPECT_TRUE(tileNames(out2).empty());
 }
 
 // The coverage gate: a valid store that does not overlap the survey exits 3 and

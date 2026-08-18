@@ -86,6 +86,11 @@ bool hasFlag(int argc, char ** argv, const std::string & flag)
 /// A flag in the **last** argv slot has no value: exit 2 rather than silently
 /// falling through to the default. `... --bathy-store` with the path lost to a
 /// shell slip must not run a full flat-bottom build and exit 0 (#297 review).
+///
+/// A flag followed by **another flag** is the same slip one slot along
+/// (`--campaign --platform bizzy` would otherwise record the campaign as
+/// `"--platform"` in `registry.json`), so a value beginning with `--` is refused
+/// too. Single-dash tokens are left alone: those are negative numbers.
 std::string argValue(int argc, char ** argv, const std::string & flag, const std::string & dflt)
 {
   for (int i = 1; i < argc; ++i) {
@@ -94,7 +99,16 @@ std::string argValue(int argc, char ** argv, const std::string & flag, const std
         std::cerr << "error: " << flag << " requires a value, but none followed it\n";
         std::exit(2);
       }
-      return argv[i + 1];
+      const std::string value = argv[i + 1];
+      if (value.rfind("--", 0) == 0) {
+        std::cerr << "error: " << flag << " requires a value, but the next argument is "
+                  << "another flag ('" << value << "').\n"
+                  << "  A value beginning with '--' is not accepted: it is almost always a\n"
+                  << "  dropped argument, and taking it literally would write the flag name\n"
+                  << "  into the store's provenance.\n";
+        std::exit(2);
+      }
+      return value;
     }
   }
   return dflt;
