@@ -51,6 +51,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "geodesy/ecef.h"
@@ -266,6 +267,26 @@ double maxPaintedLongitude(const fs::path & dir)
   return max_lon;
 }
 
+/// Per-cell quality band (band 1) of a processed store, keyed by absolute cell
+/// so two stores can be compared cell for cell.
+std::map<std::tuple<uint32_t, uint32_t, uint16_t, uint16_t>, std::uint16_t> qualityByCell(
+  const fs::path & dir)
+{
+  std::map<gggs::GridIndex, mtrs::TiledRasterTile<std::uint16_t>> tiles;
+  mtrs::loadTiles<std::uint16_t>(tiles, dir.string(), gggs::Level(kOutLevel), 3);
+  std::map<std::tuple<uint32_t, uint32_t, uint16_t, uint16_t>, std::uint16_t> quality;
+  for (const auto & kv : tiles) {
+    for (uint16_t r = 0; r < kv.second.edge; ++r) {
+      for (uint16_t c = 0; c < kv.second.edge; ++c) {
+        if (kv.second.get(r, c, 0) != 0) {
+          quality[{kv.first.row(), kv.first.column(), r, c}] = kv.second.get(r, c, 1);
+        }
+      }
+    }
+  }
+  return quality;
+}
+
 std::set<std::string> tileNames(const fs::path & dir)
 {
   std::set<std::string> names;
@@ -356,6 +377,23 @@ TEST_F(Tier2ProcessedDemTest, DemPlacementDiffersFromFlatInTheSlopeDirection)
   const double shift_m = (flat_lon - dem_lon) * metresPerDegreeLon(kLat);
   // Analytically ~2.7 m at the far edge for this slope; assert metres, not cells.
   EXPECT_GT(shift_m, 1.0) << "flat_lon=" << flat_lon << " dem_lon=" << dem_lon;
+
+  // The corrected (vertical, horizontal) pair also reaches grazingQuality at the
+  // TOOL's call site, not just in the geometry unit test: some cell painted by
+  // both runs must carry a different quality score.
+  const auto flat_quality = qualityByCell(flat_out);
+  const auto dem_quality = qualityByCell(dem_out);
+  std::size_t shared = 0, differing = 0;
+  for (const auto & kv : flat_quality) {
+    const auto found = dem_quality.find(kv.first);
+    if (found != dem_quality.end()) {
+      ++shared;
+      differing += (found->second != kv.second) ? 1 : 0;
+    }
+  }
+  ASSERT_GT(shared, 0u) << "the two runs painted no cell in common";
+  EXPECT_GT(differing, 0u) << "quality is identical in every shared cell — the "
+                              "DEM-corrected pair is not reaching grazingQuality";
 
   // The DEM was actually consulted and mostly succeeded.
   EXPECT_NE(dem_log.find("dem hit="), std::string::npos) << dem_log;
