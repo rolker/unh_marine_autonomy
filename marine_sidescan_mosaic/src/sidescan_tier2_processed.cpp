@@ -363,6 +363,195 @@ std::optional<std::size_t> removePriorStore(const std::string & out_dir, std::st
   return removed;
 }
 
+/// @brief Everything the provenance guards need to know about `out_dir`.
+struct OutputDirState
+{
+  bool has_tiles = false;
+  bool has_registry = false;
+  bool has_sidecar = false;
+  bool populated = false;
+};
+
+/// @brief Inspect @p out_dir for the provenance guards (tiles + both sidecars).
+OutputDirState inspectOutputDir(const std::string & out_dir)
+{
+  OutputDirState state;
+  state.has_tiles = hasTileFiles(out_dir);
+  state.has_registry = std::filesystem::exists(std::filesystem::path(out_dir) / "registry.json");
+  state.has_sidecar = std::filesystem::exists(std::filesystem::path(out_dir) / "projection.json");
+  state.populated = state.has_tiles || state.has_registry || state.has_sidecar;
+  return state;
+}
+
+/// @brief The output-directory provenance guards, run before anything is decoded.
+///
+/// @param sidecar_mode in/out: this run's mode, promoted to @ref kMixedMode when an
+///   operator accepts a deliberate mix.
+/// @return an exit code to return from the tool immediately, or `nullopt` to proceed.
+std::optional<int> checkOutputDirGuards(
+  const std::string & out_dir, const OutputDirState & state, bool accumulate, bool overwrite,
+  bool dem_mode, const std::string & projection_mode, bool allow_mixed_projection,
+  const std::string & bathy_store, const std::string & bathy_layers, int source_id_arg,
+  std::string * sidecar_mode)
+{
+  const std::filesystem::path registry_file = std::filesystem::path(out_dir) / "registry.json";
+  const bool out_dir_has_tiles = state.has_tiles;
+  const bool out_dir_has_registry = state.has_registry;
+  const bool out_dir_populated = state.populated;
+  // Projection-mode guard (#297). ADR-0005 D2/D6 make per-cell provenance exactly
+  // one interned source index resolved through the registry — nothing per cell
+  // records HOW a sample was placed, so this is that contract applied to placement.
+  // (D8 is the "both stores adopt this" decision, not a corruption rule.)
+  // --accumulate folds this run into the tiles already on disk, and its only
+  // provenance guard is the source_id match below — which a DEM-corrected re-run
+  // with the same --source-id passes. Compositing corrected
+  // and mis-placed samples into the same cells is unrecoverable: the source band
+  // records the same source either way. So refuse the mix, fail-fast before
+  // decoding. A store with no sidecar predates mode recording and is therefore
+  // flat-built (every store built before this flag existed is).
+  //
+  // "Already a store" is decided by the TILES (plus either provenance file), not by
+  // registry.json alone: a run interrupted between the tile write and the registry
+  // write leaves coverage on disk that a later --accumulate would otherwise fold
+  // into with both guards skipped, and then re-stamp with a pure mode (#297 round-2
+  // review).
+
+  // The same protection for a re-run WITHOUT --accumulate. saveTiles overwrites
+  // only the tiles this run touches, so a plain re-run into a populated directory
+  // leaves the previous build's untouched tiles in place — a store that is
+  // materially mixed (this run's placement in some cells, the previous run's in
+  // others) while the sidecar is re-stamped with this run's pure mode, at exit 0
+  // and with no flag. Refuse, and make clearing the prior build explicit (#297
+  // round-2 review).
+  if (!accumulate && overwrite && !out_dir_populated) {
+    std::cerr << "warning: --overwrite: " << out_dir << " holds no previous build; "
+              << "nothing to clear.\n";
+  }
+  if (!accumulate && out_dir_populated && !overwrite) {
+    std::cerr << "error: " << out_dir << " already holds a build (tiles/registry/"
+              << "projection.json) and this run does not pass --accumulate.\n"
+              << "  Writing into it would leave the previous build's untouched tiles beside\n"
+              << "  this run's, so the store would hold samples placed two different ways\n"
+              << "  while projection.json recorded a single pure mode. Per-cell provenance\n"
+              << "  cannot tell them apart afterwards (ADR-0005 D2/D6). Choose one:\n"
+              << "    --accumulate   composite into the existing store (mode-guarded), or\n"
+              << "    --overwrite    delete the prior tiles + registry + sidecar first, or\n"
+              << "    a fresh out_dir.\n";
+    return 2;
+  }
+  if (accumulate && out_dir_populated) {
+    const ProjectionSidecar recorded = readProjectionSidecar(out_dir);
+    if (recorded.state == SidecarState::kUnreadable) {
+      std::cerr << "error: --accumulate: the store in " << out_dir << " has a projection.json "
+                << "that could not be read or carries no projection_mode.\n"
+                << "  Its projection mode is therefore UNKNOWN, and an unknown mode is not\n"
+                << "  assumed to be flat: folding this run in could composite flat-bottom and\n"
+                << "  DEM-orthorectified samples into the same cells, which per-cell provenance\n"
+                << "  cannot tell apart afterwards. Repair or remove the sidecar (a store with\n"
+                << "  NO projection.json is a pre-#297 flat build), or use a fresh out_dir.\n";
+      return 2;
+    }
+    const std::string existing_mode =
+      recorded.state == SidecarState::kOk ? recorded.mode : "flat";
+    const std::string mode_note = recorded.state == SidecarState::kMissing ?
+      " (no projection.json — a pre-#297 flat build)" : "";
+    if (existing_mode != projection_mode) {
+      std::cerr << (allow_mixed_projection ? "warning" : "error")
+                << ": --accumulate: the store in " << out_dir << " was built with "
+                << "projection_mode '" << existing_mode << "'" << mode_note
+                << ", but this run uses '" << projection_mode << "'.\n"
+                << "  Compositing flat-bottom and DEM-orthorectified samples into the same\n"
+                << "  cells is unrecoverable: per-cell provenance records only the source id,\n"
+                << "  which is identical either way. Regenerate into a fresh out_dir instead\n"
+                << "  of accumulating, or pass --allow-mixed-projection to accept the mix.\n";
+      if (!allow_mixed_projection) {
+        return 2;
+      }
+      // The mix is accepted, so the store now holds samples placed BOTH ways and
+      // stays that way forever: record `mixed`, not this run's mode. Rewriting it
+      // as pure `dem`/`flat` would launder the provenance — every later
+      // --accumulate would then pass the guard silently (#297 review).
+      *sidecar_mode = kMixedMode;
+      std::cerr << "warning: " << out_dir << " is now a MIXED-projection store; its "
+                << "projection.json records '" << kMixedMode << "' permanently, and every "
+                << "later --accumulate into it needs --allow-mixed-projection.\n";
+    } else if (existing_mode == kMixedMode) {
+      // Unreachable while kMixedMode is neither "flat" nor "dem" (the branch above
+      // fires first), but keep the stickiness explicit rather than incidental.
+      *sidecar_mode = kMixedMode;
+    } else if (dem_mode && recorded.state == SidecarState::kOk) {
+      // Same MODE, different DEM. Two DEM runs against different bathy stores (or
+      // a different layer search order) are not the same placement: a re-imported
+      // store, another vintage, or a different vertical datum moves the samples,
+      // and the composited cells again record only the source id. The mode guard
+      // cannot see this, so report it — as a warning, not a refusal: re-running
+      // against an UPDATED store is a legitimate, common workflow, and only the
+      // operator knows whether the two surfaces agree.
+      const std::string recorded_store = recorded.bathy_store;
+      const std::string recorded_layers = recorded.bathy_layers;
+      if (!recorded_store.empty() &&
+        (recorded_store != jsonEscape(bathy_store) || recorded_layers != jsonEscape(bathy_layers)))
+      {
+        std::cerr << "warning: --accumulate: the store in " << out_dir << " was "
+                  << "DEM-orthorectified against '" << recorded_store << "' (layers '"
+                  << recorded_layers << "'), but this run uses '" << bathy_store
+                  << "' (layers '" << bathy_layers << "').\n"
+                  << "  Both runs are 'dem', so the projection-mode guard passes — but samples\n"
+                  << "  placed against two different bathymetric surfaces (a different vintage,\n"
+                  << "  extent, or vertical datum) composite into the same cells with nothing\n"
+                  << "  per-cell to tell them apart. Confirm the two surfaces agree, or build\n"
+                  << "  into a fresh out_dir. The sidecar will now name THIS run's store.\n";
+      }
+    }
+  }
+
+  // Provenance guard (#253 review; ADR-0005 D2/D6 per-cell provenance, D7's
+  // append-only registry merge / #179). foldTile preserves each
+  // existing cell's original source band, but writeRegistry() is a write-once
+  // single-source writer — so accumulating a DIFFERENT source-id into a store
+  // leaves tiles carrying mixed source indices while registry.json names only
+  // this run's source, silently corrupting provenance. Until the registry is an
+  // append-only merge (#179), refuse the mismatch rather than corrupt it. Fail
+  // fast, before decoding.
+  if (accumulate) {
+    const std::string reg_path = registry_file.string();
+    if (out_dir_has_tiles && !out_dir_has_registry) {
+      std::cerr << "error: --accumulate: " << out_dir << " holds value tiles but no "
+                << "registry.json.\n"
+                << "  The tiles' per-cell source indices are unresolvable without it, so this\n"
+                << "  run cannot check that its --source-id matches theirs — and writing a\n"
+                << "  fresh single-source registry over folded foreign coverage would assert a\n"
+                << "  provenance the tiles do not have (ADR-0005 D2/D6). A store in this state\n"
+                << "  is an interrupted build: remove it, or regenerate into a fresh out_dir.\n";
+      return 2;
+    }
+    std::ifstream reg(reg_path);
+    std::string line;
+    while (std::getline(reg, line)) {
+      const auto key = line.find("\"source_id\"");
+      if (key == std::string::npos) {
+        continue;
+      }
+      const auto colon = line.find(':', key);
+      if (colon == std::string::npos) {
+        continue;
+      }
+      const int existing_sid = std::atoi(line.c_str() + colon + 1);
+      if (existing_sid > 0 && existing_sid != source_id_arg) {
+        std::cerr << "error: --accumulate: existing store registry " << reg_path
+                  << " has source_id " << existing_sid << ", but this run uses "
+                  << source_id_arg << ".\n"
+                  << "  A multi-source registry merge is not yet implemented "
+                  << "(ADR-0005 D7 / #179); re-run with --source-id " << existing_sid
+                  << " or use a fresh out_dir to avoid corrupting provenance.\n";
+        return 2;
+      }
+      break;   // registry v1 is single-source: first source_id is authoritative.
+    }
+  }
+  return std::nullopt;
+}
+
 /// @brief The tool body. `main` wraps it in a last-resort handler (below): the DEM
 ///   call sites catch their own faults, but `gggs::Level::gridIndex`'s
 ///   `std::out_of_range` and the throwing `std::filesystem` overloads used around
@@ -458,7 +647,7 @@ int runTool(int argc, char ** argv)
     std::cerr << "error: --bathy-cache-tiles must be in [1, " << kMaxCacheTiles
               << "]; a bathy tile is 960x960x2 doubles (~14.7 MB), so " << bathy_cache_tiles
               << " would ask for roughly "
-              << (static_cast<long long>(bathy_cache_tiles) * 147 / 10) << " MB of "
+              << (static_cast<std::int64_t>(bathy_cache_tiles) * 147 / 10) << " MB of "
               << "resident cache.\n";
     return 2;
   }
@@ -487,162 +676,12 @@ int runTool(int argc, char ** argv)
     return 2;
   }
 
-  // Projection-mode guard (#297). ADR-0005 D2/D6 make per-cell provenance exactly
-  // one interned source index resolved through the registry — nothing per cell
-  // records HOW a sample was placed, so this is that contract applied to placement.
-  // (D8 is the "both stores adopt this" decision, not a corruption rule.) --accumulate folds this run into the tiles already
-  // on disk, and its only provenance guard is the source_id match below — which a
-  // DEM-corrected re-run with the same --source-id passes. Compositing corrected
-  // and mis-placed samples into the same cells is unrecoverable: the source band
-  // records the same source either way. So refuse the mix, fail-fast before
-  // decoding. A store with no sidecar predates mode recording and is therefore
-  // flat-built (every store built before this flag existed is).
-  //
-  // "Already a store" is decided by the TILES (plus either provenance file), not by
-  // registry.json alone: a run interrupted between the tile write and the registry
-  // write leaves coverage on disk that a later --accumulate would otherwise fold
-  // into with both guards skipped, and then re-stamp with a pure mode (#297 round-2
-  // review).
-  const std::filesystem::path registry_file = std::filesystem::path(out_dir) / "registry.json";
-  const std::filesystem::path sidecar_file = std::filesystem::path(out_dir) / "projection.json";
-  const bool out_dir_has_tiles = hasTileFiles(out_dir);
-  const bool out_dir_has_registry = std::filesystem::exists(registry_file);
-  const bool out_dir_has_sidecar = std::filesystem::exists(sidecar_file);
-  const bool out_dir_populated =
-    out_dir_has_tiles || out_dir_has_registry || out_dir_has_sidecar;
-
-  // The same protection for a re-run WITHOUT --accumulate. saveTiles overwrites
-  // only the tiles this run touches, so a plain re-run into a populated directory
-  // leaves the previous build's untouched tiles in place — a store that is
-  // materially mixed (this run's placement in some cells, the previous run's in
-  // others) while the sidecar is re-stamped with this run's pure mode, at exit 0
-  // and with no flag. Refuse, and make clearing the prior build explicit (#297
-  // round-2 review).
-  if (!accumulate && overwrite && !out_dir_populated) {
-    std::cerr << "warning: --overwrite: " << out_dir << " holds no previous build; "
-              << "nothing to clear.\n";
-  }
-  if (!accumulate && out_dir_populated && !overwrite) {
-    std::cerr << "error: " << out_dir << " already holds a build (tiles/registry/"
-              << "projection.json) and this run does not pass --accumulate.\n"
-              << "  Writing into it would leave the previous build's untouched tiles beside\n"
-              << "  this run's, so the store would hold samples placed two different ways\n"
-              << "  while projection.json recorded a single pure mode. Per-cell provenance\n"
-              << "  cannot tell them apart afterwards (ADR-0005 D2/D6). Choose one:\n"
-              << "    --accumulate   composite into the existing store (mode-guarded), or\n"
-              << "    --overwrite    delete the prior tiles + registry + sidecar first, or\n"
-              << "    a fresh out_dir.\n";
-    return 2;
-  }
-  if (accumulate && out_dir_populated) {
-    const ProjectionSidecar recorded = readProjectionSidecar(out_dir);
-    if (recorded.state == SidecarState::kUnreadable) {
-      std::cerr << "error: --accumulate: the store in " << out_dir << " has a projection.json "
-                << "that could not be read or carries no projection_mode.\n"
-                << "  Its projection mode is therefore UNKNOWN, and an unknown mode is not\n"
-                << "  assumed to be flat: folding this run in could composite flat-bottom and\n"
-                << "  DEM-orthorectified samples into the same cells, which per-cell provenance\n"
-                << "  cannot tell apart afterwards. Repair or remove the sidecar (a store with\n"
-                << "  NO projection.json is a pre-#297 flat build), or use a fresh out_dir.\n";
-      return 2;
-    }
-    const std::string existing_mode =
-      recorded.state == SidecarState::kOk ? recorded.mode : "flat";
-    const std::string mode_note = recorded.state == SidecarState::kMissing ?
-      " (no projection.json — a pre-#297 flat build)" : "";
-    if (existing_mode != projection_mode) {
-      std::cerr << (allow_mixed_projection ? "warning" : "error")
-                << ": --accumulate: the store in " << out_dir << " was built with "
-                << "projection_mode '" << existing_mode << "'" << mode_note
-                << ", but this run uses '" << projection_mode << "'.\n"
-                << "  Compositing flat-bottom and DEM-orthorectified samples into the same\n"
-                << "  cells is unrecoverable: per-cell provenance records only the source id,\n"
-                << "  which is identical either way. Regenerate into a fresh out_dir instead\n"
-                << "  of accumulating, or pass --allow-mixed-projection to accept the mix.\n";
-      if (!allow_mixed_projection) {
-        return 2;
-      }
-      // The mix is accepted, so the store now holds samples placed BOTH ways and
-      // stays that way forever: record `mixed`, not this run's mode. Rewriting it
-      // as pure `dem`/`flat` would launder the provenance — every later
-      // --accumulate would then pass the guard silently (#297 review).
-      sidecar_mode = kMixedMode;
-      std::cerr << "warning: " << out_dir << " is now a MIXED-projection store; its "
-                << "projection.json records '" << kMixedMode << "' permanently, and every "
-                << "later --accumulate into it needs --allow-mixed-projection.\n";
-    } else if (existing_mode == kMixedMode) {
-      // Unreachable while kMixedMode is neither "flat" nor "dem" (the branch above
-      // fires first), but keep the stickiness explicit rather than incidental.
-      sidecar_mode = kMixedMode;
-    } else if (dem_mode && recorded.state == SidecarState::kOk) {
-      // Same MODE, different DEM. Two DEM runs against different bathy stores (or
-      // a different layer search order) are not the same placement: a re-imported
-      // store, another vintage, or a different vertical datum moves the samples,
-      // and the composited cells again record only the source id. The mode guard
-      // cannot see this, so report it — as a warning, not a refusal: re-running
-      // against an UPDATED store is a legitimate, common workflow, and only the
-      // operator knows whether the two surfaces agree.
-      const std::string recorded_store = recorded.bathy_store;
-      const std::string recorded_layers = recorded.bathy_layers;
-      if (!recorded_store.empty() &&
-        (recorded_store != jsonEscape(bathy_store) || recorded_layers != jsonEscape(bathy_layers)))
-      {
-        std::cerr << "warning: --accumulate: the store in " << out_dir << " was "
-                  << "DEM-orthorectified against '" << recorded_store << "' (layers '"
-                  << recorded_layers << "'), but this run uses '" << bathy_store
-                  << "' (layers '" << bathy_layers << "').\n"
-                  << "  Both runs are 'dem', so the projection-mode guard passes — but samples\n"
-                  << "  placed against two different bathymetric surfaces (a different vintage,\n"
-                  << "  extent, or vertical datum) composite into the same cells with nothing\n"
-                  << "  per-cell to tell them apart. Confirm the two surfaces agree, or build\n"
-                  << "  into a fresh out_dir. The sidecar will now name THIS run's store.\n";
-      }
-    }
-  }
-
-  // Provenance guard (#253 review; ADR-0005 D2/D6 per-cell provenance, D7's
-  // append-only registry merge / #179). foldTile preserves each
-  // existing cell's original source band, but writeRegistry() is a write-once
-  // single-source writer — so accumulating a DIFFERENT source-id into a store
-  // leaves tiles carrying mixed source indices while registry.json names only
-  // this run's source, silently corrupting provenance. Until the registry is an
-  // append-only merge (#179), refuse the mismatch rather than corrupt it. Fail
-  // fast, before decoding.
-  if (accumulate) {
-    const std::string reg_path = registry_file.string();
-    if (out_dir_has_tiles && !out_dir_has_registry) {
-      std::cerr << "error: --accumulate: " << out_dir << " holds value tiles but no "
-                << "registry.json.\n"
-                << "  The tiles' per-cell source indices are unresolvable without it, so this\n"
-                << "  run cannot check that its --source-id matches theirs — and writing a\n"
-                << "  fresh single-source registry over folded foreign coverage would assert a\n"
-                << "  provenance the tiles do not have (ADR-0005 D2/D6). A store in this state\n"
-                << "  is an interrupted build: remove it, or regenerate into a fresh out_dir.\n";
-      return 2;
-    }
-    std::ifstream reg(reg_path);
-    std::string line;
-    while (std::getline(reg, line)) {
-      const auto key = line.find("\"source_id\"");
-      if (key == std::string::npos) {
-        continue;
-      }
-      const auto colon = line.find(':', key);
-      if (colon == std::string::npos) {
-        continue;
-      }
-      const int existing_sid = std::atoi(line.c_str() + colon + 1);
-      if (existing_sid > 0 && existing_sid != source_id_arg) {
-        std::cerr << "error: --accumulate: existing store registry " << reg_path
-                  << " has source_id " << existing_sid << ", but this run uses "
-                  << source_id_arg << ".\n"
-                  << "  A multi-source registry merge is not yet implemented "
-                  << "(ADR-0005 D7 / #179); re-run with --source-id " << existing_sid
-                  << " or use a fresh out_dir to avoid corrupting provenance.\n";
-        return 2;
-      }
-      break;   // registry v1 is single-source: first source_id is authoritative.
-    }
+  const OutputDirState out_dir_state = inspectOutputDir(out_dir);
+  if (const auto guard_exit = checkOutputDirGuards(
+      out_dir, out_dir_state, accumulate, overwrite, dem_mode, projection_mode,
+      allow_mixed_projection, bathy_store, bathy_layers, source_id_arg, &sidecar_mode))
+  {
+    return *guard_exit;
   }
 
   std::ifstream in(tier1_path, std::ios::binary);
@@ -719,7 +758,7 @@ int runTool(int argc, char ** argv)
       std::cerr << "error: out of memory loading a bathy tile.\n"
                 << "  The resident budget is --bathy-cache-tiles " << bathy_cache_tiles
                 << " x ~14.7 MB = ~"
-                << (static_cast<long long>(bathy_cache_tiles) * 147 / 10) << " MB; lower it\n"
+                << (static_cast<std::int64_t>(bathy_cache_tiles) * 147 / 10) << " MB; lower it\n"
                 << "  (the store itself is not implicated). No tiles and no registry were "
                 << "written.\n";
     };
@@ -973,7 +1012,7 @@ int runTool(int argc, char ** argv)
   // Clear the prior build BEFORE anything of this run's is written, and only on the
   // explicit --overwrite (the refusal above is what an unflagged re-run gets). A
   // partial clear must not be written into, so a failure here aborts.
-  if (!accumulate && overwrite && out_dir_populated) {
+  if (!accumulate && overwrite && out_dir_state.populated) {
     std::string remove_error;
     const auto removed = removePriorStore(out_dir, &remove_error);
     if (!removed) {
@@ -1023,7 +1062,8 @@ int runTool(int argc, char ** argv)
     std::cerr << "saveTiles failed: " << e.what() << "\n";
     return 1;
   }
-  const std::string registry_path = registry_file.string();
+  const std::string registry_path =
+    (std::filesystem::path(out_dir) / "registry.json").string();
   writeRegistry(registry_path, source_id, platform, sensor, sensor_class, campaign);
   // `writeRegistry` returns void, and BOTH --accumulate provenance guards key on
   // registry.json being present — an interrupted or failed write would leave tiles
