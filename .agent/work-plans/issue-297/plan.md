@@ -311,12 +311,30 @@ flat-bottom (ADR-0006 D6/D9).
   value-taking flag left **without** its value (`... --bathy-store` at the end of the
   command line) is an argument error (exit 2), never a silent fall-through to the
   default — that path would have written a full flat-bottom store and exited 0.
+  *(Round-2/3 review corrections)* the same dropped-argument refusal covers three
+  more shapes: a value that is itself flag-shaped (`--campaign --platform ...`, which
+  would write a flag name into the store's provenance), a **positional** that is
+  flag-shaped (`<tier1.sst1> --accumulate` created a store directory literally named
+  `--accumulate` while also turning accumulate on, at exit 0), and a numeric value
+  with trailing garbage (`--min-dem-coverage 0.9,` silently became `0.9`, since
+  `stod` stops at the first character it cannot use). `--bathy-cache-tiles` is bounded
+  at **both** ends, `[1, 1024]` — the LRU holds N x ~14.7 MB of resident tile, so an
+  unbounded N turns a typo into a mid-run `std::bad_alloc` that the DEM call sites
+  would report as "the store is corrupt or truncated", sending the operator after the
+  wrong fault; 1024 tiles is already ~15 GB. Every bound appears in the usage text
+  beside its flag.
 - Construct the reader once (throws ⇒ the tool prints the diagnostic and returns 1).
   *(Round-1 review correction)* the DEM exception handler wraps only the **lookup
   call sites**, not the whole ping loop: a catch-all there would change the flat path
   this feature must leave untouched, and would report a Tier-1 decode or accumulator
   failure as a DEM fault. `registry.json` is also verified on disk after the void
   `writeRegistry` call, since both `--accumulate` guards key on that file existing.
+  *(Round-2 review addition)* `main` also installs a **last-resort handler** around
+  the whole tool: the DEM call sites catch their own faults, but `gggs::Level::
+  gridIndex`'s `std::out_of_range` and the throwing `std::filesystem` overloads can
+  still escape, and ending a store writer in `std::terminate` with no diagnostic is
+  not acceptable. It reports the exception and returns 1, telling the operator to
+  treat any partially written store as incomplete.
 - Per sample: keep the existing flat `groundRange(slant, altitude)` as the nadir-cone
   gate and the iteration seed, then call `correctedGroundRange(...)` with
   `sensor_height_m = gb.altitude_m` (`GeoBeam` is already computed at line 228).
@@ -340,21 +358,34 @@ flat-bottom (ADR-0006 D6/D9).
   this tool**, needing no other package's API:
 
   - `sidescan_tier2_processed` writes `<out_dir>/projection.json` next to
-    `registry.json`: `{"version":1, "projection_mode":"flat"|"dem"|"mixed",
+    `registry.json`: `{"version":2, "projection_mode":"flat"|"dem"|"mixed",
     "bathy_store":"<path>", "bathy_layers":"survey,reference",
-    "dem_coverage":<frac>|null}`. Every run writes it, including the default flat run
-    — on which `bathy_store` and `bathy_layers` are both the empty string and
-    `dem_coverage` is `null`, since no store was consulted.
+    "dem_coverage":<frac>|null, "dem_coverage_history":[<frac>|null, ...]}`. Every run
+    writes it, including the default flat run — on which `bathy_store` and
+    `bathy_layers` are both the empty string and the coverage figures are `null`,
+    since no store was consulted.
     *(Round-2 review correction)* the sidecar is written **before the first tile**,
     not last: written last, a crash or a full filesystem between the tile write and
     the sidecar write leaves a DEM store with no `projection.json`, which every later
     run reads as a pre-#297 FLAT build. A sidecar that cannot be written is therefore
     an **error (exit 1) before anything else is written**, and the only residue a
     crash can leave is the harmless one — a sidecar with no tiles beside it.
-    *(Round-2 review correction)* `dem_coverage` records the run's **achieved**
+    *(Round-2 review correction)* `dem_coverage` records the **achieved**
     coverage, because `--min-dem-coverage 0` is an explicit opt-in to a partial run
     and without the figure a 3 %- and a 99 %-corrected store both read as plain
     `"dem"` downstream.
+    *(Round-3 review correction)* it is recorded so it SURVIVES an `--accumulate`.
+    Re-stamping the sidecar with only this run's figure made a 0.99 bag folded into a
+    0.03 store read 0.99 — laundering the exact hazard the field records. The sidecar
+    (now `version: 2`) therefore carries `dem_coverage_history`, one element per
+    contributing run in order, and `dem_coverage` is the WORST figure in it, so a
+    single-number reader never gets a rosier answer than the store deserves. The same
+    correction applies to `bathy_store`: a run with no store of its own (a flat run
+    promoted to `mixed`) keeps the recorded value instead of blanking it, since that
+    record is permanent provenance and the different-store cross-check depends on it.
+    The sidecar READER is a small structural parser for the flat object rather than a
+    per-line key search — a key found inside a value could otherwise spoof the mode,
+    and a hand-repaired single-line sidecar lost every field after the first.
   - Under `--accumulate`, alongside the existing `source_id` check and **before**
     decoding, read the existing sidecar and refuse a mode mismatch with the same
     fail-fast shape as the `source_id` guard (exit 2), naming both modes and telling
@@ -382,11 +413,19 @@ flat-bottom (ADR-0006 D6/D9).
     *(round-2 review correction)*. `saveTiles` rewrites only the tiles this run
     touches, so a plain re-run leaves the previous build's other tiles in place — a
     materially mixed store stamped with a single pure mode, at exit 0 and with no
-    flag. Exit 2, naming the three ways forward: `--accumulate`, a fresh `out_dir`,
-    or the new **`--overwrite`**, which deletes the prior build's tiles,
-    `registry.json`, and `projection.json` (nothing else in the directory) before
-    writing, and which is mutually exclusive with `--accumulate`. The deletion happens
-    late — after the coverage gate — so a gated failure never destroys the old store.
+    flag. Exit 2, naming the ways forward: `--accumulate` or a fresh `out_dir`.
+    *(Round-3 review correction — operator decision)* a third way, `--overwrite`,
+    was implemented in round 2 and **removed** in round 3: **this tool must not
+    delete a store**. Every in-tool deletion path the review found could destroy a
+    store nobody meant to lose — a run that placed nothing still cleared the
+    directory and exited 0, and the deleter matched *any* `.tif` in `out_dir` with no
+    store-marker precondition, so a transposed path argument would take out a
+    `marine_bathymetry_store` layer of the same filename shape. Stores are
+    data-of-record here, so clearing one is the operator's own explicit act, outside
+    this tool; per the workspace convention the feature is removed outright rather
+    than left behind an opt-in. The refusal instead NAMES the files a manual clear
+    would remove (`*.tif`, `registry.json`, `projection.json`, and the derived
+    `overviews/`).
   - `--allow-mixed-projection` is the explicit, documented override for an operator
     who accepts the mix; it prints the refusal text as a warning and continues.
     *(Implementation note)* it covers **only** the mode-mismatch refusal — not the
@@ -570,9 +609,9 @@ flat store; that is the case step 3 now refuses):
 | `marine_sidescan_mosaic/include/marine_sidescan_mosaic/bathy_dem.hpp` (new) | `BathyDem` reader: `depthAt(lat, lon)`, layer/level index, hard-fail construction |
 | `marine_sidescan_mosaic/src/bathy_dem.cpp` (new) | Layer scan (filename set + level set), query-time `Level::gridIndex()`→`tileFilename()` lookup, bilinear sampling, LRU tile cache over `marine_tiled_raster_store::loadTile<double>` |
 | `marine_sidescan_mosaic/include/marine_sidescan_mosaic/projection.hpp` | Add `DemCorrection` + `correctedGroundRange<DepthLookup>` |
-| `marine_sidescan_mosaic/src/sidescan_tier2_processed.cpp` | `--bathy-store` / `--bathy-layers` / `--datum-check-warn-m` / `--min-dem-coverage` / `--bathy-cache-tiles` / `--allow-mixed-projection` / `--overwrite` (the last two added by the round-1 and round-2 reviews); `sensor_height_m` from `GeoBeam::altitude_m`; corrected `(vertical_offset, ground)` into `grazingQuality`; new counters + datum cross-check in the summary; coverage gate before the writes; `projection.json` sidecar write (before the first tile) + `--accumulate` mode/registry guards + the populated-`out_dir` refusal |
+| `marine_sidescan_mosaic/src/sidescan_tier2_processed.cpp` | `--bathy-store` / `--bathy-layers` / `--datum-check-warn-m` / `--min-dem-coverage` / `--bathy-cache-tiles` / `--allow-mixed-projection` (added by the round-1 and round-2 reviews; round 2's `--overwrite` was removed again in round 3 — see the sidecar/guard section); `sensor_height_m` from `GeoBeam::altitude_m`; corrected `(vertical_offset, ground)` into `grazingQuality`; new counters + datum cross-check in the summary; coverage gate before the writes; `projection.json` sidecar write (before the first tile) + `--accumulate` mode/registry guards + the populated-`out_dir` refusal |
 | `marine_sidescan_mosaic/CMakeLists.txt` | `bathy_dem.cpp` in the library; `test_bathy_dem` and `test_tier2_processed_dem` gtest targets (the latter with the `$<TARGET_FILE:>` compile definition) |
-| `marine_sidescan_mosaic/README.md` | Document `--bathy-store`/`--bathy-layers`/`--min-dem-coverage`/`--allow-mixed-projection`, the orthorectification step in "Pipeline (per ping)" (line 23-24 still describes only `sqrt(slant²−alt²)`), the datum cross-check, the coverage gate and its exit code, the **"regenerate, don't accumulate, when switching projection mode"** rule + `projection.json` sidecar, the populated-`out_dir` refusal + `--overwrite`, and the flat-bottom-by-design choice — scoped, per the round-2 review, to the LIVE draft path (ADR-0006 D6/D9); `sidescan_tier2_flat` is flat by its own scope, not by those clauses |
+| `marine_sidescan_mosaic/README.md` | Document `--bathy-store`/`--bathy-layers`/`--min-dem-coverage`/`--allow-mixed-projection`, the orthorectification step in "Pipeline (per ping)" (line 23-24 still describes only `sqrt(slant²−alt²)`), the datum cross-check, the coverage gate and its exit code, the **"regenerate, don't accumulate, when switching projection mode"** rule + `projection.json` sidecar, the populated-`out_dir` refusal and why the tool has no store deleter, the sidecar's `dem_coverage`/`dem_coverage_history` pair, the complete exit-code table, and the flat-bottom-by-design choice — scoped, per the round-2 review, to the LIVE draft path (ADR-0006 D6/D9); `sidescan_tier2_flat` is flat by its own scope, not by those clauses |
 | `marine_sidescan_mosaic/test/test_projection.cpp` | New `CorrectedGroundRange*` cases (tolerance-based) |
 | `marine_sidescan_mosaic/test/test_bathy_dem.cpp` (new) | Reader round-trip, bilinear, partial-stencil renormalisation, no-data, grid-crossing, multi-level, duplicate-layer, hard-fail cases |
 | `marine_sidescan_mosaic/test/test_tier2_processed_dem.cpp` (new) | End-to-end synthetic `.sst1` + synthetic bathy store through the built binary |
