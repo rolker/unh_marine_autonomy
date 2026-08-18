@@ -134,8 +134,13 @@ public:
   /// @brief Total tiles found by the startup scan.
   std::size_t tileCount() const {return tile_count_;}
 
-  /// @brief Successful @ref depthAt lookups per layer directory name.
-  const std::map<std::string, std::size_t> & hitsByLayer() const {return hits_by_layer_;}
+  /// @brief Successful @ref depthAt **calls** per layer directory name.
+  ///
+  /// These count store *probes* that returned data, not placed samples: a caller
+  /// iterating a ray/bottom intersection calls `depthAt` several times for one
+  /// sample, and a per-ping datum check adds one more. Useful for "which layer is
+  /// actually feeding this run", never comparable one-for-one with a sample count.
+  const std::map<std::string, std::size_t> & lookupsByLayer() const {return lookups_by_layer_;}
 
   /// @brief One-line human description of the scanned store (for diagnostics).
   std::string describe() const;
@@ -185,7 +190,7 @@ private:
   std::list<std::pair<CacheKey, Tile>> lru_;   ///< front = most recently used.
   std::map<CacheKey, std::list<std::pair<CacheKey, Tile>>::iterator> cache_index_;
 
-  std::map<std::string, std::size_t> hits_by_layer_;
+  std::map<std::string, std::size_t> lookups_by_layer_;
   std::vector<std::string> warnings_;
 };
 

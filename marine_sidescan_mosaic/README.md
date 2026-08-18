@@ -126,7 +126,10 @@ datum mismatch (an orthometric store, a lever-arm error, an unexpected tide fram
 and is reported as mean/RMS with a warning past `--datum-check-warn-m`.
 
 **Degraded samples are counted, never guessed.** The summary reports
-`hit / no-coverage / degenerate / non-converged` plus per-layer hit counts. A sample
+`hit / no-coverage / degenerate / non-converged` per sample, plus per-layer counts
+of DEM *probes that returned data* — a probe count, not a sample count (one sample
+costs up to one bilinear stencil per iteration, and each ping adds a datum-check
+probe), so the two are not comparable one-for-one. A sample
 whose iteration does not settle within its 5-iteration cap falls back to the flat
 placement and is counted — the non-converged iterate is never emitted. Same for a
 DEM cell at or above the sensor, or one that would put the sample inside the nadir

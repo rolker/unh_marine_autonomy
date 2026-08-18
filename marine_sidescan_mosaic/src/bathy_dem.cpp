@@ -180,7 +180,7 @@ BathyDem::BathyDem(
 
   all_levels_.assign(levels_seen.rbegin(), levels_seen.rend());
   for (const auto & layer : layers_) {
-    hits_by_layer_[layer.name] = 0;
+    lookups_by_layer_[layer.name] = 0;
   }
 }
 
@@ -319,7 +319,7 @@ std::optional<double> BathyDem::depthAt(double lat_deg, double lon_deg)
   if (nearest_weight < 0.0) {
     return std::nullopt;   // unreachable: resolveSource proved the centre cell valid.
   }
-  ++hits_by_layer_[layers_[source->layer].name];
+  ++lookups_by_layer_[layers_[source->layer].name];
   // All four present ⇒ the weights sum to 1 and `blended` is the bilinear value.
   // Otherwise fall back to the nearest valid of the four (never a partial blend,
   // whose weights would not sum to 1 and would bias the result toward zero).

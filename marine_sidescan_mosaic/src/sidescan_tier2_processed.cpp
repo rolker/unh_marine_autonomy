@@ -681,8 +681,12 @@ int main(int argc, char ** argv)
     std::cerr << "tier2-processed: dem hit=" << n_dem_hit
               << " no-coverage=" << n_dem_no_coverage
               << " degenerate=" << n_dem_degenerate
-              << " non-converged=" << n_dem_nonconverged << "; per-layer hits";
-    for (const auto & kv : dem->hitsByLayer()) {
+              << " non-converged=" << n_dem_nonconverged
+      // Deliberately NOT called "hits": these count DEM PROBES that returned a
+      // value (up to one bilinear stencil per iteration per sample, plus one per
+      // ping for the datum check), so they are not comparable with hit= above.
+              << "; per-layer store lookups that returned data (probes, not samples)";
+    for (const auto & kv : dem->lookupsByLayer()) {
       std::cerr << " " << kv.first << "=" << kv.second;
     }
     std::cerr << "\n";

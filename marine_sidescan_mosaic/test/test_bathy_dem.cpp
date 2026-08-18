@@ -143,7 +143,7 @@ TEST(BathyDem, RoundTripsAKnownDepth)
   ASSERT_TRUE(depth.has_value());
   EXPECT_NEAR(*depth, -12.5, 1e-9);
   EXPECT_EQ(dem.tileCount(), 1u);
-  EXPECT_EQ(dem.hitsByLayer().at("survey"), 1u);
+  EXPECT_EQ(dem.lookupsByLayer().at("survey"), 1u);
 }
 
 // ADR-0006 D9 requires the coarser bathy to be INTERPOLATED, not nearest-sampled:
@@ -253,8 +253,8 @@ TEST(BathyDem, LayerPriorityAndFallthrough)
     const auto depth = dem.depthAt(kLat, kLon);
     ASSERT_TRUE(depth.has_value());
     EXPECT_NEAR(*depth, -5.0, 1e-9);
-    EXPECT_EQ(dem.hitsByLayer().at("survey"), 1u);
-    EXPECT_EQ(dem.hitsByLayer().at("reference"), 0u);
+    EXPECT_EQ(dem.lookupsByLayer().at("survey"), 1u);
+    EXPECT_EQ(dem.lookupsByLayer().at("reference"), 0u);
   }
   {
     msm::BathyDem dem(dir.path().string(), {"reference", "survey"});
@@ -271,7 +271,7 @@ TEST(BathyDem, LayerPriorityAndFallthrough)
   const auto depth = dem.depthAt(kLat, kLon);
   ASSERT_TRUE(depth.has_value());
   EXPECT_NEAR(*depth, -7.0, 1e-9);
-  EXPECT_EQ(dem.hitsByLayer().at("reference"), 1u);
+  EXPECT_EQ(dem.lookupsByLayer().at("reference"), 1u);
 }
 
 // An unusable store is a hard failure at construction, never a silent fallback
