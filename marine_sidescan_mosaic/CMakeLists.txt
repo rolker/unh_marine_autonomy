@@ -159,6 +159,18 @@ if(BUILD_TESTING)
   target_link_libraries(test_bathy_dem ${PROJECT_NAME})
   ament_target_dependencies(test_bathy_dem marine_autonomy marine_tiled_raster_store)
 
+  # End-to-end subprocess test of the built sidescan_tier2_processed binary over a
+  # synthetic .sst1 + synthetic bathy store (#297): DEM placement vs flat, the
+  # flat-path equivalence, the store hard-fail, the coverage gate, and the
+  # --accumulate projection-mode guard. The binary path is injected as a compile
+  # definition, the pattern marine_bathymetry_store uses for import_geotiff.
+  ament_add_gtest(test_tier2_processed_dem test/test_tier2_processed_dem.cpp)
+  target_link_libraries(test_tier2_processed_dem ${PROJECT_NAME})
+  ament_target_dependencies(test_tier2_processed_dem
+    geographic_msgs geodesy marine_autonomy marine_tiled_raster_store)
+  target_compile_definitions(test_tier2_processed_dem PRIVATE
+    SIDESCAN_TIER2_PROCESSED_BINARY="$<TARGET_FILE:sidescan_tier2_processed>")
+  add_dependencies(test_tier2_processed_dem sidescan_tier2_processed)
 endif()
 
 ament_package()

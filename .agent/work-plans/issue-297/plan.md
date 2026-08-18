@@ -122,6 +122,12 @@ std::optional<double> depthAt(double lat_deg, double lon_deg);   // WGS84 ellips
   the review's silent-total-failure hole: a mistyped `--bathy-store`, a store that has
   been renamed `survey/`→`processed/`, or an empty store now aborts the run at
   startup instead of falling back to flat for every sample while exiting 0.
+- **Resolution order (implementation clarification)**: layer priority is the
+  **outer** loop and level the **inner** one — for each layer in the configured
+  order, the finest level with data at the position wins; only when a layer has no
+  data there at any level does the search fall through to the next layer. Layer
+  priority is the stronger semantic (a `survey` surface beats a `reference` prior
+  regardless of resolution); "finest available level" then picks within a layer.
 - **Layer priority**: default search order `survey,reference` (mirroring the store's
   own `source_layers_by_priority` prefix, `bathy_cell.hpp:70-71`), overridable with
   `--bathy-layers`. `chart` is **not** in the default: chart soundings are
@@ -253,7 +259,10 @@ consecutive pings hit the same tiles). Two bounds keep it honest:
   before), not something to discover in the field.
 
 At convergence the routine also yields `vertical_offset`, which is the local grazing
-geometry "for free" — consumed by step 4.
+geometry "for free" — consumed by step 4. *(Implementation clarification)* on every
+non-`kConverged` status `vertical_offset` is **NaN**, not a stale iterate: the caller
+takes its own flat pair `(nadir_altitude_m, flat_ground)` on those paths, and a NaN
+makes an accidental use of the degraded value fail loudly instead of quietly.
 
 ### 3. Wire into `sidescan_tier2_processed.cpp` only
 
@@ -297,6 +306,12 @@ flat-bottom (ADR-0006 D6/D9).
     recording — i.e. it is flat-built (every existing store is) — so a `--bathy-store`
     run is refused the same way. A flat run over a sidecar-less store is allowed
     (unchanged behaviour) and writes the sidecar going forward.
+    *(Implementation clarification)* "missing sidecar ⇒ flat" applies only where a
+    store **exists**, detected by `registry.json` in `out_dir` (every run writes
+    one). An `--accumulate` run into a directory with no registry has nothing to
+    accumulate onto and is not refused — otherwise the **first** bag of a
+    bag-by-bag DEM ingest, which is always `--accumulate` into an empty directory,
+    could never run.
   - `--allow-mixed-projection` is the explicit, documented override for an operator
     who accepts the mix; it prints the refusal text as a warning and continues.
   - When #179 lands the append-only registry, the mode moves into the registry's
@@ -332,7 +347,10 @@ flat-bottom (ADR-0006 D6/D9).
   - `--min-dem-coverage 0` is the explicit operator opt-in for a deliberately partial
     or non-overlapping run (used by the equivalence test in step 5). Even at `0`, a
     below-50 % fraction still prints the same block as a `warning:` so the condition
-    is never invisible.
+    is never invisible. *(Implementation clarification)* the warning is emitted
+    whenever the fraction is below 50 % and the run is not already erroring — i.e.
+    for **any** threshold below 0.5, not only for `0` — so a low-but-accepted
+    coverage is never invisible at any setting.
   - The gate applies **only** when `--bathy-store` is supplied; the default
     flat-bottom run is unaffected.
 
