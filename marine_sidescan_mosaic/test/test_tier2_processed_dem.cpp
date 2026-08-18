@@ -467,6 +467,13 @@ TEST_F(Tier2ProcessedDemTest, ValueFlagWithoutItsValueIsAnArgumentError)
   EXPECT_EQ(run(out2, "--campaign --platform bizzyboat"), 2) << log();
   EXPECT_NE(log().find("another flag"), std::string::npos) << log();
   EXPECT_TRUE(tileNames(out2).empty());
+
+  // An empty layer list is an ARGUMENT refusal (exit 2), not a store failure.
+  const fs::path out3 = dir_ / "no_layers";
+  EXPECT_EQ(
+    run(out3, "--bathy-store \"" + store_.string() + "\" --bathy-layers \" , \""), 2) << log();
+  EXPECT_NE(log().find("--bathy-layers names no layer"), std::string::npos) << log();
+  EXPECT_TRUE(tileNames(out3).empty());
 }
 
 // The coverage gate: a valid store that does not overlap the survey exits 3 and

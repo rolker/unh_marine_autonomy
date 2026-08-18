@@ -462,6 +462,15 @@ int runTool(int argc, char ** argv)
   }
   const bool allow_mixed_projection = hasFlag(argc, argv, "--allow-mixed-projection");
   const bool dem_mode = !bathy_store.empty();
+  // An argument refusal, not a store failure: the README assigns exit 2 to bad
+  // arguments, and letting BathyDem's "no layer names requested" throw reach the
+  // startup handler would report it as exit 1 (#297 review).
+  if (dem_mode && splitCsv(bathy_layers).empty()) {
+    std::cerr << "error: --bathy-layers names no layer (it is empty or all separators); "
+              << "pass a comma-separated search order such as '" << kDefaultBathyLayers
+              << "'\n";
+    return 2;
+  }
   const std::string projection_mode = dem_mode ? "dem" : "flat";
   // What the sidecar will record. It is this run's mode unless the run
   // deliberately mixes modes into an existing store, which makes the store
