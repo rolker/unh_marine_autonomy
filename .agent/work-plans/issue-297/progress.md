@@ -524,3 +524,71 @@ to the `## Plan Authored` entry's Open Questions.
 ### Next step
 `review-code` (round 2) on the thirteen-commit diff `ab0df7b..0c5142d`, dispatched to a
 fresh-context sub-agent. Nothing is pushed.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-18 00:30 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-297 at `98d3e4a`
+**Mode**: pre-push
+**Depth**: Deep (reason: 3630 lines / 14 files; data-of-record store writer)
+**Must-fix**: 3 | **Suggestions**: 20
+**Round**: 2 | **Ship**: continue — must-fix fell 7 -> 3, but all three are fresh holes in the same provenance-marker subsystem the round-1 fixes rewrote, and one is a regression introduced by a round-1 fix.
+
+Specialists: Static Analysis (run; `ament_cppcheck` self-skipped on its slow-version guard),
+Governance, Plan Drift, Claude Adversarial x2 (Lens A + Lens B, Deep prompt). Copilot off
+(standing quota decision); Local cross-model off (`--no-local`, workspace#590).
+
+### Round-1 verification (all 7 must-fixes checked against source, not the checkbox)
+- All 7 genuinely resolved: sticky `kMixedMode` (`:372`); tri-state sidecar read with
+  `kUnreadable` -> exit 2 and the write checked after `close()` (`:166-237`); coverage
+  denominator = hit + no-coverage + degenerate + non-converged (`:612-613`); per-layer
+  warnings with the hard-fail still requiring all layers absent (`bathy_dem.cpp:174-197`);
+  `argValue` last-slot exit 2 (`:93-96`); the catch-all replaced by two DEM call-site
+  handlers with none installed in flat mode (`:513-520,563-566`); `docs/sonar_ecosystem.md`
+  rows 46/49 updated. Each has a test that fails against the reverted code — the shelf
+  fixture yields coverage 0.40 under the new denominator vs 1.00 under the old.
+- **Test claim confirmed by re-running**: 83 gtest cases, 0 failures; result files postdate
+  this session's invocation.
+- **Lint claim confirmed twice over**: exactly 6 failures, all pre-existing. The two in
+  touched files sit in untouched context gaps between hunks, and linting the `origin/jazzy`
+  copies reproduces byte-identical divergences at the pre-shift line numbers. Zero new.
+- **ADR-0006 D9 decoupling holds** — no `marine_bathymetry_store` in `package.xml` or
+  `CMakeLists.txt`, test fixtures included.
+
+### Findings
+- [ ] (must-fix) Mode marker written last and both `--accumulate` guards key on `registry.json` while the fold loop keys on tile files — a crash/ENOSPC in the sidecar write leaves a DEM store reading as pre-#297 flat, and a registry-less store is folded into unguarded then re-stamped pure over a sticky `mixed` [Lens A + Lens B + lead] — `src/sidescan_tier2_processed.cpp:340,719-755`
+- [ ] (must-fix) Regression from a round-1 fix: the datum cross-check was moved before the writes but landed after the coverage gate's `return 3`, so it is silent on exactly the runs a datum error causes [Lens A + lead] — `src/sidescan_tier2_processed.cpp:654-679`
+- [ ] (must-fix) A non-`--accumulate` re-run into a populated `out_dir` leaves stale tiles and stamps a pure mode on a mixed-placement store, exit 0, no flag — both guards are `if (accumulate)` [Lens B + lead] — `src/sidescan_tier2_processed.cpp:719-723,746`
+- [ ] (suggestion) `argValue` still accepts the next flag as a value; `--campaign --platform x` writes `"--platform"` into `registry.json` [Lens B] — `src/sidescan_tier2_processed.cpp:89-101`
+- [ ] (suggestion) No top-level handler in `main`: `gggs::Level::gridIndex`'s `out_of_range` and the throwing `std::filesystem` overloads escape to `std::terminate` with no diagnostic [Lens A + Lens B] — `src/sidescan_tier2_processed.cpp:471-598`, `src/bathy_dem.cpp:127,144`
+- [ ] (suggestion) All-or-nothing bilinear blend discards an almost-exact interpolation over one negligible-weight missing neighbour; renormalising by present weights removes the bias the comment cites [Lens A] — `src/bathy_dem.cpp:336-362`
+- [ ] (suggestion) "Nearest valid of the four" is unconditionally the centre cell (`t,u` in [0,0.5]) and `nearest_weight < 0.0` is dead code [Lens A] — `src/bathy_dem.cpp:349-357`
+- [ ] (suggestion) The guard compares only `projection_mode`, so `--accumulate` across two different bathy stores (different vintage/datum) passes unchecked [Lens B] — `src/sidescan_tier2_processed.cpp:166-183,356`
+- [ ] (suggestion) `--min-dem-coverage 0` stamps `"dem"` with no record of achieved coverage; a 3% and a 99% store are indistinguishable downstream [Lens B] — `src/sidescan_tier2_processed.cpp:629-652,746`
+- [ ] (suggestion) `std::bad_alloc` from an oversized `--bathy-cache-tiles` is reported as "the store is corrupt or truncated"; the flag has a lower bound only [Lens B] — `src/sidescan_tier2_processed.cpp:312,478-482`
+- [ ] (suggestion) Duplicate names in `--bathy-layers` are scanned twice: double-counted `tile_count_`, duplicated `describe()`, two `layers_` entries onto one name-keyed counter [Lens A] — `src/bathy_dem.cpp:134-167`
+- [ ] (suggestion) `--bathy-layers ""` exits 1 where the README assigns argument refusals to exit 2 [Governance + Plan Drift] — `src/bathy_dem.cpp:124-125`, `README.md:156-160`
+- [ ] (suggestion) `out_dir + "/registry.json"` vs the `std::filesystem::path` form used by both guards; and `mode` is the only sidecar value not `jsonEscape`d [Lens A] — `src/sidescan_tier2_processed.cpp:728,176`
+- [ ] (suggestion) `CorruptTileAbortsTheRunWithoutWriting` asserts only on the DEM path; nothing asserts a non-DEM exception is no longer mis-attributed [Lens A] — `test/test_tier2_processed_dem.cpp:504-528`
+- [ ] (suggestion) ADR amendment's "placed either flat-bottom or DEM-orthorectified" reads as store-level purity; a `dem` store also holds flat-placed fallback samples [Governance] — `docs/decisions/0006-multi-platform-backscatter-store.md:208-210`
+- [ ] (suggestion) The #297 amendment has no top-of-file `**Amended**` pointer, unlike every other amended ADR in this repo [Governance] — `docs/decisions/0006-multi-platform-backscatter-store.md:15`
+- [ ] (suggestion) ADR-0005 D8 cited for a "no silent provenance corruption" rule it does not contain (one new site, two pre-existing) [Governance] — `src/sidescan_tier2_processed.cpp:332,383,410`
+- [ ] (suggestion) "flat-bottom by design (ADR-0006 D6/D9)" over-extends to the offline `sidescan_tier2_flat`; D6/D9 scope that to the live draft path [Governance] — `README.md:29-30`, `src/sidescan_tier2_processed.cpp:300-302`
+- [ ] (suggestion) The new cross-store file-format coupling (path shape, 2-band Float64, band 0 up-positive ellipsoidal, NaN nodata, no package dep) is unlisted in the agent guide's pitfalls [Governance] — `.agents/README.md:130-170`, `include/marine_sidescan_mosaic/bathy_dem.hpp:49-53`
+- [ ] (suggestion) `sonar_ecosystem.md` row 46's title still says "live mosaic (L13, uint16)" while its status describes the offline chain and flips to ✅ [Governance] — `docs/sonar_ecosystem.md:46`
+- [ ] (suggestion) Residual plan staleness: "per-layer **hit** counter" x2 (the `146cbf2` rename exists to stop that misreading), the pre-sync "<= 20 cell reads" in Principles Self-Check, `--bathy-cache-tiles` missing from Files-to-Change, "9 files all in marine_sidescan_mosaic" vs 12 shipped incl. an ADR [Plan Drift] — `.agent/work-plans/issue-297/plan.md:143,361,526,511,594`
+- [ ] (suggestion) Implementation behaviour the plan doesn't carry: the GGGS 72°/80° span caveat, `depthAt` throwing at query time, `--allow-mixed-projection` covering only the mode-mismatch refusal, the datum check's final placement, the flat run printing no DEM line [Plan Drift] — `.agent/work-plans/issue-297/plan.md:154-165,344-349,352-362,456-458`
+- [ ] (suggestion) `marine_sidescan_mosaic` is neither built nor tested in hosted CI, so both new suites run only locally; merge rests on a full-scope `ci_local` attestation (ADR-0018) [Governance] — `.github/workflows/ros-base-docker.yml:41,46`
+
+### Owed before merge (not findings against the diff)
+- [ ] Plan step 6 real-data acceptance run against `~/data/stores/sidescan/tier1/2026-06-19.sst1` + `~/data/stores/bathymetry/`, with its four thresholds (coverage >= 0.5, datum mean < 1.0 m, non-converged < 1%, wall clock <= 2x flat) — deliberately operator-run.
+- [ ] File the five plan follow-ups ((a) seabed-normal incidence, (b) DEM-supplied nadir altitude, (c) sigma-weighted sampling, (d) projection mode into the registry with #179, (e) acoustic-shadow handling) with the PR, and note the sidecar's retirement on #179 while doing so.
+
+### Next step
+`address-findings` on the three must-fixes (all in the sidecar/guard ordering subsystem),
+with regression tests for the registry-less-store and populated-out_dir paths, then
+re-dispatch `review-code` (Round 3) scoped to that subsystem. Nothing is pushed until a
+pre-push review returns approved.
