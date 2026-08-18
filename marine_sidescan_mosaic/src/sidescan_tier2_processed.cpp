@@ -35,6 +35,7 @@
 /// establishes the compositing + provenance contract.
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -42,9 +43,11 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <new>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -175,38 +178,65 @@ std::string jsonEscape(const std::string & s)
 /// single-source writer in `marine_backscatter`, and widening it is a package API
 /// change that belongs with #179's append-only registry merge. Until then the tool
 /// writes its own sidecar, which every run (flat included) emits.
+/// All string arguments are passed **already JSON-escaped** (`jsonEscape`), so a
+/// value preserved verbatim from the previous sidecar can be written straight back
+/// without an unescape/re-escape round trip.
+///
+/// @param dem_coverage_history the complete per-run coverage list for this store as
+///   raw JSON element text without its brackets — every earlier run's figure plus
+///   this run's, in order. `dem_coverage` is derived from it as the WORST figure
+///   any contributing run achieved, so a single-number reader can never get a
+///   rosier answer than the store deserves.
 /// @return true when the sidecar is on disk complete; false on any I/O failure
 ///   (open, write, or the flush that close() performs — a full filesystem fails
 ///   only there, so the stream state is checked after the close, not before).
 bool writeProjectionSidecar(
-  const std::string & out_dir, const std::string & mode,
-  const std::string & bathy_store, const std::string & bathy_layers,
-  const std::optional<double> & dem_coverage)
+  const std::string & out_dir, const std::string & mode_json,
+  const std::string & bathy_store_json, const std::string & bathy_layers_json,
+  const std::string & dem_coverage_history)
 {
+  // The worst figure across every run that contributed. An --accumulate used to
+  // stamp the sidecar with THIS run's coverage, so folding a 0.99 bag into a 0.03
+  // store made the store read 0.99 — laundering the exact hazard the figure exists
+  // to record (#297 round-3 review).
+  std::optional<double> worst;
+  std::istringstream elements(dem_coverage_history);
+  std::string element;
+  while (std::getline(elements, element, ',')) {
+    try {
+      std::size_t used = 0;
+      const double value = std::stod(element, &used);
+      worst = worst ? std::min(*worst, value) : value;
+    } catch (const std::exception &) {
+      continue;   // "null" (a flat run) and anything unparseable contribute nothing.
+    }
+  }
+
   const std::string path = (std::filesystem::path(out_dir) / "projection.json").string();
   std::ofstream out(path);
   if (!out) {
     return false;
   }
-  // `mode` is tool-generated, but escape it like every other value: a value that
-  // is escaped only because of where it came from is one refactor from not being.
   out << "{\n"
-      << "  \"version\": 1,\n"
-      << "  \"projection_mode\": \"" << jsonEscape(mode) << "\",\n"
-      << "  \"bathy_store\": \"" << jsonEscape(bathy_store) << "\",\n"
-      << "  \"bathy_layers\": \"" << jsonEscape(bathy_layers) << "\",\n"
-      // The achieved DEM coverage of the run that wrote this sidecar. `--min-dem-
-      // coverage 0` is an explicit opt-in to a partial run, and without this a 3 %
-      // and a 99 % store both read as plain "dem" downstream (#297 review). `null`
-      // for a flat run, and for a `mixed` store it is only this run's figure —
-      // per-run coverage history belongs with #179's registry merge.
+      << "  \"version\": 2,\n"
+      << "  \"projection_mode\": \"" << mode_json << "\",\n"
+      << "  \"bathy_store\": \"" << bathy_store_json << "\",\n"
+      << "  \"bathy_layers\": \"" << bathy_layers_json << "\",\n"
+      // The DEM coverage this store was built at. `--min-dem-coverage 0` is an
+      // explicit opt-in to a partial run, and without a figure a 3 %- and a 99 %-
+      // corrected store both read as plain "dem" downstream (#297 review). `null`
+      // when no contributing run had one (a flat store).
       << "  \"dem_coverage\": ";
-  if (dem_coverage) {
-    out << *dem_coverage;
+  if (worst) {
+    out << *worst;
   } else {
     out << "null";
   }
-  out << "\n"
+  // Per-run history, oldest first — one element per run that wrote this store
+  // (`null` for a flat one). The aggregate above is a floor over it; the list is
+  // what survives an --accumulate, so no run's figure is ever dropped.
+  out << ",\n"
+      << "  \"dem_coverage_history\": [" << dem_coverage_history << "]\n"
       << "}\n";
   out.close();
   return !out.fail();
@@ -227,38 +257,145 @@ struct ProjectionSidecar
   std::string mode;           ///< only meaningful when `state == kOk`.
   std::string bathy_store;    ///< as recorded (still JSON-escaped); "" if absent.
   std::string bathy_layers;   ///< as recorded (still JSON-escaped); "" if absent.
+  /// The recorded per-run coverage list, as raw JSON element text WITHOUT its
+  /// brackets ("0.99, null, 0.03"); "" when the store records none. Carried
+  /// forward verbatim so no run's figure is ever dropped.
+  std::string dem_coverage_history;
 };
 
-/// @brief The quoted value of `"<key>": "<value>"` on @p line, if it is there.
-std::optional<std::string> jsonLineValue(const std::string & line, const std::string & key)
+/// @brief The escaped inner text of the JSON string starting at @p i (which must
+///   index its opening quote). @p i is left on the closing quote.
+///
+/// The text is returned **still escaped**, so a recorded value compares directly
+/// against `jsonEscape(candidate)` without a round trip.
+std::optional<std::string> scanJsonString(const std::string & text, std::size_t * i)
 {
-  const auto at = line.find("\"" + key + "\"");
-  if (at == std::string::npos) {
-    return std::nullopt;
-  }
-  const auto colon = line.find(':', at);
-  if (colon == std::string::npos) {
-    return std::nullopt;
-  }
-  const auto open = line.find('"', colon);
-  if (open == std::string::npos) {
-    return std::nullopt;
-  }
-  // The writer escapes every value, so the first unescaped quote closes it.
   std::string value;
-  for (std::size_t i = open + 1; i < line.size(); ++i) {
-    if (line[i] == '\\' && i + 1 < line.size()) {
-      value.push_back(line[i]);
-      value.push_back(line[i + 1]);
-      ++i;
+  for (std::size_t j = *i + 1; j < text.size(); ++j) {
+    if (text[j] == '\\') {
+      if (j + 1 >= text.size()) {
+        return std::nullopt;   // trailing backslash: truncated.
+      }
+      value.push_back(text[j]);
+      value.push_back(text[j + 1]);
+      ++j;
       continue;
     }
-    if (line[i] == '"') {
+    if (text[j] == '"') {
+      *i = j;
       return value;
     }
-    value.push_back(line[i]);
+    value.push_back(text[j]);
   }
-  return std::nullopt;   // unterminated: a truncated line, not a value.
+  return std::nullopt;   // unterminated.
+}
+
+/// @brief Parse the sidecar's flat JSON object into `key -> raw value text`.
+///
+/// A real (if small) parser rather than a per-line key search: searching for
+/// `"projection_mode"` anywhere on a line finds it INSIDE a value too, so a
+/// `--bathy-store` path holding a quoted `"projection_mode": "flat"` used to emit a
+/// later `bathy_store` line whose spoofed mode overwrote the real one — a `dem`
+/// store read back as `flat`. Scanning the object structurally cannot confuse a
+/// value for a key, and it is also whitespace-agnostic: a hand-repaired sidecar
+/// written on a single line parses all of its fields, not just the first (#297
+/// round-3 review).
+///
+/// String values are returned still-escaped (see @ref scanJsonString); numbers,
+/// literals, and arrays are returned as their verbatim source text. The FIRST
+/// occurrence of a key wins, so an appended duplicate cannot override a recorded
+/// value. Nested objects are refused — this sidecar is flat by contract, and an
+/// unparseable sidecar is an unknown mode, which is the safe answer.
+std::optional<std::map<std::string, std::string>> parseFlatJsonObject(const std::string & text)
+{
+  std::map<std::string, std::string> out;
+  const auto skipWs = [&text](std::size_t i) {
+      while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i]))) {
+        ++i;
+      }
+      return i;
+    };
+  std::size_t i = skipWs(0);
+  if (i >= text.size() || text[i] != '{') {
+    return std::nullopt;
+  }
+  i = skipWs(i + 1);
+  if (i < text.size() && text[i] == '}') {
+    return out;   // an empty object is well-formed, just modeless.
+  }
+  while (i < text.size()) {
+    if (text[i] != '"') {
+      return std::nullopt;
+    }
+    const auto key = scanJsonString(text, &i);
+    if (!key) {
+      return std::nullopt;
+    }
+    i = skipWs(i + 1);
+    if (i >= text.size() || text[i] != ':') {
+      return std::nullopt;
+    }
+    i = skipWs(i + 1);
+    if (i >= text.size()) {
+      return std::nullopt;
+    }
+    std::string value;
+    if (text[i] == '"') {
+      const auto parsed = scanJsonString(text, &i);
+      if (!parsed) {
+        return std::nullopt;
+      }
+      value = *parsed;
+      ++i;
+    } else if (text[i] == '[') {
+      const std::size_t start = i;
+      bool closed = false;
+      for (++i; i < text.size(); ++i) {
+        if (text[i] == '"') {
+          if (!scanJsonString(text, &i)) {
+            return std::nullopt;
+          }
+          continue;   // the loop's ++i steps past the closing quote.
+        }
+        if (text[i] == '[' || text[i] == '{') {
+          return std::nullopt;   // flat by contract: no nesting inside the array.
+        }
+        if (text[i] == ']') {
+          closed = true;
+          break;
+        }
+      }
+      if (!closed) {
+        return std::nullopt;
+      }
+      value = text.substr(start, i - start + 1);
+      ++i;
+    } else if (text[i] == '{') {
+      return std::nullopt;   // flat by contract.
+    } else {
+      const std::size_t start = i;
+      while (i < text.size() && text[i] != ',' && text[i] != '}' &&
+        !std::isspace(static_cast<unsigned char>(text[i])))
+      {
+        ++i;
+      }
+      value = text.substr(start, i - start);
+      if (value.empty()) {
+        return std::nullopt;
+      }
+    }
+    out.emplace(*key, value);   // first occurrence wins.
+    i = skipWs(i);
+    if (i < text.size() && text[i] == ',') {
+      i = skipWs(i + 1);
+      continue;
+    }
+    if (i < text.size() && text[i] == '}') {
+      return out;
+    }
+    return std::nullopt;
+  }
+  return std::nullopt;   // ran off the end: truncated.
 }
 
 ProjectionSidecar readProjectionSidecar(const std::string & out_dir)
@@ -269,33 +406,43 @@ ProjectionSidecar readProjectionSidecar(const std::string & out_dir)
     out.state = SidecarState::kMissing;
     return out;
   }
+  out.state = SidecarState::kUnreadable;   // until a mode is actually parsed.
   std::ifstream in(path);
   if (!in) {
-    out.state = SidecarState::kUnreadable;
     return out;
   }
-  out.state = SidecarState::kUnreadable;   // until a mode is actually parsed.
-  std::string line;
-  while (std::getline(in, line)) {
-    if (const auto mode = jsonLineValue(line, "projection_mode")) {
-      // An empty mode is present-but-unknown, not a flat store: leave the state
-      // at kUnreadable.
-      if (!mode->empty()) {
-        out.mode = *mode;
-        out.state = SidecarState::kOk;
-      }
-      continue;
-    }
-    if (const auto store = jsonLineValue(line, "bathy_store")) {
-      out.bathy_store = *store;
-      continue;
-    }
-    if (const auto layers = jsonLineValue(line, "bathy_layers")) {
-      out.bathy_layers = *layers;
-    }
+  std::ostringstream text;
+  text << in.rdbuf();
+  if (in.bad()) {
+    return out;
   }
-  // Ran off the end (or hit a read error) without a parseable mode: truncated or
-  // corrupt, never "flat".
+  const auto fields = parseFlatJsonObject(text.str());
+  if (!fields) {
+    // Truncated, corrupt, or not the flat object this tool writes: an unknown
+    // mode, never "flat".
+    return out;
+  }
+  const auto store = fields->find("bathy_store");
+  if (store != fields->end()) {
+    out.bathy_store = store->second;
+  }
+  const auto layers = fields->find("bathy_layers");
+  if (layers != fields->end()) {
+    out.bathy_layers = layers->second;
+  }
+  const auto history = fields->find("dem_coverage_history");
+  if (history != fields->end() && history->second.size() >= 2 &&
+    history->second.front() == '[' && history->second.back() == ']')
+  {
+    out.dem_coverage_history = history->second.substr(1, history->second.size() - 2);
+  }
+  const auto mode = fields->find("projection_mode");
+  // An empty (or absent) mode is present-but-unknown, not a flat store: leave the
+  // state at kUnreadable.
+  if (mode != fields->end() && !mode->second.empty()) {
+    out.mode = mode->second;
+    out.state = SidecarState::kOk;
+  }
   return out;
 }
 
@@ -325,6 +472,24 @@ bool hasTileFiles(const std::string & out_dir)
   return false;
 }
 
+/// @brief @p path in a form two spellings of the same location share.
+///
+/// `weakly_canonical` where the filesystem can answer (it resolves `..`, symlinks,
+/// and a relative prefix against the CWD), else the purely lexical normalisation —
+/// never a throw, and never an empty answer for a non-empty input.
+std::string normalizedPath(const std::string & path)
+{
+  if (path.empty()) {
+    return path;
+  }
+  std::error_code ec;
+  const auto resolved = std::filesystem::weakly_canonical(std::filesystem::path(path), ec);
+  if (ec || resolved.empty()) {
+    return std::filesystem::path(path).lexically_normal().string();
+  }
+  return resolved.string();
+}
+
 /// @brief Everything the provenance guards need to know about `out_dir`.
 struct OutputDirState
 {
@@ -345,16 +510,28 @@ OutputDirState inspectOutputDir(const std::string & out_dir)
   return state;
 }
 
+/// @brief What the sidecar this run writes carries, once the prior store has had
+///   its say. A field this run has nothing to say about must keep the previous
+///   run's value rather than blanking it (#297 round-3 review).
+struct SidecarCarryForward
+{
+  std::string mode;                  ///< this run's mode, or `mixed` once promoted.
+  std::string bathy_store_json;      ///< JSON-escaped; see @ref jsonEscape.
+  std::string bathy_layers_json;     ///< JSON-escaped.
+  /// Earlier runs' `dem_coverage` elements (raw JSON text, no brackets); "" if none.
+  std::string dem_coverage_history;
+};
+
 /// @brief The output-directory provenance guards, run before anything is decoded.
 ///
-/// @param sidecar_mode in/out: this run's mode, promoted to @ref kMixedMode when an
-///   operator accepts a deliberate mix.
+/// @param carry in/out: seeded with this run's own values, adjusted here for what
+///   the existing store already records.
 /// @return an exit code to return from the tool immediately, or `nullopt` to proceed.
 std::optional<int> checkOutputDirGuards(
   const std::string & out_dir, const OutputDirState & state, bool accumulate,
   bool dem_mode, const std::string & projection_mode, bool allow_mixed_projection,
   const std::string & bathy_store, const std::string & bathy_layers, int source_id_arg,
-  std::string * sidecar_mode)
+  SidecarCarryForward * carry)
 {
   const std::filesystem::path registry_file = std::filesystem::path(out_dir) / "registry.json";
   const bool out_dir_has_tiles = state.has_tiles;
@@ -443,37 +620,63 @@ std::optional<int> checkOutputDirGuards(
       // stays that way forever: record `mixed`, not this run's mode. Rewriting it
       // as pure `dem`/`flat` would launder the provenance — every later
       // --accumulate would then pass the guard silently (#297 review).
-      *sidecar_mode = kMixedMode;
+      carry->mode = kMixedMode;
       std::cerr << "warning: " << out_dir << " is now a MIXED-projection store; its "
                 << "projection.json records '" << kMixedMode << "' permanently, and every "
                 << "later --accumulate into it needs --allow-mixed-projection.\n";
     } else if (existing_mode == kMixedMode) {
       // Unreachable while kMixedMode is neither "flat" nor "dem" (the branch above
       // fires first), but keep the stickiness explicit rather than incidental.
-      *sidecar_mode = kMixedMode;
-    } else if (dem_mode && recorded.state == SidecarState::kOk) {
-      // Same MODE, different DEM. Two DEM runs against different bathy stores (or
-      // a different layer search order) are not the same placement: a re-imported
-      // store, another vintage, or a different vertical datum moves the samples,
-      // and the composited cells again record only the source id. The mode guard
-      // cannot see this, so report it — as a warning, not a refusal: re-running
-      // against an UPDATED store is a legitimate, common workflow, and only the
-      // operator knows whether the two surfaces agree.
-      const std::string recorded_store = recorded.bathy_store;
-      const std::string recorded_layers = recorded.bathy_layers;
-      if (!recorded_store.empty() &&
-        (recorded_store != jsonEscape(bathy_store) || recorded_layers != jsonEscape(bathy_layers)))
-      {
-        std::cerr << "warning: --accumulate: the store in " << out_dir << " was "
-                  << "DEM-orthorectified against '" << recorded_store << "' (layers '"
-                  << recorded_layers << "'), but this run uses '" << bathy_store
-                  << "' (layers '" << bathy_layers << "').\n"
-                  << "  Both runs are 'dem', so the projection-mode guard passes — but samples\n"
-                  << "  placed against two different bathymetric surfaces (a different vintage,\n"
-                  << "  extent, or vertical datum) composite into the same cells with nothing\n"
-                  << "  per-cell to tell them apart. Confirm the two surfaces agree, or build\n"
-                  << "  into a fresh out_dir. The sidecar will now name THIS run's store.\n";
-      }
+      carry->mode = kMixedMode;
+    }
+
+    // A DIFFERENT DEM, whatever the mode verdict was. Two DEM placements against
+    // different bathy stores (or a different layer search order) are not the same
+    // placement: another vintage, extent, or vertical datum moves the samples, and
+    // the composited cells again record only the source id. The mode guard cannot
+    // see this, so report it — as a warning, not a refusal: re-running against an
+    // UPDATED store is a legitimate, common workflow, and only the operator knows
+    // whether the two surfaces agree. Checked OUTSIDE the mode chain (a refused
+    // mismatch has already returned above), so a `mixed` store — which is exactly
+    // the store most likely to be built from several surfaces — is not the one
+    // store that never gets the warning.
+    //
+    // It compares the store PATH, normalised (`./stores/bathy` and its absolute
+    // form are the same store; without that the check cried wolf on every relative
+    // invocation). What a path comparison cannot see is the same path RE-IMPORTED
+    // with new content — a store fingerprint in the registry is what would catch
+    // that, and it belongs with #179 (#297 round-3 review).
+    const std::string recorded_store = recorded.bathy_store;
+    const std::string recorded_layers = recorded.bathy_layers;
+    if (dem_mode && !recorded_store.empty() &&
+      (normalizedPath(recorded_store) != normalizedPath(jsonEscape(bathy_store)) ||
+      recorded_layers != jsonEscape(bathy_layers)))
+    {
+      std::cerr << "warning: --accumulate: the store in " << out_dir << " was "
+                << "DEM-orthorectified against '" << recorded_store << "' (layers '"
+                << recorded_layers << "'), but this run uses '" << bathy_store
+                << "' (layers '" << bathy_layers << "').\n"
+                << "  The projection-mode guard cannot see this — but samples placed against\n"
+                << "  two different bathymetric surfaces (a different vintage, extent, or\n"
+                << "  vertical datum) composite into the same cells with nothing per-cell to\n"
+                << "  tell them apart. Confirm the two surfaces agree, or build into a fresh\n"
+                << "  out_dir. The sidecar will now name THIS run's store.\n";
+    }
+
+    // Carry the prior sidecar's provenance forward. Every earlier run's coverage
+    // figure stays in the history list — an --accumulate that re-stamped the store
+    // with only ITS OWN figure made a 0.99 bag folded into a 0.03 store read 0.99.
+    carry->dem_coverage_history = recorded.dem_coverage_history;
+    // A run with no bathy store of its own (a flat run promoted to `mixed`) must not
+    // blank the store the DEM half was built against: that record is permanent and
+    // erasing it silently disables the different-store cross-check for this store
+    // forever (#297 round-3 review).
+    if (carry->bathy_store_json.empty() && !recorded.bathy_store.empty()) {
+      carry->bathy_store_json = recorded.bathy_store;
+      carry->bathy_layers_json = recorded.bathy_layers;
+      std::cerr << "note: this run names no --bathy-store, so projection.json keeps naming '"
+                << recorded.bathy_store << "' (layers '" << recorded.bathy_layers
+                << "') — the surface the store's DEM-placed samples were built against.\n";
     }
   }
 
@@ -629,10 +832,14 @@ int runTool(int argc, char ** argv)
     return 2;
   }
   const std::string projection_mode = dem_mode ? "dem" : "flat";
-  // What the sidecar will record. It is this run's mode unless the run
-  // deliberately mixes modes into an existing store, which makes the store
-  // permanently `mixed` (set in the guard below) — see kMixedMode.
-  std::string sidecar_mode = projection_mode;
+  // What the sidecar will record: this run's own values, adjusted by the guards
+  // below for whatever the existing store already records (a deliberate mode mix
+  // makes the store permanently `mixed`; a field this run says nothing about keeps
+  // the previous run's value rather than being blanked).
+  SidecarCarryForward carry;
+  carry.mode = projection_mode;
+  carry.bathy_store_json = jsonEscape(bathy_store);
+  carry.bathy_layers_json = jsonEscape(dem_mode ? bathy_layers : "");
   if (!(min_dem_coverage >= 0.0 && min_dem_coverage <= 1.0)) {
     std::cerr << "error: --min-dem-coverage must be a fraction in [0, 1]\n";
     return 2;
@@ -645,7 +852,7 @@ int runTool(int argc, char ** argv)
   const OutputDirState out_dir_state = inspectOutputDir(out_dir);
   if (const auto guard_exit = checkOutputDirGuards(
       out_dir, out_dir_state, accumulate, dem_mode, projection_mode,
-      allow_mixed_projection, bathy_store, bathy_layers, source_id_arg, &sidecar_mode))
+      allow_mixed_projection, bathy_store, bathy_layers, source_id_arg, &carry))
   {
     return *guard_exit;
   }
@@ -992,8 +1199,21 @@ int runTool(int argc, char ** argv)
               << mkdir_ec.message() << "\n";
     return 1;
   }
+  // This run's element appended to the history the prior sidecar recorded, so the
+  // list holds one figure per run that ever wrote this store.
+  std::ostringstream coverage_history;
+  coverage_history << carry.dem_coverage_history;
+  if (!carry.dem_coverage_history.empty()) {
+    coverage_history << ", ";
+  }
+  if (dem_coverage) {
+    coverage_history << *dem_coverage;
+  } else {
+    coverage_history << "null";
+  }
   if (!writeProjectionSidecar(
-      out_dir, sidecar_mode, bathy_store, dem_mode ? bathy_layers : "", dem_coverage))
+      out_dir, jsonEscape(carry.mode), carry.bathy_store_json, carry.bathy_layers_json,
+      coverage_history.str()))
   {
     std::cerr << "error: could not write " << out_dir << "/projection.json.\n"
               << "  It records how this run placed its samples, and it is written before the\n"
@@ -1034,7 +1254,7 @@ int runTool(int argc, char ** argv)
             << " bad-pose=" << n_bad_pose << "), best-source into "
             << written << " 3-band tiles + registry.json in " << out_dir
             << " [projection=" << projection_mode
-            << (sidecar_mode == projection_mode ? "" : " store=" + sidecar_mode) << "]\n";
+            << (carry.mode == projection_mode ? "" : " store=" + carry.mode) << "]\n";
   if (dem) {
     std::cerr << "tier2-processed: dem hit=" << n_dem_hit
               << " no-coverage=" << n_dem_no_coverage

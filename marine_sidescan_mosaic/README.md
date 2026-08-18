@@ -162,18 +162,30 @@ Under `--accumulate`, the provenance guards key on the **tiles** as well as on
 (and a tiles-without-registry store is refused outright: its per-cell source indices
 are unresolvable).
 
-The sidecar records the run's **achieved** DEM coverage as `dem_coverage` (`null`
-for a flat run). `--min-dem-coverage 0` is an explicit opt-in to a partial run, and
-without the figure a 3 %-corrected and a 99 %-corrected store both read as plain
-`"dem"` downstream.
+The sidecar records the **achieved** DEM coverage. `--min-dem-coverage 0` is an
+explicit opt-in to a partial run, and without the figure a 3 %-corrected and a
+99 %-corrected store both read as plain `"dem"` downstream. Two fields carry it
+(sidecar `version: 2`):
+
+- `dem_coverage_history` — one element per run that has written this store, oldest
+  first, `null` for a flat run. An `--accumulate` **appends**; no run's figure is
+  ever dropped.
+- `dem_coverage` — the **worst** figure in that history (`null` when no run had
+  one). A single-number reader therefore never gets a rosier answer than the store
+  deserves: folding a 99 %-corrected bag into a 3 %-corrected store leaves the store
+  reading 3 %, which is the hazard the figure exists to record.
 
 The sidecar also records **which** bathy store and layer order a `dem` run used, so
-an `--accumulate` of one DEM run onto another built against a *different* store (or
-layer order) **warns**: the mode guard cannot see that difference, and two
-bathymetric surfaces of different vintage, extent, or vertical datum place samples
-differently. It is a warning rather than a refusal — re-running against an updated
-store is a legitimate workflow, and only the operator knows whether the surfaces
-agree.
+an `--accumulate` against a *different* store (or layer order) **warns**: the mode
+guard cannot see that difference, and two bathymetric surfaces of different vintage,
+extent, or vertical datum place samples differently. Paths are compared normalised,
+so a relative and an absolute spelling of the same store do not warn; a store
+*re-imported in place with new content* is what the check cannot see (that needs a
+store fingerprint, which belongs with #179). It is a warning rather than a refusal —
+re-running against an updated store is a legitimate workflow, and only the operator
+knows whether the surfaces agree. A run that names **no** `--bathy-store` (a flat
+run accepted into a store as a deliberate mix) leaves the recorded store name in
+place rather than blanking it: that record is permanent provenance.
 
 **Regenerate, don't accumulate, when switching projection mode.** Every run writes a
 `projection.json` sidecar next to `registry.json` recording `flat` or `dem`. The

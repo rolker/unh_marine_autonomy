@@ -499,13 +499,15 @@ TEST_F(Tier2ProcessedDemTest, CoverageGateAbortsBeforeAnyWrite)
   // coverage it actually achieved — otherwise a 0 %- and a 99 %-corrected store are
   // indistinguishable downstream.
   const std::string sidecar = readFile(allowed / "projection.json");
-  EXPECT_NE(sidecar.find("\"dem_coverage\": 0"), std::string::npos) << sidecar;
+  // The trailing comma matters: "dem_coverage": 0 alone also matches 0.87, which
+  // would prove only that the key is present and starts with a zero.
+  EXPECT_NE(sidecar.find("\"dem_coverage\": 0,"), std::string::npos) << sidecar;
 
   // A flat run has no coverage figure to record.
   const fs::path flat = dir_ / "flat_coverage";
   ASSERT_EQ(run(flat), 0) << log();
   EXPECT_NE(
-    readFile(flat / "projection.json").find("\"dem_coverage\": null"), std::string::npos)
+    readFile(flat / "projection.json").find("\"dem_coverage\": null,"), std::string::npos)
     << readFile(flat / "projection.json");
 }
 
@@ -783,4 +785,78 @@ TEST_F(Tier2ProcessedDemTest, AccumulateRefusesToMixProjectionModes)
   const fs::path fresh = dir_ / "fresh";
   EXPECT_EQ(
     run(fresh, "--accumulate --bathy-store \"" + store_.string() + "\""), 0) << log();
+}
+
+// The sidecar must not LAUNDER the provenance the prior run recorded. Two ways it
+// used to: an --accumulate re-stamped dem_coverage with only its own figure (so a
+// 0.99 bag folded into a near-zero store read 0.99), and a flat run promoted to
+// `mixed` wrote bathy_store: "" — erasing, permanently and silently, the record the
+// different-store cross-check depends on.
+TEST_F(Tier2ProcessedDemTest, AccumulateDoesNotLaunderTheRecordedProvenance)
+{
+  // (a) coverage. A deliberately partial run first (coverage 0 against the far
+  // store), then a well-covered fold on top.
+  const fs::path out = dir_ / "coverage_history";
+  ASSERT_EQ(
+    run(out, "--bathy-store \"" + far_store_.string() + "\" --min-dem-coverage 0"), 0) << log();
+  const std::string first = readFile(out / "projection.json");
+  EXPECT_NE(first.find("\"dem_coverage\": 0,"), std::string::npos) << first;
+  EXPECT_NE(first.find("\"dem_coverage_history\": [0]"), std::string::npos) << first;
+
+  ASSERT_EQ(
+    run(out, "--accumulate --bathy-store \"" + store_.string() + "\""), 0) << log();
+  const std::string folded = readFile(out / "projection.json");
+  // Every run's figure survives, and the single-number field is the WORST of them —
+  // never the rosier latest.
+  EXPECT_NE(folded.find("\"dem_coverage\": 0,"), std::string::npos) << folded;
+  EXPECT_NE(folded.find("\"dem_coverage_history\": [0, "), std::string::npos) << folded;
+  EXPECT_EQ(folded.find("\"dem_coverage_history\": [0]"), std::string::npos) << folded;
+
+  // (b) the bathy store record. A flat --accumulate accepted as a deliberate mix
+  // must leave the DEM half's store named.
+  const fs::path mixed = dir_ / "mixed_keeps_store";
+  ASSERT_EQ(run(mixed, "--bathy-store \"" + store_.string() + "\""), 0) << log();
+  ASSERT_NE(
+    readFile(mixed / "projection.json").find(store_.string()), std::string::npos);
+  ASSERT_EQ(run(mixed, "--accumulate --allow-mixed-projection"), 0) << log();
+  const std::string promoted = readFile(mixed / "projection.json");
+  EXPECT_NE(promoted.find("\"mixed\""), std::string::npos) << promoted;
+  EXPECT_NE(promoted.find(store_.string()), std::string::npos) << promoted;
+  EXPECT_EQ(promoted.find("\"bathy_store\": \"\""), std::string::npos) << promoted;
+
+  // ...and the cross-check that record feeds still works afterwards: a DEM
+  // --accumulate against a DIFFERENT store into the now-mixed store still warns.
+  ASSERT_EQ(
+    run(
+      mixed, "--accumulate --allow-mixed-projection --min-dem-coverage 0 --bathy-store \"" +
+      far_store_.string() + "\""), 0) << log();
+  EXPECT_NE(log().find("was DEM-orthorectified against"), std::string::npos) << log();
+}
+
+// A sidecar value must never be readable as a KEY. The reader parses the object
+// structurally, so a bathy-store path that itself contains a quoted
+// "projection_mode" cannot spoof the store's mode — and a hand-repaired
+// single-line sidecar still yields all of its fields, not just the first.
+TEST_F(Tier2ProcessedDemTest, SidecarValuesCannotSpoofSidecarKeys)
+{
+  const fs::path out = dir_ / "spoofed";
+  ASSERT_EQ(run(out, "--bathy-store \"" + store_.string() + "\""), 0) << log();
+
+  // Hand-rewrite the sidecar onto ONE line, with a spoofed mode inside a value.
+  {
+    std::ofstream repaired(out / "projection.json", std::ios::trunc);
+    repaired << "{ \"version\": 2, \"projection_mode\": \"dem\", \"bathy_store\": "
+             << "\"/tmp/\\\"projection_mode\\\": \\\"flat\\\"/store\", "
+             << "\"bathy_layers\": \"survey,reference\", \"dem_coverage\": null, "
+             << "\"dem_coverage_history\": [null] }\n";
+  }
+  // The mode is still 'dem' (not the spoofed 'flat'), so a flat --accumulate is
+  // refused — and the store field parsed off the same single line is reported.
+  EXPECT_EQ(run(out, "--accumulate"), 2) << log();
+  EXPECT_NE(log().find("projection_mode 'dem'"), std::string::npos) << log();
+
+  // The single line's bathy_store also reached the different-store cross-check.
+  EXPECT_EQ(
+    run(out, "--accumulate --bathy-store \"" + store_.string() + "\""), 0) << log();
+  EXPECT_NE(log().find("was DEM-orthorectified against"), std::string::npos) << log();
 }
