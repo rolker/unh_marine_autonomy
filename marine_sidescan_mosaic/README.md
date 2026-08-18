@@ -22,7 +22,12 @@ and the dirty-region distribution topic (P4) are separate sub-issues.
    residual gap the `no_nadir_policy` applies (`drop` default, or `assume_zero`).
 3. **Per-sample projection** — slant range `(sample0+j)·c/2f` → ground range
    `sqrt(slant²−alt²)` → geodetic via `geodesy::wgs84::direct` at the across-track
-   azimuth → GGGS `CellIndex` (grid resolved per sample, no edge clamp).
+   azimuth → GGGS `CellIndex` (grid resolved per sample, no edge clamp). The
+   offline `sidescan_tier2_processed` build can replace the flat `sqrt(slant²−alt²)`
+   with a **DEM-orthorectified** ground range — see
+   [DEM orthorectification](#dem-orthorectification-sidescan_tier2_processed-297).
+   The live node and `sidescan_tier2_flat` stay flat-bottom **by design** (ADR-0006
+   D6/D9: "no bathy live").
 4. **Normalize** — rolling AGC (`RollingNormalizer`) maps sample magnitudes to
    `uint16` so the mosaic stays legible (live stand-in for PINGMapper's EGN).
 5. **Splat** — each sample is deposited across its **along-track footprint**
@@ -86,6 +91,61 @@ ros2 launch marine_sidescan_mosaic sidescan_mosaic.launch.py \
 
 The resulting WGS84 GeoTIFF tiles load directly in QGIS / a CAMP `RasterLayer`.
 
+### DEM orthorectification (`sidescan_tier2_processed`, #297)
+
+The flat-bottom `sqrt(slant² − alt²)` applies one held nadir altitude across the
+whole swath, which mis-places every off-nadir sample on a sloping or irregular
+bottom. Pass `--bathy-store` and the durable `processed` build instead solves for
+where the ray actually meets the seafloor, reading the bathymetry store's GeoTIFF
+value tiles directly (ADR-0006 D9 — a file-level dependency, no
+`marine_bathymetry_store` package dependency) and bilinearly interpolating them.
+
+```bash
+ros2 run marine_sidescan_mosaic sidescan_tier2_processed \
+    ~/data/stores/sidescan/tier1/2026-06-19.sst1 /tmp/tier2_dem \
+    --bathy-store ~/data/stores/bathymetry \
+    [--bathy-layers survey,reference] [--min-dem-coverage 0.5] \
+    [--datum-check-warn-m 1.0] [--allow-mixed-projection]
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--bathy-store` | *(unset)* | Bathy store root. **Omitted ⇒ the unchanged flat-bottom path.** An absent root, an absent layer directory, or a store with no tiles is a hard failure at startup (exit 1) — never a silent whole-run fallback to flat |
+| `--bathy-layers` | `survey,reference` | Layer directory search order, highest priority first. `chart` is **not** in the default: chart soundings are shoal-biased for navigation safety (ADR-0010 D7) and would bias placement; opt in only where it is the only coverage. ADR-0010 D3's `survey/`→`processed/` re-classification is a change to this flag, not to code |
+| `--min-dem-coverage` | `0.5` | Minimum share of DEM-consulted samples that must actually find data. Below it the run **exits 3 having written nothing** — no tiles, no registry. `0` is the explicit opt-in for a deliberately partial run; a below-50 % fraction still prints the same diagnostic block as a warning |
+| `--datum-check-warn-m` | `1.0` | Warn when the mean nadir-altimeter-vs-DEM discrepancy exceeds this |
+| `--allow-mixed-projection` | off | Accept an `--accumulate` across projection modes (see below) |
+
+**Datum.** The vertical term is a WGS84 **ellipsoidal height on both sides**: the
+sensor's from the Tier-1 baked `earth`→transducer pose (`GeoBeam::altitude_m`), the
+bottom's from the store's depth band. `nadir_altitude_m` is a *height above bottom*,
+not a height datum, and is used only as the nadir-cone gate, the iteration seed, and
+the fallback. As an independent check, each ping compares its altimeter reading
+against `sensor height − DEM height` at the nadir point; a persistent offset means a
+datum mismatch (an orthometric store, a lever-arm error, an unexpected tide frame)
+and is reported as mean/RMS with a warning past `--datum-check-warn-m`.
+
+**Degraded samples are counted, never guessed.** The summary reports
+`hit / no-coverage / degenerate / non-converged` plus per-layer hit counts. A sample
+whose iteration does not settle within its 5-iteration cap falls back to the flat
+placement and is counted — the non-converged iterate is never emitted. Same for a
+DEM cell at or above the sensor, or one that would put the sample inside the nadir
+cone. Acoustic shadow and multi-valued ray/bottom intersections are out of scope in
+v1: the iteration takes the solution nearest the flat seed.
+
+**Regenerate, don't accumulate, when switching projection mode.** Every run writes a
+`projection.json` sidecar next to `registry.json` recording `flat` or `dem`. Under
+`--accumulate`, a mode mismatch is refused (exit 2) before anything is decoded: the
+per-cell source band records only the source id, so flat and DEM-placed samples
+composited into the same cells cannot be told apart afterwards. A store with no
+sidecar predates the flag and is treated as flat-built. Build into a **fresh**
+output directory instead, or pass `--allow-mixed-projection` to accept the mix
+deliberately. (The mode belongs in `registry.json`; it moves there when #179's
+append-only registry merge lands, and the sidecar retires.)
+
+**Exit codes**: `0` success, `1` I/O or unusable bathy store, `2` argument or
+provenance-guard refusal, `3` DEM coverage below `--min-dem-coverage`.
+
 ### Overview pyramid (post-ingest, #188 / ADR-0011)
 
 The live mosaic is single-level (L13), so a zoomed-out consumer must open every
@@ -114,11 +174,19 @@ colcon build --symlink-install --packages-select marine_sidescan_mosaic
 colcon test --packages-select marine_sidescan_mosaic
 ```
 
-Unit tests cover the projection geometry (`test_projection`), the splat
-accumulator (`test_accumulator`), the normalizer (`test_normalizer`), and the
-overview-pyramid builder's production path (`test_overview_pyramid` — argument
-parsing, on-disk fold, level-distinguished sidecar, mean/value-idempotency, and
-the empty-layer / partial-pyramid guards).
+Unit tests cover the projection geometry including the DEM correction
+(`test_projection`), the splat accumulator (`test_accumulator`), the normalizer
+(`test_normalizer`), the overview-pyramid builder's production path
+(`test_overview_pyramid` — argument parsing, on-disk fold, level-distinguished
+sidecar, mean/value-idempotency, and the empty-layer / partial-pyramid guards), the
+bathy DEM reader over synthetic value tiles (`test_bathy_dem` — bilinear blend,
+no-data, grid-crossing stencil, multi-level and layer priority, hard-fail
+construction), and the `sidescan_tier2_processed` DEM path end to end through the
+built binary (`test_tier2_processed_dem` — slope-direction placement, flat-path
+equivalence, store hard-fail, coverage gate, `--accumulate` mode guard). Both new
+suites author their own fixtures (`.sst1` via `writeTier1Header`/`writeTier1Ping`,
+value tiles via `marine_tiled_raster_store::saveTile<double>`), so no binary
+fixture is committed.
 
 ## Dependencies
 
