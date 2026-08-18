@@ -148,12 +148,22 @@ v1: the iteration takes the solution nearest the flat seed.
 rewrites only the tiles a run touches, so a plain re-run into an existing store
 would leave the previous build's other tiles in place — a materially **mixed** store
 stamped with a single pure mode, at exit 0. A run without `--accumulate` therefore
-**refuses** (exit 2) a directory that already holds tiles, a `registry.json`, or a
-`projection.json`. There are two ways forward, and the refusal names both: pass
-`--accumulate`, or use a fresh output directory.
+**refuses** (exit 2) a directory that already holds tiles, a `registry.json`, a
+`projection.json`, or a derived `overviews/` pyramid. There are two ways forward,
+and the refusal names both: pass `--accumulate`, or use a fresh output directory.
+
+Every argument is checked too, and an **unrecognised** one is refused (exit 2)
+rather than ignored: an ignored `--bathy-stor /path` is a full flat-bottom build the
+operator believes is DEM-corrected, and an ignored `--overwrite` (see below) is a
+deletion that silently did not happen. A run that ends up painting **no cell at all**
+is likewise a refusal (exit 3) rather than a write: it has nothing to record, and
+rewriting the sidecar from it would relabel an existing store's provenance on the
+strength of a run that contributed nothing.
 
 **This tool never deletes a store.** There is deliberately no `--overwrite` flag:
-clearing a previous build is the operator's own explicit act, done by hand. (One was
+clearing a previous build is the operator's own explicit act, done by hand. Passing
+`--overwrite` is refused by name (exit 2) rather than ignored — an ignored deletion
+flag is a deletion the operator believes happened. (One was
 written during #297 and removed in the same PR — every in-tool deletion path found a
 way to destroy a store nobody meant to lose: a run that placed nothing still cleared
 the directory, and a transposed path argument matched another store's tile names.)
@@ -179,11 +189,20 @@ explicit opt-in to a partial run, and without the figure a 3 %-corrected and a
   deserves: folding a 99 %-corrected bag into a 3 %-corrected store leaves the store
   reading 3 %, which is the hazard the figure exists to record.
 
+A `version: 1` sidecar (written only by an intermediate build of #297) carried the
+scalar alone; its figure is **seeded into the history** on the first `--accumulate`,
+so the migration cannot drop it. A `version` this build does not know leaves the
+mode unknown — refused, like any unreadable sidecar — and so does a history element
+that is neither a number in `[0, 1]` nor `null`.
+
 The sidecar also records **which** bathy store and layer order a `dem` run used, so
 an `--accumulate` against a *different* store (or layer order) **warns**: the mode
 guard cannot see that difference, and two bathymetric surfaces of different vintage,
 extent, or vertical datum place samples differently. Paths are compared normalised,
-so a relative and an absolute spelling of the same store do not warn; a store
+so a relative and an absolute spelling of the same store do not warn — the
+normalisation resolves against the *reading* run's working directory, so a store
+recorded by its relative path can still warn if a later run is launched from
+somewhere else (record and pass absolute store paths to avoid it); a store
 *re-imported in place with new content* is what the check cannot see (that needs a
 store fingerprint, which belongs with #179). It is a warning rather than a refusal —
 re-running against an updated store is a legitimate workflow, and only the operator
@@ -207,7 +226,12 @@ marks the store `"projection_mode": "mixed"` **permanently**: a mixed store is n
 re-recorded as pure `flat`/`dem`, and every later `--accumulate` into it needs the
 flag again. A sidecar that cannot be written is an error (exit 1) **before any tile
 is written**, so the output directory is left without a store rather than with an
-unmarked one. (The mode belongs in `registry.json`; it moves there when
+unmarked one. The rewrite is **staged and swapped** (a sibling `projection.json.tmp`
+renamed into place once it is written and closed cleanly), so a failed write or a
+crash never destroys the sidecar already there — under `--accumulate` that file is
+the store's only record of its coverage history and bathy provenance, and losing it
+makes the store unreadable to every later run. (The mode belongs in `registry.json`;
+it moves there when
 #179's append-only registry merge lands, and the sidecar retires.)
 
 **Exit codes**:
@@ -216,8 +240,8 @@ unmarked one. (The mode belongs in `registry.json`; it moves there when
 |---|---|
 | `0` | Success — tiles, `registry.json`, and `projection.json` all written |
 | `1` | A run-time failure, always reported with what (if anything) reached the disk: the Tier-1 archive cannot be opened or carries the wrong magic/version; the bathy store is unusable at startup, or a tile it listed cannot be read mid-run (a corrupt/truncated store); **out of memory** loading a bathy tile, reported as a `--bathy-cache-tiles` **sizing** fault rather than as a corrupt store; `--accumulate` cannot reload an existing tile (refused, so the tile's prior coverage is never overwritten); the output directory cannot be created; `projection.json` cannot be written (before any tile); `saveTiles` throws; `registry.json` is missing or empty after the tiles were saved; or **any other exception** reaching `main`'s last-resort handler, which reports it rather than letting `std::terminate` end a store writer with no diagnostic |
-| `2` | An argument or provenance-guard refusal, always **before** anything is decoded: a bad/missing/flag-shaped flag value, an out-of-range `--source-id`, `--bathy-cache-tiles`, `--min-dem-coverage`, or `--datum-check-warn-m`, an empty `--bathy-layers`, a populated `out_dir` without `--accumulate`, an `--accumulate` across projection modes without `--allow-mixed-projection`, into a store whose sidecar is unreadable, into tiles with no `registry.json`, or with a `--source-id` the existing registry does not name |
-| `3` | The DEM coverage gate: coverage below `--min-dem-coverage`. Reported separately under the same code, no sample reached the lookup at all (an empty archive / every ping dropped) — a no-usable-input failure rather than a coverage verdict. Both exit **having written nothing** |
+| `2` | An argument or provenance-guard refusal, always **before** anything is decoded: a bad/missing/flag-shaped flag value, an **unrecognised** flag or stray token (`--overwrite` is named explicitly), a flag-shaped positional, an out-of-range `--source-id`, `--bathy-cache-tiles`, `--min-dem-coverage`, or `--datum-check-warn-m`, an empty `--bathy-layers`, a populated `out_dir` without `--accumulate`, an `--accumulate` across projection modes without `--allow-mixed-projection`, into a store whose sidecar is unreadable (unparseable, an unknown `version`, or an invalid coverage element), into tiles with no `registry.json`, or with a `--source-id` the existing registry does not name |
+| `3` | The DEM coverage gate: coverage below `--min-dem-coverage`. Reported separately under the same code: no sample reached the DEM lookup at all, and — on any run, `dem` or `flat` — no cell painted at all (an empty archive / every ping dropped) — no-usable-input failures rather than coverage verdicts. All exit **having written nothing**, leaving any existing store's tiles and `projection.json` exactly as they were |
 
 ### Overview pyramid (post-ingest, #188 / ADR-0011)
 

@@ -216,18 +216,29 @@ cannot say which: the per-cell `source-index` band resolves to the same source
 either way, so compositing the two placements into one cell is unrecoverable. Until
 #179's append-only registry merge can widen `registry.json` to carry it,
 `sidescan_tier2_processed` writes a sibling `projection.json` (`{version,
-projection_mode, bathy_store, bathy_layers, dem_coverage}`) on **every** run, flat
-included, and refuses an `--accumulate` across modes.
+projection_mode, bathy_store, bathy_layers, dem_coverage, dem_coverage_history}`) on
+**every** run, flat included, and refuses an `--accumulate` across modes.
 
 `projection_mode` is `flat`, `dem`, or `mixed` — the last being sticky for a store
 an operator deliberately mixed. It is a statement about the **run** that produced
 the store, not a guarantee of per-sample purity: a `dem` store still contains
 flat-placed samples wherever the DEM had no coverage or the geometry was degenerate
-or non-convergent, which is why the same sidecar records `dem_coverage` — the share
-of consulted samples actually placed against the DEM. `flat` alone is a purity
-claim (no sample in a flat run was DEM-placed). The sidecar is an interim artifact
-of this schema, not a new long-lived one: it retires when the mode moves into the
-registry with #179, which should carry the coverage figure with it.
+or non-convergent, which is why the same sidecar records the DEM coverage achieved.
+`flat` alone is a purity claim (no sample in a flat run was DEM-placed).
+
+Because `--accumulate` composites bag after bag into one store, the coverage record
+is **per contributing run**, not per write (sidecar `version: 2`).
+`dem_coverage_history` holds one element per run that has written the store, oldest
+first (`null` for a flat run) and append-only; `dem_coverage` is the **worst**
+element in it (`null` when no run had one). A single-number reader therefore never
+gets a rosier answer than the store deserves — folding a 99 %-corrected bag into a
+3 %-corrected store leaves the store reading 3 %, which is the hazard the figure
+exists to record. (v1, written only by an intermediate build of #297, carried the
+scalar alone; the reader seeds it in as the history's first element rather than
+letting the folding run's figure stand as the store's whole provenance.) The sidecar
+is an interim artifact of this schema, not a new long-lived one: it retires when the
+mode moves into the registry with #179, which should carry the coverage history with
+it.
 
 ### D10 — Resolution model (PROPOSED POSITION — decide in review)
 
