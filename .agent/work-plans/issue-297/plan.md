@@ -233,6 +233,29 @@ flat-bottom (ADR-0006 D6/D9).
 - Counters on the existing `n_no_nadir`-style summary line: `n_dem_hit`,
   `n_dem_no_coverage`, `n_dem_degenerate`, `n_dem_nonconverged`, plus per-layer hit
   counts and the datum-check statistic.
+- **Coverage gate (no silent zero-coverage run)**: the startup hard-fail proves the
+  store *exists and holds tiles*; it cannot prove the store **overlaps this survey**.
+  A valid store for a different lake yields `n_dem_hit == 0` while every sample
+  silently takes the flat fallback and the tool exits 0 with a normal-looking
+  summary — the same class of hole as the round-1 silent-total-failure finding.
+  Policy, one knob:
+
+  - `--min-dem-coverage <frac>` (default **0.5**) is checked *after* the ping loop
+    and **before** `saveTiles`/`writeRegistry` (both happen after the loop today,
+    `sidescan_tier2_processed.cpp:312-321`, so aborting writes nothing).
+  - Coverage fraction = `n_dem_hit / (n_dem_hit + n_dem_no_coverage)` — the share of
+    samples where the DEM was consulted **and** had data. Defined as `0` when the
+    denominator is 0 (no sample ever reached the lookup).
+  - Below the threshold ⇒ a multi-line error naming the store path, the layer search
+    order, the level(s) scanned, the full counter set, and the survey's lat/lon
+    bounding box; **no tiles and no registry written**; exit **3** (distinct from the
+    existing `1` I/O and `2` argument codes).
+  - `--min-dem-coverage 0` is the explicit operator opt-in for a deliberately partial
+    or non-overlapping run (used by the equivalence test in step 5). Even at `0`, a
+    below-50 % fraction still prints the same block as a `warning:` so the condition
+    is never invisible.
+  - The gate applies **only** when `--bathy-store` is supplied; the default
+    flat-bottom run is unaffected.
 
 ### 4. Grazing-angle quality follow-through (bounded)
 
@@ -293,7 +316,10 @@ below is therefore **new scaffolding**, planned as such.
   `import_geotiff` (`marine_bathymetry_store/CMakeLists.txt:157`). Asserts: (a) the
   sloped run places samples in different cells than the flat run in the expected
   direction, (b) the run without `--bathy-store` is byte-identical to today's output,
-  (c) a nonexistent `--bathy-store` path exits non-zero (the hard-fail from step 1).
+  (c) a nonexistent `--bathy-store` path exits non-zero (the hard-fail from step 1),
+  (d) a valid store that does **not** overlap the synthetic survey exits **3** with an
+  empty output directory (the coverage gate from step 3), and the same run with
+  `--min-dem-coverage 0` exits 0 (the documented opt-in).
 
 ## Files to Change
 
@@ -302,7 +328,7 @@ below is therefore **new scaffolding**, planned as such.
 | `marine_sidescan_mosaic/include/marine_sidescan_mosaic/bathy_dem.hpp` (new) | `BathyDem` reader: `depthAt(lat, lon)`, layer/level index, hard-fail construction |
 | `marine_sidescan_mosaic/src/bathy_dem.cpp` (new) | Layer scan (filename set + level set), query-time `Level::gridIndex()`→`tileFilename()` lookup, bilinear sampling, LRU tile cache over `marine_tiled_raster_store::loadTile<double>` |
 | `marine_sidescan_mosaic/include/marine_sidescan_mosaic/projection.hpp` | Add `DemCorrection` + `correctedGroundRange<DepthLookup>` |
-| `marine_sidescan_mosaic/src/sidescan_tier2_processed.cpp` | `--bathy-store` / `--bathy-layers` / `--datum-check-warn-m`; `sensor_height_m` from `GeoBeam::altitude_m`; corrected `(vertical_offset, ground)` into `grazingQuality`; new counters + datum cross-check in the summary |
+| `marine_sidescan_mosaic/src/sidescan_tier2_processed.cpp` | `--bathy-store` / `--bathy-layers` / `--datum-check-warn-m` / `--min-dem-coverage` / `--allow-mixed-projection`; `sensor_height_m` from `GeoBeam::altitude_m`; corrected `(vertical_offset, ground)` into `grazingQuality`; new counters + datum cross-check in the summary; coverage gate before the writes; `projection.json` sidecar write + `--accumulate` mode guard |
 | `marine_sidescan_mosaic/CMakeLists.txt` | `bathy_dem.cpp` in the library; `test_bathy_dem` and `test_tier2_processed_dem` gtest targets (the latter with the `$<TARGET_FILE:>` compile definition) |
 | `marine_sidescan_mosaic/README.md` | Document `--bathy-store`/`--bathy-layers`, the orthorectification step in "Pipeline (per ping)" (line 23-24 still describes only `sqrt(slant²−alt²)`), the datum cross-check, and the D6/D9 flat-bottom-elsewhere design choice |
 | `marine_sidescan_mosaic/test/test_projection.cpp` | New `CorrectedGroundRange*` cases (tolerance-based) |
@@ -315,7 +341,7 @@ below is therefore **new scaffolding**, planned as such.
 |---|---|
 | Documentation accuracy / verify against source | Every claim in Context is cited to a file:line read in this revision — `tier1.hpp`, `projection.hpp`/`.cpp`, `sidescan_tier2_processed.cpp`, `quality.hpp`, `bathy_cell.hpp`, `tile_io.hpp/.cpp`, `cell_index.h`, `level.h`, `CMakeLists.txt`, ADR-0006 D4/D6/D9/D10, ADR-0010 D3 |
 | Datum discipline | The vertical term is WGS84 ellipsoidal height on both sides (sensor from the ECEF pose, bottom from `BathyCell::depth`); `nadir_altitude_m` is used only where it means height above bottom (seed + flat fallback + cross-check) |
-| No silent failure / stale data | Hard-fail on an unusable bathy store; a non-converged iterate is **never emitted** (flat fallback + counter); every degraded path is counted and printed; an independent datum cross-check warns on a systematic offset |
+| No silent failure / stale data | Hard-fail on an unusable bathy store (absent/empty) **and** on a store that does not actually cover the survey (`--min-dem-coverage`, exit 3, nothing written); a non-converged iterate is **never emitted** (flat fallback + counter); every degraded path is counted and printed; an independent datum cross-check warns on a systematic offset; `--accumulate` refuses to mix projection modes |
 | Backward compatibility | `--bathy-store` is opt-in; omitting it reproduces today's output byte-for-byte (asserted by the end-to-end test) |
 | Bounded cost | Iteration capped at 5 per sample, confined to the offline batch tool; the live `mosaic_node` hot path and `sidescan_tier2_flat` are untouched |
 | Fix it completely | Bilinear interpolation is implemented rather than deferred (D9 requires it and the offline context makes it cheap); the degenerate and non-convergent branches are specified, not left to chance |
