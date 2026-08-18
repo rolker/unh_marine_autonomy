@@ -559,29 +559,29 @@ Governance, Plan Drift, Claude Adversarial x2 (Lens A + Lens B, Deep prompt). Co
   `CMakeLists.txt`, test fixtures included.
 
 ### Findings
-- [ ] (must-fix) Mode marker written last and both `--accumulate` guards key on `registry.json` while the fold loop keys on tile files — a crash/ENOSPC in the sidecar write leaves a DEM store reading as pre-#297 flat, and a registry-less store is folded into unguarded then re-stamped pure over a sticky `mixed` [Lens A + Lens B + lead] — `src/sidescan_tier2_processed.cpp:340,719-755`
-- [ ] (must-fix) Regression from a round-1 fix: the datum cross-check was moved before the writes but landed after the coverage gate's `return 3`, so it is silent on exactly the runs a datum error causes [Lens A + lead] — `src/sidescan_tier2_processed.cpp:654-679`
-- [ ] (must-fix) A non-`--accumulate` re-run into a populated `out_dir` leaves stale tiles and stamps a pure mode on a mixed-placement store, exit 0, no flag — both guards are `if (accumulate)` [Lens B + lead] — `src/sidescan_tier2_processed.cpp:719-723,746`
-- [ ] (suggestion) `argValue` still accepts the next flag as a value; `--campaign --platform x` writes `"--platform"` into `registry.json` [Lens B] — `src/sidescan_tier2_processed.cpp:89-101`
-- [ ] (suggestion) No top-level handler in `main`: `gggs::Level::gridIndex`'s `out_of_range` and the throwing `std::filesystem` overloads escape to `std::terminate` with no diagnostic [Lens A + Lens B] — `src/sidescan_tier2_processed.cpp:471-598`, `src/bathy_dem.cpp:127,144`
-- [ ] (suggestion) All-or-nothing bilinear blend discards an almost-exact interpolation over one negligible-weight missing neighbour; renormalising by present weights removes the bias the comment cites [Lens A] — `src/bathy_dem.cpp:336-362`
-- [ ] (suggestion) "Nearest valid of the four" is unconditionally the centre cell (`t,u` in [0,0.5]) and `nearest_weight < 0.0` is dead code [Lens A] — `src/bathy_dem.cpp:349-357`
-- [ ] (suggestion) The guard compares only `projection_mode`, so `--accumulate` across two different bathy stores (different vintage/datum) passes unchecked [Lens B] — `src/sidescan_tier2_processed.cpp:166-183,356`
-- [ ] (suggestion) `--min-dem-coverage 0` stamps `"dem"` with no record of achieved coverage; a 3% and a 99% store are indistinguishable downstream [Lens B] — `src/sidescan_tier2_processed.cpp:629-652,746`
-- [ ] (suggestion) `std::bad_alloc` from an oversized `--bathy-cache-tiles` is reported as "the store is corrupt or truncated"; the flag has a lower bound only [Lens B] — `src/sidescan_tier2_processed.cpp:312,478-482`
-- [ ] (suggestion) Duplicate names in `--bathy-layers` are scanned twice: double-counted `tile_count_`, duplicated `describe()`, two `layers_` entries onto one name-keyed counter [Lens A] — `src/bathy_dem.cpp:134-167`
-- [ ] (suggestion) `--bathy-layers ""` exits 1 where the README assigns argument refusals to exit 2 [Governance + Plan Drift] — `src/bathy_dem.cpp:124-125`, `README.md:156-160`
-- [ ] (suggestion) `out_dir + "/registry.json"` vs the `std::filesystem::path` form used by both guards; and `mode` is the only sidecar value not `jsonEscape`d [Lens A] — `src/sidescan_tier2_processed.cpp:728,176`
-- [ ] (suggestion) `CorruptTileAbortsTheRunWithoutWriting` asserts only on the DEM path; nothing asserts a non-DEM exception is no longer mis-attributed [Lens A] — `test/test_tier2_processed_dem.cpp:504-528`
-- [ ] (suggestion) ADR amendment's "placed either flat-bottom or DEM-orthorectified" reads as store-level purity; a `dem` store also holds flat-placed fallback samples [Governance] — `docs/decisions/0006-multi-platform-backscatter-store.md:208-210`
-- [ ] (suggestion) The #297 amendment has no top-of-file `**Amended**` pointer, unlike every other amended ADR in this repo [Governance] — `docs/decisions/0006-multi-platform-backscatter-store.md:15`
-- [ ] (suggestion) ADR-0005 D8 cited for a "no silent provenance corruption" rule it does not contain (one new site, two pre-existing) [Governance] — `src/sidescan_tier2_processed.cpp:332,383,410`
-- [ ] (suggestion) "flat-bottom by design (ADR-0006 D6/D9)" over-extends to the offline `sidescan_tier2_flat`; D6/D9 scope that to the live draft path [Governance] — `README.md:29-30`, `src/sidescan_tier2_processed.cpp:300-302`
-- [ ] (suggestion) The new cross-store file-format coupling (path shape, 2-band Float64, band 0 up-positive ellipsoidal, NaN nodata, no package dep) is unlisted in the agent guide's pitfalls [Governance] — `.agents/README.md:130-170`, `include/marine_sidescan_mosaic/bathy_dem.hpp:49-53`
-- [ ] (suggestion) `sonar_ecosystem.md` row 46's title still says "live mosaic (L13, uint16)" while its status describes the offline chain and flips to ✅ [Governance] — `docs/sonar_ecosystem.md:46`
-- [ ] (suggestion) Residual plan staleness: "per-layer **hit** counter" x2 (the `146cbf2` rename exists to stop that misreading), the pre-sync "<= 20 cell reads" in Principles Self-Check, `--bathy-cache-tiles` missing from Files-to-Change, "9 files all in marine_sidescan_mosaic" vs 12 shipped incl. an ADR [Plan Drift] — `.agent/work-plans/issue-297/plan.md:143,361,526,511,594`
-- [ ] (suggestion) Implementation behaviour the plan doesn't carry: the GGGS 72°/80° span caveat, `depthAt` throwing at query time, `--allow-mixed-projection` covering only the mode-mismatch refusal, the datum check's final placement, the flat run printing no DEM line [Plan Drift] — `.agent/work-plans/issue-297/plan.md:154-165,344-349,352-362,456-458`
-- [ ] (suggestion) `marine_sidescan_mosaic` is neither built nor tested in hosted CI, so both new suites run only locally; merge rests on a full-scope `ci_local` attestation (ADR-0018) [Governance] — `.github/workflows/ros-base-docker.yml:41,46`
+- [x] (must-fix) Mode marker written last and both `--accumulate` guards key on `registry.json` while the fold loop keys on tile files — a crash/ENOSPC in the sidecar write leaves a DEM store reading as pre-#297 flat, and a registry-less store is folded into unguarded then re-stamped pure over a sticky `mixed` [Lens A + Lens B + lead] — `src/sidescan_tier2_processed.cpp:340,719-755`
+- [x] (must-fix) Regression from a round-1 fix: the datum cross-check was moved before the writes but landed after the coverage gate's `return 3`, so it is silent on exactly the runs a datum error causes [Lens A + lead] — `src/sidescan_tier2_processed.cpp:654-679`
+- [x] (must-fix) A non-`--accumulate` re-run into a populated `out_dir` leaves stale tiles and stamps a pure mode on a mixed-placement store, exit 0, no flag — both guards are `if (accumulate)` [Lens B + lead] — `src/sidescan_tier2_processed.cpp:719-723,746`
+- [x] (suggestion) `argValue` still accepts the next flag as a value; `--campaign --platform x` writes `"--platform"` into `registry.json` [Lens B] — `src/sidescan_tier2_processed.cpp:89-101`
+- [x] (suggestion) No top-level handler in `main`: `gggs::Level::gridIndex`'s `out_of_range` and the throwing `std::filesystem` overloads escape to `std::terminate` with no diagnostic [Lens A + Lens B] — `src/sidescan_tier2_processed.cpp:471-598`, `src/bathy_dem.cpp:127,144`
+- [x] (suggestion) All-or-nothing bilinear blend discards an almost-exact interpolation over one negligible-weight missing neighbour; renormalising by present weights removes the bias the comment cites [Lens A] — `src/bathy_dem.cpp:336-362`
+- [x] (suggestion) "Nearest valid of the four" is unconditionally the centre cell (`t,u` in [0,0.5]) and `nearest_weight < 0.0` is dead code [Lens A] — `src/bathy_dem.cpp:349-357`
+- [x] (suggestion) The guard compares only `projection_mode`, so `--accumulate` across two different bathy stores (different vintage/datum) passes unchecked [Lens B] — `src/sidescan_tier2_processed.cpp:166-183,356`
+- [x] (suggestion) `--min-dem-coverage 0` stamps `"dem"` with no record of achieved coverage; a 3% and a 99% store are indistinguishable downstream [Lens B] — `src/sidescan_tier2_processed.cpp:629-652,746`
+- [x] (suggestion) `std::bad_alloc` from an oversized `--bathy-cache-tiles` is reported as "the store is corrupt or truncated"; the flag has a lower bound only [Lens B] — `src/sidescan_tier2_processed.cpp:312,478-482`
+- [x] (suggestion) Duplicate names in `--bathy-layers` are scanned twice: double-counted `tile_count_`, duplicated `describe()`, two `layers_` entries onto one name-keyed counter [Lens A] — `src/bathy_dem.cpp:134-167`
+- [x] (suggestion) `--bathy-layers ""` exits 1 where the README assigns argument refusals to exit 2 [Governance + Plan Drift] — `src/bathy_dem.cpp:124-125`, `README.md:156-160`
+- [x] (suggestion) `out_dir + "/registry.json"` vs the `std::filesystem::path` form used by both guards; and `mode` is the only sidecar value not `jsonEscape`d [Lens A] — `src/sidescan_tier2_processed.cpp:728,176`
+- [x] (suggestion) `CorruptTileAbortsTheRunWithoutWriting` asserts only on the DEM path; nothing asserts a non-DEM exception is no longer mis-attributed [Lens A] — `test/test_tier2_processed_dem.cpp:504-528`
+- [x] (suggestion) ADR amendment's "placed either flat-bottom or DEM-orthorectified" reads as store-level purity; a `dem` store also holds flat-placed fallback samples [Governance] — `docs/decisions/0006-multi-platform-backscatter-store.md:208-210`
+- [x] (suggestion) The #297 amendment has no top-of-file `**Amended**` pointer, unlike every other amended ADR in this repo [Governance] — `docs/decisions/0006-multi-platform-backscatter-store.md:15`
+- [x] (suggestion) ADR-0005 D8 cited for a "no silent provenance corruption" rule it does not contain (one new site, two pre-existing) [Governance] — `src/sidescan_tier2_processed.cpp:332,383,410`
+- [x] (suggestion) "flat-bottom by design (ADR-0006 D6/D9)" over-extends to the offline `sidescan_tier2_flat`; D6/D9 scope that to the live draft path [Governance] — `README.md:29-30`, `src/sidescan_tier2_processed.cpp:300-302`
+- [x] (suggestion) The new cross-store file-format coupling (path shape, 2-band Float64, band 0 up-positive ellipsoidal, NaN nodata, no package dep) is unlisted in the agent guide's pitfalls [Governance] — `.agents/README.md:130-170`, `include/marine_sidescan_mosaic/bathy_dem.hpp:49-53`
+- [x] (suggestion) `sonar_ecosystem.md` row 46's title still says "live mosaic (L13, uint16)" while its status describes the offline chain and flips to ✅ [Governance] — `docs/sonar_ecosystem.md:46`
+- [x] (suggestion) Residual plan staleness: "per-layer **hit** counter" x2 (the `146cbf2` rename exists to stop that misreading), the pre-sync "<= 20 cell reads" in Principles Self-Check, `--bathy-cache-tiles` missing from Files-to-Change, "9 files all in marine_sidescan_mosaic" vs 12 shipped incl. an ADR [Plan Drift] — `.agent/work-plans/issue-297/plan.md:143,361,526,511,594`
+- [x] (suggestion) Implementation behaviour the plan doesn't carry: the GGGS 72°/80° span caveat, `depthAt` throwing at query time, `--allow-mixed-projection` covering only the mode-mismatch refusal, the datum check's final placement, the flat run printing no DEM line [Plan Drift] — `.agent/work-plans/issue-297/plan.md:154-165,344-349,352-362,456-458`
+- [x] (suggestion) `marine_sidescan_mosaic` is neither built nor tested in hosted CI, so both new suites run only locally; merge rests on a full-scope `ci_local` attestation (ADR-0018) [Governance] — `.github/workflows/ros-base-docker.yml:41,46` (deferred: expanding the hosted-CI package list is a CI-configuration change, which AGENTS.md puts under Ask First, and the omission is repo-wide — `marine_bathymetry_store` and `marine_tiled_raster_store` are absent too. ADR-0018 accepts a full-scope `ci_local` attestation as the merge gate; raised in the PR body for a separate CI-scope issue.)
 
 ### Owed before merge (not findings against the diff)
 - [ ] Plan step 6 real-data acceptance run against `~/data/stores/sidescan/tier1/2026-06-19.sst1` + `~/data/stores/bathymetry/`, with its four thresholds (coverage >= 0.5, datum mean < 1.0 m, non-converged < 1%, wall clock <= 2x flat) — deliberately operator-run.
@@ -592,3 +592,52 @@ Governance, Plan Drift, Claude Adversarial x2 (Lens A + Lens B, Deep prompt). Co
 with regression tests for the registry-less-store and populated-out_dir paths, then
 re-dispatch `review-code` (Round 3) scoped to that subsystem. Nothing is pushed until a
 pre-push review returns approved.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-18 01:00 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-297 at `2112a36`
+**Addressed**: `## Local Review (Pre-Push)` (round 2, 2026-08-18 00:30 -04:00, branch at `98d3e4a`) — 3 must-fix + 20 suggestions
+**Commits**: `1a3a950`, `2e014c2`, `4511262`, `b02360b`, `106213c`, `3a40488`, `89f5a41`, `8500e91`, `a137bb9`, `e41884c`, `5343ce4`, `ae5f988`, `882b648`, `8c0e51e`, `bcf6773`, `69e7608`, `2112a36`
+
+### Actions
+- [x] (must-fix) Sidecar written last / guards keyed on `registry.json` — the sidecar is now written **before the first tile** (after the `--overwrite` clear, before `saveTiles`), so the only residue a crash can leave is a sidecar with no tiles; the guards key on `hasTileFiles(out_dir)` plus either provenance file, and an `--accumulate` into a tiles-but-no-registry store is refused outright — `src/sidescan_tier2_processed.cpp` (`inspectOutputDir`, `checkOutputDirGuards`, the write block) — `2e014c2`
+- [x] (must-fix) Datum cross-check silenced by the coverage gate's `return 3` — the block moved to the top of the post-loop `if (dem)`, so it reports before every gate exit and before any write — `src/sidescan_tier2_processed.cpp` — `1a3a950`
+- [x] (must-fix) Non-`--accumulate` re-run into a populated `out_dir` — refused (exit 2) naming the three ways forward; new mutually-exclusive `--overwrite` deletes the prior tiles/registry/sidecar (nothing else) late, after the coverage gate, so a gated failure never destroys the old store — `src/sidescan_tier2_processed.cpp`, `README.md` — `2e014c2`
+- [x] (suggestion) `argValue` accepted the next flag as a value — a value beginning with `--` is now an argument error; single-dash tokens (negative numbers) untouched — `4511262`
+- [x] (suggestion) No top-level handler — `main` is now a `try`/`catch(...)` wrapper around `runTool` with a diagnostic and exit 1 — `b02360b`
+- [x] (suggestion) All-or-nothing bilinear blend — partial stencils are renormalised over the present weights — `src/bathy_dem.cpp`, `bathy_dem.hpp` — `106213c`
+- [x] (suggestion) Dead `nearest_weight < 0.0` branch — replaced by a `weight_sum > 0` guard with the reachability argument stated — `106213c`
+- [x] (suggestion) Guard compares only `projection_mode` — the sidecar's `bathy_store`/`bathy_layers` are compared too and a difference **warns** (not refuses: re-running against an updated store is legitimate) — `3a40488`
+- [x] (suggestion) `--min-dem-coverage 0` left no record — the sidecar gains `dem_coverage` (`null` for flat) and the summary prints it — `89f5a41`
+- [x] (suggestion) `std::bad_alloc` mis-reported as a corrupt store — `--bathy-cache-tiles` is bounded `[1, 1024]` and both DEM call sites catch `std::bad_alloc` separately as a sizing fault — `8500e91`
+- [x] (suggestion) Duplicate `--bathy-layers` names scanned twice — de-duplicated in `BathyDem`, keeping the first occurrence, with a warning — `a137bb9`
+- [x] (suggestion) `--bathy-layers ""` exited 1 — caught in argument parsing, exit 2, matching the README — `e41884c`
+- [x] (suggestion) `out_dir + "/registry.json"` string concatenation and an unescaped `mode` — both use the `std::filesystem::path` form / `jsonEscape` now — `2e014c2`, `89f5a41`
+- [x] (suggestion) Nothing asserted a non-DEM exception is no longer mis-attributed — added to `CorruptTileAbortsTheRunWithoutWriting` (an unusable output path on a DEM run must not mention the DEM) — `5343ce4`
+- [x] (suggestion) ADR amendment read as store-level purity — reworded: the mode describes the run, a `dem` store still holds flat-placed fallback samples, which is why `dem_coverage` exists — `ae5f988`
+- [x] (suggestion) No top-of-file `**Amended**` pointer — added, linking the D9 amendment — `ae5f988`
+- [x] (suggestion) ADR-0005 D8 mis-cited — the guards now cite D2/D6 (per-cell provenance) and the registry merge cites D7 — `882b648`, and the plan's ADR-Compliance row too — `69e7608`
+- [x] (suggestion) "flat-bottom by design (D6/D9)" over-extended to `sidescan_tier2_flat` — scoped to the live draft path in the README, the source comment, `sonar_ecosystem.md`, and the plan's Open Questions — `8c0e51e`, `bcf6773`, `69e7608`
+- [x] (suggestion) Cross-store file-format coupling unlisted in the agent guide — added as a Common Pitfall with the full on-disk contract — `bcf6773`
+- [x] (suggestion) `sonar_ecosystem.md` row 46 title — now "live mosaic (L13, uint16) + offline Tier-1/Tier-2 chain" — `bcf6773`
+- [x] (suggestion) Residual plan staleness (hit-vs-lookup counter x2, the 20-cell-read bound, `--bathy-cache-tiles` missing from Files-to-Change, the file count) — all corrected — `69e7608`
+- [x] (suggestion) Implementation behaviour the plan didn't carry (GGGS 72°/80° span caveat, `depthAt` throwing at query time, `--allow-mixed-projection` scope, the datum check's placement, the flat run printing no DEM line) — added — `69e7608`
+- [x] (suggestion) `marine_sidescan_mosaic` not in hosted CI (deferred: expanding the hosted-CI package list is a CI-configuration change, which AGENTS.md puts under Ask First, and the gap is repo-wide — `marine_bathymetry_store` and `marine_tiled_raster_store` are absent too. ADR-0018 accepts a full-scope `ci_local` attestation as the merge gate; to be raised in the PR body for a separate CI-scope issue.)
+
+### New regression tests (round-2 scope)
+- `SidecarIsWrittenBeforeAnyTile` — a read-only `out_dir` makes the sidecar write fail; exit 1 with **no** tiles and no registry (the crash window).
+- `StoreWithTilesButNoRegistryIsStillGuarded` — (a) a DEM store with its registry removed still trips the mode guard; (b) a mode-matching fold into a registry-less store is refused rather than run unverified.
+- `NonAccumulateReRunIntoAPopulatedDirIsRefused` — refusal + no change on disk; `--accumulate --overwrite` rejected; `--overwrite` yields exactly a fresh DEM run's tile set.
+- `DatumCrossCheckIsReportedBeforeTheCoverageGateExits` — asserts the report's position **before** the gate's error on an exit-3 run.
+- `AccumulateWarnsWhenTheBathyStoreChanges`, `PartialStencilRenormalisesRatherThanSnappingToNearest`, `DuplicateLayerNamesAreScannedOnce`, plus the flag-shaped-value, empty-`--bathy-layers`, `dem_coverage`, and non-DEM-fault assertions folded into existing cases.
+
+### Verification
+- `./core_ws/build.sh marine_sidescan_mosaic` clean; `./core_ws/test.sh marine_sidescan_mosaic` → **90 gtest cases, 0 failures** (was 83; +7 cases).
+- Lint: back to the **6 pre-existing** failures (2 `cpplint` line-length in `sidescan_mosaic_bag.cpp`, 4 `uncrustify` from the linter-version drift). Four *new* cpplint failures introduced mid-pass were fixed rather than accepted: `runtime/int` (`long long` → `std::int64_t`) x2, a >100-char comment, and `readability/fn_size` — the last by extracting `inspectOutputDir` + `checkOutputDirGuards` out of the tool body (`2112a36`), which also isolates the guard logic. The `uncrustify` diff on `sidescan_tier2_processed.cpp` is again only the two pre-existing hunks.
+- Nothing pushed.
+
+### Next step
+Re-dispatch `review-code` (Round 3), scoped to the projection-mode provenance subsystem (write ordering, guard keying, the populated-`out_dir` path) and its new regression tests.
