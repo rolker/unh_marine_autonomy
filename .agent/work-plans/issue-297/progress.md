@@ -947,3 +947,105 @@ Lifecycle: **Implementation** → **review-code** (round 5, a verification pass 
 operator-run real-data acceptance run, filing the five plan follow-ups with the PR
 (follow-up (d) now also carries the deferred `bathy_store` append-only record), and
 the full-scope `ci_local` attestation (ADR-0018). Nothing is pushed.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-18 02:21 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-297 at `fd3685b`
+**Mode**: pre-push (narrow verification pass over the round-5 fix commits `2b05cbb..fd3685b`)
+**Depth**: Standard (reason: ~600-line C++ change to a store writer; four prior deep rounds, so this pass verifies the round-4 resolutions rather than re-reading the whole branch)
+**Must-fix**: 2 | **Suggestions**: 12
+**Round**: 5 | **Ship**: recommended — must-fix fell 5 → 2, both are one-line mechanical fixes with obvious corrections and no design question; everything else is suggestion- or follow-up-shaped.
+
+### Round-4 resolutions verified (all five, in source and by test)
+- v1→v2 migration: the scalar seeds the history (`readProjectionSidecar` else-branch),
+  an unknown `version` is `kUnreadable` — verified, plus the v1-flat `[null, null]` case.
+- Stage-and-swap write with post-`close()` `fail()` check and `discardStaging()` on every
+  failure path, then `rename` — verified; `build_sidescan_overviews`' cited precedent is real
+  (`overview_pyramid.cpp:381-484`).
+- The no-placement refusal sits outside `if (dem)` (line 1428) and fires **before**
+  `create_directories` (line 1489), so its "nothing was written" claim holds.
+- `refuseUnknownArguments` walks argv correctly: all 15 flags in `valueFlags()`/`booleanFlags()`
+  match every flag `argValue`/`hasFlag` consults; flag-shaped values are deliberately not
+  swallowed, so `argValue` keeps its own diagnostic; `--flag=value` lands on the loud path.
+- ADR-0006 amendment and README match the implemented v2 semantics.
+- Reported state confirmed independently: build clean, **22/22** in `test_tier2_processed_dem`,
+  223 package-wide, exactly the **6** pre-existing lint failures (2 cpplint in the untouched
+  `sidescan_mosaic_bag.cpp`, 4 uncrustify), all outside the round-5 hunks. Zero new lint.
+
+### Findings
+- [ ] (must-fix) `exists(path, ec) || ec` sets `kMissing` when the stat itself FAILED, and
+  `kMissing` is read downstream (857-859) as "a pre-#297 flat build" — an EACCES/ELOOP/ENOTDIR
+  on the sidecar makes a `dem` store readable as flat and lets a flat `--accumulate` through at
+  exit 0; the fail-safe direction is inverted and must be `kUnreadable`. Cross-pass confirmed
+  (Lens A + Lens B) — `src/sidescan_tier2_processed.cpp:597`
+- [ ] (must-fix) The coverage doubles are streamed at `operator<<`'s default 6-significant-digit
+  precision, so any coverage above ~0.9999995 is written as the literal `1` and reads back as
+  perfect DEM coverage — verified empirically (`0.9999995` prints `1`). That is the "rosier than
+  the store deserves" laundering the worst-of aggregate exists to prevent, and the re-emitted
+  value passes the `[0, 1]` validation silently. Set `max_digits10` precision on the staging
+  stream (`<iomanip>`/`<limits>` not yet included) — `src/sidescan_tier2_processed.cpp:385,399`
+- [ ] (suggestion) Crash-durability overclaim: no `fsync` on the staging file before `rename`
+  nor on the directory after, so the docstring's "on disk complete" and README's "a failed write
+  **or a crash** never destroys the sidecar already there" are stronger than POSIX gives. Add the
+  fsyncs or soften both to "a failed write". Cross-pass confirmed —
+  `src/sidescan_tier2_processed.cpp:406-417`, `README.md:229-233`
+- [ ] (suggestion) No run lock and a read-modify-write coverage history: two concurrent
+  `--accumulate` runs into one `out_dir` interleave into the fixed-name `projection.json.tmp` and
+  the later rename drops the other run's element. Pre-existing tool-wide (tiles and registry have
+  no lock either) rather than a round-5 regression, but the cited `overview_pyramid.cpp:390-402`
+  precedent uses `create_directory` as an exclusive lock and that half was not carried over.
+  Follow-up-shaped — `src/sidescan_tier2_processed.cpp:363,369,922,1497`
+- [ ] (suggestion) The sidecar is committed BEFORE `saveTiles`/`writeRegistry`, so a `saveTiles`
+  throw or a missing registry (both exit 1) leaves an `--accumulate`d store permanently
+  relabelled `mixed` with a phantom history element, and neither message says the sidecar was
+  already rewritten. The sidecar-first ordering is the deliberate documented trade (no tile
+  without a sidecar), so this is a follow-up, not a regression —
+  `src/sidescan_tier2_processed.cpp:1499-1537`
+- [ ] (suggestion) Duplicate flags are still silently first-wins: `--bathy-store A --bathy-store B`
+  orthorectifies against A at exit 0 — the same dropped/mistyped-argument class this round's own
+  error text cites. Cross-pass confirmed — `src/sidescan_tier2_processed.cpp:98-119,191-227`
+- [ ] (suggestion) `discardStaging()` uses `std::filesystem::remove`, which deletes an EMPTY
+  DIRECTORY the tool did not create — and that is exactly the new test's blocker, so
+  `AFailedSidecarWriteLeavesThePreviousSidecarIntact` destroys its own block mid-run and the
+  `remove_all` at the end is a no-op. Guard the cleanup to regular files. Cross-pass confirmed —
+  `src/sidescan_tier2_processed.cpp:364-367`, `test/test_tier2_processed_dem.cpp:1033,1044`
+- [ ] (suggestion) `valueFlags()`'s docstring claims a missed flag "fails loudly in its own test",
+  but six accepted flags (`--no-nadir-policy`, `--tx-beamwidth-fallback-rad`, `--sensor`,
+  `--sensor-class`, `--datum-check-warn-m`, `--bathy-cache-tiles`) are passed by no test — a typo
+  in that list would turn a documented flag into exit 2 silently. Fix the comment or extend the
+  `known_flags` case. Cross-pass confirmed — `src/sidescan_tier2_processed.cpp:156-159`
+- [ ] (suggestion) `parseCoverageElements`' comment names `"0.5,"` as the empty-element case it
+  catches, but `std::getline` yields no trailing empty token, so `[0.5,]` parses cleanly as
+  `[0.5]` while `[0.5, ]` is refused — the comment names the one case it does not catch —
+  `src/sidescan_tier2_processed.cpp:297,311`
+- [ ] (suggestion) `inspectOutputDir` mixes the THROWING `exists` overload (registry, sidecar)
+  with the `error_code` overload added beside it for `overviews/`, so an unreadable `out_dir`
+  escapes as a generic "unhandled exception" exit 1 instead of a guard verdict. Cross-pass
+  confirmed — `src/sidescan_tier2_processed.cpp:756-759`
+- [ ] (suggestion) `projection.json.tmp` crash debris is named neither in the populated-dir
+  refusal's "these files, and nothing else in the directory" list nor counted by
+  `inspectOutputDir`. Cross-pass confirmed — `src/sidescan_tier2_processed.cpp:835-841,751-763`
+- [ ] (suggestion) Test gaps in the new cases: no out-of-range element (`[1.5]` / `[-0.2]`) —
+  the `parsed < 0 || parsed > 1` clause the README advertises — and the post-`close()`
+  `out.fail()` and `rename`-failure branches (the full-filesystem case that motivated the
+  change) are unexercised — `test/test_tier2_processed_dem.cpp:955-1005,1022-1045`
+- [ ] (suggestion) README's "Every argument is checked too" reads package-wide, but
+  `sidescan_tier2_flat.cpp` shares the same `argValue`/`hasFlag` helpers with no
+  `refuseUnknownArguments` — `sidescan_tier2_flat --overwrite` is still silently ignored. Scope
+  the sentence or file the follow-up — `README.md:152-158`
+- [ ] (suggestion) ADR's "one element per run that has written the store … append-only" is not
+  what a pre-#297 store adopted via `--accumulate` gets: `kMissing` leaves the carried history
+  empty, so the result claims a single run where there were many —
+  `docs/decisions/0006-multi-platform-backscatter-store.md:231-232`
+
+### Next step
+Lifecycle: **Local Review** → **address-findings** (two one-line must-fixes) → push / open PR.
+Given `Ship: recommended`, applying the two must-fixes and shipping is preferred over another
+full round; the suggestions are candidates for the PR's follow-up filing rather than for this
+branch. Still owed before merge (unchanged, not findings): the operator-run real-data acceptance
+run, filing the plan follow-ups with the PR (follow-up (d) carries the deferred `bathy_store`
+append-only record), and the full-scope `ci_local` attestation (ADR-0018). Nothing is pushed.
