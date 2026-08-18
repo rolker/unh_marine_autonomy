@@ -165,3 +165,17 @@ defines the `.repos` files that pull in all project repos across 6 layers:
   Changes here affect all workspace users.
 - **Legacy code**: Some launch files (`.launch` extension) use ROS 1 XML format and
   are no longer active. The current launch files use Python (`.py` extension).
+- **Cross-store file-format coupling with no package dependency**:
+  `marine_sidescan_mosaic`'s `BathyDem` (`sidescan_tier2_processed --bathy-store`,
+  #297) reads `marine_bathymetry_store`'s value tiles **directly off disk** —
+  ADR-0006 D9 requires the decoupling, so there is deliberately no
+  `marine_bathymetry_store` entry in `package.xml` or `CMakeLists.txt` and no
+  compiler check on the format. The contract it assumes:
+  `<store_root>/<layer>/<level>_<row>_<col>.tif`, 2-band `Float64`, band 0 =
+  **WGS84 ellipsoidal height, up-positive** with `NaN` for no data, band 1 =
+  1-sigma vertical uncertainty. Changing any of those in the bathy store silently
+  breaks this reader (wrong placements, not a build failure), so change them
+  together and re-run `test_bathy_dem` / `test_tier2_processed_dem`, which author
+  their own value tiles against the same contract. The layer directory names are
+  configuration (`--bathy-layers`), not code — ADR-0010 D3's `survey/`→`processed/`
+  re-classification is a flag change here.
