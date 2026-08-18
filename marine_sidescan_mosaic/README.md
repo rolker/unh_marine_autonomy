@@ -153,8 +153,11 @@ registry already on disk — the store is unmarked and must be repaired or
 regenerated before use. (The mode belongs in `registry.json`; it moves there when
 #179's append-only registry merge lands, and the sidecar retires.)
 
-**Exit codes**: `0` success, `1` I/O or unusable bathy store, `2` argument or
-provenance-guard refusal, `3` DEM coverage below `--min-dem-coverage`.
+**Exit codes**: `0` success, `1` I/O, unusable bathy store, or an unwritable
+`projection.json`, `2` argument or provenance-guard refusal, `3` DEM coverage below
+`--min-dem-coverage` — or, reported separately, no sample reaching the lookup at all
+(an empty archive / every ping dropped, which is a no-usable-input failure rather
+than a coverage verdict).
 
 ### Overview pyramid (post-ingest, #188 / ADR-0011)
 

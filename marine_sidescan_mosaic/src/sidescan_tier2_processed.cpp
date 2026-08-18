@@ -45,6 +45,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "geographic_msgs/msg/geo_point.hpp"
@@ -119,17 +120,36 @@ double toDouble(const std::string & s, const std::string & flag)
   }
 }
 
-/// @brief Minimal JSON string escape for the values written into the sidecar
-///   (store paths and the layer list — no control characters expected).
+/// @brief JSON string escape for the values written into the sidecar (store paths
+///   and the layer list).
+///
+/// Control characters are escaped too, not merely unexpected: a path holding a
+/// newline would otherwise emit invalid JSON *and* let an injected line be read
+/// back as a `projection_mode` by the line-based reader.
 std::string jsonEscape(const std::string & s)
 {
+  static const char * const kHex = "0123456789abcdef";
   std::string out;
   out.reserve(s.size());
   for (const char c : s) {
-    if (c == '"' || c == '\\') {
-      out.push_back('\\');
+    switch (c) {
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\b': out += "\\b"; break;
+      case '\f': out += "\\f"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if (static_cast<unsigned char>(c) < 0x20) {
+          out += "\\u00";
+          out.push_back(kHex[(static_cast<unsigned char>(c) >> 4) & 0xF]);
+          out.push_back(kHex[static_cast<unsigned char>(c) & 0xF]);
+        } else {
+          out.push_back(c);
+        }
+        break;
     }
-    out.push_back(c);
   }
   return out;
 }
@@ -591,8 +611,21 @@ int main(int argc, char ** argv)
     // through the very gate meant to stop it (#297 review).
     const std::size_t denominator =
       n_dem_hit + n_dem_no_coverage + n_dem_degenerate + n_dem_nonconverged;
+    if (denominator == 0) {
+      // No sample ever reached the lookup: an empty archive, or every ping dropped
+      // upstream. That is a no-usable-input failure, not a coverage verdict —
+      // reporting it as "coverage 0 (0 of 0)" would send the operator hunting for
+      // the wrong problem.
+      std::cerr << "error: no sample reached the DEM lookup, so this run placed nothing.\n"
+                << "  read " << n_in << " ping(s), projected " << n_proj
+                << "; dropped no-nadir=" << n_no_nadir << " bad-pose=" << n_bad_pose << "\n"
+                << "  Check the Tier-1 archive rather than the bathy store: an empty .sst1,\n"
+                << "  or pings without an altimeter return under --no-nadir-policy drop,\n"
+                << "  produce this. Nothing was written.\n";
+      return 3;
+    }
     const double coverage =
-      denominator == 0 ? 0.0 : static_cast<double>(n_dem_hit) / static_cast<double>(denominator);
+      static_cast<double>(n_dem_hit) / static_cast<double>(denominator);
     const bool below_gate = coverage < min_dem_coverage;
     if (below_gate || coverage < 0.5) {
       std::string gate_note;
@@ -616,6 +649,31 @@ int main(int argc, char ** argv)
                   << "  --min-dem-coverage 0 to accept a deliberately partial run.\n";
         return 3;
       }
+    }
+
+    // Datum cross-check, reported HERE — before saveTiles/writeRegistry — because
+    // it is the stronger signal of the two: low coverage means samples were left
+    // uncorrected, while a datum offset means they were CONFIDENTLY MIS-PLACED.
+    // It still only warns (the offset can be a legitimate known bias, and the tool
+    // cannot tell), but the operator sees it before the store lands, not after.
+    if (n_datum_check > 0) {
+      const double n = static_cast<double>(n_datum_check);
+      const double mean = datum_sum / n;
+      const double rms = std::sqrt(datum_sq_sum / n);
+      std::cerr << "tier2-processed: datum cross-check (nadir altimeter vs sensor height "
+                << "- DEM) over " << n_datum_check << " pings: mean " << mean
+                << " m, rms " << rms << " m\n";
+      if (std::abs(mean) > datum_check_warn_m) {
+        std::cerr << "warning: mean datum discrepancy " << mean << " m exceeds "
+                  << datum_check_warn_m << " m. The altimeter's height above bottom and the "
+                  << "sensor-height-minus-DEM height are the same quantity by two independent "
+                  << "paths, so a persistent offset means a datum mismatch (an orthometric "
+                  << "bathy store, a lever-arm error, or an unexpected tide frame) — the "
+                  << "samples may be confidently mis-placed, not merely uncorrected.\n";
+      }
+    } else {
+      std::cerr << "warning: datum cross-check had no usable ping (no altimeter return with "
+                << "DEM coverage), so the vertical datum agreement is unverified\n";
     }
   }
 
@@ -667,7 +725,22 @@ int main(int argc, char ** argv)
     std::cerr << "saveTiles failed: " << e.what() << "\n";
     return 1;
   }
-  writeRegistry(out_dir + "/registry.json", source_id, platform, sensor, sensor_class, campaign);
+  const std::string registry_path = out_dir + "/registry.json";
+  writeRegistry(registry_path, source_id, platform, sensor, sensor_class, campaign);
+  // `writeRegistry` returns void, and BOTH --accumulate provenance guards key on
+  // registry.json being present — an interrupted or failed write would leave tiles
+  // that every later accumulate folds into unguarded. Verify the file landed.
+  std::error_code registry_ec;
+  if (!std::filesystem::exists(registry_path) ||
+    std::filesystem::file_size(registry_path, registry_ec) == 0 || registry_ec)
+  {
+    std::cerr << "error: " << registry_path << " was not written (or is empty) after the "
+              << "tiles were saved.\n"
+              << "  The tiles carry per-cell source indices that only the registry resolves,\n"
+              << "  and both --accumulate provenance guards look for this file — without it a\n"
+              << "  later run would fold into the store unchecked. Regenerate the store.\n";
+    return 1;
+  }
   // Every run records its projection mode, flat included — a later --accumulate
   // reads it to refuse mixing modes (#297).
   if (!writeProjectionSidecar(
@@ -700,25 +773,6 @@ int main(int argc, char ** argv)
       std::cerr << " " << kv.first << "=" << kv.second;
     }
     std::cerr << "\n";
-    if (n_datum_check > 0) {
-      const double n = static_cast<double>(n_datum_check);
-      const double mean = datum_sum / n;
-      const double rms = std::sqrt(datum_sq_sum / n);
-      std::cerr << "tier2-processed: datum cross-check (nadir altimeter vs sensor height "
-                << "- DEM) over " << n_datum_check << " pings: mean " << mean
-                << " m, rms " << rms << " m\n";
-      if (std::abs(mean) > datum_check_warn_m) {
-        std::cerr << "warning: mean datum discrepancy " << mean << " m exceeds "
-                  << datum_check_warn_m << " m. The altimeter's height above bottom and the "
-                  << "sensor-height-minus-DEM height are the same quantity by two independent "
-                  << "paths, so a persistent offset means a datum mismatch (an orthometric "
-                  << "bathy store, a lever-arm error, or an unexpected tide frame) — the "
-                  << "samples may be confidently mis-placed, not merely uncorrected.\n";
-      }
-    } else {
-      std::cerr << "warning: datum cross-check had no usable ping (no altimeter return with "
-                << "DEM coverage), so the vertical datum agreement is unverified\n";
-    }
   }
   return 0;
 }
