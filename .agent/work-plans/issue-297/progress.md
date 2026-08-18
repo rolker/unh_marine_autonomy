@@ -641,3 +641,101 @@ pre-push review returns approved.
 
 ### Next step
 Re-dispatch `review-code` (Round 3), scoped to the projection-mode provenance subsystem (write ordering, guard keying, the populated-`out_dir` path) and its new regression tests.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-18 05:35 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-297 at `723108f`
+**Mode**: pre-push
+**Depth**: Deep (reason: scoped re-review of a data-of-record store writer; 652 lines in the tool)
+**Must-fix**: 5 | **Suggestions**: 12
+**Round**: 3 | **Ship**: continue — the three round-2 must-fixes are genuinely resolved, but the new `--overwrite` deletion path introduced this round carries two independent data-of-record destruction routes, both cross-confirmed by two disjoint adversarial lenses.
+
+Scope: the projection-mode provenance subsystem + its new regression tests, per the round-2
+exit contract. Specialists: Static Analysis (run), Governance, Plan Drift, Claude Adversarial
+x2 (Lens A + Lens B, Deep prompt). Copilot off (standing quota decision); Local cross-model
+off (`--no-local`, workspace#590).
+
+### Round-2 verification (all 3 must-fixes checked against source, not the checkbox)
+- **Sidecar before the first tile** — written at `:1046`, `saveTiles` at `:1060`, after the
+  `--overwrite` clear and the `create_directories`. Guards key on `hasTileFiles(out_dir)` plus
+  either provenance file (`inspectOutputDir:376-384`), and an `--accumulate` into a
+  tiles-but-no-registry store is refused at `:518-527`. Resolved.
+- **Datum cross-check before every coverage-gate exit** — at `:905`, inside `if (dem)` and ahead
+  of both `return 3` paths (`:942`, `:968`). `DatumCrossCheckIsReportedBeforeTheCoverageGateExits`
+  pins it by byte offset, which is the right way to assert an ordering. Resolved.
+- **Populated `out_dir` without `--accumulate`** — refused exit 2 at `:430-441`; `--overwrite`
+  clears late at `:1015`, after the gate. Resolved *as specified* — but see must-fix 1/2, which
+  are new holes in the `--overwrite` path itself, not a re-opening of this one.
+- **Test claim re-run and confirmed**: 90 gtest cases (10+14+5+21+21+5+14), 0 failures.
+- **Lint claim confirmed**: exactly 6 failures, all pre-existing — 2 cpplint in the untouched
+  `sidescan_mosaic_bag.cpp`, 4 uncrustify of which the `sidescan_tier2_processed.cpp` diff is
+  only the two untouched string-continuation hunks at lines 605 and 611. Zero new.
+- **The `2112a36` guard extraction is behaviour-preserving** — diff read line by line; the only
+  semantic change is `sidecar_mode` becoming an out-parameter.
+- **The renormalised bilinear blend is correct**, and its "t,u <= 0.5 by construction" claim
+  holds: the query point lies inside the cell whose centre it is measured from. Both lenses
+  independently verified this and the de-duplication.
+
+### Findings
+- [ ] (must-fix) `--overwrite` clears the prior store even when this run placed nothing, then exits 0. The `denominator == 0` "placed nothing" refusal is inside `if (dem)`, so a flat run over an empty/altimeter-less `.sst1` deletes every tile + registry + sidecar, writes 0 tiles, and reports success. Newly introduced this round [Lens A + Lens B + lead] — `src/sidescan_tier2_processed.cpp:1015-1028,1056-1067`
+- [ ] (must-fix) `removePriorStore` deletes *any* `.tif` in `out_dir` with no store-marker precondition; the package's own strict `<level>_<row>_<col>.tif` test (`bathy_dem.cpp:71-97 levelFromName`) exists for exactly this and was applied to the reader but not the deleter. A transposed path argument deletes a `marine_bathymetry_store` layer — the same `tileFilename` shape — and reports it as "the previous build" [Lens A + Lens B + lead] — `src/sidescan_tier2_processed.cpp:335-364,310-326`
+- [ ] (must-fix) The sidecar launders the two provenance fields this round added: `dem_coverage` is overwritten with this run's figure under `--accumulate` (a 0.03 store folded with a 0.99 bag reads 0.99 — the exact hazard the field cites as its reason), and promoting to `mixed` from a flat run writes `bathy_store: ""`, which erases the record permanently and silently disables the new different-store warning for that store forever [Lens A + Lens B] — `src/sidescan_tier2_processed.cpp:474,946,1046-1047`
+- [ ] (must-fix) `SidecarIsWrittenBeforeAnyTile` proves its point via a read-only directory, which `CAP_DAC_OVERRIDE` defeats: `.agent/scripts/ci_local.sh:428` runs the container `--user root`, so the sidecar write succeeds and the test fails under precisely the full-scope attestation ADR-0018 makes the merge gate. `GTEST_SKIP()` on `geteuid() == 0` [Lens A + lead-verified] — `test/test_tier2_processed_dem.cpp:596-614`
+- [ ] (must-fix) README exit-code contract is missing three new exit-1 classes: a failed `--overwrite` clear (`:1018-1024`), the `bad_alloc` `--bathy-cache-tiles` sizing fault (`:753-762,800-803,849-852`), and `main`'s last-resort handler (`:1117-1127`) [Governance] — `README.md:189-193`
+- [ ] (suggestion) "Nothing was written" is false on the `--overwrite` path — the sidecar-failure, `saveTiles`-failure, and registry-verification messages all now follow an irreversible delete and tell the operator nothing changed [Lens B] — `src/sidescan_tier2_processed.cpp:1049-1053,1062,1075-1079`
+- [ ] (suggestion) Stale GDAL companions survive `--overwrite` and re-attach to the new tile of the same name: `<tile>.tif.aux.xml` (band statistics/stretch, written by QGIS on inspection), `.ovr`, `.msk` all fall outside the `extension() == ".tif"` filter. Also warn when `overviews/` exists, since `--overwrite` is the first operation here that *shrinks* a store [Lens B + Governance] — `src/sidescan_tier2_processed.cpp:349-351`
+- [ ] (suggestion) Positional `tier1_path`/`out_dir` are exempt from the round-3 flag-shaped-value refusal, and `hasFlag` matches the same slot: `sidescan_tier2_processed in.sst1 --accumulate` creates a directory literally named `--accumulate` *and* turns accumulate on, exit 0 [Lens A] — `src/sidescan_tier2_processed.cpp:584-585`
+- [ ] (suggestion) TOCTOU: `inspectOutputDir` is captured at `:679` and consumed at `:1015` after a ping loop that can run minutes; a store completed into the dir meanwhile is written beside and stamped pure. Proper fix is a store-level lock, so this is follow-up-shaped rather than mechanical [Lens B] — `src/sidescan_tier2_processed.cpp:679,1015`
+- [ ] (suggestion) `jsonLineValue` finds its key inside escaped values, so a `--bathy-store` path containing a quoted `projection_mode` emits a later `bathy_store` line whose spoofed mode overwrites the real one — a `dem` store then reads back `flat`. The comment at `:138-143` explicitly claims robustness here [Lens A] — `src/sidescan_tier2_processed.cpp:233-262,279-296`
+- [ ] (suggestion) `readProjectionSidecar`'s `continue` after a parsed `projection_mode` drops `bathy_store`/`bathy_layers` from a single-line (hand-repaired) sidecar, silently disabling the different-store cross-check [Lens A] — `src/sidescan_tier2_processed.cpp:280-288`
+- [ ] (suggestion) Range-`for` over an `error_code`-constructed `directory_iterator` still uses the *throwing* `operator++`, contradicting both documented contracts ("any read problem answers no tiles"; `*error`/`nullopt`). Use `it.increment(ec)` [Lens A + Lens B] — `src/sidescan_tier2_processed.cpp:320,344`
+- [ ] (suggestion) `removePriorStore` reports a file that vanished between the listing and the removal as `"cannot remove <path>: Success"`; treat `!removed && !ec` as already-gone [Lens A] — `src/sidescan_tier2_processed.cpp:356-362`
+- [ ] (suggestion) `EXPECT_NE(sidecar.find("\"dem_coverage\": 0"), npos)` also matches `0.87`, so it proves only that the key is present and starts with `0` [Lens A] — `test/test_tier2_processed_dem.cpp:502`
+- [ ] (suggestion) `toInt`/`toDouble` accept trailing garbage (`--min-dem-coverage 0.9,` silently becomes 0.9) — the same dropped-argument class `argValue` was hardened against this round; check `pos == s.size()` [Lens B] — `src/sidescan_tier2_processed.cpp:118-136`
+- [ ] (suggestion) The bathy-store cross-check compares raw path strings, so it warns on `./stores/bathy` vs an absolute path and never fires when the same path is re-imported with new content — which is what the comment at `:484-486` claims it catches [Lens B] — `src/sidescan_tier2_processed.cpp:492-493`
+- [ ] (suggestion) Usage text omits the new `[1, 1024]` bound (every other bounded flag carries its constraint inline), the README's copy-paste example now exits 2 on its second run, and the `--bathy-layers` row is silent on the empty-list refusal [Governance] — `src/sidescan_tier2_processed.cpp:580`, `README.md:107-111,117`
+- [ ] (suggestion) ADR-0006 amendment date is hand-typed as 2026-08-17; the commit that wrote it (`ae5f988`) is dated 2026-08-18 00:52 -04:00 [Governance] — `docs/decisions/0006-multi-platform-backscatter-store.md:15`
+- [ ] (suggestion / follow-up, not this PR) The cross-store file-format contract is documented in `.agents/README.md` but unenforced on either side — the tests author their own value tiles against the same assumed contract, so both halves can drift together with CI green. A contract test reading a tile from `marine_bathymetry_store`'s own writer would close it [Governance] — `.agents/README.md:167-181`
+
+### Deferral confirmed sound
+The hosted-CI scope deferral is correct as reasoned: `marine_sidescan_mosaic` is absent from
+`.github/workflows/ros-base-docker.yml` repo-wide (so are `marine_bathymetry_store` and
+`marine_tiled_raster_store`), expanding that list is a CI-configuration change AGENTS.md puts
+under Ask First, and ADR-0018 accepts a full-scope `ci_local` attestation as the merge gate.
+One consequence worth carrying: must-fix 4 means that attestation cannot currently pass, so the
+deferral and that finding have to be resolved together.
+
+### Governance summary
+Principles: Pass throughout except **Watch** on "enforcement over documentation" (the unenforced
+cross-store format contract) and **Watch** on "a change includes its consequences" (the exit-code
+table, usage text, and README example did not fully follow the new flag). ADRs 0005, 0006, 0002,
+0010, 0013 Pass — the ADR-0006 header pointer, D9 rewording, and field list were verified against
+the writer, and the D8-to-D2/D6/D7 citation fix propagated to code and plan. ADR-0011 **Watch**
+(stale `overviews/` after a shrinking `--overwrite`; ADR-0011 already classes stale overviews as
+non-corrupting, so this is a README clause). ADR-0018 Pass as handled, with the caveat above.
+
+### Plan adherence
+Round-2 staleness is genuinely cleared (counter rename, cost bound, `--bathy-cache-tiles` and
+`--overwrite` in Files-to-Change, the 12-file scope, the ADR citation, the `sidescan_tier2_flat`
+scope answer), and the plan's `--overwrite` late-deletion and sidecar-first claims match the code.
+Three round-3 behaviours the plan does not yet carry: `main`'s last-resort handler (the plan still
+reads as "no whole-program handler"), the flag-shaped-value extension to the argument refusal, and
+the `[1, 1024]` bound with its rationale.
+
+### Owed before merge (unchanged, not findings against the diff)
+- [ ] Plan step 6 real-data acceptance run against `~/data/stores/sidescan/tier1/2026-06-19.sst1`
+  + `~/data/stores/bathymetry/`, with its four thresholds — deliberately operator-run.
+- [ ] File the five plan follow-ups with the PR, noting the sidecar's retirement on #179.
+- [ ] Full-scope `ci_local` attestation (ADR-0018) — blocked on must-fix 4.
+
+### Next step
+`address-findings` on the five must-fixes. Must-fix 1-3 are all in the `--overwrite` /
+sidecar-write path this round introduced and should be fixed together, with regression tests for
+(a) a run that places nothing not clearing the store, (b) a non-tile `.tif` surviving
+`--overwrite`, and (c) `dem_coverage` / `bathy_store` not being laundered by `--accumulate`.
+Must-fix 4 and 5 are mechanical. Then re-dispatch `review-code` (Round 4), scoped to the
+`--overwrite` path. Nothing is pushed until a pre-push review returns approved.
