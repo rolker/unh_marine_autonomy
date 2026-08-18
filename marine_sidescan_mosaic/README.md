@@ -206,11 +206,14 @@ is written**, so the output directory is left without a store rather than with a
 unmarked one. (The mode belongs in `registry.json`; it moves there when
 #179's append-only registry merge lands, and the sidecar retires.)
 
-**Exit codes**: `0` success, `1` I/O, unusable bathy store, or an unwritable
-`projection.json`, `2` argument or provenance-guard refusal, `3` DEM coverage below
-`--min-dem-coverage` — or, reported separately, no sample reaching the lookup at all
-(an empty archive / every ping dropped, which is a no-usable-input failure rather
-than a coverage verdict).
+**Exit codes**:
+
+| Code | Meaning |
+|---|---|
+| `0` | Success — tiles, `registry.json`, and `projection.json` all written |
+| `1` | A run-time failure, always reported with what (if anything) reached the disk: the Tier-1 archive cannot be opened or carries the wrong magic/version; the bathy store is unusable at startup, or a tile it listed cannot be read mid-run (a corrupt/truncated store); **out of memory** loading a bathy tile, reported as a `--bathy-cache-tiles` **sizing** fault rather than as a corrupt store; `--accumulate` cannot reload an existing tile (refused, so the tile's prior coverage is never overwritten); the output directory cannot be created; `projection.json` cannot be written (before any tile); `saveTiles` throws; `registry.json` is missing or empty after the tiles were saved; or **any other exception** reaching `main`'s last-resort handler, which reports it rather than letting `std::terminate` end a store writer with no diagnostic |
+| `2` | An argument or provenance-guard refusal, always **before** anything is decoded: a bad/missing/flag-shaped flag value, an out-of-range `--source-id`, `--bathy-cache-tiles`, `--min-dem-coverage`, or `--datum-check-warn-m`, an empty `--bathy-layers`, a populated `out_dir` without `--accumulate`, an `--accumulate` across projection modes without `--allow-mixed-projection`, into a store whose sidecar is unreadable, into tiles with no `registry.json`, or with a `--source-id` the existing registry does not name |
+| `3` | The DEM coverage gate: coverage below `--min-dem-coverage`. Reported separately under the same code, no sample reached the lookup at all (an empty archive / every ping dropped) — a no-usable-input failure rather than a coverage verdict. Both exit **having written nothing** |
 
 ### Overview pyramid (post-ingest, #188 / ADR-0011)
 
