@@ -485,8 +485,10 @@ int runTool(int argc, char ** argv)
     return 2;
   }
 
-  // Projection-mode guard (#297; the ADR-0005 D8 "no silent provenance corruption"
-  // rule applied to placement). --accumulate folds this run into the tiles already
+  // Projection-mode guard (#297). ADR-0005 D2/D6 make per-cell provenance exactly
+  // one interned source index resolved through the registry — nothing per cell
+  // records HOW a sample was placed, so this is that contract applied to placement.
+  // (D8 is the "both stores adopt this" decision, not a corruption rule.) --accumulate folds this run into the tiles already
   // on disk, and its only provenance guard is the source_id match below — which a
   // DEM-corrected re-run with the same --source-id passes. Compositing corrected
   // and mis-placed samples into the same cells is unrecoverable: the source band
@@ -596,7 +598,8 @@ int runTool(int argc, char ** argv)
     }
   }
 
-  // Provenance guard (#253 review; ADR-0005 D8 / #179). foldTile preserves each
+  // Provenance guard (#253 review; ADR-0005 D2/D6 per-cell provenance, D7's
+  // append-only registry merge / #179). foldTile preserves each
   // existing cell's original source band, but writeRegistry() is a write-once
   // single-source writer — so accumulating a DIFFERENT source-id into a store
   // leaves tiles carrying mixed source indices while registry.json names only
@@ -632,7 +635,7 @@ int runTool(int argc, char ** argv)
                   << " has source_id " << existing_sid << ", but this run uses "
                   << source_id_arg << ".\n"
                   << "  A multi-source registry merge is not yet implemented "
-                  << "(ADR-0005 D8 / #179); re-run with --source-id " << existing_sid
+                  << "(ADR-0005 D7 / #179); re-run with --source-id " << existing_sid
                   << " or use a fresh out_dir to avoid corrupting provenance.\n";
         return 2;
       }
