@@ -817,20 +817,20 @@ provenance path and the removal's leftovers). Nothing pushed.
 **Reported state verified, not trusted**: `./core_ws/test.sh marine_sidescan_mosaic` → 93 gtest cases (10+14+5+21+21+5+17), **0 failures**; lint exactly the **6 pre-existing** failures (2 cpplint in the untouched `sidescan_mosaic_bag.cpp`, 4 uncrustify), and `sidescan_tier2_processed.cpp`'s uncrustify divergence is confined to lines 822 and 828-829 — outside every hunk this branch touches. Zero new lint. The `--overwrite` removal is **complete**: no orphaned plumbing, no `removePriorStore`, no dead `out_dir_state.populated` consumer, no stale flag in README/usage/tests. README exit-code table checked line-by-line against every `return N`/`std::exit` in the tool — accurate.
 
 ### Findings
-- [ ] (must-fix) v1→v2 migration silently drops the prior store's coverage — `readProjectionSidecar` reads only `dem_coverage_history`, never the v1 scalar `dem_coverage`, and never reads `version` at all; folding a 0.99 run into a v1 store recorded at 0.03 rewrites it as `[0.99]` / `dem_coverage: 0.99`, which is verbatim the laundering v2 exists to stop. Seed the history from the scalar when the array is absent, and gate on `version`. Cross-confirmed Lens A + Lens B. (Scope note: `projection.json` never shipped, so only stores built by an intermediate build of this branch are v1 — including anything from the owed acceptance run.) — `src/sidescan_tier2_processed.cpp:448-453`
-- [ ] (must-fix) The sidecar rewrite truncates in place (`std::ofstream out(path)`), and under `--accumulate` that file is now the sole durable record of the whole coverage history plus `bathy_store`/`bathy_layers`. A write/`close()` failure — the full-filesystem case the function's own doc-comment anticipates — or a power loss destroys it, leaving the store permanently `kUnreadable` and every later `--accumulate` refused. `build_sidescan_overviews` in this same package already stages-and-swaps. Also fix the caller's "Nothing was written" text, which is false once a prior sidecar existed. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:231,256,1262`
-- [ ] (must-fix) A run that places NOTHING can permanently mark a `dem` store `mixed`, at exit 0. The `denominator == 0` "placed nothing" refusal is inside `if (dem)`, so a flat `--accumulate --allow-mixed-projection` over an empty/altimeter-less `.sst1` contributes zero samples yet rewrites the sidecar with the never-downgraded `mixed` and appends a `null` history element. This is the same failure class cited in the code as the reason `--overwrite` was removed. Gate the sidecar rewrite (or at least the promotion + history append) on `!acc.tiles().empty()`. Verified against source by the lead. [Lens B] — `src/sidescan_tier2_processed.cpp:647,1146-1157,1256`
-- [ ] (must-fix) Unknown `--` tokens are still silently ignored, so removing `--overwrite` turned `--accumulate --overwrite` from an explicit exit-2 ("opposites") into a silent accumulate at exit 0 — a regression introduced by this round. The same hole makes `--bathy-stor /path` a full flat run the operator believes is DEM-corrected. Round 4 hardened three sides of this box (flag-shaped values, flag-shaped positionals, trailing numeric garbage) and left the fourth open. Reject unrecognised `--` arguments, naming `--overwrite` specifically. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:789-835`
-- [ ] (must-fix) ADR-0006's #297 amendment still documents the v1 sidecar: the field list omits `dem_coverage_history`, and `dem_coverage` is described as "the share of consulted samples actually placed against the DEM" (this run's) rather than the worst across contributing runs. `dac1f62` touched this file for its date this same round, so the schema paragraph was in scope. [Governance] — `docs/decisions/0006-multi-platform-backscatter-store.md:218-230`
-- [ ] (suggestion) `NonAccumulateReRunIntoAPopulatedDirIsRefused`'s new `--overwrite` case passes for the wrong reason: `out` is populated, so the run exits 2 from the populated-dir guard whether or not the flag was recognised. Assert against a fresh empty `out_dir`. [Lens A] — `test/test_tier2_processed_dem.cpp:710`
-- [ ] (suggestion) `bathy_store` is last-writer-wins while coverage is now append-only: a DEM `--accumulate` against a different store erases the first store's identity from the only durable record (the stderr warning is not provenance), degrading the cross-check to "most recent surface only". Documented as a #179 limit in code/README/plan and warned on stderr, so recorded as a follow-up rather than a regression. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:673-704`
-- [ ] (suggestion) The worst-of-history loop computes `used` and discards it, so a hand-edited `0.9x` contributes 0.9; worse, an unparseable element is silently `continue`d, which makes `dem_coverage` read *rosier* than the store deserves — breaking the absolute guarantee the field is documented to carry. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:220-228`
-- [ ] (suggestion) The array branch captures verbatim text with no element validation, so `[ ]`, `[0.5,]`, `[foo]` parse and are re-emitted forever — the tool keeps accepting a sidecar that is invalid JSON for `jq`/`json.load`/#179's registry merge. `[ ]` in particular yields `[ , 0.87]` on the next run. Fixed by the same element validation as above. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:365-387,254`
-- [ ] (suggestion) `normalizedPath` resolves a *recorded relative* spelling against the **reading** run's CWD, so the README claim "a relative and an absolute spelling of the same store do not warn" holds only when the CWD is unchanged between runs. Record the normalised path at write time, or qualify the README sentence. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:504-515`, `README.md:185`
-- [ ] (suggestion) `overviews/` is named in the refusal message but not counted by `inspectOutputDir`, so an operator who follows the printed instructions and misses it gets a fresh store beside a stale pyramid derived from the deleted tiles, at exit 0. Include it in `populated`, or warn. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:527-535,610-612`
-- [ ] (suggestion) The root skip is correct in itself, but `SidecarIsWrittenBeforeAnyTile` is the only test pinning "no tile can exist without a mode record" and `ci_local.sh` runs `--user root` — so the invariant is now unverified in exactly the environment ADR-0018 makes the merge gate. Consider dropping privileges for that one case rather than skipping. Cross-confirmed Lens A + Lens B. — `test/test_tier2_processed_dem.cpp:637-641`
-- [ ] (suggestion) `readProjectionSidecar` slurps `projection.json` with no size cap or `is_regular_file` check; a fifo hangs the tool with no message and a huge file OOMs. A cap turns both into `kUnreadable`, the safe answer the function already commits to. [Lens B] — `src/sidescan_tier2_processed.cpp:425-433`
-- [ ] (suggestion) Stale comment: `jsonEscape`'s rationale still cites "the **line-based reader**", replaced by the structural parser in this same commit range. [Lens A] — `src/sidescan_tier2_processed.cpp:161`
+- [x] (must-fix) v1→v2 migration silently drops the prior store's coverage — `readProjectionSidecar` reads only `dem_coverage_history`, never the v1 scalar `dem_coverage`, and never reads `version` at all; folding a 0.99 run into a v1 store recorded at 0.03 rewrites it as `[0.99]` / `dem_coverage: 0.99`, which is verbatim the laundering v2 exists to stop. Seed the history from the scalar when the array is absent, and gate on `version`. Cross-confirmed Lens A + Lens B. (Scope note: `projection.json` never shipped, so only stores built by an intermediate build of this branch are v1 — including anything from the owed acceptance run.) — `src/sidescan_tier2_processed.cpp:448-453`
+- [x] (must-fix) The sidecar rewrite truncates in place (`std::ofstream out(path)`), and under `--accumulate` that file is now the sole durable record of the whole coverage history plus `bathy_store`/`bathy_layers`. A write/`close()` failure — the full-filesystem case the function's own doc-comment anticipates — or a power loss destroys it, leaving the store permanently `kUnreadable` and every later `--accumulate` refused. `build_sidescan_overviews` in this same package already stages-and-swaps. Also fix the caller's "Nothing was written" text, which is false once a prior sidecar existed. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:231,256,1262`
+- [x] (must-fix) A run that places NOTHING can permanently mark a `dem` store `mixed`, at exit 0. The `denominator == 0` "placed nothing" refusal is inside `if (dem)`, so a flat `--accumulate --allow-mixed-projection` over an empty/altimeter-less `.sst1` contributes zero samples yet rewrites the sidecar with the never-downgraded `mixed` and appends a `null` history element. This is the same failure class cited in the code as the reason `--overwrite` was removed. Gate the sidecar rewrite (or at least the promotion + history append) on `!acc.tiles().empty()`. Verified against source by the lead. [Lens B] — `src/sidescan_tier2_processed.cpp:647,1146-1157,1256`
+- [x] (must-fix) Unknown `--` tokens are still silently ignored, so removing `--overwrite` turned `--accumulate --overwrite` from an explicit exit-2 ("opposites") into a silent accumulate at exit 0 — a regression introduced by this round. The same hole makes `--bathy-stor /path` a full flat run the operator believes is DEM-corrected. Round 4 hardened three sides of this box (flag-shaped values, flag-shaped positionals, trailing numeric garbage) and left the fourth open. Reject unrecognised `--` arguments, naming `--overwrite` specifically. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:789-835`
+- [x] (must-fix) ADR-0006's #297 amendment still documents the v1 sidecar: the field list omits `dem_coverage_history`, and `dem_coverage` is described as "the share of consulted samples actually placed against the DEM" (this run's) rather than the worst across contributing runs. `dac1f62` touched this file for its date this same round, so the schema paragraph was in scope. [Governance] — `docs/decisions/0006-multi-platform-backscatter-store.md:218-230`
+- [x] (suggestion) `NonAccumulateReRunIntoAPopulatedDirIsRefused`'s new `--overwrite` case passes for the wrong reason: `out` is populated, so the run exits 2 from the populated-dir guard whether or not the flag was recognised. Assert against a fresh empty `out_dir`. [Lens A] — `test/test_tier2_processed_dem.cpp:710`
+- [x] (suggestion) `bathy_store` is last-writer-wins while coverage is now append-only: a DEM `--accumulate` against a different store erases the first store's identity from the only durable record (the stderr warning is not provenance), degrading the cross-check to "most recent surface only". Documented as a #179 limit in code/README/plan and warned on stderr, so recorded as a follow-up rather than a regression. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:673-704` (deferred: a #179 follow-up, not a regression — the append-only store record needs the registry merge that retires this sidecar; the stderr warning and the documented limit stand meanwhile.)
+- [x] (suggestion) The worst-of-history loop computes `used` and discards it, so a hand-edited `0.9x` contributes 0.9; worse, an unparseable element is silently `continue`d, which makes `dem_coverage` read *rosier* than the store deserves — breaking the absolute guarantee the field is documented to carry. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:220-228`
+- [x] (suggestion) The array branch captures verbatim text with no element validation, so `[ ]`, `[0.5,]`, `[foo]` parse and are re-emitted forever — the tool keeps accepting a sidecar that is invalid JSON for `jq`/`json.load`/#179's registry merge. `[ ]` in particular yields `[ , 0.87]` on the next run. Fixed by the same element validation as above. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:365-387,254`
+- [x] (suggestion) `normalizedPath` resolves a *recorded relative* spelling against the **reading** run's CWD, so the README claim "a relative and an absolute spelling of the same store do not warn" holds only when the CWD is unchanged between runs. Record the normalised path at write time, or qualify the README sentence. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:504-515`, `README.md:185`
+- [x] (suggestion) `overviews/` is named in the refusal message but not counted by `inspectOutputDir`, so an operator who follows the printed instructions and misses it gets a fresh store beside a stale pyramid derived from the deleted tiles, at exit 0. Include it in `populated`, or warn. Cross-confirmed Lens A + Lens B. — `src/sidescan_tier2_processed.cpp:527-535,610-612`
+- [x] (suggestion) The root skip is correct in itself, but `SidecarIsWrittenBeforeAnyTile` is the only test pinning "no tile can exist without a mode record" and `ci_local.sh` runs `--user root` — so the invariant is now unverified in exactly the environment ADR-0018 makes the merge gate. Consider dropping privileges for that one case rather than skipping. Cross-confirmed Lens A + Lens B. — `test/test_tier2_processed_dem.cpp:637-641` (addressed differently: rather than dropping privileges, the new `AFailedSidecarWriteLeavesThePreviousSidecarIntact` blocks the staging path with a DIRECTORY — which defeats root too — and pins the same invariant, that a failed sidecar write leaves no tile and no altered record.)
+- [x] (suggestion) `readProjectionSidecar` slurps `projection.json` with no size cap or `is_regular_file` check; a fifo hangs the tool with no message and a huge file OOMs. A cap turns both into `kUnreadable`, the safe answer the function already commits to. [Lens B] — `src/sidescan_tier2_processed.cpp:425-433`
+- [x] (suggestion) Stale comment: `jsonEscape`'s rationale still cites "the **line-based reader**", replaced by the structural parser in this same commit range. [Lens A] — `src/sidescan_tier2_processed.cpp:161`
 
 ### Deferred suggestions re-checked (host item 4)
 All five confirmed soundly deferred. Four are genuinely moot with the `--overwrite` removal (false "nothing was written" after an irreversible delete; stale GDAL companions; `removePriorStore`'s `": Success"` message; the mutual-exclusion check). TOCTOU remains correctly follow-up-shaped — Lens B re-derived it independently at the same severity with the same "needs a store-level `O_EXCL` lock" conclusion. Two caveats worth carrying into the follow-ups: the "nothing was written" wording problem *returned* in a new place (must-fix 2), and `overviews/` is named by the new refusal but still not detected (suggestion above).
@@ -846,3 +846,104 @@ All five confirmed soundly deferred. Four are genuinely moot with the `--overwri
 
 ### Next step
 Lifecycle: **Local Review (Pre-Push)** → verdict `changes-requested` → **`address-findings`**, then re-dispatch `review-code` (round 5). Nothing is pushed until a pre-push review returns approved. Must-fixes 1, 4, and 5 are mechanical; 2 is a stage-and-swap the sibling tool already models; 3 is a one-condition gate — round 5 should be a short verification pass, not another design cycle. Still owed before merge (unchanged, not findings): the operator-run real-data acceptance run, filing the plan follow-ups with the PR, and the full-scope `ci_local` attestation (ADR-0018).
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-18 02:15 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-297 at `fd3685b`
+**Addressed**: `## Local Review (Pre-Push)` (round 4, 2026-08-18 01:53 -04:00, branch at `4f71bea`) — 5 must-fix + 9 suggestions
+**Commits**: `c67aa37` (code + tests), `89692ae` (ADR-0006 + README), `fd3685b` (plan sync)
+
+Surgical pass, as the review's own next-step called for: each fix is the one the
+finding named, with no redesign. One code commit — the four code must-fixes sit in
+the same three functions (`readProjectionSidecar` / `writeProjectionSidecar` / the
+argument walk) and the coverage-history validation is the same edit as the v1
+migration, so splitting further would have produced commits that do not build.
+
+### Actions
+- [x] (must-fix) v1→v2 migration — `readProjectionSidecar` now reads `version` and, when
+  `dem_coverage_history` is absent, seeds the history from the v1 scalar `dem_coverage`
+  (including a `null` scalar, which is a flat run's element). A `version` outside
+  {1, 2} is `kUnreadable` rather than read with v2 assumptions —
+  `src/sidescan_tier2_processed.cpp` (`readProjectionSidecar`)
+- [x] (must-fix) Stage-and-swap — the sidecar is written to `projection.json.tmp`,
+  closed, checked (`out.fail()` after `close()`, so a full filesystem is caught), then
+  renamed over the live file; staging debris is removed best-effort on every failure
+  path. The caller's "Nothing was written" text now says what is true: no tile and no
+  registry were written, and any sidecar the store already had is intact —
+  `src/sidescan_tier2_processed.cpp` (`writeProjectionSidecar`, the write call site)
+- [x] (must-fix) No-placement gate — `if (acc.tiles().empty())` refuses with exit 3
+  before the output directory is created, so it applies to flat runs too, not only
+  inside `if (dem)`. A zero-contribution `--accumulate --allow-mixed-projection` can no
+  longer relabel a `dem` store `mixed` or append a `null` history element —
+  `src/sidescan_tier2_processed.cpp` (before the accumulate fold)
+- [x] (must-fix) Unrecognised arguments — `refuseUnknownArguments` walks argv past the
+  two positionals against the tool's own flag lists and exits 2 on anything unknown,
+  naming `--overwrite` explicitly. It defers to `argValue` for a missing/flag-shaped
+  value (it does not consume a `--`-shaped token as a value), so those keep their
+  precise messages. A stray non-flag token is refused on the same grounds —
+  `src/sidescan_tier2_processed.cpp` (`refuseUnknownArguments`, called from `runTool`)
+- [x] (must-fix) ADR-0006 amendment — the field list now carries
+  `dem_coverage_history`, and the paragraph states the append-only per-run history,
+  the worst-of-history aggregate, and the v1 seeding rule —
+  `docs/decisions/0006-multi-platform-backscatter-store.md`
+- [x] (suggestion) The `--overwrite` case now also asserts against a FRESH out_dir, in
+  the new `UnknownFlagsAreArgumentErrors`; the populated-dir case stays as a
+  cross-check with a comment on why it alone was insufficient —
+  `test/test_tier2_processed_dem.cpp`
+- [x] (suggestion) `bathy_store` last-writer-wins — `src/sidescan_tier2_processed.cpp:673-704`
+  (deferred: a #179 follow-up rather than a regression, as the finding itself records.
+  An append-only store record is the same shape of change as the registry merge that
+  retires this sidecar; the stderr warning and the documented limit stand meanwhile.
+  Rolled into follow-up (d) when the plan follow-ups are filed with the PR.)
+- [x] (suggestion) Worst-of-history no longer parses text at write time at all: the
+  history is a `std::vector<std::optional<double>>` end to end, validated once at read
+  time, so a hand-edited `0.9x` cannot contribute `0.9` and nothing unparseable can be
+  silently skipped into a rosier `dem_coverage` — `src/sidescan_tier2_processed.cpp`
+  (`parseCoverageElements`, `writeProjectionSidecar`)
+- [x] (suggestion) Element validation — `[ ]`, `[0.5,]`, `[foo]`, and any value outside
+  `[0, 1]` now make the sidecar `kUnreadable` instead of being re-emitted forever; the
+  writer re-emits from the parsed values, so the file it writes is always valid JSON —
+  `src/sidescan_tier2_processed.cpp` (`parseCoverageElements`, `readProjectionSidecar`)
+- [x] (suggestion) README qualified: the normalisation resolves against the *reading*
+  run's working directory, so a recorded relative path can still warn when a later run
+  is launched elsewhere (pass absolute store paths to avoid it) — `README.md`
+- [x] (suggestion) `overviews/` counts toward `populated` (`inspectOutputDir`), the
+  refusal message names it in the file list, and `AStaleOverviewsDirectoryStillCounts
+  AsPopulated` pins it — `src/sidescan_tier2_processed.cpp`, `test/…`
+- [x] (suggestion) Root-skip coverage — addressed differently, and better: rather than
+  dropping privileges in `SidecarIsWrittenBeforeAnyTile`, the new
+  `AFailedSidecarWriteLeavesThePreviousSidecarIntact` blocks the *staging* path with a
+  DIRECTORY (which `CAP_DAC_OVERRIDE` does not defeat), so the "a failed sidecar write
+  leaves no tile and no altered record" invariant is now verified under `ci_local.sh`'s
+  `--user root` too — `test/test_tier2_processed_dem.cpp`
+- [x] (suggestion) `readProjectionSidecar` refuses a non-regular file and caps the read
+  at 1 MiB, so a fifo or a huge file is `kUnreadable` instead of a hang or a
+  `bad_alloc` — `src/sidescan_tier2_processed.cpp`
+- [x] (suggestion) Stale `jsonEscape` comment corrected — the rationale is now the
+  structural reader's `kUnreadable` verdict, not the retired line-based reader —
+  `src/sidescan_tier2_processed.cpp`
+
+### Verification
+`./core_ws/build.sh marine_sidescan_mosaic` clean; `./core_ws/test.sh
+marine_sidescan_mosaic` → **22 gtest cases in `test_tier2_processed_dem`, 0 failures**
+(17 before + 5 new), 223 tests overall with **only the 6 pre-existing lint failures**
+(2 cpplint in the untouched `sidescan_mosaic_bag.cpp`; 4 uncrustify, of which
+`sidescan_tier2_processed.cpp`'s remains the same 10-line divergence at the
+pre-existing `--source-id` / `--no-nadir-policy` messages, outside every hunk here).
+Zero new lint. Nothing pushed.
+
+New tests: `UnknownFlagsAreArgumentErrors`, `V1SidecarCoverageIsCarriedIntoTheHistory`
+(v1 dem, v1 flat, unknown version, invalid history element),
+`AFailedSidecarWriteLeavesThePreviousSidecarIntact`,
+`ARunThatPlacesNothingCannotRelabelTheStore`,
+`AStaleOverviewsDirectoryStillCountsAsPopulated`.
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (round 5, a verification pass over
+`4f71bea..fd3685b`). Still owed before merge (unchanged, not findings): the
+operator-run real-data acceptance run, filing the five plan follow-ups with the PR
+(follow-up (d) now also carries the deferred `bathy_store` append-only record), and
+the full-scope `ci_local` attestation (ADR-0018). Nothing is pushed.
