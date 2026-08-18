@@ -67,9 +67,10 @@ so reading bathy value tiles needs **no new package dependency** — consistent 
 Two consequences of staying decoupled, both handled in Approach step 1:
 
 - `layerDirName()` and `levelFromTileFilename()` live in `marine_bathymetry_store`
-  (`tile_io.hpp:76,103`) and are therefore **not** available here. The reader parses
-  the level from the `<level>_<row>_<col>.tif` filename prefix itself and holds the
-  layer directory names as its own (documented, config-overridable) strings.
+  (`tile_io.hpp:71,103`) and are therefore **not** available here. The reader reads the
+  level from the `<level>_<row>_<col>.tif` filename **prefix** itself (a leading-integer
+  parse — see the lookup direction in Approach step 1) and holds the layer directory
+  names as its own (documented, config-overridable) strings.
 - ADR-0010 D3 re-classifies the depth theme's `survey/` layer wholesale to
   `processed/` and adds `draft/`. That rename has **not** landed in code — `SourceLayer`
   is still `Survey|Reference|Chart` (`bathy_cell.hpp:54-67`) and `layerDirName` still
@@ -87,10 +88,27 @@ An offline-tool-only module (no ROS/node dependency) exposing:
 std::optional<double> depthAt(double lat_deg, double lon_deg);   // WGS84 ellipsoidal height
 ```
 
+- **Lookup direction — filename→grid parse is not available, so invert it.**
+  `gggs::GridIndex`'s `(level, row, column)` constructor is **private**
+  (`grid_index.h:165-171`; friends are only `Level`, `GridAreaIterator`,
+  `GridBounds`), so a filename cannot be turned back into a `GridIndex` without the
+  ~50-line SW-corner-derive + `Level::gridIndex()` round-trip that
+  `marine_bathymetry_store` keeps in an **anonymous namespace** in
+  `src/tile_io.cpp` (not exported). The reader therefore never parses a filename
+  into a grid. It goes the other way, at query time:
+
+      gggs::Level(l).gridIndex(lat, lon)            // level.h:89 — public
+        → marine_tiled_raster_store::tileFilename(grid)   // tile_io.hpp:65 → "<l>_<row>_<col>.tif"
+        → <store>/<layer>/<that filename>           // membership tested against the scanned set
+        → gggs::Level(l).cellIndex(point)           // level.h:114
+        → tile.get(cell.row(), cell.column(), 0)    // band 0 = depth (tiled_raster_tile.hpp:99)
+
+  This needs no private constructor and no third copy of the parse helper.
 - **Startup scan (hard-fail, not silent)**: on construction, walk each requested
-  layer directory under `<bathy_store_root>/`, parse `<level>_<row>_<col>.tif`
-  filenames into `{level, GridIndex}`, and build the index. **Throw** if none of the
-  requested layer directories exists, or if the scan finds **zero** tiles. This closes
+  layer directory under `<bathy_store_root>/` and record, per layer, the **set of
+  file names** present plus the **set of levels** seen — the level being the leading
+  integer of `<level>_<row>_<col>.tif`, the only parse performed. **Throw** if none of
+  the requested layer directories exists, or if the scan finds **zero** tiles. This closes
   the review's silent-total-failure hole: a mistyped `--bathy-store`, a store that has
   been renamed `survey/`→`processed/`, or an empty store now aborts the run at
   startup instead of falling back to flat for every sample while exiting 0.
@@ -282,7 +300,7 @@ below is therefore **new scaffolding**, planned as such.
 | File | Change |
 |------|--------|
 | `marine_sidescan_mosaic/include/marine_sidescan_mosaic/bathy_dem.hpp` (new) | `BathyDem` reader: `depthAt(lat, lon)`, layer/level index, hard-fail construction |
-| `marine_sidescan_mosaic/src/bathy_dem.cpp` (new) | Layer scan + filename level parse, bilinear sampling, LRU tile cache over `marine_tiled_raster_store::loadTile<double>` |
+| `marine_sidescan_mosaic/src/bathy_dem.cpp` (new) | Layer scan (filename set + level set), query-time `Level::gridIndex()`→`tileFilename()` lookup, bilinear sampling, LRU tile cache over `marine_tiled_raster_store::loadTile<double>` |
 | `marine_sidescan_mosaic/include/marine_sidescan_mosaic/projection.hpp` | Add `DemCorrection` + `correctedGroundRange<DepthLookup>` |
 | `marine_sidescan_mosaic/src/sidescan_tier2_processed.cpp` | `--bathy-store` / `--bathy-layers` / `--datum-check-warn-m`; `sensor_height_m` from `GeoBeam::altitude_m`; corrected `(vertical_offset, ground)` into `grazingQuality`; new counters + datum cross-check in the summary |
 | `marine_sidescan_mosaic/CMakeLists.txt` | `bathy_dem.cpp` in the library; `test_bathy_dem` and `test_tier2_processed_dem` gtest targets (the latter with the `$<TARGET_FILE:>` compile definition) |
