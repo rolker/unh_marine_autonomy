@@ -488,6 +488,18 @@ TEST_F(Tier2ProcessedDemTest, CoverageGateAbortsBeforeAnyWrite)
       allowed,
       "--bathy-store \"" + far_store_.string() + "\" --min-dem-coverage 0"), 0) << log();
   EXPECT_FALSE(tileNames(allowed).empty());
+  // An opt-in partial run is still a "dem" store, so the sidecar must carry the
+  // coverage it actually achieved — otherwise a 0 %- and a 99 %-corrected store are
+  // indistinguishable downstream.
+  const std::string sidecar = readFile(allowed / "projection.json");
+  EXPECT_NE(sidecar.find("\"dem_coverage\": 0"), std::string::npos) << sidecar;
+
+  // A flat run has no coverage figure to record.
+  const fs::path flat = dir_ / "flat_coverage";
+  ASSERT_EQ(run(flat), 0) << log();
+  EXPECT_NE(
+    readFile(flat / "projection.json").find("\"dem_coverage\": null"), std::string::npos)
+    << readFile(flat / "projection.json");
 }
 
 // A sidecar that is present but unreadable/truncated leaves the store's mode

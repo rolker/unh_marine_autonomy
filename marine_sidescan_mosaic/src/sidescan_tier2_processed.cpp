@@ -179,18 +179,33 @@ std::string jsonEscape(const std::string & s)
 ///   only there, so the stream state is checked after the close, not before).
 bool writeProjectionSidecar(
   const std::string & out_dir, const std::string & mode,
-  const std::string & bathy_store, const std::string & bathy_layers)
+  const std::string & bathy_store, const std::string & bathy_layers,
+  const std::optional<double> & dem_coverage)
 {
   const std::string path = (std::filesystem::path(out_dir) / "projection.json").string();
   std::ofstream out(path);
   if (!out) {
     return false;
   }
+  // `mode` is tool-generated, but escape it like every other value: a value that
+  // is escaped only because of where it came from is one refactor from not being.
   out << "{\n"
       << "  \"version\": 1,\n"
-      << "  \"projection_mode\": \"" << mode << "\",\n"
+      << "  \"projection_mode\": \"" << jsonEscape(mode) << "\",\n"
       << "  \"bathy_store\": \"" << jsonEscape(bathy_store) << "\",\n"
-      << "  \"bathy_layers\": \"" << jsonEscape(bathy_layers) << "\"\n"
+      << "  \"bathy_layers\": \"" << jsonEscape(bathy_layers) << "\",\n"
+      // The achieved DEM coverage of the run that wrote this sidecar. `--min-dem-
+      // coverage 0` is an explicit opt-in to a partial run, and without this a 3 %
+      // and a 99 % store both read as plain "dem" downstream (#297 review). `null`
+      // for a flat run, and for a `mixed` store it is only this run's figure —
+      // per-run coverage history belongs with #179's registry merge.
+      << "  \"dem_coverage\": ";
+  if (dem_coverage) {
+    out << *dem_coverage;
+  } else {
+    out << "null";
+  }
+  out << "\n"
       << "}\n";
   out.close();
   return !out.fail();
@@ -654,6 +669,8 @@ int runTool(int argc, char ** argv)
   // quantity by two independent paths, so a persistent offset means a datum
   // mismatch (orthometric store, lever-arm error, unexpected tide frame).
   std::size_t n_datum_check = 0;
+  // The achieved DEM coverage, once the gate has computed it (flat runs: none).
+  std::optional<double> dem_coverage;
   double datum_sum = 0.0, datum_sq_sum = 0.0;
   double bbox_min_lat = std::numeric_limits<double>::infinity();
   double bbox_max_lat = -std::numeric_limits<double>::infinity();
@@ -846,6 +863,7 @@ int runTool(int argc, char ** argv)
     }
     const double coverage =
       static_cast<double>(n_dem_hit) / static_cast<double>(denominator);
+    dem_coverage = coverage;   // recorded in the sidecar; see writeProjectionSidecar.
     const bool below_gate = coverage < min_dem_coverage;
     if (below_gate || coverage < 0.5) {
       std::string gate_note;
@@ -946,7 +964,7 @@ int runTool(int argc, char ** argv)
     return 1;
   }
   if (!writeProjectionSidecar(
-      out_dir, sidecar_mode, bathy_store, dem_mode ? bathy_layers : ""))
+      out_dir, sidecar_mode, bathy_store, dem_mode ? bathy_layers : "", dem_coverage))
   {
     std::cerr << "error: could not write " << out_dir << "/projection.json.\n"
               << "  It records how this run placed its samples, and it is written before the\n"
@@ -1000,6 +1018,10 @@ int runTool(int argc, char ** argv)
       std::cerr << " " << kv.first << "=" << kv.second;
     }
     std::cerr << "\n";
+    if (dem_coverage) {
+      std::cerr << "tier2-processed: achieved DEM coverage " << *dem_coverage
+                << ", recorded in projection.json\n";
+    }
   }
   return 0;
 }

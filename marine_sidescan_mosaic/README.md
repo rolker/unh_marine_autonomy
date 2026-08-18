@@ -151,6 +151,11 @@ Under `--accumulate`, the provenance guards key on the **tiles** as well as on
 (and a tiles-without-registry store is refused outright: its per-cell source indices
 are unresolvable).
 
+The sidecar records the run's **achieved** DEM coverage as `dem_coverage` (`null`
+for a flat run). `--min-dem-coverage 0` is an explicit opt-in to a partial run, and
+without the figure a 3 %-corrected and a 99 %-corrected store both read as plain
+`"dem"` downstream.
+
 The sidecar also records **which** bathy store and layer order a `dem` run used, so
 an `--accumulate` of one DEM run onto another built against a *different* store (or
 layer order) **warns**: the mode guard cannot see that difference, and two
