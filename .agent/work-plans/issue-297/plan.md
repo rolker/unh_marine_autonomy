@@ -6,11 +6,21 @@ https://github.com/rolker/unh_marine_autonomy/issues/297
 
 Part of [#247](https://github.com/rolker/unh_marine_autonomy/issues/247) (sidescan↔CUBE-stores epic, idea 1).
 
-**Revision note (2026-08-17)**: this is revision 2, rewritten against the
-`## Plan Review` entry in `progress.md` (verdict: changes-requested, 8 must-fix /
-5 suggestions). The largest change is the datum correction: the vertical term is
-now the sensor's **ellipsoidal height derived from the per-ping ECEF pose**, not
-`nadir_altitude_m` (height above bottom). See Approach step 2.
+**Revision note (2026-08-17)**: this is **revision 3**.
+
+- *Revision 2* was rewritten against the first `## Plan Review` (changes-requested,
+  8 must-fix / 5 suggestions). Its largest change was the datum correction: the
+  vertical term is the sensor's **ellipsoidal height derived from the per-ping ECEF
+  pose**, not `nadir_altitude_m` (height above bottom). See Approach step 2.
+- *Revision 3* answers the second `## Plan Review` (changes-requested, 3 must-fix /
+  6 suggestions): the bathy tile lookup is **inverted** to a query-time
+  `Level::gridIndex()` → `tileFilename()` path because `GridIndex`'s
+  `(level,row,col)` constructor is private (Approach step 1); a **DEM coverage gate**
+  closes the zero-overlap silent no-op (step 3); `--accumulate` now **refuses to mix
+  projection modes** via a `projection.json` sidecar (step 3); and a **real-data
+  acceptance run** with stated pass thresholds is added (new step 6). Cost bounds,
+  the bilinear stencil's level rule, shadow scope, the test's equivalence assertion,
+  and three citation corrections round it out.
 
 ## Context
 
@@ -38,7 +48,7 @@ they actually are).
 | Sensor **ellipsoidal height** | `ecefPoseToGeoBeam(...).altitude_m` (`projection.hpp:77`; `projection.cpp:66-69` converts ECEF→geodetic via `geodesy::toMsg`) | WGS84 ellipsoidal height, up-positive |
 | Beam azimuth / depression / heading | `GeoBeam::{azimuth_rad, depression_rad, heading_rad, valid}` (`projection.hpp:73-87`) | Full-attitude; landed in [#200](https://github.com/rolker/unh_marine_autonomy/issues/200) (closed 2026-06-21), already consumed by `sidescan_tier2_processed.cpp:228` |
 | Nadir altimeter reading | `Tier1Ping::nadir_altitude_m` (`tier1.hpp:66`) | **Height above bottom** — *not* a height datum |
-| Bathy cell depth | `BathyCell::depth` (`bathy_cell.hpp:87-89`) | **WGS84 ellipsoidal height, up-positive**, NaN = no data |
+| Bathy cell depth | `BathyCell::depth` (`bathy_cell.hpp:90`, in `struct BathyCell` at `:87`) | **WGS84 ellipsoidal height, up-positive**, NaN = no data |
 | Bathy tile on disk | `<store>/<layer>/<level>_<row>_<col>.tif`, 2-band `Float64` (depth, uncertainty) | `marine_bathymetry_store/tile_io.hpp`; layer dirs `survey` / `reference` / `chart` (`tile_io.cpp:258-266`) |
 
 **The datum point that revision 1 got wrong**: `sensor_altitude − depth` is only
@@ -346,7 +356,7 @@ that D4 already stages after this one. Recorded as a follow-up, not silently ski
 ### 5. Tests
 
 **There is no existing `sidescan_tier2_processed` test and no `.sst1` fixture**
-(`CMakeLists.txt:128-152` — the gtest targets are `test_projection`,
+(`CMakeLists.txt:127-151` — the gtest targets are `test_projection`,
 `test_accumulator`, `test_normalizer`, `test_tier1`, `test_overview_pyramid`).
 Revision 1's "extend its existing test path" was not available. The integration test
 below is therefore **new scaffolding**, planned as such.
@@ -527,4 +537,8 @@ inputs to the same code. Note for whoever consumes `tx_beamwidths`: it carries t
 Single PR. **9 new/changed files**, all in `marine_sidescan_mosaic` (4 new: 2 source,
 2 tests; 5 changed) — matching the Files to Change table. No schema or interface
 changes to `marine_bathymetry_store`, `marine_tiled_raster_store`, or
-`marine_backscatter`.
+`marine_backscatter` (the projection-mode provenance is a tool-written sidecar for
+exactly that reason — the registry field waits on #179). Revision 3 adds no files:
+the coverage gate, the sidecar, and the accumulate guard all land in
+`sidescan_tier2_processed.cpp`, and the new cases extend the two planned test
+targets. The manual acceptance run (step 6) is a PR-report artifact, not a file.
