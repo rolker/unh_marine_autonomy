@@ -335,3 +335,68 @@ make a check pass.
 ### Next step
 `review-code` on the four-commit diff `d755e5b..61742e7`, then the operator's
 real-data acceptance run (plan step 6) before the PR is opened.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-17 23:37 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-297 at `c8283d4`
+**Mode**: pre-push
+**Depth**: Deep (reason: 2920 lines / 11 files, well past the 200-line + 10-file Deep thresholds)
+**Must-fix**: 7 | **Suggestions**: 16
+**Round**: 1 | **Ship**: continue — seven must-fixes, four of them cross-confirmed by 2-4 independent specialists, and three are silent-degradation / provenance holes in the very guards this PR added.
+
+Specialists: Static Analysis (run), Governance, Plan Drift, Claude Adversarial x2
+(Lens A + Lens B, Deep prompt). Copilot off (standing quota decision);
+Local cross-model off (`--no-local`, workspace#590).
+
+### Verified independently by the lead reviewer
+- **Lint claim confirmed.** All 6 failures are pre-existing: `cpplint` line-length
+  x2 in `src/sidescan_mosaic_bag.cpp` (untouched by the diff) and `uncrustify`
+  divergence in `src/projection.cpp`, `src/sidescan_mosaic_bag.cpp` (both
+  untouched) and in untouched *regions* of `src/sidescan_tier2_processed.cpp` and
+  `test/test_projection.cpp`. Re-ran the same linters against the `origin/jazzy`
+  copies of those two files and reproduced byte-identical divergences — linter
+  version drift, not a defect in this diff. Every file and region this PR wrote is
+  clean under `ament_uncrustify`, `ament_cpplint`, `ament_cppcheck`,
+  `ament_lint_cmake` and `ament_copyright`.
+- **Test claim confirmed.** 36 new/changed gtest cases pass, 0 failures
+  (`test_projection` 21, `test_bathy_dem` 10, `test_tier2_processed_dem` 5);
+  results postdate the source mtime. 77 cases pass package-wide.
+- **No `marine_bathymetry_store` dependency crept into `package.xml` or
+  `CMakeLists.txt`** — ADR-0006 D9's decoupling holds.
+
+### Findings
+- [ ] (must-fix) `--allow-mixed-projection` launders provenance: the sidecar is rewritten with this run's mode, so a deliberately mixed store advertises pure `dem` and every later `--accumulate` passes the guard silently — needs a sticky `mixed` value [Lens A + Lens B + Governance + lead] — `src/sidescan_tier2_processed.cpp:569`
+- [ ] (must-fix) Sidecar write failure is only a warning and post-open stream errors are unchecked; `readProjectionMode` then maps missing/truncated/unparseable alike to `""` -> `"flat"`, so a DEM store with a bad sidecar silently accepts a flat `--accumulate` [Lens A + Lens B + Governance] — `src/sidescan_tier2_processed.cpp:128-174,266-271`
+- [ ] (must-fix) Coverage-gate denominator omits `n_dem_degenerate` and `n_dem_nonconverged`, which are also flat-placed — a 40%-degenerate run reports coverage 1.0 and sails through the gate whose stated purpose is to stop exactly that [Lens A + Lens B, both must-fix] — `src/sidescan_tier2_processed.cpp:490-492,500`
+- [ ] (must-fix) Partially-missing layers are silent: the hard-fail needs ALL requested layer dirs absent, and a present-but-empty layer is dropped without a word — the ADR-0010 D3 `survey/`->`processed/` rename runs on `reference/` alone with no warning, and the README claims otherwise [Governance + Lens B + Lens A] — `src/bathy_dem.cpp:133,139` / `README.md:113`
+- [ ] (must-fix) `argValue` never matches a flag in the last argv slot, so a truncated `... --bathy-store` silently runs full flat-bottom, writes `projection.json: "flat"` and exits 0 — the operator asked for orthorectification and got a flat data-of-record store [Lens B + lead] — `src/sidescan_tier2_processed.cpp:79`
+- [ ] (must-fix) The catch-all around the whole ping loop reports every exception as `"bathy DEM lookup failed"` and is installed even in flat mode, changing flat-path behaviour the PR claims is unchanged [Lens B + Lens A + Plan Drift] — `src/sidescan_tier2_processed.cpp:371,478-482`
+- [ ] (must-fix) `docs/sonar_ecosystem.md` not updated, though this repo's `AGENTS.md:56-58` names it as a required consequence of significant store/pipeline changes; rows 46 and 49 still read "design locked, not built" / "sidescan half planned" [Governance] — `docs/sonar_ecosystem.md:46,49`
+- [ ] (suggestion) Per-layer hit counters count probes (up to 5 iterations x stencil reads per sample, plus one per ping for the datum check), not placed samples, yet print beside `hit=` inviting a direct comparison [Lens A + Lens B + Plan Drift] — `src/bathy_dem.cpp:301`, `src/sidescan_tier2_processed.cpp:577-583`
+- [ ] (suggestion) Tile-size comment is 2x off — 960x960x2x8 = 14.7 MB, so the 8-tile default is ~118 MB not ~56 MB; band 1 is loaded on every tile and unused in v1 [Lens A + Lens B] — `include/marine_sidescan_mosaic/bathy_dem.hpp:88-89`, `src/bathy_dem.cpp:201`
+- [ ] (suggestion) The datum cross-check — the check that detects *confidently mis-placed* samples — runs after `saveTiles`/`writeRegistry` and only warns, while the milder coverage condition aborts before any write [Lens B] — `src/sidescan_tier2_processed.cpp:585-603`
+- [ ] (suggestion) `denominator == 0` (empty `.sst1`, or every ping dropped) yields `error: DEM coverage 0 (0 of 0 samples)` and exit 3 — a no-usable-input failure wearing the coverage error's message [Lens A] — `src/sidescan_tier2_processed.cpp:490-514`
+- [ ] (suggestion) `levelFromName` accepts stale pre-#248 companion rasters (`*_time.tif`/`*_source.tif`) that `marine_bathymetry_store/src/tile_io.cpp:353` explicitly skips; they inflate `tile_count_` and can satisfy the zero-tile hard-fail while every lookup misses [Lens B] — `src/bathy_dem.cpp:53-71`
+- [ ] (suggestion) Both `--accumulate` provenance guards key on `registry.json`, but `writeRegistry` is `void` and unchecked — an interrupted registry write leaves tiles with no registry and both guards bypassed [Lens B] — `src/sidescan_tier2_processed.cpp:264,290-316`
+- [ ] (suggestion) Tile cache can be smaller than one lookup's working set (`layers x levels` probes + 4 stencil vs `kDefaultCacheTiles = 8`) with no CLI knob to raise it; memoising the resolved source per ping would remove most of the cost [Lens B] — `include/marine_sidescan_mosaic/bathy_dem.hpp:83`, `src/bathy_dem.cpp:237-247`
+- [ ] (suggestion) `jsonEscape` escapes only `"` and `\`; an operator path with a control character produces invalid JSON, and the line-based reader could read an injected line back as a mode [Lens B] — `src/sidescan_tier2_processed.cpp:109-120`
+- [ ] (suggestion) `std::atoi` on an unbounded digit prefix is UB on overflow [Lens A] — `src/bathy_dem.cpp:66`
+- [ ] (suggestion) The bilinear stencil offsets assume the neighbour shares the query cell's angular spans; GGGS longitudinal spans jump 3x at the 72-deg and 80-deg bands, so a neighbour probe there can re-sample the same cell. Unreachable for these surveys, but the header presents `BathyDem` as a general reader [Lens A] — `src/bathy_dem.cpp:283-289`
+- [ ] (suggestion) ADR-0010 D7 citation over-claimed: D7 specifies band-midpoint depth + half-band sigma, not "shoal-biased by design"; that property belongs to the shallowest-reliable query (ADR-0002 D7 / ADR-0010 D4). Appears in two places [Governance] — `README.md:114`, `include/marine_sidescan_mosaic/bathy_dem.hpp:59-65`
+- [ ] (suggestion) The `projection.json` sidecar is a new on-disk store artifact that ADR-0006 D7's schema does not describe; the decision survives only in the work plan and a code comment [Governance] — `src/sidescan_tier2_processed.cpp:122-145`
+- [ ] (suggestion) `.agents/README.md:17` describes the package as a live mosaicker only; pre-existing staleness this PR makes materially worse [Governance] — `.agents/README.md:17`
+- [ ] (suggestion) Plan text stale vs shipped code in three places: LRU key is `{layer,level,row,col}` not `{level,GridIndex}` (a necessary fix); the "<= 20 cell reads per sample" bound omits `resolveSource`'s `layers x levels` probes and the per-ping datum lookup; an empty `--bathy-layers` exits 1 while the documented argument-error code is 2 [Plan Drift] — `.agent/work-plans/issue-297/plan.md:159,248,346`
+- [ ] (suggestion) `CorrectedGroundRangeGrazingPairFeedsQuality` exercises the geometry function, not the tool's call site; the tool-level wiring is covered only indirectly [Plan Drift] — `test/test_projection.cpp:589`
+- [ ] (suggestion) Sidecar `bathy_layers` is `""` on flat runs, unlike the plan's sidecar shape [Plan Drift] — `src/sidescan_tier2_processed.cpp:569`
+
+### Owed before merge (not findings against the diff)
+- [ ] Plan step 6 real-data acceptance run against `~/data/stores/sidescan/tier1/2026-06-19.sst1` + `~/data/stores/bathymetry/`, with its four stated thresholds (coverage >= 0.5, datum mean < 1.0 m, non-converged < 1%, wall clock <= 2x flat) and the before/after look at the known contact — deliberately operator-run.
+- [ ] File the five follow-ups the plan lists ((a) seabed-normal incidence, (b) DEM-supplied nadir altitude, (c) sigma-weighted sampling, (d) projection mode into the registry with #179, (e) acoustic-shadow handling) with the PR.
+
+### Next step
+`address-findings` on the seven must-fixes, then re-dispatch `review-code` (Round 2).
+The diff is not pushed until a pre-push review returns approved.
