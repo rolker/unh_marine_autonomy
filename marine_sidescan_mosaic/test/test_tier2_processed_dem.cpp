@@ -553,6 +553,19 @@ TEST_F(Tier2ProcessedDemTest, CorruptTileAbortsTheRunWithoutWriting)
   EXPECT_TRUE(tileNames(out).empty());
   EXPECT_FALSE(fs::exists(out / "registry.json"));
   EXPECT_FALSE(fs::exists(out / "projection.json"));
+
+  // The mirror assertion: a NON-DEM fault on a DEM run must not be reported as a
+  // DEM lookup failure. The handlers are scoped to the DEM call sites precisely so
+  // an output-path problem keeps its own diagnosis.
+  const fs::path blocked = dir_ / "out_is_a_file";
+  {
+    std::ofstream occupied(blocked);
+    occupied << "not a directory";
+  }
+  EXPECT_NE(run(blocked, "--bathy-store \"" + store_.string() + "\""), 0) << log();
+  const std::string blocked_log = log();
+  EXPECT_EQ(blocked_log.find("bathy DEM lookup failed"), std::string::npos) << blocked_log;
+  EXPECT_EQ(blocked_log.find("corrupt or truncated"), std::string::npos) << blocked_log;
 }
 
 // Degenerate and non-converged samples are placed FLAT, so they count against
