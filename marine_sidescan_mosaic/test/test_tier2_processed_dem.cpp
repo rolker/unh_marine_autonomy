@@ -554,6 +554,25 @@ TEST_F(Tier2ProcessedDemTest, DegenerateSamplesCountAgainstTheCoverageGate)
   EXPECT_FALSE(tileNames(allowed).empty());
 }
 
+// The datum cross-check must be REPORTED on a run the coverage gate then kills:
+// a store in the wrong vertical frame is exactly what drives coverage down, so a
+// check that only prints on successful runs is silent when it matters most.
+TEST_F(Tier2ProcessedDemTest, DatumCrossCheckIsReportedBeforeTheCoverageGateExits)
+{
+  const fs::path shelf_store = dir_ / "bathy_shelf";
+  writeBathyStore(shelf_store, kLat, kLon, /*shelf_above_sensor=*/ true);
+
+  const fs::path gated = dir_ / "datum_gated";
+  EXPECT_EQ(run(gated, "--bathy-store \"" + shelf_store.string() + "\""), 3) << log();
+  const std::string gate_log = log();
+  const auto datum_at = gate_log.find("datum cross-check (nadir altimeter");
+  const auto gate_at = gate_log.find("error: DEM coverage");
+  ASSERT_NE(datum_at, std::string::npos) << gate_log;
+  ASSERT_NE(gate_at, std::string::npos) << gate_log;
+  EXPECT_LT(datum_at, gate_at) << gate_log;
+  EXPECT_TRUE(tileNames(gated).empty());
+}
+
 // --accumulate must refuse to composite DEM-corrected samples into a store built
 // flat (and vice versa): per-cell provenance cannot tell the two apart.
 TEST_F(Tier2ProcessedDemTest, AccumulateRefusesToMixProjectionModes)

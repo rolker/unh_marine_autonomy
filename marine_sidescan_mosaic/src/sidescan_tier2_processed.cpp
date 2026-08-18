@@ -605,6 +605,35 @@ int main(int argc, char ** argv)
   // fallback and the tool exited 0 with a normal-looking summary. Checked here,
   // BEFORE saveTiles/writeRegistry, so a failure writes nothing.
   if (dem) {
+    // Datum cross-check, reported FIRST — before the coverage gate's own exits and
+    // before saveTiles/writeRegistry — because it is the stronger signal of the two:
+    // low coverage means samples were left uncorrected, while a datum offset means
+    // they were CONFIDENTLY MIS-PLACED. Reporting it after the gate's `return 3`
+    // would silence it on exactly the runs a wrong vertical datum produces — a
+    // store in the wrong vertical frame drives coverage down (its heights push the
+    // geometry degenerate or non-convergent) and would exit 3 with no mention of
+    // the datum at all (#297 round-2 review). It still only warns (the offset can
+    // be a legitimate known bias, and the tool cannot tell).
+    if (n_datum_check > 0) {
+      const double n = static_cast<double>(n_datum_check);
+      const double mean = datum_sum / n;
+      const double rms = std::sqrt(datum_sq_sum / n);
+      std::cerr << "tier2-processed: datum cross-check (nadir altimeter vs sensor height "
+                << "- DEM) over " << n_datum_check << " pings: mean " << mean
+                << " m, rms " << rms << " m\n";
+      if (std::abs(mean) > datum_check_warn_m) {
+        std::cerr << "warning: mean datum discrepancy " << mean << " m exceeds "
+                  << datum_check_warn_m << " m. The altimeter's height above bottom and the "
+                  << "sensor-height-minus-DEM height are the same quantity by two independent "
+                  << "paths, so a persistent offset means a datum mismatch (an orthometric "
+                  << "bathy store, a lever-arm error, or an unexpected tide frame) — the "
+                  << "samples may be confidently mis-placed, not merely uncorrected.\n";
+      }
+    } else {
+      std::cerr << "warning: datum cross-check had no usable ping (no altimeter return with "
+                << "DEM coverage), so the vertical datum agreement is unverified\n";
+    }
+
     // Every non-converged status places the sample FLAT, so all of them belong in
     // the denominator — a run that is 40 % degenerate is 40 % flat-placed, and
     // scoring it on hits-vs-no-coverage alone would report coverage 1.0 and sail
@@ -649,31 +678,6 @@ int main(int argc, char ** argv)
                   << "  --min-dem-coverage 0 to accept a deliberately partial run.\n";
         return 3;
       }
-    }
-
-    // Datum cross-check, reported HERE — before saveTiles/writeRegistry — because
-    // it is the stronger signal of the two: low coverage means samples were left
-    // uncorrected, while a datum offset means they were CONFIDENTLY MIS-PLACED.
-    // It still only warns (the offset can be a legitimate known bias, and the tool
-    // cannot tell), but the operator sees it before the store lands, not after.
-    if (n_datum_check > 0) {
-      const double n = static_cast<double>(n_datum_check);
-      const double mean = datum_sum / n;
-      const double rms = std::sqrt(datum_sq_sum / n);
-      std::cerr << "tier2-processed: datum cross-check (nadir altimeter vs sensor height "
-                << "- DEM) over " << n_datum_check << " pings: mean " << mean
-                << " m, rms " << rms << " m\n";
-      if (std::abs(mean) > datum_check_warn_m) {
-        std::cerr << "warning: mean datum discrepancy " << mean << " m exceeds "
-                  << datum_check_warn_m << " m. The altimeter's height above bottom and the "
-                  << "sensor-height-minus-DEM height are the same quantity by two independent "
-                  << "paths, so a persistent offset means a datum mismatch (an orthometric "
-                  << "bathy store, a lever-arm error, or an unexpected tide frame) — the "
-                  << "samples may be confidently mis-placed, not merely uncorrected.\n";
-      }
-    } else {
-      std::cerr << "warning: datum cross-check had no usable ping (no altimeter return with "
-                << "DEM coverage), so the vertical datum agreement is unverified\n";
     }
   }
 
