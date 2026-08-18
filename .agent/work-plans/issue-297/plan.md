@@ -386,6 +386,20 @@ flat-bottom (ADR-0006 D6/D9).
     The sidecar READER is a small structural parser for the flat object rather than a
     per-line key search — a key found inside a value could otherwise spoof the mode,
     and a hand-repaired single-line sidecar lost every field after the first.
+    *(Round-4 review corrections)* three durability/migration gaps in the above:
+    (i) the reader honours a **v1** sidecar's scalar `dem_coverage` — seeding it as
+    the history's first element and gating on `version`, since reading only the array
+    made an `--accumulate` into a v1 store rewrite the history as this run alone,
+    which is the same laundering v2 exists to stop (an unknown `version` is
+    `kUnreadable`, not "assume v2"); (ii) history elements are **validated** (a
+    number in `[0, 1]` or `null`) rather than carried forward verbatim — a skipped
+    unparseable element made `dem_coverage` read *rosier* than the store deserved,
+    and a verbatim carry re-emitted invalid JSON forever; (iii) the rewrite is
+    **staged and swapped** (`projection.json.tmp` → rename) like
+    `build_sidescan_overviews`, so a failed write or a crash cannot destroy the only
+    durable record of the store's coverage history and bathy provenance. The reader
+    also refuses a non-regular or oversized `projection.json` (a fifo would otherwise
+    hang the tool).
   - Under `--accumulate`, alongside the existing `source_id` check and **before**
     decoding, read the existing sidecar and refuse a mode mismatch with the same
     fail-fast shape as the `source_id` guard (exit 2), naming both modes and telling
@@ -426,6 +440,17 @@ flat-bottom (ADR-0006 D6/D9).
     than left behind an opt-in. The refusal instead NAMES the files a manual clear
     would remove (`*.tif`, `registry.json`, `projection.json`, and the derived
     `overviews/`).
+    *(Round-4 review corrections)* the same class, three more sides of it:
+    an **unrecognised** argument is now exit 2 rather than ignored (removing
+    `--overwrite` had turned `--accumulate --overwrite` into a *silent* accumulate,
+    and a mistyped `--bathy-stor` into a flat build the operator reads as
+    DEM-corrected; `--overwrite` is refused by name); a stale `overviews/` counts
+    toward "populated", since the refusal names it and an operator who misses it
+    would get a fresh store beside a pyramid derived from the deleted tiles; and a
+    run that **paints no cell** is refused (exit 3) before the sidecar is touched —
+    the DEM branch's own "placed nothing" refusal did not cover a flat
+    `--accumulate --allow-mixed-projection`, which could therefore relabel a `dem`
+    store `mixed` forever while contributing nothing.
   - `--allow-mixed-projection` is the explicit, documented override for an operator
     who accepts the mix; it prints the refusal text as a warning and continues.
     *(Implementation note)* it covers **only** the mode-mismatch refusal — not the
