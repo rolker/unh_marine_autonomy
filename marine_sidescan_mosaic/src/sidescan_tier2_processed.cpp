@@ -208,46 +208,79 @@ enum class SidecarState { kMissing, kUnreadable, kOk };
 struct ProjectionSidecar
 {
   SidecarState state = SidecarState::kMissing;
-  std::string mode;   ///< only meaningful when `state == kOk`.
+  std::string mode;           ///< only meaningful when `state == kOk`.
+  std::string bathy_store;    ///< as recorded (still JSON-escaped); "" if absent.
+  std::string bathy_layers;   ///< as recorded (still JSON-escaped); "" if absent.
 };
 
-ProjectionSidecar readProjectionMode(const std::string & out_dir)
+/// @brief The quoted value of `"<key>": "<value>"` on @p line, if it is there.
+std::optional<std::string> jsonLineValue(const std::string & line, const std::string & key)
 {
+  const auto at = line.find("\"" + key + "\"");
+  if (at == std::string::npos) {
+    return std::nullopt;
+  }
+  const auto colon = line.find(':', at);
+  if (colon == std::string::npos) {
+    return std::nullopt;
+  }
+  const auto open = line.find('"', colon);
+  if (open == std::string::npos) {
+    return std::nullopt;
+  }
+  // The writer escapes every value, so the first unescaped quote closes it.
+  std::string value;
+  for (std::size_t i = open + 1; i < line.size(); ++i) {
+    if (line[i] == '\\' && i + 1 < line.size()) {
+      value.push_back(line[i]);
+      value.push_back(line[i + 1]);
+      ++i;
+      continue;
+    }
+    if (line[i] == '"') {
+      return value;
+    }
+    value.push_back(line[i]);
+  }
+  return std::nullopt;   // unterminated: a truncated line, not a value.
+}
+
+ProjectionSidecar readProjectionSidecar(const std::string & out_dir)
+{
+  ProjectionSidecar out;
   const std::string path = (std::filesystem::path(out_dir) / "projection.json").string();
   if (!std::filesystem::exists(path)) {
-    return {SidecarState::kMissing, ""};
+    out.state = SidecarState::kMissing;
+    return out;
   }
   std::ifstream in(path);
   if (!in) {
-    return {SidecarState::kUnreadable, ""};
+    out.state = SidecarState::kUnreadable;
+    return out;
   }
+  out.state = SidecarState::kUnreadable;   // until a mode is actually parsed.
   std::string line;
   while (std::getline(in, line)) {
-    const auto key = line.find("\"projection_mode\"");
-    if (key == std::string::npos) {
+    if (const auto mode = jsonLineValue(line, "projection_mode")) {
+      // An empty mode is present-but-unknown, not a flat store: leave the state
+      // at kUnreadable.
+      if (!mode->empty()) {
+        out.mode = *mode;
+        out.state = SidecarState::kOk;
+      }
       continue;
     }
-    const auto colon = line.find(':', key);
-    if (colon == std::string::npos) {
+    if (const auto store = jsonLineValue(line, "bathy_store")) {
+      out.bathy_store = *store;
       continue;
     }
-    const auto open = line.find('"', colon);
-    if (open == std::string::npos) {
-      continue;
+    if (const auto layers = jsonLineValue(line, "bathy_layers")) {
+      out.bathy_layers = *layers;
     }
-    const auto close = line.find('"', open + 1);
-    if (close == std::string::npos) {
-      continue;
-    }
-    const std::string mode = line.substr(open + 1, close - open - 1);
-    if (mode.empty()) {
-      break;   // present but empty: an unknown mode, not a flat store.
-    }
-    return {SidecarState::kOk, mode};
   }
   // Ran off the end (or hit a read error) without a parseable mode: truncated or
   // corrupt, never "flat".
-  return {SidecarState::kUnreadable, ""};
+  return out;
 }
 
 /// @brief Does @p out_dir already hold value tiles from an earlier build?
@@ -464,7 +497,7 @@ int runTool(int argc, char ** argv)
     return 2;
   }
   if (accumulate && out_dir_populated) {
-    const ProjectionSidecar recorded = readProjectionMode(out_dir);
+    const ProjectionSidecar recorded = readProjectionSidecar(out_dir);
     if (recorded.state == SidecarState::kUnreadable) {
       std::cerr << "error: --accumulate: the store in " << out_dir << " has a projection.json "
                 << "that could not be read or carries no projection_mode.\n"
@@ -503,6 +536,29 @@ int runTool(int argc, char ** argv)
       // Unreachable while kMixedMode is neither "flat" nor "dem" (the branch above
       // fires first), but keep the stickiness explicit rather than incidental.
       sidecar_mode = kMixedMode;
+    } else if (dem_mode && recorded.state == SidecarState::kOk) {
+      // Same MODE, different DEM. Two DEM runs against different bathy stores (or
+      // a different layer search order) are not the same placement: a re-imported
+      // store, another vintage, or a different vertical datum moves the samples,
+      // and the composited cells again record only the source id. The mode guard
+      // cannot see this, so report it — as a warning, not a refusal: re-running
+      // against an UPDATED store is a legitimate, common workflow, and only the
+      // operator knows whether the two surfaces agree.
+      const std::string recorded_store = recorded.bathy_store;
+      const std::string recorded_layers = recorded.bathy_layers;
+      if (!recorded_store.empty() &&
+        (recorded_store != jsonEscape(bathy_store) || recorded_layers != jsonEscape(bathy_layers)))
+      {
+        std::cerr << "warning: --accumulate: the store in " << out_dir << " was "
+                  << "DEM-orthorectified against '" << recorded_store << "' (layers '"
+                  << recorded_layers << "'), but this run uses '" << bathy_store
+                  << "' (layers '" << bathy_layers << "').\n"
+                  << "  Both runs are 'dem', so the projection-mode guard passes — but samples\n"
+                  << "  placed against two different bathymetric surfaces (a different vintage,\n"
+                  << "  extent, or vertical datum) composite into the same cells with nothing\n"
+                  << "  per-cell to tell them apart. Confirm the two surfaces agree, or build\n"
+                  << "  into a fresh out_dir. The sidecar will now name THIS run's store.\n";
+      }
     }
   }
 

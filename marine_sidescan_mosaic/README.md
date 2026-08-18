@@ -151,6 +151,14 @@ Under `--accumulate`, the provenance guards key on the **tiles** as well as on
 (and a tiles-without-registry store is refused outright: its per-cell source indices
 are unresolvable).
 
+The sidecar also records **which** bathy store and layer order a `dem` run used, so
+an `--accumulate` of one DEM run onto another built against a *different* store (or
+layer order) **warns**: the mode guard cannot see that difference, and two
+bathymetric surfaces of different vintage, extent, or vertical datum place samples
+differently. It is a warning rather than a refusal — re-running against an updated
+store is a legitimate workflow, and only the operator knows whether the surfaces
+agree.
+
 **Regenerate, don't accumulate, when switching projection mode.** Every run writes a
 `projection.json` sidecar next to `registry.json` recording `flat` or `dem`. The
 sidecar is written **before the first tile**, so a crash or a full filesystem can

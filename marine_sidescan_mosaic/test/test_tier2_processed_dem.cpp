@@ -640,6 +640,29 @@ TEST_F(Tier2ProcessedDemTest, NonAccumulateReRunIntoAPopulatedDirIsRefused)
   EXPECT_EQ(tileNames(out), tileNames(fresh));
 }
 
+// Two 'dem' runs pass the mode guard even when they used DIFFERENT bathy stores —
+// a different surface places samples differently, and per-cell provenance cannot
+// tell the two apart. The sidecar records the store, so say so.
+TEST_F(Tier2ProcessedDemTest, AccumulateWarnsWhenTheBathyStoreChanges)
+{
+  const fs::path out = dir_ / "changed_store";
+  ASSERT_EQ(run(out, "--bathy-store \"" + store_.string() + "\""), 0) << log();
+  EXPECT_EQ(log().find("was DEM-orthorectified against"), std::string::npos) << log();
+
+  // Same store again: no warning.
+  ASSERT_EQ(
+    run(out, "--accumulate --bathy-store \"" + store_.string() + "\""), 0) << log();
+  EXPECT_EQ(log().find("was DEM-orthorectified against"), std::string::npos) << log();
+
+  // A different store: warned, and the run still proceeds (an updated store is a
+  // legitimate workflow — only the operator knows whether the surfaces agree).
+  ASSERT_EQ(
+    run(
+      out, "--accumulate --min-dem-coverage 0 --bathy-store \"" +
+      far_store_.string() + "\""), 0) << log();
+  EXPECT_NE(log().find("was DEM-orthorectified against"), std::string::npos) << log();
+}
+
 // The datum cross-check must be REPORTED on a run the coverage gate then kills:
 // a store in the wrong vertical frame is exactly what drives coverage down, so a
 // check that only prints on successful runs is silent when it matters most.
