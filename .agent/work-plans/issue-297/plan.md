@@ -345,12 +345,19 @@ below is therefore **new scaffolding**, planned as such.
   synthetic `.sst1` in the test's temp dir using the library's own
   `writeTier1Header` / `writeTier1Ping` (`tier1.hpp:87,99` — public, so **no fixture
   file is committed**) with a realistic ECEF pose, plus a synthetic sloped bathy
-  store. Runs the built tool twice — with and without `--bathy-store` — via
+  store. Runs the built tool several times over the same input via
   `std::system` on a `SIDESCAN_TIER2_PROCESSED_BINARY="$<TARGET_FILE:...>"` compile
   definition, the pattern already used in this repo for
-  `import_geotiff` (`marine_bathymetry_store/CMakeLists.txt:157`). Asserts: (a) the
+  `import_geotiff` (`marine_bathymetry_store/CMakeLists.txt:153-159`). Asserts: (a) the
   sloped run places samples in different cells than the flat run in the expected
-  direction, (b) the run without `--bathy-store` is byte-identical to today's output,
+  direction, (b) **the flat code path is unchanged** — asserted *within* the test
+  rather than against an absent baseline: the no-`--bathy-store` run and a
+  `--bathy-store` run over a **non-overlapping** store (every sample
+  `kNoCoverage`, `--min-dem-coverage 0`) produce **byte-identical** tiles, and the
+  no-`--bathy-store` run reports zero `n_dem_*` counters. (Revision 2 said
+  "byte-identical to today's output" — there is no committed golden and the plan
+  deliberately adds none, so that assertion had nothing to compare against. This form
+  tests the same property *and* exercises the fallback path.)
   (c) a nonexistent `--bathy-store` path exits non-zero (the hard-fail from step 1),
   (d) a valid store that does **not** overlap the synthetic survey exits **3** with an
   empty output directory (the coverage gate from step 3), and the same run with
@@ -414,7 +421,7 @@ flat store; that is the case step 3 now refuses):
 | Documentation accuracy / verify against source | Every claim in Context is cited to a file:line read in this revision — `tier1.hpp`, `projection.hpp`/`.cpp`, `sidescan_tier2_processed.cpp`, `quality.hpp`, `bathy_cell.hpp`, `tile_io.hpp/.cpp`, `cell_index.h`, `level.h`, `CMakeLists.txt`, ADR-0006 D4/D6/D9/D10, ADR-0010 D3 |
 | Datum discipline | The vertical term is WGS84 ellipsoidal height on both sides (sensor from the ECEF pose, bottom from `BathyCell::depth`); `nadir_altitude_m` is used only where it means height above bottom (seed + flat fallback + cross-check) |
 | No silent failure / stale data | Hard-fail on an unusable bathy store (absent/empty) **and** on a store that does not actually cover the survey (`--min-dem-coverage`, exit 3, nothing written); a non-converged iterate is **never emitted** (flat fallback + counter); every degraded path is counted and printed; an independent datum cross-check warns on a systematic offset; `--accumulate` refuses to mix projection modes |
-| Backward compatibility | `--bathy-store` is opt-in; omitting it reproduces today's output byte-for-byte (asserted by the end-to-end test) |
+| Backward compatibility | `--bathy-store` is opt-in; omitting it takes the unchanged flat code path — asserted by the end-to-end test's flat-vs-no-coverage byte-identity comparison (no golden fixture is committed, so the equivalence is proven between two live runs) |
 | Bounded cost | Iteration capped at 5 per sample, confined to the offline batch tool; the live `mosaic_node` hot path and `sidescan_tier2_flat` are untouched |
 | Fix it completely | Bilinear interpolation is implemented rather than deferred (D9 requires it and the offline context makes it cheap); the degenerate and non-convergent branches are specified, not left to chance |
 
