@@ -43,6 +43,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <new>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -446,8 +447,17 @@ int runTool(int argc, char ** argv)
     argValue(
       argc, argv, "--bathy-cache-tiles",
       std::to_string(BathyDem::kDefaultCacheTiles)), "--bathy-cache-tiles");
-  if (bathy_cache_tiles < 1) {
-    std::cerr << "error: --bathy-cache-tiles must be at least 1\n";
+  // Bounded at BOTH ends. The LRU holds `N` × ~14.7 MB of resident tile, so an
+  // unbounded N turns a typo into a `std::bad_alloc` mid-run — which the DEM call
+  // sites would then report as "the store is corrupt or truncated", sending the
+  // operator after the wrong fault (#297 review). 1024 tiles is already ~15 GB.
+  constexpr int kMaxCacheTiles = 1024;
+  if (bathy_cache_tiles < 1 || bathy_cache_tiles > kMaxCacheTiles) {
+    std::cerr << "error: --bathy-cache-tiles must be in [1, " << kMaxCacheTiles
+              << "]; a bathy tile is 960x960x2 doubles (~14.7 MB), so " << bathy_cache_tiles
+              << " would ask for roughly "
+              << (static_cast<long long>(bathy_cache_tiles) * 147 / 10) << " MB of "
+              << "resident cache.\n";
     return 2;
   }
   const bool allow_mixed_projection = hasFlag(argc, argv, "--allow-mixed-projection");
@@ -688,6 +698,17 @@ int runTool(int argc, char ** argv)
                 << "  a tile the startup scan listed could not be read, so the store is\n"
                 << "  corrupt or truncated. No tiles and no registry were written.\n";
     };
+  // Running out of memory loading a tile is a SIZING fault, not a corrupt store —
+  // reported separately so the operator adjusts --bathy-cache-tiles instead of
+  // hunting a store that is fine (#297 review).
+  const auto demAllocFailed = [bathy_cache_tiles]() {
+      std::cerr << "error: out of memory loading a bathy tile.\n"
+                << "  The resident budget is --bathy-cache-tiles " << bathy_cache_tiles
+                << " x ~14.7 MB = ~"
+                << (static_cast<long long>(bathy_cache_tiles) * 147 / 10) << " MB; lower it\n"
+                << "  (the store itself is not implicated). No tiles and no registry were "
+                << "written.\n";
+    };
   while (readTier1Ping(in, p)) {
     ++n_in;
     if (p.sample_rate <= 0.0) {
@@ -722,6 +743,9 @@ int runTool(int argc, char ** argv)
       std::optional<double> nadir_bottom;
       try {
         nadir_bottom = dem->depthAt(gb.latitude_deg, gb.longitude_deg);
+      } catch (const std::bad_alloc &) {
+        demAllocFailed();
+        return 1;
       } catch (const std::exception & e) {
         demLookupFailed(e);
         return 1;
@@ -768,6 +792,9 @@ int runTool(int argc, char ** argv)
           corrected = correctedGroundRange(
             slant, gb.altitude_m, origin, azimuth, flat_ground,
             [&dem](double lat, double lon) {return dem->depthAt(lat, lon);});
+        } catch (const std::bad_alloc &) {
+          demAllocFailed();
+          return 1;
         } catch (const std::exception & e) {
           demLookupFailed(e);
           return 1;
