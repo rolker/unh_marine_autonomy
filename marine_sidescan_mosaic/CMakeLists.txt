@@ -132,7 +132,8 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_projection test/test_projection.cpp)
   target_link_libraries(test_projection ${PROJECT_NAME})
-  ament_target_dependencies(test_projection geographic_msgs geodesy marine_autonomy)
+  ament_target_dependencies(test_projection
+    geographic_msgs geodesy marine_autonomy marine_backscatter)
 
   ament_add_gtest(test_accumulator test/test_accumulator.cpp)
   target_link_libraries(test_accumulator ${PROJECT_NAME})
