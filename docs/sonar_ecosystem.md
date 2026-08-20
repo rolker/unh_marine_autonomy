@@ -74,11 +74,14 @@ ADR-0010 D4 defers the real reference-vs-chart arbitration:
 | `draft` | Live on-boat CUBE output | Streaming append; known-gappy; disposable, regenerable from bags (D8) |
 | `processed` | Off-boat deterministic `import_bag` re-run | Authoritative; distributed back; clears overlapped draft cell-wise (D8) |
 
-**Adopted target, partially materialized.** `~/data/world/` is the adopted root,
-but today it exists only on the dev host as an **eval store** (uma#314: 13 ENC
-cells). The full migration off the legacy `~/data/stores/` root — nav2
-`store_path`s, launch files, CAMP/operator-station paths, and dev tooling such as
-`~/data/stores/survey_index.db` — is **uma#310 (unstarted)**.
+**Adopted target, materialized on the dev host.** `~/data/world/` is the
+canonical root: this repo's path literals (launch defaults, doc examples,
+`~/data/world/survey_index.db`) were repointed and the dev host's store
+content migrated under it in **uma#310** (clean cut, no compat symlink —
+stale readers fail loudly). Still pending from #310's follow-ups: the
+`unh_echoboats_project11` nav2 `store_path`/`draft_dir` config repoints
+(separate PR in that repo) and the salmon/gabby store-root moves,
+sequenced with a field-rebuild day.
 
 ## Arc 1 — Coverage
 
@@ -244,9 +247,10 @@ best-source in the store (not costmap override hacks), and a fully
 GNSS-ellipsoidal runtime (no `chart_datum` frame). The load-bearing pieces are
 merged — D6 datum library, D3/D7 chart layer + regeneration, D8 draft/processed
 split, D9 depths pyramid, D10 `s57_layer` split. **Remaining frontier is
-operational, not design:** (1) the store-root migration off `~/data/stores/`
-(uma#310, unstarted) — until it lands `~/data/world/` is a 13-cell dev-host eval
-store (uma#314); (2) the chart-updater's cron-cycle operational validation (the
+operational, not design:** (1) the store-root migration's cross-host tail
+(uma#310 landed the dev host + this repo's literals; the echoboats config PR
+and the salmon/gabby moves ride the field-rebuild day); (2) the
+chart-updater's cron-cycle operational validation (the
 updater shipped in s57_tools#28 / [PR#33](https://github.com/rolker/s57_tools/pull/33); the nav-liveness-gated regeneration loop
 still needs a real cron cycle exercised); (3) field datum-grid provisioning
 (uma#288 — geoid/VDatum download + user-polygon materialization).
