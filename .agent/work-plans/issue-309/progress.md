@@ -65,3 +65,15 @@ merging in parallel and does not interact with this issue per the issue body.
 ### Actions
 - [ ] Include `marine_bathymetry_store` `tile_io.cpp` loader fix in PR scope: skip `overviews/` silently (no warn), as pre-identified in ADR-0011 Consequences.
 - [ ] Add unit tests for the depth fold policy: shallowest-preserving selection, {depth, σ} pair coherence, and no-upsample invariant — these are navigation-safety inputs.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-08-20 23:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-309/plan.md` at `30ad0eb`
+**Branch**: feature/issue-309 at `30ad0eb`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
