@@ -115,10 +115,13 @@ load-bearing: an operator authorized to work inside a restricted area waives
 ├── features/     contacts (ADR-0004); chart features thin — see D11
 ├── charts/       the ENC corpus itself + edition registry (cron-managed, D7)
 ├── s100/         S-100 family products; S-102 import cache at s100/s102/
-│                 (updater-managed; amended 2026-08-20, #288)
+│                 (populated by the operator-run s102_import CLI, not the
+│                 cron updater; amended 2026-08-20, #288)
 └── datum/        vertical-datum support data: geoid/ + vdatum/ grids
-                  (updater-managed) + user/ override polygons materialized
-                  from git (amended 2026-08-20, #288 — see amendment below)
+                  (updater-managed target — provisioning is a queued
+                  s57_tools follow-on, currently manual) + user/ override
+                  polygons materialized from git
+                  (amended 2026-08-20, #288 — see amendment below)
 ```
 
 Provenance layers for the depth theme, replacing ADR-0002 A2's
@@ -156,8 +159,10 @@ plus user override polygons, consumed across themes (S-102 depth imports, the
 D6 datum library and its CAMP/operator use, `chart_datum_node`). Because no
 single store owns it and it is neither a feature set nor a registry (D1), it
 sits as a **top-level sibling** rather than inside `charts/` or `depths/`.
-Grids (`datum/geoid/`, `datum/vdatum/`) are **updater-managed** like the ENC
-corpus (D7).
+Grids (`datum/geoid/`, `datum/vdatum/`) are **intended to be updater-managed**
+like the ENC corpus (D7), but the updater does not yet provision them: that
+download step (projsync geoid + VDatum bundle) is a queued `s57_tools`
+follow-on. Until it lands, grids are placed manually.
 
 **`datum/user/` is the one git-authored exception** to the
 regenerable-from-source posture: override polygons (e.g.

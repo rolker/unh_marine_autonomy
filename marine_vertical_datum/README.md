@@ -58,8 +58,9 @@ tooling — never on the navigation runtime (ADR-0010 D6/D7).
 The **canonical on-host location** is the world tree (ADR-0010 D3, amended
 by [#288](https://github.com/rolker/unh_marine_autonomy/issues/288)):
 `~/data/world/datum/geoid/` for the geoid file and `~/data/world/datum/vdatum/`
-for the regional `.gtx` directory, populated by the updater/provisioning step
-rather than hand-managed.
+for the regional `.gtx` directory. Provisioning these grids into the world tree
+is an intended updater/provisioning step (a queued `s57_tools` follow-on); until
+it lands, populate them manually as below.
 
 - **Geoid** (ellipsoid → NAVD88): e.g. `us_noaa_g2018u0.tif`, via
   `projsync --file us_noaa_g2018u0.tif` or from
