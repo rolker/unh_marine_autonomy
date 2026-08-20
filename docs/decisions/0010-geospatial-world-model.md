@@ -168,9 +168,10 @@ follow-on. Until it lands, grids are placed manually.
 regenerable-from-source posture: override polygons (e.g.
 `massabesic_datum_polygons.yaml`) are safety-relevant and stay PR-reviewed in
 their project repo, which remains the source of truth; a deploy step
-**materializes** a copy into `world/datum/user/` for discovery. The invariant
-holds with git as the source — the copy is regenerable, never hand-edited in
-place, and never updater-authored.
+**materializes** a copy into `world/datum/user/` for discovery (the deploy
+step is a queued follow-on in `bizzyboat_project11` — #288 plan item 5 — not
+yet implemented). The invariant holds with git as the source — the copy is
+regenerable, never hand-edited in place, and never updater-authored.
 
 **`s100/`** hosts S-100 family products as their own top-level sibling
 (decided at the #288 plan checkpoint): the family will span both raster
