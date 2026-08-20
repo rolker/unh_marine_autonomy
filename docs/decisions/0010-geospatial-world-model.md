@@ -176,8 +176,11 @@ regenerable, never hand-edited in place, and never updater-authored.
 **`s100/`** hosts S-100 family products as their own top-level sibling
 (decided at the #288 plan checkpoint): the family will span both raster
 (S-102) and feature (S-101) products, so it does not belong under `charts/`.
-The S-102 import cache moves from `~/data/stores/s102_cache` to
-`~/data/world/s100/s102/`.
+The S-102 import cache's canonical location is `~/data/world/s100/s102/` —
+superseding both the `~/data/world/charts/s102` example previously documented
+in the `marine_bathymetry_store` README (#278; `s102_import` itself has no
+default `--cache` path) and ad-hoc pre-world locations in use on existing
+hosts (e.g. `~/data/stores/s102_cache`).
 
 ### D4 — Layers encode process; σ encodes trust
 
