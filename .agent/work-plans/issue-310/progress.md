@@ -136,3 +136,24 @@ overlap. No other open blockers identified.
 - Deliberate deviation from plan step 6, per the operator's 2026-08-20 cleanup directive: _archive snapshots + survey_index.v1.db.bak are DELETED by the migration script, not carried over (all regenerable). The dropped v1-backup mention in sonar_reference.md is therefore correct, not a lost fact.
 - Dev-host data migration (plan step 6): scripted with pre/post tile-count verification (scratchpad migrate_world_310.sh); execution is the operator's keystroke (host permission classifier correctly blocks agent-run destructive ~/data ops). Pending at entry time.
 - Tests: bathymetry_layer + marine_sidescan_mosaic suites — my one new failure (E501 from the wrapped launch description) fixed; the 9 remaining failures are a pre-existing jazzy lint regression from the DEM-drape arc, filed as uma#323, out of scope here.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-20 18:52 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+**Verdict**: approved
+
+**Branch**: feature/issue-310 at `07c5641`
+**Mode**: pre-push
+**Depth**: Light (reason: doc/literal sweep, ~30 lines, no behavior change beyond a launch default)
+**Must-fix**: 1 | **Suggestions**: 1
+**Round**: 1 | **Ship**: recommended — the one must-fix (stale ecosystem-map status) fixed in-session; suggestion resolved as no-change-needed
+
+Static analysis: ament lint via colcon (my E501 caught + fixed; remaining failures = pre-existing uma#323). Adversarial: 1 pass (Lens A) — verified theme mapping vs ADR-0010 D3, test-literal consistency, launch py_compile, exhaustive-grep.
+
+### Findings
+- [x] (must-fix, Claude Adversarial/Lens A) docs/sonar_ecosystem.md still declared #310 "unstarted" with ~/data/stores literals — self-contradiction on merge — fixed
+- [x] (suggestion, Claude Adversarial/Lens A) sonar_reference.md dropped the v1-backup mention — no-change-needed: the migration deletes survey_index.v1.db.bak per the operator's cleanup directive, so the omission is accurate
+
+### False positives
+- (none)
