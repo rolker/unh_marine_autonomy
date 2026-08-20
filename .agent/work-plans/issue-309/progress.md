@@ -162,3 +162,20 @@ Files-to-Change table exactly (6 files, single component):
 Ready for `review-code`. No push / no GitHub performed (host handles pushes).
 No follow-ups opened; the voyage-planner target-resolution bound (ADR-0002 D2)
 remains a tracked follow-on, out of scope for this PR as the plan noted.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-20 21:02 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-309 at `29a3dff`
+**Mode**: pre-push
+**Depth**: Deep (reason: new navigation-safety-relevant C++ module, ~1250 LOC code+tests, filesystem crash-safety + run-lock)
+**Must-fix**: 0 | **Suggestions**: 0
+**Round**: 1 | **Ship**: recommended — no must-fix; faithful port of the proven sidescan builder, clean across static analysis + two adversarial lenses + 16/16 tests
+
+**Specialists**: Static Analysis (cpplint/uncrustify/cppcheck — clean); Governance (ADR-0010 D9 / ADR-0011 compliant; consequences — tile_io loader fix + README — landed in-PR); Plan Drift (none; files match plan exactly, inline-gridFromName resolution honored); Claude Adversarial Lens A + Lens B (both No findings); Local Adversarial skipped (Ollama unavailable); Copilot off (default). Independently re-ran test_depth_overview: 16/16 pass.
+
+### Findings
+- [ ] No issues found. LGTM.
