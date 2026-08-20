@@ -69,10 +69,12 @@ it lands, populate them manually as below.
   VDatum grid bundles from NOAA (<https://vdatum.noaa.gov/>) and extract the
   `*.gtx` files into one directory; the query scans it recursively for
   `*_mllw*.gtx` / `*_mhhw*.gtx`.
-- Point `VDatumConfig` at both — canonically
-  `{"~/data/world/datum/geoid/us_noaa_g2018u0.tif", "~/data/world/datum/vdatum"}`
-  (expanded). PROJ networking is disabled in this library, so nothing is
-  fetched at query time — missing grids fail setup loudly via `DiagFn`.
+- Point `VDatumConfig` at both — pass **literal absolute paths**; the library
+  does not expand `~` or environment variables, so a tilde form is used as-is
+  and will not resolve. Canonically
+  `{"/home/<user>/data/world/datum/geoid/us_noaa_g2018u0.tif", "/home/<user>/data/world/datum/vdatum"}`.
+  PROJ networking is disabled in this library, so nothing is fetched at query
+  time — missing grids fail setup loudly via `DiagFn`.
 
 Where VDatum has no coverage (inland lakes), use the polygon config /
 lake-datum override instead — that is the precedence chain's job.
