@@ -164,6 +164,19 @@ import_geotiff --commit /path/to/staged /path/to/store
 `import_geotiff <store_dir> <layer> <geotiff>`; `chart` is stage/commit only (a
 chart layer is never written into a live store incrementally).
 
+**Tidal-datum-referenced sources**
+([#315](https://github.com/rolker/unh_marine_autonomy/issues/315)): a grid
+referenced to MLLW imports with
+`--source-datum mllw --geoid <grid> --vdatum-dir <dir>` — each pixel's
+vertical offset is the MLLW ellipsoidal height *at that point* from the
+VDatum grids (the same `world/datum/` grids the `enc_updater` provisions),
+never a hand-computed constant. Pixels default to positive-down depths below
+the datum (`h_ellip = mllw_z − depth`); pass `--source-up` for up-positive
+datum-relative heights. Mutually exclusive with
+`--depth-scale`/`--depth-offset`; a point outside the grids' coverage is a
+hard error (a partially converted surface never imports); the source datum
+is recorded in `registry.json` provenance (`datum` field).
+
 Sequence — everything that can refuse does so **before** the live layer is
 touched, so a rejected regeneration leaves the old layer standing (D7):
 
