@@ -604,17 +604,27 @@ them let a gappy live pass clobber an authoritative re-run — continuing to sur
 degraded the store. `Processed`/`Draft` are freely writable (live/replay ingest
 write them exclusively); `Reference`/`Chart` keep their A2.1/D7 write gates.
 
-### A3.2 — Cross-layer anti-clobber is cell-wise
+### A3.2 — Cross-layer anti-clobber is cell-wise, owned by the store
 
-When a `Processed` import lands, overlapped `Draft` cells are cleared **cell-wise —
-only where the processed import has data** (never tile-wise/by-footprint). Draft
+When `Processed` data lands, overlapped `Draft` cells are cleared **cell-wise —
+only where the processed data has data** (never tile-wise/by-footprint). Draft
 cells in the re-run's gated-drop holes (cells the import left no-data) survive:
 harmless under `Processed > Draft`, and strictly more coverage than clearing by
 footprint. The store exposes no tile/cell-erase API and `save()` never deletes
 on-disk tiles, so clearing is done by writing the draft cell no-data
-(`set(Draft, cell, {})`), persisted through the normal dirty-tile save path. The
-importer returns the touched draft tiles (`ProcessedImportResult.draft_tiles_touched`)
-as the display-cache invalidation seam (ADR-0008; camp#171/#172).
+(`set(Draft, cell, {})`), persisted through the normal dirty-tile save path.
+
+The semantics live **once**, as a public store operation
+`BathymetryStore::clearOverlappedDraft` (a tile-map form and an incremental
+single-tile form), so **every** `Processed` producer applies them identically — the
+GeoTIFF importer (`importGeoTiff`) and cube_bathymetry's regeneration paths
+(`import_bag`/`batch_regen`, which write processed tiles directly via `saveTile` and
+bypass the importer; [#308](https://github.com/rolker/unh_marine_autonomy/issues/308)
+extracted the API from the importer so those paths can invoke it too — cube#133 plan
+review MF1, operator-approved). The operation returns the touched draft tiles
+(`DraftClearResult.tiles_touched`; surfaced by the importer as
+`ProcessedImportResult.draft_tiles_touched`) as the display-cache invalidation seam
+(ADR-0008; camp#171/#172).
 
 ### A3.3 — On-disk `survey/` auto-migrates to `processed/`
 

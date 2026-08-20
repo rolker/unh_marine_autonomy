@@ -274,6 +274,31 @@ either merges — the enum change intentionally breaks cube's build until that c
 
 ## Plan revision history
 
+- **Scope extension — public `clearOverlappedDraft` store API (operator-approved)** —
+  From the `cube_bathymetry#133` plan review (finding **MF1**): the cell-wise D8
+  anti-clobber shipped only *inside* `importGeoTiff` (`geotiff_import.cpp`'s
+  anonymous `clearOverlappedDraftCells`), but cube's regeneration paths
+  (`import_bag`/`batch_regen`) write processed tiles via direct `saveTile()` and
+  bypass the importer — so ADR-0010 D8's "regeneration clears overlapped draft" could
+  never run there. The operator approved the *shared-API* option over duplicating the
+  loop in cube. This pass **extracts and publishes** the semantics **once** on the
+  store: `BathymetryStore::clearOverlappedDraft(tile-map)` plus an incremental
+  single-tile overload (`clearOverlappedDraft(const BathymetryTile&)`) so a
+  live/replay writer can clear draft right after each direct `saveTile`. Returns
+  `DraftClearResult{cells_cleared, tiles_touched}`. `importGeoTiff` now **delegates**
+  to it (zero behavior change — the two existing anti-clobber tests in
+  `test_geotiff_import.cpp` pass unmodified) and maps the result into
+  `ProcessedImportResult`. Semantics identical: clear draft cells **only where the
+  processed data has populated cells** (gated-drop holes survive), through the normal
+  dirty-tile save path; never create a spurious empty draft tile. New direct-call
+  unit tests in `test_store.cpp` (`ClearOverlappedDraftIsCellWiseAndPreservesGatedDropHoles`,
+  `…NeverCreatesDraftTile`, `…TileMapAggregatesAcrossTiles`) cover the API on the
+  path cube uses, including the gated-drop-hole survival invariant. Docs: API
+  docstring cites ADR-0010 D8; ADR-0002 A3.2 retitled and amended to record the
+  public store operation and enumerate the two anti-clobber entry points (importer +
+  cube regen). `cube_bathymetry#133` consumes this API instead of duplicating the
+  loop. Files: `bathymetry_store.hpp/.cpp`, `geotiff_import.hpp/.cpp`, `bathy_cell.hpp`
+  (cross-ref), `test_store.cpp`, `docs/decisions/0002-bathymetric-data-store.md`.
 - **Implementation sync** — deviations from the plan as built: both anti-clobber
   tests (`AntiClobberCellWise`, `AntiClobberGatedDropHole`) live in
   `test_geotiff_import.cpp` (not split into `test_store.cpp`) because they need
