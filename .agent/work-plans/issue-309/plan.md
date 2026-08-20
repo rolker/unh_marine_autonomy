@@ -44,8 +44,18 @@ with the selected height.
      largest `cell[0]` (maximum ellipsoidal height = shallowest = most
      conservative); return that cell's whole 2-element vector so depth and σ
      travel together
-   - Grid-from-filename reconstruction via the same `gridIndexFromTileFilename`
-     helper already in `tile_io.cpp` (expose it, or inline the same logic)
+   - Grid-from-filename reconstruction: **inline sidescan's `gridFromName`
+     pattern** (parse `<level>_<row>_<col>.tif`, reconstruct the `GridIndex`,
+     and confirm with the `tileFilename(grid) == name` round-trip check).
+     **Decision (per Plan Review):** do *not* expose/de-anonymize tile_io's
+     `gridIndexFromTileFilename` — that helper *throws* `std::runtime_error`
+     on a malformed name, so a single bad tile would abort the whole run and
+     defeat the skip-loudly safety property. Inlining keeps the failure local:
+     a malformed/unparseable tile is **skipped loudly** (logged) and counted in
+     `tiles_skipped`; the sidecar swap is **refused when `tiles_skipped > 0`**
+     so a partial pyramid never displaces a complete one. This keeps the
+     Files-to-Change table accurate — only `tile_io.cpp` is touched (the
+     loader's silent `overviews/` skip), never `tile_io.hpp`.
    - Band-shape probe: require exactly 2 bands before touching `overviews/`
    - Crash-safe sidecar swap: `overviews.tmp/` staging, rename-aside swap
      (`overviews/ → overviews.old/`, `overviews.tmp/ → overviews/`, drop
@@ -141,6 +151,19 @@ with the selected height.
 ## Open Questions
 
 - None — plan is review-plan-ready.
+
+## Plan Review Resolution (2026-08-20)
+
+Both Plan Review suggestions folded in (operator-approved, no second review):
+
+1. **Grid-from-filename (`plan.md:47`):** resolved to **inline sidescan's
+   `gridFromName` pattern** with the `tileFilename(grid) == name` round-trip
+   check — *not* exposing tile_io's throwing `gridIndexFromTileFilename`.
+   Preserves the skip-loudly-and-refuse safety property: malformed tile →
+   skipped + counted in `tiles_skipped` → swap refused when `tiles_skipped > 0`.
+2. **Files-to-Change accuracy (`plan.md:97`):** inline decision recorded;
+   `tile_io.cpp` stays a MODIFY-only entry (loader silent `overviews/` skip),
+   `tile_io.hpp` is not touched. Table is accurate as written.
 
 ## Estimated Scope
 
