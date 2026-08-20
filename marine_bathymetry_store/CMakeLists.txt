@@ -33,6 +33,7 @@ find_package(marine_vertical_datum REQUIRED)
 add_library(${PROJECT_NAME}
   src/bathymetry_store.cpp
   src/geotiff_import.cpp
+  src/overview_pyramid.cpp
   src/query.cpp
   src/registry.cpp
   src/tile_io.cpp
@@ -84,6 +85,14 @@ install(TARGETS ${PROJECT_NAME}
 add_executable(import_geotiff src/import_geotiff_main.cpp)
 target_link_libraries(import_geotiff ${PROJECT_NAME})
 
+# The `build_depth_overviews` CLI (ADR-0010 D9 / ADR-0011): offline batch builder
+# of the shallowest-preserving depth overview pyramid for a draft/processed layer.
+# Thin main() over the library's overview_pyramid production path; ${PROJECT_NAME}
+# already carries the marine_tiled_raster_store (fold engine + GeoTIFF I/O) and
+# marine_autonomy (GGGS) links it needs.
+add_executable(build_depth_overviews src/build_depth_overviews.cpp)
+target_link_libraries(build_depth_overviews ${PROJECT_NAME})
+
 # S-102 importer core (#278): discover/fetch/convert/run stages as an internal
 # static library so the pipeline is testable without spawning the CLI. Its
 # headers live under src/s102/ and are NOT installed; nothing here is exported.
@@ -120,7 +129,8 @@ ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   marine_autonomy marine_tiled_raster_store geographic_msgs nlohmann_json GDAL)
 
-install(TARGETS import_geotiff s102_import RUNTIME DESTINATION lib/${PROJECT_NAME})
+install(TARGETS import_geotiff s102_import build_depth_overviews
+  RUNTIME DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -137,6 +147,14 @@ if(BUILD_TESTING)
   # nlohmann_json is used directly in the test (registry tamper fixtures);
   # link it explicitly since it is PRIVATE in the library target.
   target_link_libraries(test_tile_io ${PROJECT_NAME} nlohmann_json::nlohmann_json)
+
+  # The depth overview-pyramid builder tests (ADR-0010 D9 / ADR-0011): fold policy
+  # (shallowest-preserving, {depth,σ} pair coherence, no-upsample invariant),
+  # malformed-filename skip -> swap refusal, end-to-end sidecar swap, and the
+  # tile_io loader's silent skip of overviews/. GeoTIFF I/O comes transitively from
+  # marine_tiled_raster_store (linked via ${PROJECT_NAME}) — no direct GDAL/OpenSSL.
+  ament_add_gtest(test_depth_overview test/test_depth_overview.cpp)
+  target_link_libraries(test_depth_overview ${PROJECT_NAME})
 
   # The GeoTIFF importer test writes fixture rasters with GDAL directly, so it
   # links GDAL (PRIVATE in the library target).
