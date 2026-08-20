@@ -83,7 +83,8 @@ install(TARGETS ${PROJECT_NAME}
 
 # The `import_geotiff` CLI: import a GeoTIFF into a store layer's fused surface.
 add_executable(import_geotiff src/import_geotiff_main.cpp)
-target_link_libraries(import_geotiff ${PROJECT_NAME})
+target_link_libraries(import_geotiff ${PROJECT_NAME}
+  marine_vertical_datum::marine_vertical_datum)
 
 # The `build_depth_overviews` CLI (ADR-0010 D9 / ADR-0011): offline batch builder
 # of the shallowest-preserving depth overview pyramid for a draft/processed layer.

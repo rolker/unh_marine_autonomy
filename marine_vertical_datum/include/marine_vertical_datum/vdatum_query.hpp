@@ -57,6 +57,13 @@ struct VDatumConfig
 {
   std::string geoid_grid;
   std::string vdatum_grid_dir;
+  // MLLW-only mode (#315): skip building the MHHW pipeline and never run
+  // its per-point proj_trans. For a consumer that only reads mllw_z (the
+  // per-pixel GeoTIFF importer over million-pixel grids), the discarded
+  // MHHW transform would otherwise double the per-point PROJ work. With
+  // false, mhhw_z is always nullopt — semantically identical to "no MHHW
+  // grids found".
+  bool want_mhhw = true;
 };
 
 // The per-point query: (lat, lon) in degrees → VDatumResult, or nullopt

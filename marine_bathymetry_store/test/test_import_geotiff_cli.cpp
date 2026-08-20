@@ -212,3 +212,85 @@ TEST_F(ImportGeotiffCliTest, CommitWithoutStoreDirIsUsageError)
   const fs::path staged = dir_ / "staged";
   EXPECT_EQ(run("--commit \"" + staged.string() + "\""), 1);
 }
+
+// --- --source-datum flag validation (#315) ---
+// The vdatum grids themselves aren't exercised here (no PROJ fixtures in this
+// suite); these pin the loud-usage-error contract: a datum flag silently
+// ignored is exactly how a wrong-datum surface would reach the store.
+
+TEST_F(ImportGeotiffCliTest, SourceDatumExcludesDepthScaleOffset)
+{
+  const fs::path store = dir_ / "store";
+  EXPECT_EQ(
+    run(
+      store.string() + " reference " + tif_.string() +
+      " --source-datum mllw --geoid g.tif --vdatum-dir v --depth-offset -20"),
+    1);
+  EXPECT_EQ(
+    run(
+      store.string() + " reference " + tif_.string() +
+      " --source-datum mllw --geoid g.tif --vdatum-dir v --depth-scale -1"),
+    1);
+}
+
+TEST_F(ImportGeotiffCliTest, SourceDatumRequiresBothGridFlags)
+{
+  const fs::path store = dir_ / "store";
+  EXPECT_EQ(
+    run(store.string() + " reference " + tif_.string() + " --source-datum mllw"), 1);
+  EXPECT_EQ(
+    run(
+      store.string() + " reference " + tif_.string() +
+      " --source-datum mllw --geoid g.tif"),
+    1);
+}
+
+TEST_F(ImportGeotiffCliTest, DatumGridFlagsRequireSourceDatum)
+{
+  const fs::path store = dir_ / "store";
+  EXPECT_EQ(
+    run(store.string() + " reference " + tif_.string() + " --geoid g.tif"), 1);
+  EXPECT_EQ(
+    run(store.string() + " reference " + tif_.string() + " --source-up"), 1);
+}
+
+TEST_F(ImportGeotiffCliTest, SourceDatumRejectsUnknownDatumAndStageMode)
+{
+  EXPECT_EQ(
+    run(
+      (dir_ / "store").string() + " reference " + tif_.string() +
+      " --source-datum navd88 --geoid g.tif --vdatum-dir v"),
+    1);
+  EXPECT_EQ(
+    run(
+      "--stage " + (dir_ / "staged").string() + " chart " + tif_.string() +
+      " --source-datum mllw --geoid g.tif --vdatum-dir v"),
+    1);
+}
+
+TEST_F(ImportGeotiffCliTest, ProvenanceMergesFieldWiseAcrossImports)
+{
+  // #315 review: a later import passing only some provenance flags must
+  // carry the registry's other fields forward, never whole-record-replace
+  // them with empties (same merge path protects the datum stamp).
+  const fs::path store = dir_ / "store";
+  ASSERT_EQ(
+    run(store.string() + " reference " + tif_.string() + " --platform bizzy"), 0);
+  ASSERT_EQ(
+    run(store.string() + " reference " + tif_.string() + " --survey appledore"), 0);
+  std::ifstream reg(store / "registry.json");
+  ASSERT_TRUE(reg.good());
+  const std::string content(
+    (std::istreambuf_iterator<char>(reg)), std::istreambuf_iterator<char>());
+  EXPECT_NE(content.find("\"platform\": \"bizzy\""), std::string::npos) << content;
+  EXPECT_NE(content.find("\"survey\": \"appledore\""), std::string::npos) << content;
+}
+
+TEST_F(ImportGeotiffCliTest, RuntimeImportFailureExitsOneCleanly)
+{
+  // #315 review: a runtime import failure (here: a missing GeoTIFF; the
+  // vdatum-coverage gap takes the same path) must print + exit 1, never
+  // abort via std::terminate. run() returns -1 on an abnormal exit.
+  EXPECT_EQ(
+    run((dir_ / "store").string() + " reference " + (dir_ / "missing.tif").string()), 1);
+}

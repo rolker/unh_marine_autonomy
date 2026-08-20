@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <string>
@@ -66,6 +67,27 @@ struct GeoTiffImportOptions
   /// ellipsoidal height.
   double depth_scale = 1.0;
   double depth_offset = 0.0;
+  /// Per-point vertical-datum resolver (#315): when set, the source datum's
+  /// ellipsoidal height at each pixel's (lat, lon) replaces the constant
+  /// `depth_offset` — `height = depth_scale * pixel + fn(lat, lon)`. This is
+  /// how a tidal-datum-referenced grid (e.g. depths below MLLW) imports
+  /// without a hand-computed constant: the offset varies across the extent
+  /// and comes from the VDatum grids (the CLI builds this from
+  /// marine_vertical_datum::make_vdatum_query, keeping this library
+  /// PROJ-free). Returning std::nullopt means the datum grids have no
+  /// coverage at that point — a HARD ERROR (`std::runtime_error`), never a
+  /// silent skip or a fall-back to `depth_offset`: importing an
+  /// unconverted (or partially converted) surface would corrupt the layer.
+  /// Mutually exclusive with a non-zero `depth_offset`
+  /// (`std::invalid_argument`); `depth_scale` still applies (a
+  /// positive-down depth-below-datum product uses `depth_scale = -1`).
+  /// Threading contract: the importer invokes this SERIALLY from the one
+  /// calling thread, so a single-threaded-only callable (e.g. a
+  /// marine_vertical_datum query, whose copies share one PROJ context) is
+  /// safe to supply. A future parallel pixel loop must not share one
+  /// callable across threads — build one query per thread instead (see
+  /// vdatum_query.hpp).
+  std::function<std::optional<double>(double lat, double lon)> vertical_datum_fn;
   /// GGGS level to import at. The store is multi-level (ADR-0002 §D2): a coarse
   /// chart prior imports at a coarse level, a fine survey grid at a fine level,
   /// and both can share the store. `std::nullopt` (the default) uses the

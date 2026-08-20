@@ -53,9 +53,12 @@
 #include <string>
 #include <system_error>
 
+#include <optional>
+
 #include "marine_bathymetry_store/bathymetry_store.hpp"
 #include "marine_bathymetry_store/geotiff_import.hpp"
 #include "marine_bathymetry_store/registry.hpp"
+#include "marine_vertical_datum/vdatum_query.hpp"
 #include "marine_bathymetry_store/tile_io.hpp"
 
 namespace
@@ -71,6 +74,7 @@ void usage()
     "       import_geotiff --commit <staged_dir> <store_dir>      (atomic chart swap)\n"
     "                      [--cell-size m] [--level N]\n"
     "                      [--uncertainty m] [--depth-scale s] [--depth-offset m]\n"
+    "                      [--source-datum mllw --geoid G --vdatum-dir D [--source-up]]\n"
     "                      [--platform P] [--sensor S] [--survey K] [--date D]\n"
     "  layer:      draft | processed | reference | chart\n"
     "              ('survey' is a deprecated alias for 'processed'; ADR-0010 D8)\n"
@@ -104,6 +108,20 @@ void usage()
     "               height = scale*pixel + offset (defaults 1, 0). A\n"
     "               positive-down depths-below-lake-surface product imports\n"
     "               with scale -1 and offset = lake surface ellipsoidal height\n"
+    "  --source-datum mllw --geoid <grid> --vdatum-dir <dir> (#315):\n"
+    "               per-cell vertical-datum conversion for a tidal-datum-\n"
+    "               referenced grid: each pixel's offset is the MLLW\n"
+    "               ellipsoidal height at its (lat, lon) from the VDatum\n"
+    "               grids (the same grids the enc_updater provisions under\n"
+    "               world/datum/), never a hand-computed constant. Pixels\n"
+    "               are assumed POSITIVE-DOWN depths below the datum (the\n"
+    "               hydrographic norm); pass --source-up for up-positive\n"
+    "               heights relative to the datum. Mutually exclusive with\n"
+    "               --depth-scale/--depth-offset; a point outside the grids'\n"
+    "               coverage is a HARD ERROR (never a partial conversion).\n"
+    "               Draft/processed/reference imports only (the chart path\n"
+    "               converts in s57_to_geotiff). Records the source datum in\n"
+    "               registry.json provenance.\n"
     "  --platform/--sensor/--survey/--date: coarse store-level provenance\n"
     "               (StoreMetadata) written to registry.json (ADR-0005 #248)\n";
   exit(1);
@@ -171,6 +189,12 @@ int main(int argc, char * argv[])
   double constant_uncertainty = -1.0;   // sentinel: use the file's band
   double depth_scale = 1.0;
   double depth_offset = 0.0;
+  bool depth_scale_set = false;         // for the --source-datum exclusion
+  bool depth_offset_set = false;
+  const char * source_datum = nullptr;  // --source-datum (only "mllw" today)
+  const char * geoid_grid = nullptr;    // --geoid (with --source-datum)
+  const char * vdatum_dir = nullptr;    // --vdatum-dir (with --source-datum)
+  bool source_up = false;               // --source-up: datum-relative heights
   marine_bathymetry_store::StoreMetadata metadata;
 
   const auto need_arg = [&](int & i) -> const char * {
@@ -236,8 +260,18 @@ int main(int argc, char * argv[])
       constant_uncertainty = parse_finite("--uncertainty", need_arg(i));
     } else if (std::strcmp(argv[i], "--depth-scale") == 0) {
       depth_scale = parse_finite("--depth-scale", need_arg(i));
+      depth_scale_set = true;
     } else if (std::strcmp(argv[i], "--depth-offset") == 0) {
       depth_offset = parse_finite("--depth-offset", need_arg(i));
+      depth_offset_set = true;
+    } else if (std::strcmp(argv[i], "--source-datum") == 0) {
+      source_datum = need_arg(i);
+    } else if (std::strcmp(argv[i], "--geoid") == 0) {
+      geoid_grid = need_arg(i);
+    } else if (std::strcmp(argv[i], "--vdatum-dir") == 0) {
+      vdatum_dir = need_arg(i);
+    } else if (std::strcmp(argv[i], "--source-up") == 0) {
+      source_up = true;
     } else if (std::strcmp(argv[i], "--platform") == 0) {
       metadata.platform = need_arg(i);
     } else if (std::strcmp(argv[i], "--sensor") == 0) {
@@ -257,6 +291,35 @@ int main(int argc, char * argv[])
   // a normal survey/reference import.
   if (stage_dir != nullptr && commit_dir != nullptr) {
     std::cerr << "--stage and --commit are mutually exclusive\n";
+    usage();
+  }
+
+  // --source-datum validation (#315). Every mis-combination is a loud usage
+  // error — a datum flag silently ignored is exactly how a wrong-datum
+  // surface would reach the store.
+  if (source_datum != nullptr) {
+    if (std::strcmp(source_datum, "mllw") != 0) {
+      std::cerr << "--source-datum '" << source_datum
+                << "' unsupported (only 'mllw' today)\n";
+      usage();
+    }
+    if (stage_dir != nullptr || commit_dir != nullptr) {
+      std::cerr << "--source-datum applies to survey/reference imports only; "
+                << "the chart path converts datums in s57_to_geotiff\n";
+      usage();
+    }
+    if (depth_scale_set || depth_offset_set) {
+      std::cerr << "--source-datum and --depth-scale/--depth-offset are "
+                << "mutually exclusive (the datum query IS the conversion; "
+                << "use --source-up for up-positive datum-relative heights)\n";
+      usage();
+    }
+    if (geoid_grid == nullptr || vdatum_dir == nullptr) {
+      std::cerr << "--source-datum requires both --geoid and --vdatum-dir\n";
+      usage();
+    }
+  } else if (geoid_grid != nullptr || vdatum_dir != nullptr || source_up) {
+    std::cerr << "--geoid/--vdatum-dir/--source-up require --source-datum\n";
     usage();
   }
 
@@ -377,8 +440,55 @@ int main(int argc, char * argv[])
     options.uncertainty_band = 0;
     options.default_uncertainty = constant_uncertainty;
   }
-  const marine_bathymetry_store::ProcessedImportResult import_result =
-    marine_bathymetry_store::importGeoTiff(store, layer, geotiff, options);
+  if (source_datum != nullptr) {
+    // Per-cell MLLW -> ellipsoid conversion (#315). Build the query ONCE
+    // (it owns the PROJ context; per-point work is a single proj_trans) and
+    // pass it in as the per-point offset resolver. Setup failure — missing
+    // or unreadable grids — is a hard error here, before any pixel is read.
+    marine_vertical_datum::VDatumConfig vconfig;
+    vconfig.geoid_grid = geoid_grid;
+    vconfig.vdatum_grid_dir = vdatum_dir;
+    // Only mllw_z is consumed: skip the MHHW pipeline so a million-pixel
+    // import doesn't pay a second, discarded proj_trans per pixel.
+    vconfig.want_mhhw = false;
+    const marine_vertical_datum::VDatumQueryFn vquery =
+      marine_vertical_datum::make_vdatum_query(
+      vconfig, [](const std::string & msg) {
+        std::cerr << "vdatum: " << msg << "\n";
+      });
+    if (!vquery) {
+      std::cerr << "--source-datum mllw: vdatum query setup failed "
+                << "(see vdatum messages above; check --geoid/--vdatum-dir)\n";
+      return 1;
+    }
+    options.vertical_datum_fn =
+      [vquery](double lat, double lon) -> std::optional<double> {
+        const auto result = vquery(lat, lon);
+        if (!result.has_value()) {
+          return std::nullopt;
+        }
+        return result->mllw_z;
+      };
+    // Positive-down depths below the datum by default (hydrographic norm):
+    // h_ellip = mllw_z - depth. --source-up keeps +1 for up-positive
+    // heights relative to the datum: h_ellip = mllw_z + height.
+    options.depth_scale = source_up ? 1.0 : -1.0;
+    metadata.datum = source_datum;
+  }
+  // Clean failure for runtime errors (#315 review): a vdatum-coverage gap a
+  // few pixels past the grids' edge is a routine operational condition of
+  // --source-datum, not misuse — it must print and exit 1, never abort via
+  // std::terminate (matching the --commit path's catch). Nothing partial can
+  // land either way: tiles accumulate in memory and the store save runs
+  // after a successful import.
+  marine_bathymetry_store::ProcessedImportResult import_result;
+  try {
+    import_result =
+      marine_bathymetry_store::importGeoTiff(store, layer, geotiff, options);
+  } catch (const std::exception & e) {
+    std::cerr << "import failed: " << e.what() << "\n";
+    return 1;
+  }
   std::cout << "imported " << import_result.cells_imported << " cell(s) into "
             << positional[1] << "\n";
   // ADR-0010 D8 anti-clobber: a processed import supersedes overlapped live draft
@@ -392,12 +502,27 @@ int main(int argc, char * argv[])
               << import_result.draft_tiles_touched.size() << " draft tile(s)\n";
   }
 
-  // Write the coarse StoreMetadata only if any field was supplied; otherwise
-  // preserve whatever registry.json already held (loaded above).
+  // Field-wise provenance merge (#315 review): CLI-supplied fields update
+  // the registry, everything else carries forward from what was loaded. A
+  // whole-record replace here would let a pure conversion run
+  // (--source-datum with no provenance flags) blank previously recorded
+  // platform/sensor/survey/date — or a later single-flag run erase the
+  // datum stamp while the converted cells remain in the store.
+  marine_bathymetry_store::StoreMetadata merged = existing_metadata;
+  if (!metadata.platform.empty()) {merged.platform = metadata.platform;}
+  if (!metadata.sensor.empty()) {merged.sensor = metadata.sensor;}
+  if (!metadata.survey.empty()) {merged.survey = metadata.survey;}
+  if (!metadata.date.empty()) {merged.date = metadata.date;}
+  if (!metadata.datum.empty()) {merged.datum = metadata.datum;}
   const marine_bathymetry_store::StoreMetadata * to_write =
-    metadata.empty() ? (existing_metadata.empty() ? nullptr : &existing_metadata) :
-    &metadata;
-  const std::size_t saved = marine_bathymetry_store::save(store, store_dir, to_write);
+    merged.empty() ? nullptr : &merged;
+  std::size_t saved = 0;
+  try {
+    saved = marine_bathymetry_store::save(store, store_dir, to_write);
+  } catch (const std::exception & e) {
+    std::cerr << "save failed: " << e.what() << "\n";
+    return 1;
+  }
   std::cout << "saved " << saved << " tile(s) under " << store_dir << "\n";
   return 0;
 }
