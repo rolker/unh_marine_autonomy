@@ -2,8 +2,41 @@
 
 ## Status
 
-Proposed (2026-07-24). Tracked by
-[rolker/unh_marine_autonomy#272](https://github.com/rolker/unh_marine_autonomy/issues/272).
+Accepted (2026-08-20). Proposed 2026-07-24; tracked by
+[rolker/unh_marine_autonomy#272](https://github.com/rolker/unh_marine_autonomy/issues/272)
+(closed on completion of the core implementation).
+
+**"Accepted" means the decision is adopted, not that every consequence has
+shipped.** The load-bearing implementation is merged (citations below); named
+operational follow-ons remain open and are listed after them.
+
+Implementing PRs (all merged; host-verified 2026-08-20):
+
+| Decision | Merged as |
+|---|---|
+| D6 — vertical-datum library (`marine_vertical_datum`, ROS-free, core_ws) | [uma#279](https://github.com/rolker/unh_marine_autonomy/pull/279) |
+| D3 / D7 — `chart` layer + wholesale corpus regeneration | [uma#280](https://github.com/rolker/unh_marine_autonomy/pull/280) |
+| D7 — `s57_to_geotiff` exporter | [s57_tools#29](https://github.com/rolker/s57_tools/pull/29) |
+| D7 — chart operator CLI | [uma#291](https://github.com/rolker/unh_marine_autonomy/pull/291) |
+| D7 — cost-model rework (worst-case clearance / `confidence_gate`, precondition) | [uma#290](https://github.com/rolker/unh_marine_autonomy/pull/290) |
+| D8 — `draft`/`processed` quality axis + cell-wise `clearOverlappedDraft` | [uma#313](https://github.com/rolker/unh_marine_autonomy/pull/313) + [cube_bathymetry#134](https://github.com/rolker/cube_bathymetry/pull/134) |
+| D9 — depths overview pyramid (shallowest-preserving `overviews/` sidecar) | [uma#320](https://github.com/rolker/unh_marine_autonomy/pull/320) |
+| D10 — `s57_layer` depth/obstacle split | [s57_tools#31](https://github.com/rolker/s57_tools/pull/31) (issue [s57_tools#30](https://github.com/rolker/s57_tools/issues/30)) |
+
+Open follow-ons (adopted target, not yet fully materialized):
+
+- **Store-root migration** off `~/data/stores/` onto `~/data/world/` —
+  [uma#310](https://github.com/rolker/unh_marine_autonomy/issues/310)
+  (**unstarted**). Today `~/data/world/` exists only as a dev-host eval store
+  ([uma#314](https://github.com/rolker/unh_marine_autonomy/issues/314): 13 ENC cells).
+- **Chart-updater operational validation** — the corpus updater shipped
+  ([s57_tools#28](https://github.com/rolker/s57_tools/issues/28), [PR#33](https://github.com/rolker/s57_tools/pull/33) merged);
+  its nav-liveness-gated cron regeneration cycle still needs a real cron cycle
+  exercised end-to-end (D7).
+- **Field datum-grid provisioning** — geoid/VDatum download + user-polygon
+  materialization into `world/datum/`
+  ([uma#288](https://github.com/rolker/unh_marine_autonomy/issues/288); grids
+  placed manually until it lands, per the D3 amendment).
 
 Cross-cutting per the ADR-0001 convention: spans `marine_bathymetry_store`,
 `marine_tiled_raster_store`, `marine_autonomy` (GGGS), `s57_tools`,
@@ -287,7 +320,10 @@ Export rules (`s57_to_geotiff`, new tool in `s57_tools`, feeding the existing
 
 **Chart ingestion is gated on the cost-model rework** — a precondition, not a
 parallel track, and satisfied by
-[uma#276](https://github.com/rolker/unh_marine_autonomy/issues/276).
+[uma#276](https://github.com/rolker/unh_marine_autonomy/issues/276) (the tracking
+issue), which landed as
+[PR uma#290](https://github.com/rolker/unh_marine_autonomy/pull/290) — the
+identifier the implementing-PR table and `sonar_ecosystem.md` frontier cite.
 `bathymetry_layer`'s former `max_uncertainty` gate treated over-uncertain cells
 as not-reliable → LETHAL, so CATZOC-grade σ entering the store would have
 rendered chart-only regions wholesale keepout (or forced a global gate
