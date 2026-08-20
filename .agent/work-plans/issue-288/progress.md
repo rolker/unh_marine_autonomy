@@ -138,3 +138,21 @@ Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand of
 fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 288 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-20 13:36 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-288 at `4773469`
+**Mode**: pre-push
+**Depth**: Deep (reason: substantive ADR-0010 amendment [Deep trigger])
+**Must-fix**: 0 | **Suggestions**: 1
+**Round**: 2 | **Ship**: recommended — no must-fix; round-1 must-fix (grids "updater-managed" mislabel) + suggestion (s100 cache attribution) both verified addressed; only a low-priority symmetry suggestion remains
+
+### Findings
+- [ ] (suggestion) `datum/user/` materialization described present-tense without the "queued follow-on / not yet implemented" caveat the grids get; add for symmetry (deploy step = plan item 5, bizzyboat_project11) — `docs/decisions/0010-geospatial-world-model.md:170`
+
+Local Adversarial skipped: Ollama server unreachable (localhost:11434 down; ollama not on PATH).
+Out-of-scope (not findings for this PR): stale `~/data/stores/` paths in `docs/sonar_reference.md:68-69` are store-root-relocation territory (uma#310); `docs/sonar_ecosystem.md` reframe is uma#311 — both correctly untouched per the plan's scope boundary.
