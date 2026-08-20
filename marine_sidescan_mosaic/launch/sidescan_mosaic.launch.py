@@ -33,12 +33,14 @@ from launch_ros.actions import Node
 def generate_launch_description():
     # The live node writes the operator `draft` layer (splat=newest) of the
     # sidescan store; default to the canonical split-store layout
-    # ~/data/stores/<modality>/<maturity>/ (ADR-0006). Override per platform.
-    default_output_dir = os.path.expanduser('~/data/stores/sidescan/draft')
+    # ~/data/world/imagery/<modality>/<maturity>/ (ADR-0006, root per ADR-0010 D3).
+    # Override per platform.
+    default_output_dir = os.path.expanduser('~/data/world/imagery/sidescan/draft')
     args = [
         DeclareLaunchArgument('output_dir', default_value=default_output_dir,
                               description='GGGS GeoTIFF tile dir; default = the sidescan '
-                                          'store draft layer (~/data/stores/sidescan/draft)'),
+                                          'store draft layer '
+                                          '(~/data/world/imagery/sidescan/draft)'),
         DeclareLaunchArgument('gggs_level', default_value='13',
                               description='GGGS level (13 ~= 0.11 m cells)'),
         DeclareLaunchArgument('splat', default_value='newest',
