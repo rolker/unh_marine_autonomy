@@ -894,7 +894,7 @@ TEST_F(Tier2ProcessedDemTest, SidecarValuesCannotSpoofSidecarKeys)
     std::ofstream repaired(out / "projection.json", std::ios::trunc);
     repaired << "{ \"version\": 2, \"projection_mode\": \"dem\", \"bathy_store\": "
              << "\"/tmp/\\\"projection_mode\\\": \\\"flat\\\"/store\", "
-             << "\"bathy_layers\": \"processed,reference\", \"dem_coverage\": null, "
+             << "\"bathy_layers\": \"processed,draft,reference\", \"dem_coverage\": null, "
              << "\"dem_coverage_history\": [null] }\n";
   }
   // The mode is still 'dem' (not the spoofed 'flat'), so a flat --accumulate is
@@ -964,7 +964,7 @@ TEST_F(Tier2ProcessedDemTest, V1SidecarCoverageIsCarriedIntoTheHistory)
        << "  \"version\": 1,\n"
        << "  \"projection_mode\": \"dem\",\n"
        << "  \"bathy_store\": \"" << store_.string() << "\",\n"
-       << "  \"bathy_layers\": \"processed,reference\",\n"
+       << "  \"bathy_layers\": \"processed,draft,reference\",\n"
        << "  \"dem_coverage\": 0.03\n"
        << "}\n";
   }
@@ -1029,7 +1029,7 @@ TEST_F(Tier2ProcessedDemTest, NearPerfectCoverageSurvivesRewriteWithoutRoundingT
   {
     std::ofstream seed(out / "projection.json", std::ios::trunc);
     seed << "{\"version\": 2, \"projection_mode\": \"dem\", \"bathy_store\": \""
-         << store_.string() << "\", \"bathy_layers\": \"processed,reference\", "
+         << store_.string() << "\", \"bathy_layers\": \"processed,draft,reference\", "
          << "\"dem_coverage\": 0.9999995, \"dem_coverage_history\": [0.9999995]}\n";
   }
 
