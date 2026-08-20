@@ -404,6 +404,47 @@ TEST(BathyDem, PartiallyMissingLayersWarnRatherThanVanish)
   }
 }
 
+// ADR-0010 D8: `draft/` is optional-by-design — it starts empty and only live
+// CUBE ingest ever creates it, so on an offline or freshly migrated store its
+// directory legitimately does not exist. That absence is the expected state, not
+// reduced coverage, so the absent-layer warning is suppressed for `draft` (and
+// only `draft`) as long as some other requested layer resolved — otherwise the
+// new default `processed,draft,reference` would false-alarm the #297 guard on the
+// common offline path. A missing NON-draft layer still warns.
+TEST(BathyDem, AbsentDraftIsSilentWhenAnotherLayerPresent)
+{
+  const auto grid = gggs::Level(kFineLevel).gridIndex(kLat, kLon);
+
+  // The common offline case: default `processed,draft,reference` on a store that
+  // has processed/ (+ reference/) but no draft/ yet — nothing to warn about.
+  {
+    ScratchDir dir("draft_absent_ok");
+    writeConstantTile(dir.path(), "processed", grid, -9.0);
+    writeConstantTile(dir.path(), "reference", grid, -10.0);
+    msm::BathyDem dem(dir.path().string(), {"processed", "draft", "reference"});
+    ASSERT_TRUE(dem.warnings().empty())
+      << (dem.warnings().empty() ? std::string{} : dem.warnings()[0]);
+    EXPECT_EQ(dem.layers(), (std::vector<std::string>{"processed", "reference"}));
+    const auto depth = dem.depthAt(kLat, kLon);
+    ASSERT_TRUE(depth.has_value());
+    EXPECT_NEAR(*depth, -9.0, 1e-9);
+  }
+
+  // A missing NON-draft layer is still reported: only draft's absence is benign.
+  // (The warning body names both processed/ and draft/, so discriminate on the
+  // `'<name>/' does not exist` phrasing rather than a bare substring.)
+  {
+    ScratchDir dir("nondraft_absent_warns");
+    writeConstantTile(dir.path(), "reference", grid, -10.0);
+    msm::BathyDem dem(dir.path().string(), {"processed", "draft", "reference"});
+    ASSERT_EQ(dem.warnings().size(), 1u);
+    EXPECT_NE(dem.warnings()[0].find("'processed/' does not exist"), std::string::npos)
+      << dem.warnings()[0];
+    EXPECT_EQ(dem.warnings()[0].find("'draft/' does not exist"), std::string::npos)
+      << dem.warnings()[0];
+  }
+}
+
 // The store's companion rasters (`<level>_<row>_<col>_time.tif` / `_source.tif`,
 // pre-#248) carry no depth band. Counting them would inflate the tile count and
 // could satisfy the zero-tile hard-fail for a store whose value tiles are all

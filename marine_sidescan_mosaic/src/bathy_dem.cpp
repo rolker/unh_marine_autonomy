@@ -194,7 +194,21 @@ BathyDem::BathyDem(
   // `processed/` (+ a new `draft/`), a run asking for the old `survey,reference`
   // would otherwise quietly orthorectify against the coarse regional layer alone
   // (#297 review).
+  //
+  // Exception: `draft/` is optional-by-design under ADR-0010 D8. It starts empty
+  // and only live CUBE ingest ever creates it, so on an offline or freshly
+  // migrated store its directory legitimately does not exist — that is the
+  // expected state, not reduced coverage. Suppress the absent-layer warning for
+  // `draft` as long as some OTHER requested layer resolved (so we are not
+  // silently down to a coarser prior alone); a missing NON-draft layer, and a
+  // missing `draft` with no other coverage at all, still warn. `draft` stays in
+  // the default search order (kDefaultBathyLayers) so a live store consults it at
+  // its correct priority.
+  const bool have_other_coverage = !layers_.empty();
   for (const auto & name : missing) {
+    if (name == "draft" && have_other_coverage) {
+      continue;
+    }
     warnings_.push_back(
       "requested bathy layer '" + name + "/' does not exist under " + store_root_ +
       "; continuing with the layer(s) that do. If the store re-classified its layers "

@@ -172,7 +172,7 @@ Lens A (logic) + Lens B (systemic). Copilot off (default); Local Adversarial
 skipped (Ollama not installed on this host).
 
 ### Findings
-- [ ] (must-fix) New `--bathy-layers` default `processed,draft,reference` makes `BathyDem` warn "'draft/' does not exist … reduced coverage" on every offline/migrated store (draft/ starts empty, never created until live CUBE ingest) — false-alarms the #297 observability guard on the common path — `marine_sidescan_mosaic/src/bathy_dem.cpp:45,199`
+- [x] (must-fix) New `--bathy-layers` default `processed,draft,reference` makes `BathyDem` warn "'draft/' does not exist … reduced coverage" on every offline/migrated store (draft/ starts empty, never created until live CUBE ingest) — false-alarms the #297 observability guard on the common path — `marine_sidescan_mosaic/src/bathy_dem.cpp:45,199`
 - [ ] (suggestion) Sidecar fixtures use `processed,reference`, inconsistent with new default `processed,draft,reference` (cosmetic; legacy round-trip fixtures) — `marine_sidescan_mosaic/test/test_tier2_processed_dem.cpp:897,967,1032`
 - [ ] (suggestion) `migrateLegacySurveyDir` reuses one `std::error_code ec` across both `is_directory` calls (benign today; ec never read) — `marine_bathymetry_store/src/tile_io.cpp:254`
 - [ ] (suggestion) `fs::rename(survey, processed)` throwing overload yields `filesystem_error`, not the `runtime_error` "refuse loudly" idiom used for both-exist — `marine_bathymetry_store/src/tile_io.cpp:268`
