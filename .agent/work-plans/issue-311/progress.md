@@ -259,3 +259,39 @@ structural change — in a single commit (`3a1af69`) alongside the box-checks.
 
 Lifecycle: **Implementation** → **review-code** (re-review the fixes). No push,
 no GitHub actions taken (FOREGROUND, host performs pushes).
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-20 22:24 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-311 at `49dd800`
+**Addressed**: host scope note — 5 host-validated Copilot comments on PR#322 (citation-hygiene round; no progress.md review entry — the host performed triage externally, so this pass consumes the scope note as its fix plan)
+**Commits**: `49dd800`
+
+Final citation-hygiene round before publish. All five findings host-validated as
+trivial; each verified against the current source before acting, then fixed in a
+single atomic commit alongside this entry's progress commit.
+
+### Actions
+- [x] Bare `PR#33` → clickable link `[PR#33](https://github.com/rolker/s57_tools/pull/33)` — `docs/sonar_ecosystem.md:250`
+- [x] Bare `PR#33` → clickable link (alongside the existing `s57_tools#28` issue link) — `docs/decisions/0010-geospatial-world-model.md:33`
+- [x] Bare `PR#33` → clickable link — `.agent/work-plans/issue-311/gardening_dispositions.md:38`
+- [x] Bare `PR#33` → clickable link — `.agent/work-plans/issue-311/plan.md:49` (also fixed the second occurrence at `plan.md:111`, uncited but same citation-hygiene defect)
+- [x] Stale placeholder PR ids in the historical Issue Review entry marked with a brief inline correction (uma#308→PR#313, uma#309→PR#320, cube#133→cube#134) — clarified, not rewritten — `.agent/work-plans/issue-311/progress.md:37`
+
+### Verification
+- `grep` confirms zero remaining bare `PR#33` — all five occurrences are now
+  qualified `[PR#33](https://github.com/rolker/s57_tools/pull/33)` links.
+- PR#33 target used verbatim from the host scope note (verified there as
+  rolker/s57_tools PR #33, the s57_tools#28 enc_updater PR); no GitHub lookups
+  performed (no read auth in this dispatch).
+- The progress.md correction preserves the original historical prose and only
+  appends a marker pointing to the corrected citations already recorded in the
+  first Implementation entry above.
+- Pre-commit hooks ran on `49dd800` (no `--no-verify`); docs-only change.
+
+### Next step
+
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). No push,
+no GitHub actions taken (FOREGROUND only, host performs pushes).
