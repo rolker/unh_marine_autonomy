@@ -50,11 +50,19 @@ struct StoreMetadata
   std::string sensor;    ///< Contributing sensor (e.g. "m3").
   std::string survey;    ///< Survey / campaign id (e.g. "massabesic-2026").
   std::string date;      ///< Acquisition date (ISO-8601, e.g. "2026-06-30").
+  /// Source vertical datum the import converted FROM (e.g. "mllw", #315).
+  /// Stored values are always ellipsoidal; this records what the source was
+  /// referenced to before conversion. Empty when the source was already
+  /// ellipsoidal (or converted by constant scale/offset). Absent from
+  /// pre-#315 registries, which load with it empty — an additive field, no
+  /// schema-version bump.
+  std::string datum;
 
   /// @brief True if every field is empty (nothing worth persisting).
   bool empty() const noexcept
   {
-    return platform.empty() && sensor.empty() && survey.empty() && date.empty();
+    return platform.empty() && sensor.empty() && survey.empty() &&
+           date.empty() && datum.empty();
   }
 
   /// @brief Write `registry.json` under @p store_root_dir atomically.

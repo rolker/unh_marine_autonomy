@@ -212,3 +212,58 @@ TEST_F(ImportGeotiffCliTest, CommitWithoutStoreDirIsUsageError)
   const fs::path staged = dir_ / "staged";
   EXPECT_EQ(run("--commit \"" + staged.string() + "\""), 1);
 }
+
+// --- --source-datum flag validation (#315) ---
+// The vdatum grids themselves aren't exercised here (no PROJ fixtures in this
+// suite); these pin the loud-usage-error contract: a datum flag silently
+// ignored is exactly how a wrong-datum surface would reach the store.
+
+TEST_F(ImportGeotiffCliTest, SourceDatumExcludesDepthScaleOffset)
+{
+  const fs::path store = dir_ / "store";
+  EXPECT_EQ(
+    run(
+      store.string() + " reference " + tif_.string() +
+      " --source-datum mllw --geoid g.tif --vdatum-dir v --depth-offset -20"),
+    1);
+  EXPECT_EQ(
+    run(
+      store.string() + " reference " + tif_.string() +
+      " --source-datum mllw --geoid g.tif --vdatum-dir v --depth-scale -1"),
+    1);
+}
+
+TEST_F(ImportGeotiffCliTest, SourceDatumRequiresBothGridFlags)
+{
+  const fs::path store = dir_ / "store";
+  EXPECT_EQ(
+    run(store.string() + " reference " + tif_.string() + " --source-datum mllw"), 1);
+  EXPECT_EQ(
+    run(
+      store.string() + " reference " + tif_.string() +
+      " --source-datum mllw --geoid g.tif"),
+    1);
+}
+
+TEST_F(ImportGeotiffCliTest, DatumGridFlagsRequireSourceDatum)
+{
+  const fs::path store = dir_ / "store";
+  EXPECT_EQ(
+    run(store.string() + " reference " + tif_.string() + " --geoid g.tif"), 1);
+  EXPECT_EQ(
+    run(store.string() + " reference " + tif_.string() + " --source-up"), 1);
+}
+
+TEST_F(ImportGeotiffCliTest, SourceDatumRejectsUnknownDatumAndStageMode)
+{
+  EXPECT_EQ(
+    run(
+      (dir_ / "store").string() + " reference " + tif_.string() +
+      " --source-datum navd88 --geoid g.tif --vdatum-dir v"),
+    1);
+  EXPECT_EQ(
+    run(
+      "--stage " + (dir_ / "staged").string() + " chart " + tif_.string() +
+      " --source-datum mllw --geoid g.tif --vdatum-dir v"),
+    1);
+}

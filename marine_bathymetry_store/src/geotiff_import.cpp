@@ -58,6 +58,11 @@ ProcessedImportResult importGeoTiff(
   if (options.uncertainty_band < 0) {
     throw std::invalid_argument("importGeoTiff: uncertainty_band must be >= 0 (0 = none)");
   }
+  if (options.vertical_datum_fn && options.depth_offset != 0.0) {
+    throw std::invalid_argument(
+      "importGeoTiff: vertical_datum_fn and a non-zero depth_offset are "
+      "mutually exclusive (the datum query IS the per-point offset)");
+  }
 
   // Target import level: a caller-specified level (multi-level, ADR-0002 §D2) or
   // the store's default level.
@@ -135,8 +140,24 @@ ProcessedImportResult importGeoTiff(
       if (!std::isfinite(depth_row[x]) || (has_nodata && depth_row[x] == nodata)) {
         continue;   // no-data pixel
       }
+      const double longitude = gt[0] + (x + 0.5) * gt[1];
       // Vertical conversion at import (§D4): pixel value -> ellipsoidal height.
-      const double depth = options.depth_scale * depth_row[x] + options.depth_offset;
+      // With a per-point datum resolver (#315) the offset is the source
+      // datum's ellipsoidal height at this pixel; no coverage there is a
+      // hard error — a partially converted surface must never import.
+      double offset = options.depth_offset;
+      if (options.vertical_datum_fn) {
+        const std::optional<double> datum_z =
+          options.vertical_datum_fn(latitude, longitude);
+        if (!datum_z.has_value()) {
+          throw std::runtime_error(
+            "importGeoTiff: vertical-datum grids have no coverage at (" +
+            std::to_string(latitude) + ", " + std::to_string(longitude) +
+            ") — refusing a partial datum conversion for " + path);
+        }
+        offset = *datum_z;
+      }
+      const double depth = options.depth_scale * depth_row[x] + offset;
       // A non-finite OR non-positive uncertainty is *missing*, not perfect:
       // zero would pass every reliability gate and carry infinite weight in
       // 1/sigma^2 fusion. Such cells get default_uncertainty (NaN by default
@@ -148,7 +169,6 @@ ProcessedImportResult importGeoTiff(
       {
         uncertainty = uncertainty_row[x];
       }
-      const double longitude = gt[0] + (x + 0.5) * gt[1];
       // Fill the pixel's full FOOTPRINT of store cells, not just the cell
       // under its centre — a coarser-than-store source (e.g. a 5 m contour
       // prior into a 0.5 m store) must produce coverage, not isolated dots.

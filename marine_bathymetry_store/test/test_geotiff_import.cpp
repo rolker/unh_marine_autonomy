@@ -543,3 +543,75 @@ TEST_F(GeoTiffImportTest, DraftImportDoesNotClearAnything)
   EXPECT_EQ(result.draft_cells_cleared, 0u);
   EXPECT_TRUE(result.draft_tiles_touched.empty());
 }
+
+// --- Per-point vertical-datum conversion (#315) ---
+
+TEST_F(GeoTiffImportTest, VerticalDatumFnAppliesPerPointOffset)
+{
+  // An MLLW-referenced grid: each pixel's offset is the datum's ellipsoidal
+  // height AT THAT POINT, not one constant — inject a longitude-dependent
+  // resolver and check two same-row cells convert with different offsets.
+  BathymetryStore store(11, /*reference_writable=*/true);
+  const std::vector<float> depth{10.0f, 10.0f};   // equal depths below datum
+  const std::vector<float> unc{0.5f, 0.5f};
+  const auto tif = writeTestTiff(dir_ / "mllw.tif", store.level(), 2, 1, depth, unc);
+
+  GeoTiffImportOptions options;
+  options.depth_scale = -1.0;   // positive-down depths below the datum
+  const gggs::GridIndex grid = store.level().gridIndex(43.0, -70.5);
+  const double cell_x = grid.longitudinalSpan() / gggs::cell_rows_per_grid;
+  const double split = grid.westLongitude() + cell_x;   // between the 2 pixels
+  options.vertical_datum_fn =
+    [split](double, double lon) -> std::optional<double> {
+      return lon < split ? -28.0 : -29.0;   // western vs eastern mllw_z
+    };
+  const auto imported =
+    importGeoTiff(store, SourceLayer::Reference, tif, options).cells_imported;
+  EXPECT_EQ(imported, 2u);
+
+  const auto west = store.get(SourceLayer::Reference, nwCell(store, store.level()));
+  ASSERT_TRUE(west.has_value());
+  EXPECT_DOUBLE_EQ(west->depth, -38.0);    // -1 * 10 + (-28)
+  const auto east = store.get(
+    SourceLayer::Reference,
+    store.cellIndex(
+      grid.northLatitude() - 0.5 * grid.latitudinalSpan() / gggs::cell_rows_per_grid,
+      grid.westLongitude() + 1.5 * cell_x));
+  ASSERT_TRUE(east.has_value());
+  EXPECT_DOUBLE_EQ(east->depth, -39.0);    // -1 * 10 + (-29)
+}
+
+TEST_F(GeoTiffImportTest, VerticalDatumFnNoCoverageIsHardError)
+{
+  // A point outside the datum grids must abort the import — a partially
+  // converted surface must never land in the store.
+  BathymetryStore store(11, /*reference_writable=*/true);
+  const std::vector<float> depth{10.0f};
+  const std::vector<float> unc{0.5f};
+  const auto tif = writeTestTiff(dir_ / "gap.tif", store.level(), 1, 1, depth, unc);
+
+  GeoTiffImportOptions options;
+  options.depth_scale = -1.0;
+  options.vertical_datum_fn =
+    [](double, double) -> std::optional<double> {return std::nullopt;};
+  EXPECT_THROW(
+    importGeoTiff(store, SourceLayer::Reference, tif, options), std::runtime_error);
+  EXPECT_TRUE(store.tiles(SourceLayer::Reference).empty());
+}
+
+TEST_F(GeoTiffImportTest, VerticalDatumFnExcludesConstantOffset)
+{
+  // The datum query IS the offset; combining it with a constant one is a
+  // caller bug and must fail loudly, not silently sum.
+  BathymetryStore store(11, /*reference_writable=*/true);
+  const std::vector<float> depth{10.0f};
+  const std::vector<float> unc{0.5f};
+  const auto tif = writeTestTiff(dir_ / "both.tif", store.level(), 1, 1, depth, unc);
+
+  GeoTiffImportOptions options;
+  options.depth_offset = -20.0;
+  options.vertical_datum_fn =
+    [](double, double) -> std::optional<double> {return -28.0;};
+  EXPECT_THROW(
+    importGeoTiff(store, SourceLayer::Reference, tif, options), std::invalid_argument);
+}

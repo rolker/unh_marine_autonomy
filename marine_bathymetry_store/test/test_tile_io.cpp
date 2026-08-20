@@ -1291,3 +1291,27 @@ TEST_F(TileIoTest, ReplaceChartLayerRestoresOrphanedBackupThenSurvivesFailedSwap
   ASSERT_TRUE(got.has_value());   // old orphan data restored and surviving
   EXPECT_DOUBLE_EQ(got->depth, -10.0);
 }
+
+TEST_F(TileIoTest, StoreMetadataDatumFieldRoundTripsAndBackCompat)
+{
+  // #315: the source-datum provenance field persists, and a pre-#315
+  // registry (no "datum" key at all) loads with it empty rather than
+  // erroring — an additive field, no schema-version bump.
+  fs::create_directories(dir_);
+  StoreMetadata md{"bizzy", "colleague-grid", "appledore-2026", "2026-08-20", "mllw"};
+  md.save(dir_.string());
+  StoreMetadata loaded;
+  loaded.load(dir_.string());
+  EXPECT_EQ(loaded.datum, "mllw");
+
+  // Hand-write a pre-#315 registry (current version, no "datum" key).
+  {
+    std::ofstream out(dir_ / "registry.json", std::ios::trunc);
+    out << "{\"version\": 2, \"platform\": \"bizzy\", \"sensor\": \"m3\", "
+        << "\"survey\": \"massabesic-2026\", \"date\": \"2026-06-30\"}\n";
+  }
+  StoreMetadata reloaded;
+  reloaded.load(dir_.string());
+  EXPECT_EQ(reloaded.platform, "bizzy");
+  EXPECT_TRUE(reloaded.datum.empty());
+}

@@ -65,6 +65,7 @@ void StoreMetadata::save(const std::string & store_root_dir) const
     {"sensor", sensor},
     {"survey", survey},
     {"date", date},
+    {"datum", datum},
   };
 
   const fs::path tmp = fs::path(store_root_dir) / kRegistryTmpFile;
@@ -130,6 +131,7 @@ void StoreMetadata::load(const std::string & store_root_dir)
   sensor = jsonStr(doc, "sensor");
   survey = jsonStr(doc, "survey");
   date = jsonStr(doc, "date");
+  datum = jsonStr(doc, "datum");   // absent in pre-#315 registries -> empty
 }
 
 }  // namespace marine_bathymetry_store

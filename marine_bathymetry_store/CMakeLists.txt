@@ -82,7 +82,8 @@ install(TARGETS ${PROJECT_NAME}
 
 # The `import_geotiff` CLI: import a GeoTIFF into a store layer's fused surface.
 add_executable(import_geotiff src/import_geotiff_main.cpp)
-target_link_libraries(import_geotiff ${PROJECT_NAME})
+target_link_libraries(import_geotiff ${PROJECT_NAME}
+  marine_vertical_datum::marine_vertical_datum)
 
 # S-102 importer core (#278): discover/fetch/convert/run stages as an internal
 # static library so the pipeline is testable without spawning the CLI. Its
