@@ -156,3 +156,24 @@ fresh-context sub-agent:
 
 Local Adversarial skipped: Ollama server unreachable (localhost:11434 down; ollama not on PATH).
 Out-of-scope (not findings for this PR): stale `~/data/stores/` paths in `docs/sonar_reference.md:68-69` are store-root-relocation territory (uma#310); `docs/sonar_ecosystem.md` reframe is uma#311 — both correctly untouched per the plan's scope boundary.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-20 10:07 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #312 at `d439d7d`
+**Sources**: 3 (Copilot R1 @ `d439d7d`, Local Review (Pre-Push) R1–R2 @ prior SHAs, CI rollup)
+**Cross-source confirmations**: 0
+**CI**: failures-noted — `marine_autonomy_integration_tests` `test_command_bridge_routes_to_mission_manager` (launch_testing timing flake: "Expected clear_tasks ... got []" + KeyboardInterrupt teardown; both reported failures are the same test double-counted across Test.xml/xunit). Diff is docs-only + one help-text string — cannot affect command_bridge/mission_manager. jazzy branch green at 08-18. Failed-job re-run triggered 2026-08-20 to confirm flake.
+
+### Findings
+- [ ] (trivial, Copilot) plan.md item-6 lead-in sentence hard to parse (flagged as unmatched paren; parens balance but the 4-line parenthetical is unreadable) — reword — `.agent/work-plans/issue-288/plan.md:85-88`
+- [ ] (trivial, Copilot) "(expanded)" wording ambiguous: `vdatum_query.cpp` does NOT expand `~`/env vars (verified — no wordexp/getenv), so state that literal absolute paths must be passed; also nest the `VDatumConfig` line under its parent bullet for correct Markdown structure — `marine_vertical_datum/README.md:72-75`
+
+### False positives
+- (none)
+
+**Local-timeline reconciliation**: pre-push rounds 1–2 findings (provenance
+wording, datum/user symmetry caveat) all resolved before publish; Copilot raised
+neither, and raised nothing overlapping — no cross-source confirmations.
