@@ -98,3 +98,16 @@ overlap. No other open blockers identified.
 - [ ] Update `docs/sonar_reference.md:68-69` (tiled-stores table + survey-index path).
 - [ ] Decide and record the transitional-symlink-vs-clean-cut question explicitly during plan-task.
 - [ ] Cross-reference (don't implement here) the `unh_echoboats_project11` config PR need and the potential `s102_import --cache` default follow-up once this migration lands.
+
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-08-20 18:29 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-310/plan.md` at `9762c14`
+**Branch**: feature/issue-310 at `9762c14`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready (clean-cut-vs-symlink and eval-store reconciliation were settled at checkpoint 1 and encoded in the plan).
