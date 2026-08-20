@@ -123,3 +123,16 @@ overlap. No other open blockers identified.
 
 ### Findings
 - [ ] Plan looks solid. Ready for implementation.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-20 18:52 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**Branch**: feature/issue-310 at `07c5641` (rebased onto current jazzy — 15 same-day merges picked up)
+
+- Repo half per plan steps 1-5+7: six path-literal touchpoints repointed to the world root (bathymetry_layer doc/README/test → world/depths; sidescan launch default + README → world/imagery/sidescan; sonar_reference data-of-record table + survey_index.db world-root home). Sweep re-verified clean (ADR-0010 decision text intentionally untouched).
+- Review finding folded in: docs/sonar_ecosystem.md status text updated — it still called #310 "unstarted" with stores literals (self-contradiction on merge).
+- Deliberate deviation from plan step 6, per the operator's 2026-08-20 cleanup directive: _archive snapshots + survey_index.v1.db.bak are DELETED by the migration script, not carried over (all regenerable). The dropped v1-backup mention in sonar_reference.md is therefore correct, not a lost fact.
+- Dev-host data migration (plan step 6): scripted with pre/post tile-count verification (scratchpad migrate_world_310.sh); execution is the operator's keystroke (host permission classifier correctly blocks agent-run destructive ~/data ops). Pending at entry time.
+- Tests: bathymetry_layer + marine_sidescan_mosaic suites — my one new failure (E501 from the wrapped launch description) fixed; the 9 remaining failures are a pre-existing jazzy lint regression from the DEM-drape arc, filed as uma#323, out of scope here.
