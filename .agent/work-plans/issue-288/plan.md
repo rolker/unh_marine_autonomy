@@ -83,11 +83,11 @@ ADR amendment (1) should merge before or alongside the consumer repoints (3–4)
    deferred** (not covered by this item's boat-host deploy-step); noted here so the
    deferral is explicit.
 
-6. **Delete `mru_transform` CMake download block** (GATED — in `mru_transform`;
-   **explicitly blocked on item 2's outcome** — the updater (or a follow-on
-   provisioning script) must actually cover `datum/` before hosts can be provisioned.
-   s57_tools#28 status host-verified 2026-08-20: filed and CLOSED/shipped):
+6. **Delete `mru_transform` CMake download block** (GATED — in `mru_transform`):
    Remove the `projsync` + VDatum zip download block entirely (no disabled fallback).
+   **Blocked on item 2's outcome**: the updater (or a follow-on provisioning script)
+   must actually cover `datum/` before hosts can be provisioned. s57_tools#28 status
+   host-verified 2026-08-20: filed and CLOSED/shipped.
    **Gate**: the PR may not merge until deploy-log entries from **both gabby and
    salmon** confirm `~/data/world/datum/` is populated. The required evidence is the
    output of:
