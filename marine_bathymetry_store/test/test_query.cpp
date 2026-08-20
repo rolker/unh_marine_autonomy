@@ -46,11 +46,11 @@ TEST(Query, BestSourcePrefersHigherPriorityLayer)
   BathymetryStore store(5, /*reference_writable=*/true);
   const auto cell = store.cellIndex(43.0, -70.5);
   store.set(SourceLayer::Reference, cell, BathyCell{-12.0, 2.0});
-  store.set(SourceLayer::Survey, cell, BathyCell{-10.0, 0.1});
+  store.set(SourceLayer::Draft, cell, BathyCell{-10.0, 0.1});
 
   const auto best = bestSource(store, cell);
   ASSERT_TRUE(best.has_value());
-  EXPECT_EQ(best->source, SourceLayer::Survey);
+  EXPECT_EQ(best->source, SourceLayer::Draft);
   EXPECT_DOUBLE_EQ(best->depth, -10.0);
 }
 
@@ -72,7 +72,7 @@ TEST(Query, UnknownCellIsNullopt)
   EXPECT_FALSE(bestSource(store, cell).has_value());
 
   // A written-but-no-data cell is still unknown (not "deep water").
-  store.set(SourceLayer::Survey, cell, BathyCell{});
+  store.set(SourceLayer::Draft, cell, BathyCell{});
   EXPECT_FALSE(bestSource(store, cell).has_value());
 }
 
@@ -82,12 +82,12 @@ TEST(Query, ShallowestReliablePicksGreatestHeight)
   BathymetryStore store(5, /*reference_writable=*/true);
   const auto cell = store.cellIndex(43.0, -70.5);
   store.set(SourceLayer::Reference, cell, BathyCell{-30.0, 0.1});  // deeper
-  store.set(SourceLayer::Survey, cell, BathyCell{-25.0, 0.2});         // shallower
+  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, 0.2});         // shallower
 
   const auto result = shallowestReliable(store, cell, 1.0);
   ASSERT_TRUE(result.has_value());
   EXPECT_DOUBLE_EQ(result->depth, -25.0);
-  EXPECT_EQ(result->source, SourceLayer::Survey);
+  EXPECT_EQ(result->source, SourceLayer::Draft);
 }
 
 TEST(Query, ShallowestReliableExcludesOverUncertain)
@@ -96,7 +96,7 @@ TEST(Query, ShallowestReliableExcludesOverUncertain)
   const auto cell = store.cellIndex(43.0, -70.5);
   store.set(SourceLayer::Reference, cell, BathyCell{-30.0, 0.1});  // reliable, deeper
   // shallower, but too uncertain to be reliable:
-  store.set(SourceLayer::Survey, cell, BathyCell{-25.0, 5.0});
+  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, 5.0});
 
   const auto result = shallowestReliable(store, cell, 1.0);
   ASSERT_TRUE(result.has_value());
@@ -108,7 +108,7 @@ TEST(Query, ShallowestReliableTreatsNaNUncertaintyAsUnreliable)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Survey, cell, BathyCell{-25.0, std::nan("")});
+  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, std::nan("")});
   EXPECT_FALSE(shallowestReliable(store, cell, 1.0).has_value());
 }
 
@@ -116,7 +116,7 @@ TEST(Query, ForEachRegionVisitsCoveredCells)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Survey, cell, BathyCell{-20.0, 0.5});
+  store.set(SourceLayer::Draft, cell, BathyCell{-20.0, 0.5});
 
   std::size_t visited = 0;
   std::size_t with_data = 0;
@@ -143,7 +143,7 @@ TEST(Query, BestSourceFallsThroughToReferencePrior)
 
   store.set(SourceLayer::Reference, unsurveyed, BathyCell{38.0, 3.0});
   store.set(SourceLayer::Reference, surveyed, BathyCell{38.0, 3.0});
-  store.set(SourceLayer::Survey, surveyed, BathyCell{40.0, 0.5});
+  store.set(SourceLayer::Draft, surveyed, BathyCell{40.0, 0.5});
 
   // Unsurveyed cell falls through to the prior.
   const auto a = bestSource(store, unsurveyed);
@@ -154,7 +154,7 @@ TEST(Query, BestSourceFallsThroughToReferencePrior)
   // Surveyed cell prefers the live survey over the prior.
   const auto b = bestSource(store, surveyed);
   ASSERT_TRUE(b.has_value());
-  EXPECT_EQ(b->source, SourceLayer::Survey);
+  EXPECT_EQ(b->source, SourceLayer::Draft);
   EXPECT_DOUBLE_EQ(b->depth, 40.0);
 }
 
@@ -212,8 +212,8 @@ TEST(Query, ShallowestReliableConsidersAllLevels)
   const auto pt = gggs::geoPoint(43.0, -70.5);
 
   // Fine level: shallower but too uncertain. Coarse: deeper but reliable.
-  store.set(SourceLayer::Survey, fine.cellIndex(pt), BathyCell{-20.0, 5.0});
-  store.set(SourceLayer::Survey, coarse.cellIndex(pt), BathyCell{-30.0, 0.2});
+  store.set(SourceLayer::Draft, fine.cellIndex(pt), BathyCell{-20.0, 5.0});
+  store.set(SourceLayer::Draft, coarse.cellIndex(pt), BathyCell{-30.0, 0.2});
 
   const auto result = shallowestReliable(store, store.cellIndex(43.0, -70.5), 1.0);
   ASSERT_TRUE(result.has_value());
@@ -250,7 +250,7 @@ TEST(Query, ShallowestReliableWithNoReliableDataReturnsNullopt)
   const auto cell = store.cellIndex(43.0, -70.5);
   // Over-uncertain across both layers that hold this cell.
   store.set(SourceLayer::Reference, cell, BathyCell{-30.0, 5.0});
-  store.set(SourceLayer::Survey, cell, BathyCell{-25.0, 9.0});
+  store.set(SourceLayer::Draft, cell, BathyCell{-25.0, 9.0});
 
   EXPECT_FALSE(shallowestReliable(store, cell, 1.0).has_value());
 
@@ -278,7 +278,7 @@ TEST(Query, ReliableSamplesCollectsAllLayersDropsNaNRetainsInfiniteAtInfinity)
     const auto cell = store.cellIndex(43.0, -70.5);
     store.set(SourceLayer::Chart, cell, BathyCell{-20.0, 1.5});
     store.set(SourceLayer::Reference, cell, BathyCell{-12.0, 2.0});
-    store.set(SourceLayer::Survey, cell, BathyCell{-10.0, 0.1});
+    store.set(SourceLayer::Draft, cell, BathyCell{-10.0, 0.1});
 
     const auto samples = reliableSamples(store, cell, 3.0);
     ASSERT_EQ(samples.size(), 3u);
@@ -286,7 +286,7 @@ TEST(Query, ReliableSamplesCollectsAllLayersDropsNaNRetainsInfiniteAtInfinity)
     for (const auto & s : samples) {
       sources.insert(s.source);
     }
-    EXPECT_EQ(sources.count(SourceLayer::Survey), 1u);
+    EXPECT_EQ(sources.count(SourceLayer::Draft), 1u);
     EXPECT_EQ(sources.count(SourceLayer::Reference), 1u);
     EXPECT_EQ(sources.count(SourceLayer::Chart), 1u);
   }
@@ -296,7 +296,7 @@ TEST(Query, ReliableSamplesCollectsAllLayersDropsNaNRetainsInfiniteAtInfinity)
   {
     BathymetryStore store(5, /*reference_writable=*/true);
     const auto cell = store.cellIndex(43.0, -70.5);
-    store.set(SourceLayer::Survey, cell, BathyCell{-10.0, std::nan("")});
+    store.set(SourceLayer::Draft, cell, BathyCell{-10.0, std::nan("")});
     store.set(SourceLayer::Reference, cell, BathyCell{-12.0, 2.0});
 
     const auto samples = reliableSamples(store, cell, 3.0);
@@ -312,7 +312,7 @@ TEST(Query, ReliableSamplesCollectsAllLayersDropsNaNRetainsInfiniteAtInfinity)
     BathymetryStore store(5);
     const auto cell = store.cellIndex(43.0, -70.5);
     store.set(
-      SourceLayer::Survey, cell,
+      SourceLayer::Draft, cell,
       BathyCell{-10.0, std::numeric_limits<double>::infinity()});
 
     const auto at_inf = reliableSamples(store, cell, std::numeric_limits<double>::infinity());
@@ -323,19 +323,53 @@ TEST(Query, ReliableSamplesCollectsAllLayersDropsNaNRetainsInfiniteAtInfinity)
   }
 }
 
-TEST(Query, BestSourceFullPriorityOrderSurveyReferenceChart)
+TEST(Query, BestSourcePrefersProcessedOverDraft)
 {
-  // ADR-0010 D4 placeholder ordering: survey > reference > chart. With all
-  // three present the highest-priority layer wins; removing layers walks down.
+  // ADR-0010 D8: Processed (authoritative offline re-run) outranks Draft (live
+  // CUBE) at the same cell. The priority walk returns the Processed sample even
+  // though the Draft sample is present and shallower — proving the split's core
+  // guarantee that a live pass never degrades a re-run cell in the query overlay.
+  BathymetryStore store(5);
+  const auto cell = store.cellIndex(43.0, -70.5);
+  store.set(SourceLayer::Draft, cell, BathyCell{-9.0, 0.1});
+  store.set(SourceLayer::Processed, cell, BathyCell{-11.0, 0.3});
+
+  const auto best = bestSource(store, cell);
+  ASSERT_TRUE(best.has_value());
+  EXPECT_EQ(best->source, SourceLayer::Processed);
+  EXPECT_DOUBLE_EQ(best->depth, -11.0);
+
+  // Where Processed has no data, the walk falls through to Draft.
+  const auto draft_only = store.cellIndex(43.0, -70.4);
+  store.set(SourceLayer::Draft, draft_only, BathyCell{-7.0, 0.2});
+  const auto b = bestSource(store, draft_only);
+  ASSERT_TRUE(b.has_value());
+  EXPECT_EQ(b->source, SourceLayer::Draft);
+}
+
+TEST(Query, BestSourceFullPriorityOrderProcessedDraftReferenceChart)
+{
+  // ADR-0010 D4/D8 ordering: processed > draft > reference > chart. With all four
+  // present the highest-priority layer wins; removing layers walks down.
   BathymetryStore store(5, /*reference_writable=*/true, /*chart_staging_writable=*/true);
   const auto cell = store.cellIndex(43.0, -70.5);
   store.set(SourceLayer::Chart, cell, BathyCell{-20.0, 1.5});
   store.set(SourceLayer::Reference, cell, BathyCell{-12.0, 2.0});
-  store.set(SourceLayer::Survey, cell, BathyCell{-10.0, 0.1});
+  store.set(SourceLayer::Draft, cell, BathyCell{-10.0, 0.1});
+  store.set(SourceLayer::Processed, cell, BathyCell{-11.0, 0.2});
 
   auto best = bestSource(store, cell);
   ASSERT_TRUE(best.has_value());
-  EXPECT_EQ(best->source, SourceLayer::Survey);
+  EXPECT_EQ(best->source, SourceLayer::Processed);
+
+  // Drop Processed: Draft wins.
+  const auto cell_d = store.cellIndex(43.5, -70.6);
+  store.set(SourceLayer::Chart, cell_d, BathyCell{-20.0, 1.5});
+  store.set(SourceLayer::Reference, cell_d, BathyCell{-12.0, 2.0});
+  store.set(SourceLayer::Draft, cell_d, BathyCell{-10.0, 0.1});
+  best = bestSource(store, cell_d);
+  ASSERT_TRUE(best.has_value());
+  EXPECT_EQ(best->source, SourceLayer::Draft);
 
   const auto cell2 = store.cellIndex(44.0, -71.0);
   store.set(SourceLayer::Chart, cell2, BathyCell{-21.0, 1.5});

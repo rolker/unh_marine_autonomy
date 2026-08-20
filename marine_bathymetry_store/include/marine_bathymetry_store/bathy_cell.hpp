@@ -38,28 +38,48 @@ namespace marine_bathymetry_store
 /// source layer": the layer is the map it lives in.
 ///
 /// #248 (ADR-0002 Amendment A2.1) collapsed the old `chart`/`draft`/`processed`
-/// classes into **two** layers — `Survey` (highest priority) and `Reference`
-/// (the read-only prior). #275 then reintroduced `Chart` as a **third**, distinct
-/// layer for official navigation products (S57 exports; ADR-0010 D3/D7) — not the
-/// pre-#248 `chart` class, and not a generalization of `reference`. The numeric
-/// value is the priority rank (0 = highest), so the taxonomy is now three layers
-/// ordered `Survey 0 > Reference 1 > Chart 2`. `Chart` is **lowest** priority — a
-/// D4 placeholder ordering pending the #276 cost-model rework — so best-source
-/// falls through Survey, then Reference, then Chart where no higher layer holds
-/// data. Both `Reference` and `Chart` are write-gated priors that live CUBE
-/// ingest can never clobber: `Reference` is read-only (see `BathymetryStore::set`
-/// and the `reference_writable` flag the importer opts into); `Chart` is writable
-/// only via the wholesale-regeneration swap (`replaceChartLayer`), gated by
-/// `chart_staging_writable`.
+/// classes into `Survey` + `Reference`. #275 then reintroduced `Chart` for
+/// official navigation products (S57 exports; ADR-0010 D3/D7). ADR-0010 **D8**
+/// now re-splits the single `Survey` layer back into the quality axis it fused:
+/// **`Processed`** (the deterministic off-boat `import_bag` re-run — authoritative)
+/// and **`Draft`** (live on-boat CUBE — immediate, known-gappy, disposable and
+/// regenerable from bags). The live and offline CUBE paths produce different
+/// surfaces (ADR-0010 Context §3), so keeping them as one layer let the next day's
+/// gappy live pass clobber the previous night's authoritative re-run wherever
+/// swaths overlap — continuing to survey degraded the store.
+///
+/// The numeric value is the priority rank (0 = highest), so the taxonomy is four
+/// layers ordered `Processed 0 > Draft 1 > Reference 2 > Chart 3`. `Processed`
+/// outranks `Draft` (ADR-0010 D4/D8), so a fresh live pass adds data where the
+/// re-run has none but never degrades re-run cells; `Chart` is **lowest** — a D4
+/// placeholder ordering pending the #276 cost-model rework — so best-source falls
+/// through Processed, then Draft, then Reference, then Chart where no higher layer
+/// holds data. `Processed` and `Draft` are both freely writable (live/replay
+/// ingest write them exclusively). `Reference` and `Chart` are write-gated priors
+/// that ingest can never clobber: `Reference` is read-only (see
+/// `BathymetryStore::set` and the `reference_writable` flag the importer opts
+/// into); `Chart` is writable only via the wholesale-regeneration swap
+/// (`replaceChartLayer`), gated by `chart_staging_writable`.
+///
+/// **Anti-clobber (ADR-0010 D8):** when `Processed` data lands, overlapped
+/// `Draft` cells are cleared **cell-wise — only where the processed data has
+/// data** via the store's public `BathymetryStore::clearOverlappedDraft` (called by
+/// the GeoTIFF importer and cube's direct-`saveTile` regen paths alike). Draft cells
+/// in the re-run's gated-drop holes
+/// (cells the import left no-data) survive: harmless under `Processed > Draft` and
+/// strictly more coverage than clearing by footprint.
 enum class SourceLayer : uint8_t
 {
-  Survey = 0,         ///< The CUBE product (live on-boat or off-boat re-run). Highest
-                      ///< priority. Subsumes the pre-#248 draft/processed distinction
-                      ///< (one fused surface per layer since #221).
-  Reference = 1,  ///< A prior surface imported before the survey (chart-derived
+  Processed = 0,  ///< Off-boat deterministic `import_bag` re-run. Authoritative,
+                  ///< distributed back to boat/operator stores. Highest priority.
+  Draft = 1,      ///< Live on-boat CUBE output. Immediate (feeds today's costmap
+                  ///< and the ADR-0008 coverage view); known-gappy; disposable and
+                  ///< regenerable from bags. Cleared cell-wise where a Processed
+                  ///< import overlaps it (ADR-0010 D8).
+  Reference = 2,  ///< A prior surface imported before the survey (chart-derived
                   ///< contour prior, external processed grid). Broad, coarse,
                   ///< read-only. Ellipsoidal heights converted at import (§D4).
-  Chart = 2,      ///< Official navigation products (S57 exports; ADR-0010 D3/D7).
+  Chart = 3,      ///< Official navigation products (S57 exports; ADR-0010 D3/D7).
                   ///< Lowest priority (D4 placeholder ordering). Writable ONLY via
                   ///< the wholesale-regeneration path (`replaceChartLayer` swap of
                   ///< a staged directory) — never by cell-wise ingest; a staging
@@ -67,8 +87,9 @@ enum class SourceLayer : uint8_t
 };
 
 /// @brief Source layers in descending priority order — iterate for best-source.
-inline constexpr std::array<SourceLayer, 3> source_layers_by_priority{
-  SourceLayer::Survey, SourceLayer::Reference, SourceLayer::Chart};
+inline constexpr std::array<SourceLayer, 4> source_layers_by_priority{
+  SourceLayer::Processed, SourceLayer::Draft, SourceLayer::Reference,
+  SourceLayer::Chart};
 
 /// @brief Number of source layers present in this phase.
 inline constexpr std::size_t source_layer_count = source_layers_by_priority.size();

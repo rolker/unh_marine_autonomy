@@ -44,9 +44,9 @@ TEST(Store, SetGetRoundTrip)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Survey, cell, BathyCell{-30.0, 0.5});
+  store.set(SourceLayer::Draft, cell, BathyCell{-30.0, 0.5});
 
-  const auto got = store.get(SourceLayer::Survey, cell);
+  const auto got = store.get(SourceLayer::Draft, cell);
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, -30.0);
   EXPECT_DOUBLE_EQ(got->uncertainty, 0.5);
@@ -55,7 +55,7 @@ TEST(Store, SetGetRoundTrip)
 TEST(Store, GetEmptyLayerIsNullopt)
 {
   BathymetryStore store(5);
-  EXPECT_FALSE(store.get(SourceLayer::Survey, store.cellIndex(43.0, -70.5)).has_value());
+  EXPECT_FALSE(store.get(SourceLayer::Draft, store.cellIndex(43.0, -70.5)).has_value());
 }
 
 TEST(Store, LayersAreIndependent)
@@ -64,9 +64,9 @@ TEST(Store, LayersAreIndependent)
   BathymetryStore store(5, /*reference_writable=*/true);
   const auto cell = store.cellIndex(43.0, -70.5);
   store.set(SourceLayer::Reference, cell, BathyCell{-10.0, 0.1});
-  store.set(SourceLayer::Survey, cell, BathyCell{-12.0, 2.0});
+  store.set(SourceLayer::Draft, cell, BathyCell{-12.0, 2.0});
   EXPECT_DOUBLE_EQ(store.get(SourceLayer::Reference, cell)->depth, -10.0);
-  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Survey, cell)->depth, -12.0);
+  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Draft, cell)->depth, -12.0);
 }
 
 TEST(Store, DoubleWriteSameCellLastWriteWins)
@@ -75,24 +75,24 @@ TEST(Store, DoubleWriteSameCellLastWriteWins)
   // first — there is no per-day epoch ordering or provenance guard.
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  EXPECT_TRUE(store.set(SourceLayer::Survey, cell, BathyCell{-10.0, 0.1}));
-  EXPECT_TRUE(store.set(SourceLayer::Survey, cell, BathyCell{-12.0, 0.2}));
-  const auto got = store.get(SourceLayer::Survey, cell);
+  EXPECT_TRUE(store.set(SourceLayer::Draft, cell, BathyCell{-10.0, 0.1}));
+  EXPECT_TRUE(store.set(SourceLayer::Draft, cell, BathyCell{-12.0, 0.2}));
+  const auto got = store.get(SourceLayer::Draft, cell);
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, -12.0);
   EXPECT_DOUBLE_EQ(got->uncertainty, 0.2);
   // Still one tile (same grid).
-  EXPECT_EQ(tilesIn(store, SourceLayer::Survey), 1u);
+  EXPECT_EQ(tilesIn(store, SourceLayer::Draft), 1u);
 }
 
 TEST(Store, TilesAllocatedLazilyPerLayer)
 {
   BathymetryStore store(5);
-  EXPECT_TRUE(store.tiles(SourceLayer::Survey).empty());
+  EXPECT_TRUE(store.tiles(SourceLayer::Draft).empty());
   EXPECT_TRUE(store.tiles(SourceLayer::Reference).empty());
 
-  store.set(SourceLayer::Survey, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5});
-  EXPECT_EQ(tilesIn(store, SourceLayer::Survey), 1u);
+  store.set(SourceLayer::Draft, store.cellIndex(43.0, -70.5), BathyCell{-30.0, 0.5});
+  EXPECT_EQ(tilesIn(store, SourceLayer::Draft), 1u);
   EXPECT_TRUE(store.tiles(SourceLayer::Reference).empty());
 }
 
@@ -100,8 +100,8 @@ TEST(Store, NoDataCellReadsBackAsNoData)
 {
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  store.set(SourceLayer::Survey, cell, BathyCell{});  // depth NaN
-  const auto got = store.get(SourceLayer::Survey, cell);
+  store.set(SourceLayer::Draft, cell, BathyCell{});  // depth NaN
+  const auto got = store.get(SourceLayer::Draft, cell);
   ASSERT_TRUE(got.has_value());      // tile exists
   EXPECT_FALSE(got->hasData());      // but the cell carries no usable depth
 }
@@ -116,15 +116,15 @@ TEST(Store, MultiLevelTilesCoexist)
   const auto default_cell = store.cellIndex(43.0, -70.5);
   ASSERT_NE(fine_cell.level(), default_cell.level());
 
-  EXPECT_NO_THROW(store.set(SourceLayer::Survey, fine_cell, BathyCell{-22.0, 0.3}));
-  store.set(SourceLayer::Survey, default_cell, BathyCell{-20.0, 0.5});
+  EXPECT_NO_THROW(store.set(SourceLayer::Draft, fine_cell, BathyCell{-22.0, 0.3}));
+  store.set(SourceLayer::Draft, default_cell, BathyCell{-20.0, 0.5});
 
   // Both tiles exist in the same layer at different levels.
-  EXPECT_EQ(tilesIn(store, SourceLayer::Survey), 2u);
-  const auto fine_got = store.get(SourceLayer::Survey, fine_cell);
+  EXPECT_EQ(tilesIn(store, SourceLayer::Draft), 2u);
+  const auto fine_got = store.get(SourceLayer::Draft, fine_cell);
   ASSERT_TRUE(fine_got.has_value());
   EXPECT_DOUBLE_EQ(fine_got->depth, -22.0);
-  const auto default_got = store.get(SourceLayer::Survey, default_cell);
+  const auto default_got = store.get(SourceLayer::Draft, default_cell);
   ASSERT_TRUE(default_got.has_value());
   EXPECT_DOUBLE_EQ(default_got->depth, -20.0);
 }
@@ -132,7 +132,7 @@ TEST(Store, MultiLevelTilesCoexist)
 TEST(Store, InvalidCellThrows)
 {
   BathymetryStore store(5);
-  EXPECT_THROW(store.set(SourceLayer::Survey, gggs::CellIndex{}, BathyCell{}),
+  EXPECT_THROW(store.set(SourceLayer::Draft, gggs::CellIndex{}, BathyCell{}),
     std::invalid_argument);
 }
 
@@ -154,7 +154,7 @@ TEST(Store, ReferenceIsReadOnlyByDefault)
     std::logic_error);
   // Other layers are unaffected by the guard.
   const auto cell = store.cellIndex(43.0, -70.5);
-  EXPECT_NO_THROW(store.set(SourceLayer::Survey, cell, BathyCell{-12.0, 2.0}));
+  EXPECT_NO_THROW(store.set(SourceLayer::Draft, cell, BathyCell{-12.0, 2.0}));
 }
 
 TEST(Store, ReferenceWritableStoreAllowsSet)
@@ -198,22 +198,22 @@ TEST(Store, ImportTilesBulkInsert)
   // (last-write-wins) while leaving other grids untouched.
   BathymetryStore store(5);
   const auto cell = store.cellIndex(43.0, -70.5);
-  EXPECT_EQ(store.importTiles(SourceLayer::Survey, oneTile(cell, BathyCell{-30.0, 0.5})), 1u);
-  const auto got = store.get(SourceLayer::Survey, cell);
+  EXPECT_EQ(store.importTiles(SourceLayer::Draft, oneTile(cell, BathyCell{-30.0, 0.5})), 1u);
+  const auto got = store.get(SourceLayer::Draft, cell);
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->depth, -30.0);
 
   // Re-importing the same grid replaces it (no provenance ordering since #221).
-  EXPECT_EQ(store.importTiles(SourceLayer::Survey, oneTile(cell, BathyCell{-28.0, 0.4})), 1u);
-  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Survey, cell)->depth, -28.0);
-  EXPECT_EQ(tilesIn(store, SourceLayer::Survey), 1u);
+  EXPECT_EQ(store.importTiles(SourceLayer::Draft, oneTile(cell, BathyCell{-28.0, 0.4})), 1u);
+  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Draft, cell)->depth, -28.0);
+  EXPECT_EQ(tilesIn(store, SourceLayer::Draft), 1u);
 
   // A grid not in the import is left untouched: import a second, distinct grid.
   const auto other = store.cellIndex(44.0, -71.0);
   ASSERT_FALSE(cell.grid() == other.grid());
-  store.importTiles(SourceLayer::Survey, oneTile(other, BathyCell{-15.0, 0.6}));
-  EXPECT_EQ(tilesIn(store, SourceLayer::Survey), 2u);
-  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Survey, cell)->depth, -28.0);   // first grid intact
+  store.importTiles(SourceLayer::Draft, oneTile(other, BathyCell{-15.0, 0.6}));
+  EXPECT_EQ(tilesIn(store, SourceLayer::Draft), 2u);
+  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Draft, cell)->depth, -28.0);   // first grid intact
 }
 
 TEST(Store, ImportTilesRejectsTileKeyMismatch)
@@ -230,7 +230,7 @@ TEST(Store, ImportTilesRejectsTileKeyMismatch)
   marine_bathymetry_store::BathymetryTile mismatched(cell_b.grid());
   tiles.emplace(cell_a.grid(), std::move(mismatched));
   EXPECT_THROW(
-    store.importTiles(SourceLayer::Survey, std::move(tiles)),
+    store.importTiles(SourceLayer::Draft, std::move(tiles)),
     std::invalid_argument);
 }
 
@@ -257,8 +257,8 @@ TEST(Store, ImportTilesEmptyIsNoOp)
   // An empty import (e.g. an entirely no-data GeoTIFF) inserts nothing and adds
   // no tiles to the layer.
   BathymetryStore store(5);
-  EXPECT_EQ(store.importTiles(SourceLayer::Survey, {}), 0u);
-  EXPECT_TRUE(store.tiles(SourceLayer::Survey).empty());
+  EXPECT_EQ(store.importTiles(SourceLayer::Draft, {}), 0u);
+  EXPECT_TRUE(store.tiles(SourceLayer::Draft).empty());
 }
 
 TEST(Store, ChartIsReadOnlyByDefault)
@@ -305,4 +305,98 @@ TEST(Store, ImportTilesHonorsChartGate)
 
   BathymetryStore staging(5, /*reference_writable=*/false, /*chart_staging_writable=*/true);
   EXPECT_EQ(staging.importTiles(SourceLayer::Chart, oneTile(cell, BathyCell{-20.0, 1.5})), 1u);
+}
+
+// --- Public cell-wise anti-clobber API: clearOverlappedDraft (ADR-0010 D8) ---
+// Direct-call coverage of the store operation extracted from importGeoTiff (#308),
+// so cube's `saveTile`-based regen paths that bypass the importer exercise the same
+// semantics. importGeoTiff's own anti-clobber tests (test_geotiff_import.cpp) cover
+// the importer wiring; these hit the store API on the direct path.
+
+TEST(Store, ClearOverlappedDraftIsCellWiseAndPreservesGatedDropHoles)
+{
+  // The invariant that mandates CELL-WISE (not tile-wise) clearing on the direct
+  // path: a processed tile clears only draft cells it has data for; a processed
+  // no-data cell (a gated-drop hole) leaves the overlapping draft cell intact, and a
+  // processed cell where draft has no data clears nothing.
+  BathymetryStore store(11);
+  const gggs::GridIndex grid = store.level().gridIndex(43.0, -70.5);
+  const gggs::CellIndex cell_a(grid, 0, 0);   // draft data + processed data -> cleared
+  const gggs::CellIndex cell_b(grid, 0, 1);   // draft data + processed hole  -> survives
+  const gggs::CellIndex cell_c(grid, 0, 2);   // draft empty + processed data -> nothing
+  ASSERT_TRUE(cell_a.valid() && cell_b.valid() && cell_c.valid());
+  store.set(SourceLayer::Draft, cell_a, BathyCell{-9.0, 0.4});
+  store.set(SourceLayer::Draft, cell_b, BathyCell{-8.0, 0.4});
+  // cell_c intentionally left with no draft data.
+
+  marine_bathymetry_store::BathymetryTile processed(grid);
+  processed.set(0, 0, BathyCell{-30.0, 0.1});  // covers A
+  processed.set(0, 2, BathyCell{-31.0, 0.1});  // covers C (draft empty there)
+  // (0, 1) left no-data: the gated-drop hole over B.
+
+  const auto result = store.clearOverlappedDraft(processed);
+
+  EXPECT_EQ(result.cells_cleared, 1u);            // only cell A
+  ASSERT_EQ(result.tiles_touched.size(), 1u);
+  EXPECT_TRUE(result.tiles_touched.front() == grid);
+
+  // Cell A: draft cleared (reads no-data).
+  const auto draft_a = store.get(SourceLayer::Draft, cell_a);
+  ASSERT_TRUE(draft_a.has_value());
+  EXPECT_FALSE(draft_a->hasData());
+  // Cell B: processed no-data hole -> draft SURVIVES.
+  const auto draft_b = store.get(SourceLayer::Draft, cell_b);
+  ASSERT_TRUE(draft_b.has_value());
+  ASSERT_TRUE(draft_b->hasData());
+  EXPECT_DOUBLE_EQ(draft_b->depth, -8.0);
+  // Cell C: draft never had data, so nothing to clear (still no-data).
+  const auto draft_c = store.get(SourceLayer::Draft, cell_c);
+  ASSERT_TRUE(draft_c.has_value());  // the A/B writes created the tile
+  EXPECT_FALSE(draft_c->hasData());
+}
+
+TEST(Store, ClearOverlappedDraftNeverCreatesDraftTile)
+{
+  // Clearing must never CREATE a Draft tile where none existed: a processed tile
+  // over an empty Draft layer clears nothing and leaves Draft empty (no spurious
+  // all-NaN on-disk artifact).
+  BathymetryStore store(11);
+  const gggs::GridIndex grid = store.level().gridIndex(43.0, -70.5);
+  marine_bathymetry_store::BathymetryTile processed(grid);
+  processed.set(0, 0, BathyCell{-30.0, 0.1});
+
+  const auto result = store.clearOverlappedDraft(processed);
+
+  EXPECT_EQ(result.cells_cleared, 0u);
+  EXPECT_TRUE(result.tiles_touched.empty());
+  EXPECT_TRUE(store.tiles(SourceLayer::Draft).empty());
+}
+
+TEST(Store, ClearOverlappedDraftTileMapAggregatesAcrossTiles)
+{
+  // The tile-map overload clears across several grids in one call (a bulk regen),
+  // aggregating the count and listing each touched grid once.
+  BathymetryStore store(11);
+  const gggs::GridIndex grid1 = store.level().gridIndex(43.0, -70.5);
+  const gggs::GridIndex grid2 = store.level().gridIndex(44.0, -69.0);
+  ASSERT_FALSE(grid1 == grid2);
+  const gggs::CellIndex c1(grid1, 0, 0);
+  const gggs::CellIndex c2(grid2, 0, 0);
+  store.set(SourceLayer::Draft, c1, BathyCell{-9.0, 0.4});
+  store.set(SourceLayer::Draft, c2, BathyCell{-7.0, 0.4});
+
+  std::map<gggs::GridIndex, marine_bathymetry_store::BathymetryTile> processed;
+  marine_bathymetry_store::BathymetryTile t1(grid1);
+  t1.set(0, 0, BathyCell{-30.0, 0.1});
+  marine_bathymetry_store::BathymetryTile t2(grid2);
+  t2.set(0, 0, BathyCell{-31.0, 0.1});
+  processed.emplace(grid1, std::move(t1));
+  processed.emplace(grid2, std::move(t2));
+
+  const auto result = store.clearOverlappedDraft(processed);
+
+  EXPECT_EQ(result.cells_cleared, 2u);
+  EXPECT_EQ(result.tiles_touched.size(), 2u);
+  EXPECT_FALSE(store.get(SourceLayer::Draft, c1)->hasData());
+  EXPECT_FALSE(store.get(SourceLayer::Draft, c2)->hasData());
 }

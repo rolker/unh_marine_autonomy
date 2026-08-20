@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -47,7 +48,7 @@ struct DatasetCloser
 
 }  // namespace
 
-std::size_t importGeoTiff(
+ProcessedImportResult importGeoTiff(
   BathymetryStore & store, SourceLayer layer,
   const std::string & path, const GeoTiffImportOptions & options)
 {
@@ -200,11 +201,27 @@ std::size_t importGeoTiff(
     }
   }
 
+  ProcessedImportResult result;
+  result.cells_imported = imported;
+
+  // Anti-clobber (ADR-0010 D8): a Processed import supersedes overlapped live
+  // Draft cells. Delegate to the store's public `clearOverlappedDraft` (the store
+  // owns this semantics so cube's direct-`saveTile` regen paths apply it
+  // identically). Clear BEFORE the move below consumes `tiles` — Draft and
+  // Processed are independent layer maps, so mutating Draft here does not disturb
+  // the processed tiles still headed for importTiles(). Gated-drop holes (processed
+  // no-data cells) leave the draft cell intact; see BathymetryStore::clearOverlappedDraft.
+  if (layer == SourceLayer::Processed) {
+    const DraftClearResult cleared = store.clearOverlappedDraft(tiles);
+    result.draft_cells_cleared = cleared.cells_cleared;
+    result.draft_tiles_touched = std::move(cleared.tiles_touched);
+  }
+
   // Bulk-insert into the layer's single fused surface (#221). The Reference
   // read-only gate is enforced by importTiles (throws logic_error if the store
   // is not reference_writable).
   store.importTiles(layer, std::move(tiles));
-  return imported;
+  return result;
 }
 
 }  // namespace marine_bathymetry_store

@@ -86,7 +86,7 @@ std::optional<DepthSample> shallowestReliable(
 /// Same reliability gate as `shallowestReliable` (uncertainty ≤ @p
 /// max_uncertainty; a NaN uncertainty is never reliable), but returns **all**
 /// passing samples rather than collapsing to the shallowest. A cell can carry
-/// more than one sample when several source layers (Survey/Reference/Chart) or
+/// more than one sample when several source layers (Processed/Draft/Reference/Chart) or
 /// several GGGS levels cover it.
 ///
 /// @note This exists because a *shallowest-depth* pick is unsafe for cost: a

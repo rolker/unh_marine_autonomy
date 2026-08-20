@@ -58,8 +58,9 @@ namespace marine_sidescan_mosaic
 
 /// @brief Default layer search order for @ref BathyDem.
 ///
-/// Mirrors the store's own `source_layers_by_priority` prefix (Survey, then
-/// Reference). `chart` is deliberately **not** in the default: charted soundings
+/// Mirrors the store's own `source_layers_by_priority` prefix (Processed, then
+/// Draft, then Reference — ADR-0010 D8 split the pre-D8 `survey/` into
+/// `processed/`+`draft/`). `chart` is deliberately **not** in the default: charted soundings
 /// are cartographically shoal-biased for navigation safety, and a shoal-biased
 /// vertical term would bias sample placement. That bias is wanted in the store's
 /// **safety** query — the shallowest-reliable mode of ADR-0002 D7, refined by
@@ -168,8 +169,8 @@ public:
   /// while **another** requested layer does have tiles: the store is usable but
   /// the search order is narrower than the operator asked for. Reported rather
   /// than thrown (reference-only coverage is legitimate) and never swallowed —
-  /// a silently dropped `survey/` would orthorectify a survey against the coarse
-  /// regional layer alone. Constructed as a library value so the tool owns the
+  /// a silently dropped `processed/`/`draft/` would orthorectify a survey against
+  /// the coarse regional layer alone. Constructed as a library value so the tool owns the
   /// output stream.
   const std::vector<std::string> & warnings() const {return warnings_;}
 

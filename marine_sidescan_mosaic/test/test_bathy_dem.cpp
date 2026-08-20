@@ -359,7 +359,7 @@ TEST(BathyDem, UnusableStoreThrows)
   EXPECT_THROW(makeDem(dir.path().string(), {}), std::runtime_error);
 
   // A store whose only tiles are in a layer the caller did not ask for is just as
-  // unusable — this is the ADR-0010 D3 survey/ -> processed/ rename case.
+  // unusable — this is the ADR-0010 D8 survey/ -> processed/ rename case.
   writeConstantTile(dir.path(), "processed", gggs::Level(kFineLevel).gridIndex(kLat, kLon), -3.0);
   EXPECT_THROW(makeDem(dir.path().string(), {"survey"}), std::runtime_error);
   EXPECT_NO_THROW(makeDem(dir.path().string(), {"processed"}));
@@ -367,9 +367,9 @@ TEST(BathyDem, UnusableStoreThrows)
 
 // A requested layer that is absent — or present but tile-less — while another
 // requested layer HAS tiles is usable but narrower than the operator asked for.
-// It must be reported, never dropped in silence: after ADR-0010 D3's
-// survey/ -> processed/ re-classification, `survey,reference` would otherwise
-// quietly orthorectify against the coarse regional layer alone.
+// It must be reported, never dropped in silence: after ADR-0010 D8's
+// survey/ -> processed/ re-classification (+ new draft/), the old `survey,reference`
+// default would otherwise quietly orthorectify against the coarse regional layer alone.
 TEST(BathyDem, PartiallyMissingLayersWarnRatherThanVanish)
 {
   ScratchDir dir("partial");
@@ -401,6 +401,47 @@ TEST(BathyDem, PartiallyMissingLayersWarnRatherThanVanish)
   {
     msm::BathyDem dem(dir.path().string(), {"reference"});
     EXPECT_TRUE(dem.warnings().empty());
+  }
+}
+
+// ADR-0010 D8: `draft/` is optional-by-design — it starts empty and only live
+// CUBE ingest ever creates it, so on an offline or freshly migrated store its
+// directory legitimately does not exist. That absence is the expected state, not
+// reduced coverage, so the absent-layer warning is suppressed for `draft` (and
+// only `draft`) as long as some other requested layer resolved — otherwise the
+// new default `processed,draft,reference` would false-alarm the #297 guard on the
+// common offline path. A missing NON-draft layer still warns.
+TEST(BathyDem, AbsentDraftIsSilentWhenAnotherLayerPresent)
+{
+  const auto grid = gggs::Level(kFineLevel).gridIndex(kLat, kLon);
+
+  // The common offline case: default `processed,draft,reference` on a store that
+  // has processed/ (+ reference/) but no draft/ yet — nothing to warn about.
+  {
+    ScratchDir dir("draft_absent_ok");
+    writeConstantTile(dir.path(), "processed", grid, -9.0);
+    writeConstantTile(dir.path(), "reference", grid, -10.0);
+    msm::BathyDem dem(dir.path().string(), {"processed", "draft", "reference"});
+    ASSERT_TRUE(dem.warnings().empty())
+      << (dem.warnings().empty() ? std::string{} : dem.warnings()[0]);
+    EXPECT_EQ(dem.layers(), (std::vector<std::string>{"processed", "reference"}));
+    const auto depth = dem.depthAt(kLat, kLon);
+    ASSERT_TRUE(depth.has_value());
+    EXPECT_NEAR(*depth, -9.0, 1e-9);
+  }
+
+  // A missing NON-draft layer is still reported: only draft's absence is benign.
+  // (The warning body names both processed/ and draft/, so discriminate on the
+  // `'<name>/' does not exist` phrasing rather than a bare substring.)
+  {
+    ScratchDir dir("nondraft_absent_warns");
+    writeConstantTile(dir.path(), "reference", grid, -10.0);
+    msm::BathyDem dem(dir.path().string(), {"processed", "draft", "reference"});
+    ASSERT_EQ(dem.warnings().size(), 1u);
+    EXPECT_NE(dem.warnings()[0].find("'processed/' does not exist"), std::string::npos)
+      << dem.warnings()[0];
+    EXPECT_EQ(dem.warnings()[0].find("'draft/' does not exist"), std::string::npos)
+      << dem.warnings()[0];
   }
 }
 
