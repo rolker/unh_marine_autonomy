@@ -25,24 +25,30 @@ or consumer-specific logic.
 
 ### Source layers (`bathy_cell.hpp`)
 
-`SourceLayer` is an ordered enum in descending query priority — `Survey = 0`
-(the CUBE product), `Reference = 1` (a prior surface imported before the survey:
-a chart-derived contour prior, an external processed grid), `Chart = 2` (official
-navigation products, S57 exports). The numeric value is the priority rank, and
+`SourceLayer` is an ordered enum in descending query priority — `Processed = 0`
+(the authoritative off-boat `import_bag` re-run), `Draft = 1` (live on-boat CUBE),
+`Reference = 2` (a prior surface imported before the survey: a chart-derived
+contour prior, an external processed grid), `Chart = 3` (official navigation
+products, S57 exports). The numeric value is the priority rank, and
 `source_layers_by_priority` is the array every query and I/O path iterates.
 
 The pre-#248 `chart`/`draft`/`processed` taxonomy first collapsed to
-`survey` + `reference` (ADR-0002 Amendment A2.1): with one platform and one fused
-surface per layer the live-vs-durable split added no query value. `Chart` was then
+`survey` + `reference` (ADR-0002 Amendment A2.1). ADR-0010 **D8** then re-split
+`survey` back into **`Processed`** and **`Draft`** (Amendment A3): the live and
+offline CUBE paths produce different surfaces, so fusing them let a gappy live pass
+clobber an authoritative re-run under a multi-day campaign loop. `Chart` was
 reintroduced by #275 as a *distinct* layer for ADR-0010 D3/D7 — not the pre-#248
 `chart`, and not a generalization of `reference`: it holds official products
 regenerated wholesale from S57, at the lowest priority under D4's placeholder
-ordering (`survey > reference > chart`).
+ordering (`processed > draft > reference > chart`).
 
 A cell's source is **implied by which layer holds it**: the store keeps one tile
 map per layer, so source is the map, not a per-cell field. Priority is a
-**non-destructive query-time overlay** — live `survey` ingest never clobbers the
-read-only `reference` prior (ADR-0002 §D3).
+**non-destructive query-time overlay** — live `draft` ingest never clobbers the
+read-only `reference` prior (ADR-0002 §D3), and never outranks a `processed`
+re-run cell. **Anti-clobber (D8):** a `processed` import clears overlapped `draft`
+cells **cell-wise** (only where it has data, so the re-run's gated-drop holes leave
+draft intact).
 
 #### Write gates
 
@@ -52,7 +58,8 @@ chart_staging_writable)`, mirrored by `fromCellSize`):
 
 | Layer | Flag | Writable how |
 |---|---|---|
-| `Survey` | — | always writable (live ingest) |
+| `Processed` | — | always writable (offline `import_bag` re-run) |
+| `Draft` | — | always writable (live CUBE ingest) |
 | `Reference` | `reference_writable=true` | cell-wise `set()` / `importTiles()` on an importer store |
 | `Chart` | `chart_staging_writable=true` | **staging only** — build the layer in a staging store, `save()` it, then swap it in with `replaceChartLayer` |
 
@@ -80,8 +87,8 @@ written.
 ### Queries (`query.hpp`)
 
 - `bestSource(store, cell)` — the highest-priority layer with data. Walks
-  `source_layers_by_priority` in order (`Survey` → `Reference` → `Chart`) and
-  returns the first layer holding a value for the cell.
+  `source_layers_by_priority` in order (`Processed` → `Draft` → `Reference` →
+  `Chart`) and returns the first layer holding a value for the cell.
 - `shallowestReliable(store, cell, max_uncertainty)` — the shallowest (greatest
   ellipsoidal height) value among layers whose uncertainty is within tolerance.
   For navigation-safety use.
@@ -102,14 +109,17 @@ dropped — ADR-0002 Amendment A2.2). `save()` writes only dirty tiles
 the file geotransform and rejecting tiles written at a different GGGS level.
 Coarse store-level provenance (`StoreMetadata{platform, sensor, survey, date}`) is
 persisted once at the store root as `registry.json` (`registry.hpp`). The layer
-subdirectory names are `survey/`, `reference/`, `chart/` (`layerDirName`).
+subdirectory names are `processed/`, `draft/`, `reference/`, `chart/`
+(`layerDirName`). A legacy on-disk `survey/` layer **auto-migrates** to `processed/`
+on `load()`/`loadWindow()` (single atomic rename; a store holding both `survey/` and
+`processed/` is refused — ADR-0010 D8, Amendment A3).
 
 #### Wholesale chart regeneration (`replaceChartLayer`)
 
 `replaceChartLayer(staged_chart_dir, store_dir)` swaps a freshly built chart layer
 into a store — ADR-0010 D7's *wholesale regeneration, never a merge*. It always
 targets `chart/` and takes no `SourceLayer` argument, so no caller can
-wholesale-replace `survey/` or `reference/`. The producer builds the layer in a
+wholesale-replace `processed/`, `draft/`, or `reference/`. The producer builds the layer in a
 staging store (`chart_staging_writable=true`), `save()`s it, and hands the
 resulting `<staged>/chart` directory to this call.
 
@@ -150,7 +160,7 @@ import_geotiff --commit /path/to/staged /path/to/store
   the cost-model rework
   ([#276](https://github.com/rolker/unh_marine_autonomy/issues/276)) lands.
 
-`survey`/`reference` imports keep the single-step form
+`draft`/`processed`/`reference` imports keep the single-step form
 `import_geotiff <store_dir> <layer> <geotiff>`; `chart` is stage/commit only (a
 chart layer is never written into a live store incrementally).
 
@@ -200,7 +210,7 @@ and the coarse `StoreMetadata` round-trip.
 
 The chart suite additionally covers the write gates (`set` / `importTiles` on a
 normal store, and both the constructor and `fromCellSize` staging opt-ins), the
-full `Survey > Reference > Chart` best-source walk-down, and every
+full `Processed > Draft > Reference > Chart` best-source walk-down, and every
 `replaceChartLayer` path: round-trip through a swap, wholesale supersession of
 stale tiles, each refusal (missing / empty / symlinked / aliased staged dir,
 non-directory store), stale-backup recovery from a crashed run, restoration of the

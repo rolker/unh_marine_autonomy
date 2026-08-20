@@ -70,6 +70,17 @@ under a multi-day campaign loop). Depth layers are now
 and rationale; A2's remaining simplifications (single value tile, coarse
 `StoreMetadata`, no per-cell staleness gate) stand.
 
+**Amended 2026-08-20 ([#308](https://github.com/rolker/unh_marine_autonomy/issues/308)):**
+the draft/processed split of ADR-0010 D8 is **implemented** (the #272 pointer above
+records the *decision*; this records the *code*). `SourceLayer::Survey` splits into
+`Processed` (0, authoritative offline re-run) and `Draft` (1, live CUBE), shifting
+`Reference` (2) and `Chart` (3); best-source priority is now
+`Processed > Draft > Reference > Chart`; a `Processed` import clears overlapped
+`Draft` cells **cell-wise** (only where the import has data, so gated-drop holes
+survive); and a legacy on-disk `survey/` layer **auto-migrates** to `processed/`
+(single atomic rename; refuse-if-both). A2.1 is revised accordingly — see
+**Amendment A3** below.
+
 The full design is in the issue body; this ADR records the load-bearing
 architecture decisions and their rationale so they survive the issue. It is a
 **cross-cutting** decision in the sense ADR-0001 establishes for this repo's
@@ -574,6 +585,54 @@ The `SourceLayer` rename and the dropped bathy-store obligations (no per-cell ti
 source to feed) are a producer-side contract change. cube_bathymetry#96 (the
 consumption side) must co-land so there is no broken-build window; the merge is
 coordinated (issue #248 resolution 2, 2026-06-30).
+
+## Amendment A3 — draft/processed split implemented ([#308](https://github.com/rolker/unh_marine_autonomy/issues/308), 2026-08-20)
+
+Implements ADR-0010 **D8** in `marine_bathymetry_store`, restoring the quality axis
+A2.1 collapsed. The evidence and decision live in ADR-0010 D8; this records the
+realized contract.
+
+### A3.1 — `SourceLayer::Survey` splits into `Processed` + `Draft`
+
+The single `Survey` layer (A2.1) becomes two: **`Processed`** (enum 0, the
+deterministic off-boat `import_bag` re-run — authoritative, distributed back) and
+**`Draft`** (enum 1, live on-boat CUBE — immediate, known-gappy, disposable and
+regenerable from bags). `Reference` shifts to 2 and `Chart` to 3. Best-source
+priority is now `Processed > Draft > Reference > Chart` (the numeric rank). The live
+and offline CUBE paths produce different surfaces (ADR-0010 Context §3), so fusing
+them let a gappy live pass clobber an authoritative re-run — continuing to survey
+degraded the store. `Processed`/`Draft` are freely writable (live/replay ingest
+write them exclusively); `Reference`/`Chart` keep their A2.1/D7 write gates.
+
+### A3.2 — Cross-layer anti-clobber is cell-wise
+
+When a `Processed` import lands, overlapped `Draft` cells are cleared **cell-wise —
+only where the processed import has data** (never tile-wise/by-footprint). Draft
+cells in the re-run's gated-drop holes (cells the import left no-data) survive:
+harmless under `Processed > Draft`, and strictly more coverage than clearing by
+footprint. The store exposes no tile/cell-erase API and `save()` never deletes
+on-disk tiles, so clearing is done by writing the draft cell no-data
+(`set(Draft, cell, {})`), persisted through the normal dirty-tile save path. The
+importer returns the touched draft tiles (`ProcessedImportResult.draft_tiles_touched`)
+as the display-cache invalidation seam (ADR-0008; camp#171/#172).
+
+### A3.3 — On-disk `survey/` auto-migrates to `processed/`
+
+The pre-D8 fused `survey/` layer carries no per-cell live-vs-re-run provenance, so
+there is nothing to split: `load()`/`loadWindow()` **re-classify it wholesale to
+`processed/`** via a single same-filesystem `rename(survey/ → processed/)` (the
+atomic commit point; `draft/` starts empty). Re-opening a migrated store is
+idempotent (no `survey/` remains). A store holding **both** `survey/` and
+`processed/` is ambiguous and **refused loudly** (throws); the operator resolves it.
+`save()`/`evictOutside()` never migrate.
+
+### A3.4 — Synchronized landing with cube_bathymetry#133
+
+The `Survey → Draft` producer-side retarget must co-land: cube_bathymetry's writers
+still target `SourceLayer::Survey`, so this enum change breaks cube's build until
+cube_bathymetry#133 lands in lockstep (mirrors the A2.5 / cube_bathymetry#96
+discipline). The CLI keeps a `survey` alias (a deprecation-warned alias for
+`processed`) so operator workflows are not broken silently.
 
 ## Consequences
 

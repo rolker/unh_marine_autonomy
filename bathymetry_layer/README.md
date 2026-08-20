@@ -6,8 +6,10 @@ the planner routes around shoals.
 
 This is the **D1** (prior-only, static) deliverable of issue
 [#164](https://github.com/rolker/unh_marine_autonomy/issues/164): the layer reads
-the store's persisted layers (`survey/` and the read-only `reference/` prior — the
-post-#248 taxonomy) from disk and converts depth to cost. It does **not** yet
+the store's persisted layers (`processed/` + `draft/` and the read-only `reference/`
+prior — ADR-0010 D8 split the pre-D8 `survey/` into processed/draft) from disk —
+transparently, through the store's best-source query overlay, so this layer needs
+no per-layer knowledge — and converts depth to cost. It does **not** yet
 re-read the store live as the boat surveys — that is the D2 follow-on (see
 [Follow-on work](#follow-on-work)).
 
