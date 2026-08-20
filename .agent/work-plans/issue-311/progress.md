@@ -117,3 +117,18 @@ From the consequences map:
 ### Open questions
 - [ ] For #163: is the lake-contour-prior import idea actively wanted as a follow-on issue, or definitively out of scope?
 - [ ] For mru_transform#8: is the issue tracking only the datum design (answered by ADR-0010), or also a broader TF frame hierarchy doc?
+
+## Plan Review
+**Status**: complete
+**When**: 2026-08-20 21:52 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-311/plan.md` at `428ba68`
+**PR**: PR-less (`--issue 311`, layer worktree)
+**Verdict**: approve-with-suggestions
+
+### Findings
+- [ ] (suggestion) Verify the enumerated implementing-PR numbers (#279, #280, #291, #290, #313, #320, s57_tools#29/#30, cube#133/#134) resolve to real merged PRs before writing them into ADR-0010 — the ADR is a durable record and a wrong citation is a permanent error. `plan.md:31-33`
+- [ ] (suggestion) The Context's "ADR-0010 ... is complete" overstates implementation status; the Accepted status line should acknowledge remaining follow-ons (full migration uma#310 UNSTARTED, chart-updater cron, datum-grid provisioning) so "Accepted" reads as decision-adopted, not everything-shipped — consistent with the plan's own "partially materialized" framing. `plan.md:11`
+- [ ] (suggestion) ADR-0010's own Consequences/housekeeping list names three items absent from the plan's gardening set: s57_tools#23 (answered by ADR), s57_tools#26 (mooted by D5/D10), and echoboats#276's dangling "#14" reference. The plan frames itself as executing ADR-0010's housekeeping directly — fold these in or explicitly mark them out-of-scope/tracked-elsewhere. `plan.md:36-38`
+- [ ] (suggestion) Before retiring #163, confirm the D7 corpus-updater / cron-regeneration thread (the draft calls it "the next piece") is tracked elsewhere (ADR-0010 D7 folds s57_tools#5) so closing #163 doesn't orphan it. `plan.md:75-86`
