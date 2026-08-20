@@ -49,3 +49,21 @@ ADR-0010 Context §3. The issue correctly maps scope, dependencies, and sequenci
 
 ### Open questions
 - [ ] No open questions — plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-08-20 16:10 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-308/plan.md` at `a9152e3`
+**PR**: PR-less (`--issue` mode; `gh` unauthenticated — issue read from the local review-issue entry)
+**Verdict**: changes-requested
+
+### Findings
+- [ ] (must-fix) Anti-clobber approach is tile-wise but ADR-0010 D8 mandates cell-wise clearing (gated-drop holes must survive); contradicts plan Context and both anti-clobber tests — `plan.md:44` and `plan.md:108`
+- [ ] (must-fix) Clearing mechanism infeasible/non-persistent as written — no public store tile/cell-erase API and `save()` never deletes on-disk tiles (`bathymetry_store.hpp:180-186`); use `set(Draft, cell, NaN)` per populated processed cell — `plan.md:44-47`
+- [ ] (suggestion) `test_import_geotiff_cli.cpp:176` uses `survey` CLI arg but is not in the Files-to-Change table — `plan.md:95`
+- [ ] (suggestion) Clarify `draft_tiles_cleared` granularity under cell-wise clearing (tiles touched, not tiles removed) — `plan.md:44`
+- [ ] (suggestion) CLI usage/error strings need updating: `s102_import_main.cpp:50,177`, `import_geotiff_main.cpp:120` — `plan.md:93-94`
+- [ ] (suggestion) `warnIfUnrecognizedStoreLayout` full message (not just dir list) inverts under D8 — `tile_io.cpp:198-203`, `plan.md:38-39`
+- [ ] (minor) Factor shared migration helper across `load()`/`loadWindow()`; note `save()`/`evictOutside()` don't migrate — `plan.md:36-39`
