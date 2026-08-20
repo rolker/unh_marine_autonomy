@@ -184,3 +184,51 @@ Verdict is changes-requested → host should dispatch `address-findings` to work
 open items above (the must-fix needs an author decision: suppress absent-draft
 when processed present / drop draft from default / accept+document), then
 re-dispatch `review-code`. Diff is not pushed until a pre-push review returns approved.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-20 17:16 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-308 at `c46c25f`
+**Addressed**: `## Local Review (Pre-Push)` (2026-08-20 17:30, `feature/issue-308` at `467aeb1`)
+**Commits**: `e36a6f6`, `41e8e13`, `8c1bfdb`, `dd24369`, `416d7c1`, `c46c25f`
+
+### Summary
+
+Worked the pre-push review's 1 must-fix + 5 suggestions, one atomic commit each.
+The must-fix took the host-directed option: `draft/` is optional-by-design under
+ADR-0010 D8 (created only by live CUBE ingest), so `BathyDem` now suppresses the
+absent-layer warning for `draft` when another requested layer resolved — a missing
+NON-draft layer, and a missing `draft` with no other coverage, still warn. `draft`
+stays in the default `kDefaultBathyLayers` search order. The store-side suggestions
+harden the D8 `survey/`→`processed/` auto-migration and document its read-side write.
+
+### Actions
+- [x] (must-fix) Suppress absent-`draft/` warning when another requested bathy layer is present; keep it for a missing non-draft layer or no coverage; documented draft-is-optional at the warning site; `draft` kept in default list; added `BathyDem.AbsentDraftIsSilentWhenAnotherLayerPresent` regression test — `marine_sidescan_mosaic/src/bathy_dem.cpp:191`, `marine_sidescan_mosaic/test/test_bathy_dem.cpp` (`e36a6f6`)
+- [x] (suggestion) Aligned the three sidecar `bathy_layers` fixtures to `processed,draft,reference` (value never asserted; flat-store `""` left as-is) — `marine_sidescan_mosaic/test/test_tier2_processed_dem.cpp:897,967,1032` (`41e8e13`)
+- [x] (suggestion) Separate `std::error_code` per `is_directory` probe in `migrateLegacySurveyDir` — `marine_bathymetry_store/src/tile_io.cpp:254` (`8c1bfdb`)
+- [x] (suggestion) `fs::rename` now uses the `error_code` overload and re-throws `std::runtime_error` on failure, matching the both-exist refuse-loudly idiom — `marine_bathymetry_store/src/tile_io.cpp:268` (`dd24369`)
+- [x] (suggestion) Symlink guard: a symlinked legacy `survey/` is refused loudly (would leave `processed/` a link out of the store), mirroring `replaceChartLayer`; added `MigrationRefusesSymlinkedSurveyDir` test — `marine_bathymetry_store/src/tile_io.cpp:266`, `marine_bathymetry_store/test/test_tile_io.cpp` (`416d7c1`)
+- [x] (suggestion) Documented the read-with-write side effect (write-access requirement + concurrent-open race, both one-shot) on `load()`/`loadWindow()` header docs and call sites — `marine_bathymetry_store/include/marine_bathymetry_store/tile_io.hpp`, `marine_bathymetry_store/src/tile_io.cpp` (`c46c25f`)
+
+### Tests
+
+- `marine_bathymetry_store` (the store-side findings F3–F6): **262 tests, 0 errors,
+  0 failures, 33 skipped** (`build.sh` + `test.sh`), up from 261 — the new
+  `MigrationRefusesSymlinkedSurveyDir` passes.
+- `marine_sidescan_mosaic` (F1 code+test, F2 fixtures): **could not be built/tested
+  in this worktree** — the same pre-existing environment gap noted in the prior
+  Implementation entry persists: the installed `ros-jazzy-geodesy` lacks
+  `geodesy/geodesics.h`/`ecef.h`, which `projection.hpp:30` (a file this issue does
+  not touch) needs, so the whole package fails to configure. My changes there are
+  behaviour/logic + test-fixture level; the re-review / CI with a complete geodesy
+  will compile them. The added `BathyDem.AbsentDraftIsSilentWhenAnotherLayerPresent`
+  test follows the exact idioms of the surrounding tests in the same file.
+
+### Next step
+
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a
+fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 308 --skill review-code
