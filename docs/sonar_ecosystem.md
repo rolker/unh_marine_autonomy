@@ -7,8 +7,9 @@ current; when an umbrella closes or a frontier shifts, update the relevant row.
 
 > Status legend: ✅ done · 🔨 in progress · 📋 designed, not built · ⚠️ blocked/degraded
 
-_Last verified: 2026-06-29 (full status audit against PR/merge state);
-"Where to direct efforts" frontier updated 2026-07-13 ([#258](https://github.com/rolker/unh_marine_autonomy/issues/258))._
+_Last verified: 2026-08-20 (world-model reframe under ADR-0010; store-bathy row,
+ADR spine, and frontier refreshed against merge state);
+"Where to direct efforts" frontier updated 2026-08-20 ([#311](https://github.com/rolker/unh_marine_autonomy/issues/311))._
 
 ## The two arcs
 
@@ -35,6 +36,48 @@ Arc 2 is the **search mission's payload** — for Lake Massabesic (submerged-obj
 search), finding and marking targets *is* the point; Arc 1 tells you where you've
 looked.
 
+## The world model (the STORE hub)
+
+The collection of geospatial stores is the vehicle's **world model**
+([ADR-0010](decisions/0010-geospatial-world-model.md), Accepted 2026-08-20): its
+persistent knowledge of the environment, organized as **raster stores (fields) +
+feature stores (features) + the provenance registry** ([ADR-0005](decisions/0005-multi-platform-provenance-registry.md)),
+all sharing the GGGS spatial index, the WGS84-ellipsoidal datum invariant
+(ADR-0010 D5), and a regenerable-from-source philosophy (every store is a cache
+derivable from bags, the ENC corpus, or reference inputs). Adoption is
+**umbrella-level only** — no package renames; `marine_bathymetry_store`,
+`marine_tiled_raster_store`, etc. keep their mechanism names.
+
+The adopted on-disk root is **`~/data/world/`**, organized by theme × provenance
+(ADR-0010 D3):
+
+```
+~/data/world/
+├── depths/     chart | reference | draft | processed   (marine_bathymetry_store)
+├── imagery/    sidescan (two-tier, ADR-0006) + MBES backscatter (ADR-0007)
+├── features/   contacts (ADR-0004); chart features stay thin until S-100 (D11)
+├── charts/     the ENC corpus + edition registry (cron-managed updater, D7)
+├── s100/       S-100 family; S-102 import cache at s100/s102/ (#288)
+└── datum/      geoid/ + vdatum/ grids + user/ override polygons (#288)
+```
+
+For the **depth** theme the four provenance layers replace ADR-0002 A2's
+`survey`/`reference` pair, ranked `processed > draft > reference > chart` for the
+best-source query (ADR-0010 D4/D8):
+
+| Layer | What | Lifecycle |
+|-------|------|-----------|
+| `chart` | Official navigation products (S57 → S-100) | Regenerated wholesale from the corpus on edition change (D7); write-gated to that path |
+| `reference` | Third-party priors (contour models, external grids/BAGs) | One-shot bespoke imports, σ per source; construction-time read-only gate |
+| `draft` | Live on-boat CUBE output | Streaming append; known-gappy; disposable, regenerable from bags (D8) |
+| `processed` | Off-boat deterministic `import_bag` re-run | Authoritative; distributed back; clears overlapped draft cell-wise (D8) |
+
+**Adopted target, partially materialized.** `~/data/world/` is the adopted root,
+but today it exists only on the dev host as an **eval store** (uma#314: 13 ENC
+cells). The full migration off the legacy `~/data/stores/` root — nav2
+`store_path`s, launch files, CAMP/operator-station paths, and dev tooling such as
+`~/data/stores/survey_index.db` — is **uma#310 (unstarted)**.
+
 ## Arc 1 — Coverage
 
 | Stage | What | Owning umbrella(s) | ADR | Status |
@@ -45,7 +88,7 @@ looked.
 | **Estimate — bathy** | CUBE draft tiles (live), backscatter co-estimation, slope correction | — | 0007 | ✅ mature ([cube#54], [cube#70] closed); slope-correction merged but dormant (needs [cube#59]) |
 | **Estimate — sidescan** | `marine_sidescan_mosaic`: live mosaic (L13, uint16) + offline Tier-1/Tier-2 chain | [#171](https://github.com/rolker/unh_marine_autonomy/issues/171) (I2), [#185](https://github.com/rolker/unh_marine_autonomy/issues/185) | — | ✅ built: live mosaic node + Tier-1 `.sst1` archive + Tier-2 `flat`/`processed` builders + overview pyramid ([#188]); placement is DEM-orthorectified against the bathy store in the `processed` build ([#297], `--bathy-store`), flat-bottom in the live `draft` path by design (ADR-0006 D6/D9) and in the cheap `flat` Tier-2 builder by scope |
 | **Store — core** | Generic band/dtype tiled-GeoTIFF store core | [#172](https://github.com/rolker/unh_marine_autonomy/issues/172) | 0002 | ✅ closed (`marine_tiled_raster_store`) |
-| **Store — bathy** | Multi-source bathy store; layers (draft/processed/chart), priority query | [#86](https://github.com/rolker/unh_marine_autonomy/issues/86) | 0002 | ✅ readiness arc complete; sub-features: [cube#44] chart prior 🔨 implemented (PR#45); [#151] levels / [#188] pyramids / [#189] atomic write 📋 |
+| **Store — bathy** | World-model **depths** theme: four provenance layers (`chart`/`reference`/`draft`/`processed`), best-source priority query, multi-level (D3/D4) | [#86](https://github.com/rolker/unh_marine_autonomy/issues/86) | 0002 / 0010 | ✅ readiness arc complete; **D8** draft/processed split + cell-wise `clearOverlappedDraft` anti-clobber ([#313] + [cube#134]) ✅; **chart** layer + wholesale regeneration ([#280], exporter [s57#29], CLI [#291]) ✅; **D9** depths overview pyramid (shallowest-preserving `overviews/` sidecar, `build_depth_overviews`) ([#188] via [#320]) ✅; [#151] levels ✅; [#189]/[#256] atomic tile write 📋 (gates live chart regen, D7) |
 | **Store — backscatter** | Two-tier backscatter store (GeoCoder, draft/processed) | [#180](https://github.com/rolker/unh_marine_autonomy/issues/180) | 0006 / 0007 | 🔨 **M3/MBES half ✅ done**: [cube#80] offline producer merged → `marine_mbes_backscatter_store`; **sidescan half 🔨 in flight**: durable `processed` build with best-source compositing + registry, DEM orthorectification and a `projection.json` provenance sidecar ([#297]); GeoCoder radiometry (beam pattern, slope, EGN) still 📋 |
 | **Store — provenance** | Cross-store multi-platform source-id + registry | [#179](https://github.com/rolker/unh_marine_autonomy/issues/179) | 0005 | 📋 deferred (multi-platform later tier) |
 | **Live transport** | `SonarVisualizationTile` + anti-entropy tile-sync | [#230](https://github.com/rolker/unh_marine_autonomy/issues/230) (= #86-Phase-6 / #171-I3) | 0008 | ✅ **end-to-end**: #230 transport + [cube#78] producer + [camp#121] consumer (live cache) all merged |
@@ -84,7 +127,14 @@ looked.
 [#188]: https://github.com/rolker/unh_marine_autonomy/issues/188
 [#189]: https://github.com/rolker/unh_marine_autonomy/issues/189
 [#230]: https://github.com/rolker/unh_marine_autonomy/issues/230
+[#256]: https://github.com/rolker/unh_marine_autonomy/issues/256
+[#280]: https://github.com/rolker/unh_marine_autonomy/pull/280
+[#291]: https://github.com/rolker/unh_marine_autonomy/pull/291
 [#297]: https://github.com/rolker/unh_marine_autonomy/issues/297
+[#313]: https://github.com/rolker/unh_marine_autonomy/pull/313
+[#320]: https://github.com/rolker/unh_marine_autonomy/pull/320
+[cube#134]: https://github.com/rolker/cube_bathymetry/pull/134
+[s57#29]: https://github.com/rolker/s57_tools/pull/29
 
 ## Arc 2 — Targets (find, mark, curate)
 
@@ -134,6 +184,9 @@ topic), intentionally *not* the Arc-1 raster tile-sync.
 | [0006](decisions/0006-multi-platform-backscatter-store.md) | Multi-platform backscatter store | Store |
 | [0007](decisions/0007-mbes-backscatter-store.md) | MBES backscatter store | Estimate/Store |
 | [0008](decisions/0008-live-sonar-coverage-transport-and-render.md) | Live sonar coverage transport & render | Transport/Render |
+| [0009](decisions/0009-sonar-info-message.md) | `SonarInfo` per-sensor acoustic metadata | Acquire/Estimate |
+| [0010](decisions/0010-geospatial-world-model.md) | Geospatial world model (taxonomy, datum invariant, per-layer processes) | Store (umbrella) |
+| [0011](decisions/0011-overview-pyramid.md) | Overview pyramids (sidecar layout, fold-policy contract) | Store |
 
 ## Where to direct efforts
 
@@ -181,6 +234,21 @@ parameters → surface texturing / sidescan drape. CAMP deliberately stays the
 realtime monitoring/planning tool; exploration lives in the offline explorer
 (`marine_perception_tools`, growing out of `sidescan_target_viewer`).
 
+**World-model arc (2026-08-20): decision adopted, migration pending.** The
+Isles-of-Shoals return to ENC-covered water drove [ADR-0010](decisions/0010-geospatial-world-model.md)
+(Accepted): the stores are now framed as one **world model** rooted at
+`~/data/world/`, with the depth theme's four provenance layers, per-cell
+best-source in the store (not costmap override hacks), and a fully
+GNSS-ellipsoidal runtime (no `chart_datum` frame). The load-bearing pieces are
+merged — D6 datum library, D3/D7 chart layer + regeneration, D8 draft/processed
+split, D9 depths pyramid, D10 `s57_layer` split. **Remaining frontier is
+operational, not design:** (1) the store-root migration off `~/data/stores/`
+(uma#310, unstarted) — until it lands `~/data/world/` is a 13-cell dev-host eval
+store (uma#314); (2) the chart-updater's cron-cycle operational validation (the
+updater shipped in s57_tools#28 / PR#33; the nav-liveness-gated regeneration loop
+still needs a real cron cycle exercised); (3) field datum-grid provisioning
+(uma#288 — geoid/VDatum download + user-polygon materialization).
+
 The other legibility gaps remain: **Arc 2's `contact_manager` link** — the
 load-bearing `mark → contact_manager` hop ([rqt#81]) plus the CRUD/curate store
 (#157/#167, in flight — where a reviewed mark becomes a curated re-survey/ROV
@@ -190,10 +258,12 @@ and the **sidescan track** ([#171]/[#185]: live mosaic + offline EGN). See
 
 ### Longer-term / supporting
 
-- **Costmap cost-model rework** (midpoint-depth + per-band-uncertainty, worst-case
-  clearance) — an *enhancement* for shore-keepoff / unknown-lake generalization. The
-  tide-frame blocker ([uma#220]/[uma#223]) is already fixed, so the layer is **usable
-  today**; this is quality, not a blocker.
+- **Costmap cost-model rework** (worst-case clearance = clearance − σ, `confidence_gate`;
+  midpoint-depth + per-band uncertainty) — ✅ **landed** ([#290](https://github.com/rolker/unh_marine_autonomy/pull/290), ADR-0010 D7 precondition for
+  chart ingestion; replaces the old `max_uncertainty` gate, now deprecation-warned
+  and ignored). The tide-frame blocker ([uma#220]/[uma#223]) was already fixed, so
+  the layer was usable before this; the rework generalizes shore-keepoff / unknown-lake
+  behavior and unblocks CATZOC-grade chart σ entering the store.
 - **Land acquisition data-quality bugs** ([echoboats#337] gyro health, [echoboats#338]
   time-sync) — corrupt every downstream product in *both* arcs; cheap, foundational.
 - The **sidescan track** ([#171]/[#185]) and the **draft→processed + coverage-QC
