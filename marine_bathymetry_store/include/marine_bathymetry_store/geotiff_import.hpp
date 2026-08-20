@@ -81,6 +81,12 @@ struct GeoTiffImportOptions
   /// Mutually exclusive with a non-zero `depth_offset`
   /// (`std::invalid_argument`); `depth_scale` still applies (a
   /// positive-down depth-below-datum product uses `depth_scale = -1`).
+  /// Threading contract: the importer invokes this SERIALLY from the one
+  /// calling thread, so a single-threaded-only callable (e.g. a
+  /// marine_vertical_datum query, whose copies share one PROJ context) is
+  /// safe to supply. A future parallel pixel loop must not share one
+  /// callable across threads — build one query per thread instead (see
+  /// vdatum_query.hpp).
   std::function<std::optional<double>(double lat, double lon)> vertical_datum_fn;
   /// GGGS level to import at. The store is multi-level (ADR-0002 §D2): a coarse
   /// chart prior imports at a coarse level, a fine survey grid at a fine level,

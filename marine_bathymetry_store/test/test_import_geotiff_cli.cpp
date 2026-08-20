@@ -267,3 +267,30 @@ TEST_F(ImportGeotiffCliTest, SourceDatumRejectsUnknownDatumAndStageMode)
       " --source-datum mllw --geoid g.tif --vdatum-dir v"),
     1);
 }
+
+TEST_F(ImportGeotiffCliTest, ProvenanceMergesFieldWiseAcrossImports)
+{
+  // #315 review: a later import passing only some provenance flags must
+  // carry the registry's other fields forward, never whole-record-replace
+  // them with empties (same merge path protects the datum stamp).
+  const fs::path store = dir_ / "store";
+  ASSERT_EQ(
+    run(store.string() + " reference " + tif_.string() + " --platform bizzy"), 0);
+  ASSERT_EQ(
+    run(store.string() + " reference " + tif_.string() + " --survey appledore"), 0);
+  std::ifstream reg(store / "registry.json");
+  ASSERT_TRUE(reg.good());
+  const std::string content(
+    (std::istreambuf_iterator<char>(reg)), std::istreambuf_iterator<char>());
+  EXPECT_NE(content.find("\"platform\": \"bizzy\""), std::string::npos) << content;
+  EXPECT_NE(content.find("\"survey\": \"appledore\""), std::string::npos) << content;
+}
+
+TEST_F(ImportGeotiffCliTest, RuntimeImportFailureExitsOneCleanly)
+{
+  // #315 review: a runtime import failure (here: a missing GeoTIFF; the
+  // vdatum-coverage gap takes the same path) must print + exit 1, never
+  // abort via std::terminate. run() returns -1 on an abnormal exit.
+  EXPECT_EQ(
+    run((dir_ / "store").string() + " reference " + (dir_ / "missing.tif").string()), 1);
+}

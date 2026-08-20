@@ -190,7 +190,10 @@ VDatumQueryFn make_vdatum_query(const VDatumConfig & config, DiagFn diag)
     return {};   // ProjPipelines dtor releases the context
   }
 
-  if (!mhhw_grids.empty()) {
+  if (!config.want_mhhw) {
+    // MLLW-only consumer (#315): no MHHW pipeline, no per-point second
+    // transform. Deliberately quiet — absence is the requested state.
+  } else if (!mhhw_grids.empty()) {
     pipelines->mhhw =
       create_pipeline(pipelines->context, config.geoid_grid, mhhw_grids, diag);
     if (!pipelines->mhhw) {
