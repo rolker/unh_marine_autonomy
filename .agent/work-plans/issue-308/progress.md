@@ -37,3 +37,15 @@ ADR-0010 Context §3. The issue correctly maps scope, dependencies, and sequenci
   flags this as "adjacent but separate" — plan-task should specify what signal the
   store emits when draft cells are cleared so the display cache seam is not left
   entirely undefined until implementation.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-08-20 10:30 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-308/plan.md` at `a9152e3`
+**Branch**: feature/issue-308 at `a9152e3`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
