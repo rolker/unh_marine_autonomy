@@ -48,8 +48,13 @@ ADR amendment (1) should merge before or alongside the consumer repoints (3–4)
    File: `docs/decisions/0010-geospatial-world-model.md`.
 
 2. **Verify updater covers `datum/`** — s57_tools#28 shipped but was scoped to ENC
-   download. Confirm whether it was extended to `datum/` (projsync + VDatum bundle),
-   or file a follow-on in `s57_tools` if not. No code change in this repo.
+   download. **Verified 2026-08-20 (host, against enc_updater source)**: the updater
+   *consumes* grids for the D7 export (`geoid`/`vdatum_dir` region config) but has
+   **no download/provisioning step** for them (no projsync / VDatum-bundle fetch in
+   `downloader.py` or elsewhere). → A follow-on s57_tools issue is required
+   ("provision world/datum/ grids: projsync geoid + VDatum bundle fetch");
+   **filing queued for the publish checkpoint** (local-first). No code change in
+   this repo.
 
 3. **Repoint `unh_marine_autonomy` consumers**:
    - `marine_vertical_datum/README.md` grid-provisioning section: update canonical
@@ -144,7 +149,7 @@ ADR amendment (1) should merge before or alongside the consumer repoints (3–4)
 
 ## Open Questions
 
-- [ ] Confirm whether s57_tools#28 (shipped/closed) was extended to download `datum/` grids, or whether a follow-on issue in s57_tools is needed for the projsync + VDatum bundle step (item 2).
+- [x] ~~Confirm whether s57_tools#28 was extended to download `datum/` grids~~ — **resolved 2026-08-20**: it was not (consumes but does not provision); follow-on s57_tools issue required, filing queued for the publish checkpoint (item 2).
 - [x] ~~Confirm the S-102 cache path~~ — **settled at the 2026-08-20 plan checkpoint**: separate `world/s100/` top-level sibling; S-102 cache at `~/data/world/s100/s102/`. Recorded in the ADR amendment (item 1).
 
 ## Estimated Scope
