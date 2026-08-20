@@ -256,3 +256,24 @@ Specialists: Static Analysis (project ament cppcheck/cpplint/uncrustify/copyrigh
 
 ### Next step
 Verdict is **approved** → lifecycle: Local Review → push / open PR → triage-reviews.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-20 13:47 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**PR**: #313 at `cd99aad`
+**Sources**: 3 (Copilot R1 @ `cd99aad` [1 inline comment], Local Review (Pre-Push) R1 @ `467aeb1` + R2 @ `1707ea2`, CI rollup)
+**Cross-source confirmations**: 0
+**CI**: all-pass (build ✅, copilot-pull-request-reviewer ✅) — satisfies R2's "confirm green CI before merge" note (sidescan/bathymetry_layer were not locally buildable)
+
+### Findings
+- [ ] (minor, Copilot) `importGeoTiff` docstring claims it bulk-inserts "(merging into any existing surface; last-write-wins per cell)", but `BathymetryStore::importTiles` replaces any resident tile wholesale via `insert_or_assign` — a partial GeoTIFF patch drops previously stored cells inside touched tiles rather than merging per cell. The wording predates this PR (this PR only added the adjacent D8 anti-clobber paragraph), but it directly contradicts the correct per-tile-replacement contract documented on `importTiles` (bathymetry_store.hpp, incl. its additive-merge footgun note) and misleads callers: the S-102 run loop (`s102/run.cpp`) imports multiple products sequentially into one layer, where a GGGS tile shared across a product seam would be clobbered by the later import. Fix: correct the parenthetical to per-tile replacement semantics ("each touched tile replaces any resident tile at that grid; the lowest-uncertainty-on-contention rule applies only among this import's own pixels") and cross-reference `importTiles`' merge note — `marine_bathymetry_store/include/marine_bathymetry_store/geotiff_import.hpp:107-108`
+
+### False positives
+- (none)
+
+### Notes (informational, not findings)
+- The tile-replacement behavior itself is the deliberate #221 single-fused-grid contract and predates this PR — the required fix here is documentation-only (Documentation Accuracy principle: never document from assumptions). Whether multi-product S-102 imports can actually share a GGGS tile at product seams (potential cell loss) is a pre-existing, out-of-scope question; consider a follow-up issue if seam-adjacent products are a real workflow.
+- Prior rounds fully resolved: R1 @ `467aeb1` raised 1 must-fix + 5 suggestions, all addressed (commits `e36a6f6`..`c46c25f`); R2 @ `1707ea2` LGTM, Ship: recommended. Copilot's finding is new (not raised locally), so no cross-source confirmations.
+- R2 carry-over still applies: cube_bathymetry#133 must co-land in lockstep (enum change intentionally breaks cube's build) — ADR-0002 A3.4.
