@@ -247,7 +247,7 @@ split, D9 depths pyramid, D10 `s57_layer` split. **Remaining frontier is
 operational, not design:** (1) the store-root migration off `~/data/stores/`
 (uma#310, unstarted) — until it lands `~/data/world/` is a 13-cell dev-host eval
 store (uma#314); (2) the chart-updater's cron-cycle operational validation (the
-updater shipped in s57_tools#28 / PR#33; the nav-liveness-gated regeneration loop
+updater shipped in s57_tools#28 / [PR#33](https://github.com/rolker/s57_tools/pull/33); the nav-liveness-gated regeneration loop
 still needs a real cron cycle exercised); (3) field datum-grid provisioning
 (uma#288 — geoid/VDatum download + user-polygon materialization).
 

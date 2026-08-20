@@ -35,6 +35,10 @@ workspace filing discipline (one PR, atomic commits):
 **Host context confirms** (2026-08-20): uma#308 (D8 re-split) + cube#133 AND
 uma#309 (D9 depths pyramid) all merged today, making items 1 and 2 fully
 unblocked. The ADR flip to Accepted is now completely honest.
+> *Correction (2026-08-20, PR#322 citation hygiene): the PR ids named just above
+> were pre-verification placeholders — the merged PRs are uma PR#313 (D8, was
+> #308), uma PR#320 (D9, was #309), and cube PR#134 (was cube#133), as recorded
+> in the Implementation entry below. Left inline to preserve the historical text.*
 
 ### Scope Assessment
 

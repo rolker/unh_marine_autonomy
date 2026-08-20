@@ -35,7 +35,7 @@ atomic swap, never cell-wise merged). What landed:
   CATZOC-grade σ can enter the store without wholesale keepout) — uma#290
 
 The corpus **updater** (cron-friendly download + nav-liveness-gated wholesale
-rebuild) is **not orphaned by this close**: it shipped in s57_tools#28 (PR#33
+rebuild) is **not orphaned by this close**: it shipped in s57_tools#28 ([PR#33](https://github.com/rolker/s57_tools/pull/33)
 merged). Only its operational cron-cycle validation remains, tracked there — not
 here.
 

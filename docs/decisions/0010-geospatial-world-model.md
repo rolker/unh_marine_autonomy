@@ -30,7 +30,7 @@ Open follow-ons (adopted target, not yet fully materialized):
   (**unstarted**). Today `~/data/world/` exists only as a dev-host eval store
   ([uma#314](https://github.com/rolker/unh_marine_autonomy/issues/314): 13 ENC cells).
 - **Chart-updater operational validation** — the corpus updater shipped
-  ([s57_tools#28](https://github.com/rolker/s57_tools/issues/28), PR#33 merged);
+  ([s57_tools#28](https://github.com/rolker/s57_tools/issues/28), [PR#33](https://github.com/rolker/s57_tools/pull/33) merged);
   its nav-liveness-gated cron regeneration cycle still needs a real cron cycle
   exercised end-to-end (D7).
 - **Field datum-grid provisioning** — geoid/VDatum download + user-polygon

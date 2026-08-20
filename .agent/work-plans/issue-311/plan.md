@@ -46,7 +46,7 @@ by the host on 2026-08-20; used verbatim.
 Open follow-ons (named in the Accepted status line, NOT cited as shipped):
 store-root migration uma#310 (unstarted); chart-updater operational cron-cycle
 validation; field datum-grid provisioning (uma#288). The corpus updater itself
-shipped in s57_tools#28 (PR#33 merged) — only its cron-cycle validation is
+shipped in s57_tools#28 ([PR#33](https://github.com/rolker/s57_tools/pull/33) merged) — only its cron-cycle validation is
 outstanding.
 
 ## Approach
@@ -108,7 +108,7 @@ outstanding.
 |---|---|---|
 | sonar_ecosystem.md ADR spine | Add ADR-0009, ADR-0010, ADR-0011 rows | Yes |
 | ADR-0010 status | sonar_ecosystem.md frontier updated in same PR | Yes |
-| #163 retired | D7 corpus-updater thread must be tracked elsewhere (s57_tools#28, PR#33 merged; cron validation outstanding) so nothing is orphaned | Yes — stated in the disposition |
+| #163 retired | D7 corpus-updater thread must be tracked elsewhere (s57_tools#28, [PR#33](https://github.com/rolker/s57_tools/pull/33) merged; cron validation outstanding) so nothing is orphaned | Yes — stated in the disposition |
 | #151 retired | ADR-0010 D9 depths-pyramid mention stays accurate | Yes — cross-link in comment |
 
 ## Documentation & Instruction Impact
