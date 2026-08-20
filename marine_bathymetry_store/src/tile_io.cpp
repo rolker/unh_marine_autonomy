@@ -270,8 +270,18 @@ void migrateLegacySurveyDir(const std::string & dir)
             "store (ADR-0010 D8). Resolve by hand: 'survey/' is the pre-D8 fused "
             "layer, re-classified wholesale to 'processed/'; merge or remove one.");
   }
-  // The atomic commit point: a single intra-filesystem rename.
-  fs::rename(survey, processed);
+  // The atomic commit point: a single intra-filesystem rename. Use the
+  // error_code overload and re-throw as std::runtime_error so a rename failure
+  // surfaces through the SAME "refuse loudly" idiom as the both-exist guard above
+  // (the throwing overload would raise std::filesystem_error, a different type
+  // callers would have to catch separately).
+  std::error_code rename_ec;
+  fs::rename(survey, processed, rename_ec);
+  if (rename_ec) {
+    throw std::runtime_error(
+            "marine_bathymetry_store: failed to auto-migrate legacy 'survey/' to "
+            "'processed/' in store '" + dir + "' (ADR-0010 D8): " + rename_ec.message());
+  }
   std::cerr << "[marine_bathymetry_store] migrated legacy 'survey/' layer to "
             << "'processed/' in '" << dir << "' (ADR-0010 D8: the pre-D8 fused "
             << "layer is the authoritative import_bag re-run; draft/ starts empty).\n";
