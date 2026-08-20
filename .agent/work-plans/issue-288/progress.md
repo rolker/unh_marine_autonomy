@@ -81,3 +81,21 @@ Recommendations:
 ### Open questions
 - [ ] Confirm whether s57_tools#28 (shipped/closed) was extended to `datum/` grids, or if a follow-on s57_tools issue is needed.
 - [ ] Confirm S-102 cache path choice: `world/charts/s102` vs `world/s100/` — record in ADR amendment or updater PR.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-08-20 13:09 +00:00
+**By**: Claude Code Agent (Claude Opus)
+<!-- Independent: plan authored by Claude Sonnet in a prior context; this review is a fresh-context Opus sub-agent, not the author, so no self-review annotation. -->
+
+**Plan**: `.agent/work-plans/issue-288/plan.md` at `d10e736`
+**PR**: PR-less (`--issue` / host-dispatch mode)
+**Verdict**: changes-requested
+
+### Findings
+- [ ] (must-fix) Scope boundary vs **uma#310** (store-root migration) not declared; item 3 relocates `survey_index.db` — #310's territory — while other root-migration consequences (nav2 `store_path`, CAMP paths) are uncovered. State the boundary: #288 = `datum/` subtree + datum/S-102/ENC consumer repoints; #310 = store-root relocation. — `plan.md:46`
+- [ ] (must-fix) `docs/sonar_ecosystem.md` reframe double-tracked with **uma#311** (ecosystem-doc housekeeping); assign a single owner (leans #311) and remove from the other plan. — `plan.md:44`
+- [ ] (must-fix) Item 3 edits `s102_import_main.cpp` help text to cite `~/data/world/charts/s102`, a path the plan itself flags as unsettled (Open Q2); resolve the path and reconcile with ADR-0010 D11 (S-102 = gridded depth → raster convention) before touching the .cpp. — `plan.md:41`
+- [ ] (suggestion) ADR amendment (item 1) must justify `datum/`'s top-level placement (support data, not a store/feature/registry per D1) and the git-authored `world/datum/user/` exception to D1's regenerable-from-source invariant. — `plan.md:28`
+- [ ] (suggestion) D6 lists CAMP (operator-side) as a datum-library consumer needing grids on the operator station; item 5 provisions only boat hosts — note or defer operator-station provisioning. — `plan.md:59`
+- [ ] (suggestion) Make item 6 explicitly blocked on item 2's outcome (updater datum/ coverage); confirm s57_tools#28 status (plan asserts shipped/closed; review-issue was unsure). — `plan.md:64`
