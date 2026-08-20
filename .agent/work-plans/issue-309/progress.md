@@ -179,3 +179,43 @@ remains a tracked follow-on, out of scope for this PR as the plan noted.
 
 ### Findings
 - [ ] No issues found. LGTM.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-20 21:18 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**PR**: #320 at `5a3410f`
+**Addressed**: host-verified finding from the post-PR Copilot round on PR#320
+(`overview_pyramid.cpp:110` — non-idempotent sidecar from an order-dependent
+equal-depth tie-break). Delivered via the address-findings dispatch injection,
+not a `## Integrated Review` entry in this file.
+**Commits**: `5a3410f`
+
+### Actions
+- [x] Deterministic equal-depth tie-break in `depthShallowestFold` — an equal-depth
+  / different-σ tie no longer depends on contributor enumeration order (buckets fill
+  in unspecified filesystem-iteration order — `overview_builder.hpp`). Total order on
+  σ: finite preferred over the NaN no-data sentinel, then the smaller σ (more
+  reliable pair, ADR-0010 D9 "shoalest-reliable"). Total order documented in the
+  function/helper comments. — `marine_bathymetry_store/src/overview_pyramid.cpp:92`
+- [x] Exposed `depthShallowestFold` via a `detail` namespace (declared in
+  `overview_pyramid.hpp`) so the fold's determinism is directly unit-testable. —
+  `marine_bathymetry_store/include/marine_bathymetry_store/overview_pyramid.hpp`
+- [x] Added determinism test `DepthOverviewFold.FoldIsOrderIndependent`: every
+  permutation of a contributor set folds to one identical {depth, σ}, covering
+  equal-depth/different-σ, finite-σ-beats-NaN-σ, shoalest-carries-NaN-σ, and
+  all-NaN-σ cases. — `marine_bathymetry_store/test/test_depth_overview.cpp:298`
+
+### Build & test — all green (foreground)
+- `colcon build --packages-select marine_bathymetry_store` → finished, no warnings
+  from the changed code.
+- `colcon test --packages-select marine_bathymetry_store` → **16/16 tests passed,
+  0 failed** (copyright/cppcheck/cpplint/uncrustify/lint_cmake/xmllint clean; the
+  `test_depth_overview` gtest binary passes including the new
+  `FoldIsOrderIndependent` case). uncrustify reformatted the new test block; the
+  reformat is committed.
+
+### Next step
+Ready for `review-code` re-review of the fix. No push / no GitHub performed (host
+pushes to PR#320).
