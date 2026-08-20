@@ -99,3 +99,19 @@ Recommendations:
 - [ ] (suggestion) ADR amendment (item 1) must justify `datum/`'s top-level placement (support data, not a store/feature/registry per D1) and the git-authored `world/datum/user/` exception to D1's regenerable-from-source invariant. — `plan.md:28`
 - [ ] (suggestion) D6 lists CAMP (operator-side) as a datum-library consumer needing grids on the operator station; item 5 provisions only boat hosts — note or defer operator-station provisioning. — `plan.md:59`
 - [ ] (suggestion) Make item 6 explicitly blocked on item 2's outcome (updater datum/ coverage); confirm s57_tools#28 status (plan asserts shipped/closed; review-issue was unsure). — `plan.md:64`
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-20 13:26 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-288 at `040c945`
+**Mode**: pre-push
+**Depth**: Deep (reason: substantive ADR-0010 amendment [Deep trigger]; 307 changed lines ≥200)
+**Must-fix**: 1 | **Suggestions**: 1
+**Round**: 1 | **Ship**: continue — one mechanical wording contradiction (grids labeled "updater-managed" vs. this PR's verified "not yet provisioned"); design itself sound, expect fast convergence
+
+### Findings
+- [ ] (must-fix) ADR-0010 D3 + marine_vertical_datum README present datum grids as "updater-managed"/"populated by the updater", contradicting item-2's verified fact that the updater does not provision grids (provisioning is a queued follow-on); reword to intended/future or state provisioning is currently manual [cross-pass confirmed: Lens A + Lens B] — `docs/decisions/0010-geospatial-world-model.md:120,159`, `marine_vertical_datum/README.md:61`
+- [ ] (suggestion) `s100/` is also tagged "(updater-managed)" but the S-102 cache is populated by the operator-run `s102_import` CLI, not the cron updater — attribute to import tooling — `docs/decisions/0010-geospatial-world-model.md:118`
