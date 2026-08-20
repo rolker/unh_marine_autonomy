@@ -132,3 +132,79 @@ From the consequences map:
 - [ ] (suggestion) The Context's "ADR-0010 ... is complete" overstates implementation status; the Accepted status line should acknowledge remaining follow-ons (full migration uma#310 UNSTARTED, chart-updater cron, datum-grid provisioning) so "Accepted" reads as decision-adopted, not everything-shipped — consistent with the plan's own "partially materialized" framing. `plan.md:11`
 - [ ] (suggestion) ADR-0010's own Consequences/housekeeping list names three items absent from the plan's gardening set: s57_tools#23 (answered by ADR), s57_tools#26 (mooted by D5/D10), and echoboats#276's dangling "#14" reference. The plan frames itself as executing ADR-0010's housekeeping directly — fold these in or explicitly mark them out-of-scope/tracked-elsewhere. `plan.md:36-38`
 - [ ] (suggestion) Before retiring #163, confirm the D7 corpus-updater / cron-regeneration thread (the draft calls it "the next piece") is tracked elsewhere (ADR-0010 D7 folds s57_tools#5) so closing #163 doesn't orphan it. `plan.md:75-86`
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-20 22:30 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-311 at `a306c67`
+**PR**: PR-less (`--issue 311`, layer worktree — no push, no GitHub)
+**ADR-0013 phase**: Implementation
+
+### What shipped
+
+Per operator direction, all four Plan Review suggestions were folded into the
+plan (committed first), then implemented — no second plan review.
+
+**Plan revision** (`28bf54d`): folded the four suggestions — HOST-VERIFIED PR
+citations, "Accepted = decision-adopted not everything-shipped" wording with
+named follow-ons, widened gardening set (+s57_tools#23, s57_tools#26,
+echoboats#276), and the #163 non-orphaning confirmation (s57_tools#28 shipped
+the updater).
+
+**Commits (docs-only; pre-commit hooks ran via the normal commit path, no
+`--no-verify`):**
+
+| SHA | Change |
+|---|---|
+| `28bf54d` | Revise #311 plan per plan review (fold 4 suggestions) |
+| `53df9ec` | Reframe `docs/sonar_ecosystem.md` under the world model |
+| `e12f246` | Flip ADR-0010 status Proposed → Accepted (2026-08-20) |
+| `a306c67` | Draft the seven gardening dispositions (host-post texts) |
+
+**`docs/sonar_ecosystem.md`** — added a "world model (the STORE hub)" section
+(D3 theme×provenance tree, `~/data/world/` as adopted-target-partially-
+materialized: 13-cell dev-host eval store uma#314, migration uma#310 unstarted);
+rewrote the Store-bathy row for the as-built D3/D8/D9 state
+(`clearOverlappedDraft`, depths overview-pyramid sidecar); added ADR-0009/0010/
+0011 to the spine; refreshed the frontier (world-model arc adopted, remaining
+work operational); marked the cost-model rework landed (uma#290); bumped
+Last-verified to 2026-08-20.
+
+**`docs/decisions/0010-geospatial-world-model.md`** — Status → Accepted with the
+host-verified implementing-PR table (D6 uma#279, D3/D7 uma#280, exporter
+s57_tools#29, CLI uma#291, cost model uma#290, D8 uma#313+cube#134, D9 uma#320,
+D10 s57_tools#31) and the three named open follow-ons (uma#310, chart-updater
+cron validation, uma#288).
+
+**`.agent/work-plans/issue-311/gardening_dispositions.md`** — new; verbatim
+host-post comment texts for all seven items, each with the AI signature block
+(Model: Claude Fable 5, the host's posting model).
+
+### Verification
+
+- Every technical claim checked against this worktree's source/docs (not from
+  memory): `clearOverlappedDraft` (public API in `bathymetry_store.hpp`, ADR-0010
+  D8), shallowest-preserving depth overview sidecar (`overview_pyramid.hpp`/
+  `.cpp`, `build_depth_overviews`, ADR-0010 D9), the `processed > draft >
+  reference > chart` ranking (`bathy_cell.hpp`), and `~/data/world/` root
+  (`s102_import_main.cpp`, `marine_vertical_datum/README.md`, ADR-0010 D3).
+- ADR spine additions limited to the three sonar ADRs (0009/0010/0011); ADR-0012
+  (helm speed regulation) is not sonar and was left out.
+- PR citations used the HOST-VERIFIED 2026-08-20 list verbatim (correcting the
+  plan-authored placeholders #308/#309/cube#133 → #313/#320/cube#134, and
+  s57_tools#30 → PR#31); no GitHub lookups performed here.
+- All reference-style doc links resolve (checked programmatically).
+
+### Follow-on (host actions, not in this PR)
+
+The seven gardening dispositions are drafted only — the host posts each verbatim
+with operator confirmation and makes the close/dedupe state changes. The two
+Plan-Authored open questions (lake-contour-prior for #163; non-datum TF-hierarchy
+scope for mru_transform#8) are surfaced inside those disposition texts for the
+operator to settle at post time.
+
+### Next step
+
+Ready for code review (`review-code`). No push, no GitHub actions taken.
