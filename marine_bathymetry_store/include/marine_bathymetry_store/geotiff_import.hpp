@@ -111,17 +111,19 @@ struct ProcessedImportResult
 /// applies only among this import's own pixels. See `importTiles`' additive-merge
 /// footgun note for the shrinking-re-import consequence.
 ///
-/// **Anti-clobber (ADR-0010 D8):** when @p layer is `Processed`, after the insert
-/// the importer clears overlapped `Draft` cells **cell-wise — only where this
-/// import has data** — by writing them no-data via `BathymetryStore::set(Draft,
-/// …, {})` (persisted through the normal dirty-tile save path; there is no
-/// tile/cell-erase API and `save()` never deletes on-disk tiles). Draft cells in
-/// the re-run's gated-drop holes (cells this import left no-data) survive — the
-/// query overlay resolves them under `Processed > Draft` where the processed
-/// surface has data, and shows the surviving draft where it does not. Clearing
-/// operates at this import's cell/level granularity; draft data at a *different*
-/// GGGS level is not reached (in practice draft and processed both come from CUBE
-/// at the store level). Non-`Processed` imports clear nothing.
+/// **Anti-clobber (ADR-0010 D8):** when @p layer is `Processed`, the importer clears
+/// overlapped `Draft` cells **cell-wise — only where this import has data** — by
+/// delegating to the store's public `BathymetryStore::clearOverlappedDraft` (the
+/// store owns this semantics so cube's direct-`saveTile` regen paths clear draft
+/// identically; the clear writes no-data via `set(Draft, …, {})`, persisted through
+/// the normal dirty-tile save path — there is no tile/cell-erase API and `save()`
+/// never deletes on-disk tiles). Draft cells in the re-run's gated-drop holes (cells
+/// this import left no-data) survive — the query overlay resolves them under
+/// `Processed > Draft` where the processed surface has data, and shows the surviving
+/// draft where it does not. Clearing operates at this import's cell/level
+/// granularity; draft data at a *different* GGGS level is not reached (in practice
+/// draft and processed both come from CUBE at the store level). Non-`Processed`
+/// imports clear nothing.
 ///
 /// @return A `ProcessedImportResult` (cells imported + anti-clobber side effect).
 /// @throws std::invalid_argument on a bad band index;

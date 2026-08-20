@@ -21,10 +21,14 @@
 
 #include "marine_bathymetry_store/bathymetry_store.hpp"
 
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace marine_bathymetry_store
 {
@@ -117,6 +121,58 @@ std::size_t BathymetryStore::importTiles(
     ++inserted;
   }
   return inserted;
+}
+
+DraftClearResult BathymetryStore::clearOverlappedDraft(
+  const BathymetryTile & processed_tile)
+{
+  constexpr uint16_t edge = BathymetryTile::edge;
+  DraftClearResult result;
+  const gggs::GridIndex & grid = processed_tile.index();
+  // Never create a draft tile where none exists: nothing to clear there, and an
+  // all-NaN draft tile would be a spurious on-disk artifact.
+  if (layerMap(SourceLayer::Draft).count(grid) == 0) {
+    return result;
+  }
+  const std::vector<double> & depth = processed_tile.depthBand();
+  bool touched = false;
+  for (uint32_t i = 0; i < depth.size(); ++i) {
+    if (std::isnan(depth[i])) {
+      continue;   // processed no-data (gated-drop hole): leave the draft cell
+    }
+    const uint16_t row = static_cast<uint16_t>(i / edge);
+    const uint16_t col = static_cast<uint16_t>(i % edge);
+    const gggs::CellIndex cell(grid, row, col);
+    const std::optional<BathyCell> draft = get(SourceLayer::Draft, cell);
+    if (!draft.has_value() || !draft->hasData()) {
+      continue;   // draft has nothing here — nothing to clear
+    }
+    // Write no-data in place: reads as no-data thereafter, tile marked dirty so
+    // the clear persists on the next save.
+    set(SourceLayer::Draft, cell, BathyCell{});
+    ++result.cells_cleared;
+    touched = true;
+  }
+  if (touched) {
+    result.tiles_touched.push_back(grid);
+  }
+  return result;
+}
+
+DraftClearResult BathymetryStore::clearOverlappedDraft(
+  const std::map<gggs::GridIndex, BathymetryTile> & processed_tiles)
+{
+  // Delegate per tile: map keys are unique grids, so each cleared grid appears at
+  // most once in tiles_touched — identical to clearing the whole map in one pass.
+  DraftClearResult result;
+  for (const auto & [grid, tile] : processed_tiles) {
+    (void)grid;   // the per-tile overload re-keys off tile.index()
+    const DraftClearResult one = clearOverlappedDraft(tile);
+    result.cells_cleared += one.cells_cleared;
+    result.tiles_touched.insert(
+      result.tiles_touched.end(), one.tiles_touched.begin(), one.tiles_touched.end());
+  }
+  return result;
 }
 
 BathymetryTile & BathymetryStore::getOrCreateTile(

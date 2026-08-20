@@ -48,55 +48,6 @@ struct DatasetCloser
 
 }  // namespace
 
-namespace
-{
-
-/// Clear overlapped `Draft` cells cell-wise after a `Processed` import (ADR-0010
-/// D8). For each imported processed tile whose grid the `Draft` layer already
-/// holds a tile for, clear (write no-data) exactly the `Draft` cells that (a) this
-/// import populated AND (b) `Draft` currently holds data at — so a processed
-/// gated-drop hole (no-data cell) leaves the overlapping draft cell intact, and no
-/// spurious empty draft tile is ever created. Persisted through the normal
-/// dirty-tile save path: `set(Draft, …, {})` marks the draft tile dirty.
-void clearOverlappedDraftCells(
-  BathymetryStore & store,
-  const std::map<gggs::GridIndex, BathymetryTile> & processed_tiles,
-  ProcessedImportResult & result)
-{
-  constexpr uint16_t edge = BathymetryTile::edge;
-  for (const auto & [grid, tile] : processed_tiles) {
-    // Never create a draft tile where none exists: nothing to clear there, and an
-    // all-NaN draft tile would be a spurious on-disk artifact.
-    if (store.tiles(SourceLayer::Draft).count(grid) == 0) {
-      continue;
-    }
-    const std::vector<double> & depth = tile.depthBand();
-    bool touched = false;
-    for (uint32_t i = 0; i < depth.size(); ++i) {
-      if (std::isnan(depth[i])) {
-        continue;   // processed no-data (gated-drop hole): leave the draft cell
-      }
-      const uint16_t row = static_cast<uint16_t>(i / edge);
-      const uint16_t col = static_cast<uint16_t>(i % edge);
-      const gggs::CellIndex cell(grid, row, col);
-      const std::optional<BathyCell> draft = store.get(SourceLayer::Draft, cell);
-      if (!draft.has_value() || !draft->hasData()) {
-        continue;   // draft has nothing here — nothing to clear
-      }
-      // Write no-data in place: reads as no-data thereafter, tile marked dirty so
-      // the clear persists on the next save.
-      store.set(SourceLayer::Draft, cell, BathyCell{});
-      ++result.draft_cells_cleared;
-      touched = true;
-    }
-    if (touched) {
-      result.draft_tiles_touched.push_back(grid);
-    }
-  }
-}
-
-}  // namespace
-
 ProcessedImportResult importGeoTiff(
   BathymetryStore & store, SourceLayer layer,
   const std::string & path, const GeoTiffImportOptions & options)
@@ -254,13 +205,16 @@ ProcessedImportResult importGeoTiff(
   result.cells_imported = imported;
 
   // Anti-clobber (ADR-0010 D8): a Processed import supersedes overlapped live
-  // Draft cells. Clear them cell-wise BEFORE the move below consumes `tiles` —
-  // Draft and Processed are independent layer maps, so mutating Draft here does
-  // not disturb the processed tiles still headed for importTiles(). Gated-drop
-  // holes (processed no-data cells) leave the draft cell intact; see
-  // clearOverlappedDraftCells.
+  // Draft cells. Delegate to the store's public `clearOverlappedDraft` (the store
+  // owns this semantics so cube's direct-`saveTile` regen paths apply it
+  // identically). Clear BEFORE the move below consumes `tiles` — Draft and
+  // Processed are independent layer maps, so mutating Draft here does not disturb
+  // the processed tiles still headed for importTiles(). Gated-drop holes (processed
+  // no-data cells) leave the draft cell intact; see BathymetryStore::clearOverlappedDraft.
   if (layer == SourceLayer::Processed) {
-    clearOverlappedDraftCells(store, tiles, result);
+    const DraftClearResult cleared = store.clearOverlappedDraft(tiles);
+    result.draft_cells_cleared = cleared.cells_cleared;
+    result.draft_tiles_touched = std::move(cleared.tiles_touched);
   }
 
   // Bulk-insert into the layer's single fused surface (#221). The Reference

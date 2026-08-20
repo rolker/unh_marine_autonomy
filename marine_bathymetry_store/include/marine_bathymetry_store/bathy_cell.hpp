@@ -61,9 +61,11 @@ namespace marine_bathymetry_store
 /// into); `Chart` is writable only via the wholesale-regeneration swap
 /// (`replaceChartLayer`), gated by `chart_staging_writable`.
 ///
-/// **Anti-clobber (ADR-0010 D8):** when a `Processed` import lands, overlapped
-/// `Draft` cells are cleared **cell-wise — only where the processed import has
-/// data** (see `geotiff_import.hpp`). Draft cells in the re-run's gated-drop holes
+/// **Anti-clobber (ADR-0010 D8):** when `Processed` data lands, overlapped
+/// `Draft` cells are cleared **cell-wise — only where the processed data has
+/// data** via the store's public `BathymetryStore::clearOverlappedDraft` (called by
+/// the GeoTIFF importer and cube's direct-`saveTile` regen paths alike). Draft cells
+/// in the re-run's gated-drop holes
 /// (cells the import left no-data) survive: harmless under `Processed > Draft` and
 /// strictly more coverage than clearing by footprint.
 enum class SourceLayer : uint8_t

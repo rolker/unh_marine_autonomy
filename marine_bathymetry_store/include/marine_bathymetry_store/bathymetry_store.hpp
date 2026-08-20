@@ -28,6 +28,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "geographic_msgs/msg/geo_point.hpp"
 #include "marine_autonomy/gggs.h"
@@ -58,6 +59,21 @@ std::size_t evictOutside(
   const geographic_msgs::msg::GeoPoint & min_pt,
   const geographic_msgs::msg::GeoPoint & max_pt);
 
+/// @brief Result of a `clearOverlappedDraft` call (ADR-0010 D8 anti-clobber).
+///
+/// `tiles_touched` is the display-cache invalidation seam (ADR-0008; camp#171/#172):
+/// the `Draft` tiles that had ≥1 cell cleared (each appears once, ascending). Nothing
+/// is removed on disk under cell-wise clearing — a cleared cell is written no-data
+/// (NaN) in place and persisted through the normal dirty-tile save path — so these
+/// tiles are **touched** (dirtied), not deleted.
+struct DraftClearResult
+{
+  /// `Draft` cells transitioned from data → no-data by the clear.
+  std::size_t cells_cleared = 0;
+  /// `Draft` tiles with ≥1 cleared cell (each once). Cache-invalidation seam.
+  std::vector<gggs::GridIndex> tiles_touched;
+};
+
 /// @brief In-memory, GGGS-tiled, multi-layer, multi-level bathymetric store.
 ///
 /// Holds, per `SourceLayer`, **one fused** map of tiles keyed by
@@ -78,8 +94,11 @@ std::size_t evictOutside(
 /// > reference > chart` layer priority is the only provenance axis (ADR-0010 D8
 /// re-split `survey` into `Processed`+`Draft`; `Chart` added #275 per ADR-0010
 /// D3/D7, lowest under the D4 placeholder order). Cross-layer anti-clobber (a
-/// `Processed` import clears overlapped `Draft` cells, cell-wise) lives in the
-/// importer (`geotiff_import.hpp`), not this query overlay.
+/// `Processed` write clears overlapped `Draft` cells, cell-wise) is a public store
+/// operation (`clearOverlappedDraft`): the store owns the semantics so every
+/// `Processed` producer applies them identically — the GeoTIFF importer
+/// (`geotiff_import.hpp`) and cube's replay/regen paths that write processed tiles
+/// directly via `saveTile`. It is deliberately separate from this query overlay.
 ///
 /// This phase has no ROS interface or distribution — just storage, in-process
 /// queries (`query.hpp`), per-tile GeoTIFF persistence (`tile_io.hpp`), and the
@@ -195,6 +214,45 @@ public:
   ///   (writable only via the wholesale regeneration workflow, ADR-0010 D7).
   std::size_t importTiles(
     SourceLayer layer, std::map<gggs::GridIndex, BathymetryTile> tiles);
+
+  /// @brief Clear overlapped `Draft` cells where @p processed_tiles has data
+  ///        (ADR-0010 D8 cross-layer anti-clobber).
+  ///
+  /// The store owns this semantics so **every** producer of `Processed` data applies
+  /// it identically: the GeoTIFF importer (`importGeoTiff`, which calls this after
+  /// building its tile map) and cube's replay/regen paths that write processed tiles
+  /// directly via `saveTile` and bypass the importer. Call it with the processed
+  /// tiles in hand — the single-tile overload lets a live/replay writer clear
+  /// incrementally right after each direct `saveTile`, or pass a whole tile-map for a
+  /// bulk import.
+  ///
+  /// For each processed grid the `Draft` layer **already holds a tile for** (this
+  /// never creates a spurious empty draft tile), clears exactly the `Draft` cells
+  /// that (a) the processed data populated **and** (b) `Draft` currently holds data
+  /// at, by writing them no-data via `set(SourceLayer::Draft, …, {})` — persisted
+  /// through the normal dirty-tile save path (there is no tile/cell-erase API and
+  /// `save()` never deletes on-disk tiles). A processed **no-data** cell (a
+  /// gated-drop hole) leaves the overlapping draft cell intact: harmless under
+  /// `Processed > Draft` and strictly more coverage than clearing by footprint, so
+  /// stale gap-striping never accumulates under the authoritative surface. Clearing
+  /// operates at the processed cells' own level; draft data at a *different* GGGS
+  /// level is not reached (in practice draft and processed both come from CUBE at the
+  /// store level).
+  ///
+  /// This mutates only `Draft` — an ungated, freely-writable layer — so it needs no
+  /// write-gate opt-in; `Reference`/`Chart` are never touched.
+  ///
+  /// @return The cells cleared and the draft tiles touched (cache-invalidation seam).
+  DraftClearResult clearOverlappedDraft(
+    const std::map<gggs::GridIndex, BathymetryTile> & processed_tiles);
+
+  /// @brief Single-tile overload of `clearOverlappedDraft` for incremental,
+  ///        per-tile callers (a live/replay writer clearing draft after each direct
+  ///        `saveTile` of a processed tile).
+  ///
+  /// @p processed_tile is treated as keyed by its own `index()` grid. Semantics are
+  /// identical to the tile-map overload (which delegates here per entry).
+  DraftClearResult clearOverlappedDraft(const BathymetryTile & processed_tile);
 
   /// @brief A layer's tiles, keyed by `gggs::GridIndex` (ascending). Empty map
   ///        if the layer holds no data.
