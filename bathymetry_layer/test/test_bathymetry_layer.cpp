@@ -222,7 +222,7 @@ TEST(BathymetryLayer, SurveyedCellMapsClearanceToCost)
 
   // Shoal: seafloor 0.5 m below the surface, trusted (σ 0.1 ≤ gate). Worst-case
   // clearance = 0.5 − 0.1 = 0.4 m < 1.0 → LETHAL (trusted keepout).
-  store->set(SourceLayer::Survey, cell, BathyCell{-0.5, 0.1});
+  store->set(SourceLayer::Draft, cell, BathyCell{-0.5, 0.1});
   layer.setStore(std::move(store));
   layer.setMapTideValid(true);
   auto shoal = layer.evaluateCell(cell);
@@ -233,7 +233,7 @@ TEST(BathymetryLayer, SurveyedCellMapsClearanceToCost)
   // >= 3.0 → FREE_SPACE.
   auto deep_store = std::make_unique<BathymetryStore>(5);
   const auto deep_cell = deep_store->cellIndex(kLat, kLon);
-  deep_store->set(SourceLayer::Survey, deep_cell, BathyCell{-5.0, 0.1});
+  deep_store->set(SourceLayer::Draft, deep_cell, BathyCell{-5.0, 0.1});
   layer.setStore(std::move(deep_store));
   layer.setMapTideValid(true);
   auto deep = layer.evaluateCell(deep_cell);
@@ -263,7 +263,7 @@ TEST(BathymetryLayer, UntrustedShallowCellIsCautionNotLethal)
   // the 0.5 m confidence gate → UNTRUSTED. Worst-case clearance = 1.0 − 2.0 =
   // −1.0 m < minimum_depth, so pre-#276 this would be LETHAL; under D7 an
   // untrusted below-threshold cell is capped at the caution band, NOT LETHAL.
-  store->set(SourceLayer::Survey, cell, BathyCell{-1.0, 2.0});
+  store->set(SourceLayer::Draft, cell, BathyCell{-1.0, 2.0});
   layer.setStore(std::move(store));
   layer.setMapTideValid(true);
 
@@ -293,7 +293,7 @@ TEST(BathymetryLayer, InvalidTideYieldsNoInformation)
   auto store = std::make_unique<BathymetryStore>(5);
   const auto cell = store->cellIndex(kLat, kLon);
   // A perfectly good surveyed cell (deep, reliable, fresh) must still be skipped.
-  store->set(SourceLayer::Survey, cell, BathyCell{47.0, 0.1});
+  store->set(SourceLayer::Draft, cell, BathyCell{47.0, 0.1});
   layer.setStore(std::move(store));
 
   const auto result = layer.evaluateCell(cell);
@@ -329,7 +329,7 @@ TEST(BathymetryLayer, UnknownUncertaintyCellStaysConservativeLethal)
     auto store = std::make_unique<BathymetryStore>(5);
     const auto cell = store->cellIndex(kLat, kLon);
     store->set(
-      SourceLayer::Survey, cell,
+      SourceLayer::Draft, cell,
       BathyCell{-5.0, std::numeric_limits<double>::infinity()});
     layer.setStore(std::move(store));
 
@@ -346,7 +346,7 @@ TEST(BathymetryLayer, UnknownUncertaintyCellStaysConservativeLethal)
     auto store = std::make_unique<BathymetryStore>(5);
     const auto cell = store->cellIndex(kLat, kLon);
     store->set(
-      SourceLayer::Survey, cell,
+      SourceLayer::Draft, cell,
       BathyCell{-5.0, std::numeric_limits<double>::quiet_NaN()});
     layer.setStore(std::move(store));
 
@@ -362,7 +362,7 @@ TEST(BathymetryLayer, UnknownUncertaintyCellStaysConservativeLethal)
   {
     auto store = std::make_unique<BathymetryStore>(5);
     const auto cell = store->cellIndex(kLat, kLon);
-    store->set(SourceLayer::Survey, cell, BathyCell{-5.0, 0.1});
+    store->set(SourceLayer::Draft, cell, BathyCell{-5.0, 0.1});
     layer.setStore(std::move(store));
 
     const auto result = layer.evaluateCell(cell);
@@ -407,7 +407,7 @@ TEST(BathymetryLayer, NonFiniteDepthWithUntrustedFiniteSigmaStaysLethal)
   {
     auto store = std::make_unique<BathymetryStore>(5);
     const auto cell = store->cellIndex(kLat, kLon);
-    store->set(SourceLayer::Survey, cell, BathyCell{bad_depth, 2.0});
+    store->set(SourceLayer::Draft, cell, BathyCell{bad_depth, 2.0});
     layer.setStore(std::move(store));
 
     const auto result = layer.evaluateCell(cell);
@@ -471,7 +471,7 @@ TEST(BathymetryLayer, KeepoutOnlyOnTrustedShallow)
   {
     auto store = std::make_unique<BathymetryStore>(5);
     const auto cell = store->cellIndex(kLat, kLon);
-    store->set(SourceLayer::Survey, cell, BathyCell{-0.5, 0.2});
+    store->set(SourceLayer::Draft, cell, BathyCell{-0.5, 0.2});
     layer.setStore(std::move(store));
     const auto result = layer.evaluateCell(cell);
     ASSERT_TRUE(result.has_value());
@@ -485,7 +485,7 @@ TEST(BathymetryLayer, KeepoutOnlyOnTrustedShallow)
   {
     auto store = std::make_unique<BathymetryStore>(5);
     const auto cell = store->cellIndex(kLat, kLon);
-    store->set(SourceLayer::Survey, cell, BathyCell{-0.5, 0.8});
+    store->set(SourceLayer::Draft, cell, BathyCell{-0.5, 0.8});
     layer.setStore(std::move(store));
     const auto result = layer.evaluateCell(cell);
     ASSERT_TRUE(result.has_value());
@@ -519,7 +519,7 @@ TEST(BathymetryLayer, TrustedKeepoutNotMaskedByShallowerUntrustedSample)
   const auto cell = store->cellIndex(kLat, kLon);
   // TRUSTED Survey shoal: seafloor 0.5 m down, σ 0.2 ≤ gate. worst_case =
   // 0.5 − 0.2 = 0.3 < minimum_depth → LETHAL (trusted keepout).
-  store->set(SourceLayer::Survey, cell, BathyCell{-0.5, 0.2});
+  store->set(SourceLayer::Draft, cell, BathyCell{-0.5, 0.2});
   // UNTRUSTED Chart sample, SHALLOWER point estimate (−0.2 > −0.5) so it would win
   // a shallowest-depth pick, but σ 2.0 > gate → caution cap, never keepout.
   store->set(SourceLayer::Chart, cell, BathyCell{-0.2, 2.0});

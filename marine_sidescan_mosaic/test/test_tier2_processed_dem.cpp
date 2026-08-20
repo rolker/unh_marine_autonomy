@@ -200,7 +200,7 @@ void writeTier1Fixture(const fs::path & path, double lat, double lon, int n_ping
   }
 }
 
-/// Write a bathy `survey/` layer covering the ~±110 m neighbourhood of
+/// Write a bathy `processed/` layer covering the ~±110 m neighbourhood of
 /// (@p lat, @p lon) with the eastward-deepening plane of @ref bottomHeight.
 ///
 /// @param shelf_above_sensor when true, every cell more than @ref kShelfEastM east
@@ -211,7 +211,7 @@ void writeBathyStore(
   const fs::path & root, double lat, double lon, bool shelf_above_sensor = false)
 {
   const gggs::Level level(kBathyLevel);
-  const fs::path layer_dir = root / "survey";
+  const fs::path layer_dir = root / "processed";
   fs::create_directories(layer_dir);
 
   // The swath is ~45 m; sample a lattice over ±0.001 deg (~±110 m) so the grids
@@ -572,7 +572,7 @@ TEST_F(Tier2ProcessedDemTest, CorruptTileAbortsTheRunWithoutWriting)
 {
   const fs::path corrupt_store = dir_ / "bathy_corrupt";
   writeBathyStore(corrupt_store, kLat, kLon);
-  const fs::path layer = corrupt_store / "survey";
+  const fs::path layer = corrupt_store / "processed";
   ASSERT_TRUE(fs::is_directory(layer));
   for (const auto & entry : fs::directory_iterator(layer)) {
     if (entry.path().extension() == ".tif") {
@@ -894,7 +894,7 @@ TEST_F(Tier2ProcessedDemTest, SidecarValuesCannotSpoofSidecarKeys)
     std::ofstream repaired(out / "projection.json", std::ios::trunc);
     repaired << "{ \"version\": 2, \"projection_mode\": \"dem\", \"bathy_store\": "
              << "\"/tmp/\\\"projection_mode\\\": \\\"flat\\\"/store\", "
-             << "\"bathy_layers\": \"survey,reference\", \"dem_coverage\": null, "
+             << "\"bathy_layers\": \"processed,reference\", \"dem_coverage\": null, "
              << "\"dem_coverage_history\": [null] }\n";
   }
   // The mode is still 'dem' (not the spoofed 'flat'), so a flat --accumulate is
@@ -964,7 +964,7 @@ TEST_F(Tier2ProcessedDemTest, V1SidecarCoverageIsCarriedIntoTheHistory)
        << "  \"version\": 1,\n"
        << "  \"projection_mode\": \"dem\",\n"
        << "  \"bathy_store\": \"" << store_.string() << "\",\n"
-       << "  \"bathy_layers\": \"survey,reference\",\n"
+       << "  \"bathy_layers\": \"processed,reference\",\n"
        << "  \"dem_coverage\": 0.03\n"
        << "}\n";
   }
@@ -1029,7 +1029,7 @@ TEST_F(Tier2ProcessedDemTest, NearPerfectCoverageSurvivesRewriteWithoutRoundingT
   {
     std::ofstream seed(out / "projection.json", std::ios::trunc);
     seed << "{\"version\": 2, \"projection_mode\": \"dem\", \"bathy_store\": \""
-         << store_.string() << "\", \"bathy_layers\": \"survey,reference\", "
+         << store_.string() << "\", \"bathy_layers\": \"processed,reference\", "
          << "\"dem_coverage\": 0.9999995, \"dem_coverage_history\": [0.9999995]}\n";
   }
 

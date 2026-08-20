@@ -38,6 +38,8 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -168,13 +170,33 @@ TEST_F(ImportGeotiffCliTest, StageThenCommitChartLandsTiles)
 
 TEST_F(ImportGeotiffCliTest, StageRejectsNonChartLayer)
 {
-  // survey/reference are direct-to-store imports; --stage is chart-only.
+  // draft/processed/reference are direct-to-store imports; --stage is chart-only.
   // Assert the exact usage-error code (1): run() maps abnormal termination to
   // -1, so EXPECT_EQ(..., 1) keeps a crash from passing as a usage rejection.
   const fs::path staged = dir_ / "staged";
   EXPECT_EQ(
-    run("--stage \"" + staged.string() + "\" survey \"" + tif_.string() + "\" --level 11"), 1);
+    run("--stage \"" + staged.string() + "\" processed \"" + tif_.string() + "\" --level 11"), 1);
   EXPECT_FALSE(fs::exists(staged / "chart"));
+}
+
+TEST_F(ImportGeotiffCliTest, SurveyLayerNameIsDeprecatedAliasForProcessed)
+{
+  // ADR-0010 D8: the legacy `survey` layer name still works (operator back-compat)
+  // but imports into `processed/` and prints a deprecation warning on stderr.
+  const fs::path store = dir_ / "store";
+  fs::create_directories(store);
+  EXPECT_EQ(
+    run("\"" + store.string() + "\" survey \"" + tif_.string() + "\" --level 11"), 0);
+  // The alias resolves to the processed layer on disk.
+  EXPECT_EQ(countTiles(store / "processed"), 1u);
+  EXPECT_FALSE(fs::exists(store / "survey"));
+
+  // And the run warned about the deprecation (captured to cli.log by run()).
+  std::ifstream log(dir_ / "cli.log");
+  const std::string out((std::istreambuf_iterator<char>(log)),
+    std::istreambuf_iterator<char>());
+  EXPECT_NE(out.find("'survey' is deprecated"), std::string::npos)
+    << "expected a deprecation warning, got: " << out;
 }
 
 TEST_F(ImportGeotiffCliTest, StageWithoutOperandIsUsageError)

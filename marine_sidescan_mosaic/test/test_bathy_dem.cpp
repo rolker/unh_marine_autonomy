@@ -359,7 +359,7 @@ TEST(BathyDem, UnusableStoreThrows)
   EXPECT_THROW(makeDem(dir.path().string(), {}), std::runtime_error);
 
   // A store whose only tiles are in a layer the caller did not ask for is just as
-  // unusable — this is the ADR-0010 D3 survey/ -> processed/ rename case.
+  // unusable — this is the ADR-0010 D8 survey/ -> processed/ rename case.
   writeConstantTile(dir.path(), "processed", gggs::Level(kFineLevel).gridIndex(kLat, kLon), -3.0);
   EXPECT_THROW(makeDem(dir.path().string(), {"survey"}), std::runtime_error);
   EXPECT_NO_THROW(makeDem(dir.path().string(), {"processed"}));
@@ -367,9 +367,9 @@ TEST(BathyDem, UnusableStoreThrows)
 
 // A requested layer that is absent — or present but tile-less — while another
 // requested layer HAS tiles is usable but narrower than the operator asked for.
-// It must be reported, never dropped in silence: after ADR-0010 D3's
-// survey/ -> processed/ re-classification, `survey,reference` would otherwise
-// quietly orthorectify against the coarse regional layer alone.
+// It must be reported, never dropped in silence: after ADR-0010 D8's
+// survey/ -> processed/ re-classification (+ new draft/), the old `survey,reference`
+// default would otherwise quietly orthorectify against the coarse regional layer alone.
 TEST(BathyDem, PartiallyMissingLayersWarnRatherThanVanish)
 {
   ScratchDir dir("partial");

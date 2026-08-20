@@ -37,6 +37,7 @@
 #include "marine_bathymetry_store/geotiff_import.hpp"
 #include "marine_bathymetry_store/tile_io.hpp"
 
+using marine_bathymetry_store::BathyCell;
 using marine_bathymetry_store::BathymetryStore;
 using marine_bathymetry_store::GeoTiffImportOptions;
 using marine_bathymetry_store::importGeoTiff;
@@ -142,16 +143,16 @@ TEST_F(GeoTiffImportTest, AlignedImportIsCellExact)
   const auto tif = writeTestTiff(dir_ / "aligned.tif", store.level(), 3, 3, depth, unc);
 
   GeoTiffImportOptions options;
-  const auto imported = importGeoTiff(store, SourceLayer::Survey, tif, options);
+  const auto imported = importGeoTiff(store, SourceLayer::Draft, tif, options).cells_imported;
   EXPECT_EQ(imported, 8u);   // 9 pixels minus the no-data centre
 
-  const auto nw = store.get(SourceLayer::Survey, nwCell(store, store.level()));
+  const auto nw = store.get(SourceLayer::Draft, nwCell(store, store.level()));
   ASSERT_TRUE(nw.has_value());
   EXPECT_FLOAT_EQ(static_cast<float>(nw->depth), -30.0f);
   EXPECT_FLOAT_EQ(static_cast<float>(nw->uncertainty), 0.1f);
 
   // The import landed in the layer's single fused surface (#221).
-  EXPECT_FALSE(store.tiles(SourceLayer::Survey).empty());
+  EXPECT_FALSE(store.tiles(SourceLayer::Draft).empty());
 }
 
 TEST_F(GeoTiffImportTest, ImportsAtCallerSpecifiedLevel)
@@ -166,7 +167,7 @@ TEST_F(GeoTiffImportTest, ImportsAtCallerSpecifiedLevel)
 
   GeoTiffImportOptions options;
   options.level = 8;   // import at level 8, not the store's default 11
-  EXPECT_EQ(importGeoTiff(store, SourceLayer::Reference, tif, options), 1u);
+  EXPECT_EQ(importGeoTiff(store, SourceLayer::Reference, tif, options).cells_imported, 1u);
 
   // The imported tile is at level 8, queryable at that level. The fixture's
   // single pixel sits at the level-8 grid's NW corner, so query that cell.
@@ -193,10 +194,10 @@ TEST_F(GeoTiffImportTest, FinerInputKeepsLowestUncertainty)
   const std::vector<float> unc{0.5f, 0.2f, 0.9f, 0.7f};
   const auto tif = writeTestTiff(dir_ / "fine.tif", store.level(), 2, 2, depth, unc, 2);
 
-  const auto imported = importGeoTiff(store, SourceLayer::Survey, tif);
+  const auto imported = importGeoTiff(store, SourceLayer::Draft, tif).cells_imported;
   EXPECT_EQ(imported, 1u);   // four pixels, one cell
 
-  const auto got = store.get(SourceLayer::Survey, nwCell(store, store.level()));
+  const auto got = store.get(SourceLayer::Draft, nwCell(store, store.level()));
   ASSERT_TRUE(got.has_value());
   EXPECT_FLOAT_EQ(static_cast<float>(got->depth), -31.0f);       // unc 0.2 wins
   EXPECT_FLOAT_EQ(static_cast<float>(got->uncertainty), 0.2f);
@@ -213,14 +214,14 @@ TEST_F(GeoTiffImportTest, ReimportMergesLastWriteWins)
   const auto second =
     writeTestTiff(dir_ / "second.tif", store.level(), 1, 1, {-28.0f}, unc);
 
-  EXPECT_EQ(importGeoTiff(store, SourceLayer::Survey, first), 1u);
+  EXPECT_EQ(importGeoTiff(store, SourceLayer::Draft, first).cells_imported, 1u);
   EXPECT_DOUBLE_EQ(
-    store.get(SourceLayer::Survey, nwCell(store, store.level()))->depth, -30.0);
+    store.get(SourceLayer::Draft, nwCell(store, store.level()))->depth, -30.0);
 
   // A second import of the same cell overwrites the first.
-  EXPECT_EQ(importGeoTiff(store, SourceLayer::Survey, second), 1u);
+  EXPECT_EQ(importGeoTiff(store, SourceLayer::Draft, second).cells_imported, 1u);
   EXPECT_DOUBLE_EQ(
-    store.get(SourceLayer::Survey, nwCell(store, store.level()))->depth, -28.0);
+    store.get(SourceLayer::Draft, nwCell(store, store.level()))->depth, -28.0);
 }
 
 TEST_F(GeoTiffImportTest, MissingUncertaintyBandUsesDefault)
@@ -233,9 +234,9 @@ TEST_F(GeoTiffImportTest, MissingUncertaintyBandUsesDefault)
   GeoTiffImportOptions options;
   options.uncertainty_band = 0;
   options.default_uncertainty = 3.5;
-  EXPECT_EQ(importGeoTiff(store, SourceLayer::Survey, tif, options), 1u);
+  EXPECT_EQ(importGeoTiff(store, SourceLayer::Draft, tif, options).cells_imported, 1u);
 
-  const auto got = store.get(SourceLayer::Survey, nwCell(store, store.level()));
+  const auto got = store.get(SourceLayer::Draft, nwCell(store, store.level()));
   ASSERT_TRUE(got.has_value());
   EXPECT_DOUBLE_EQ(got->uncertainty, 3.5);
 }
@@ -261,7 +262,7 @@ TEST_F(GeoTiffImportTest, DepthScaleOffsetAndFiniteNoData)
   options.default_uncertainty = 3.0;
   options.depth_scale = -1.0;       // positive-down -> up-positive
   options.depth_offset = -20.0;     // lake surface ellipsoidal height
-  const auto imported = importGeoTiff(store, SourceLayer::Reference, tif, options);
+  const auto imported = importGeoTiff(store, SourceLayer::Reference, tif, options).cells_imported;
   EXPECT_EQ(imported, 1u);         // the -9999 pixel was skipped
 
   const auto got = store.get(SourceLayer::Reference, nwCell(store, store.level()));
@@ -308,7 +309,7 @@ TEST_F(GeoTiffImportTest, CoarserInputFillsPixelFootprint)
     GDALClose(ds);
   }
 
-  const auto imported = importGeoTiff(store, SourceLayer::Reference, path);
+  const auto imported = importGeoTiff(store, SourceLayer::Reference, path).cells_imported;
   EXPECT_EQ(imported, 25u);   // 5x5 store cells under the one pixel
 
   // Every cell of the footprint carries the value — spot-check a middle one.
@@ -328,7 +329,7 @@ TEST_F(GeoTiffImportTest, ZeroUncertaintyIsMissingNotPerfect)
   const std::vector<float> unc{0.0f, 0.4f};
   const auto tif = writeTestTiff(dir_ / "zerounc.tif", store.level(), 2, 1, depth, unc);
 
-  const auto imported = importGeoTiff(store, SourceLayer::Survey, tif);
+  const auto imported = importGeoTiff(store, SourceLayer::Draft, tif).cells_imported;
   EXPECT_EQ(imported, 2u);   // both cells import (depth is real)
 
   const gggs::GridIndex grid = store.level().gridIndex(43.0, -70.5);
@@ -339,11 +340,11 @@ TEST_F(GeoTiffImportTest, ZeroUncertaintyIsMissingNotPerfect)
   const auto good_cell = store.cellIndex(
     grid.northLatitude() - 0.5 * cell_y, grid.westLongitude() + 1.5 * cell_x);
 
-  const auto zero = store.get(SourceLayer::Survey, zero_cell);
+  const auto zero = store.get(SourceLayer::Draft, zero_cell);
   ASSERT_TRUE(zero.has_value());
   EXPECT_TRUE(std::isnan(zero->uncertainty));   // missing, not 0
 
-  const auto good = store.get(SourceLayer::Survey, good_cell);
+  const auto good = store.get(SourceLayer::Draft, good_cell);
   ASSERT_TRUE(good.has_value());
   EXPECT_FLOAT_EQ(static_cast<float>(good->uncertainty), 0.4f);
 }
@@ -352,7 +353,7 @@ TEST_F(GeoTiffImportTest, MissingFileThrows)
 {
   BathymetryStore store(11);
   EXPECT_THROW(
-    importGeoTiff(store, SourceLayer::Survey, (dir_ / "absent.tif").string()),
+    importGeoTiff(store, SourceLayer::Draft, (dir_ / "absent.tif").string()),
     std::runtime_error);
 }
 
@@ -396,7 +397,7 @@ TEST_F(GeoTiffImportTest, ChartStageCommitRoundTripPreservesDepthAndSigma)
     1.5f, 1.5f, 1.5f};
   const auto tif = writeTestTiff(dir_ / "chart.tif", staging.level(), 3, 3, depth, unc);
 
-  const auto imported = importGeoTiff(staging, SourceLayer::Chart, tif);
+  const auto imported = importGeoTiff(staging, SourceLayer::Chart, tif).cells_imported;
   EXPECT_EQ(imported, 9u);   // all nine pixels are valid
 
   // --stage: save the chart layer into a staged directory. The 3x3 import sits
@@ -434,4 +435,111 @@ TEST_F(GeoTiffImportTest, ChartStageCommitRoundTripPreservesDepthAndSigma)
       EXPECT_NEAR(got->uncertainty, unc[row * 3 + col], 1e-6);
     }
   }
+}
+
+// --- Cell-wise anti-clobber: a Processed import clears overlapped Draft (D8) ---
+
+namespace
+{
+// The store cell one column east of the NW-corner cell of the grid containing
+// (43.0, -70.5) at @p level (shares the grid/tile with nwCell).
+gggs::CellIndex nwCellEast(const BathymetryStore & store, const gggs::Level & level)
+{
+  const gggs::GridIndex grid = level.gridIndex(43.0, -70.5);
+  const double cell_x = grid.longitudinalSpan() / gggs::cell_rows_per_grid;
+  const double cell_y = grid.latitudinalSpan() / gggs::cell_rows_per_grid;
+  return store.cellIndex(
+    grid.northLatitude() - 0.5 * cell_y, grid.westLongitude() + 1.5 * cell_x);
+}
+}  // namespace
+
+TEST_F(GeoTiffImportTest, AntiClobberCellWiseClearsOnlyCoveredDraftCells)
+{
+  // ADR-0010 D8: a Processed import clears overlapped Draft cells CELL-WISE — only
+  // where the import has data. Draft cell A (covered by the import) is cleared;
+  // Draft cell B (same tile, not covered) survives.
+  BathymetryStore store(11);
+  const auto cell_a = nwCell(store, store.level());       // NW-corner cell
+  const auto cell_b = nwCellEast(store, store.level());   // one east, same tile
+  ASSERT_TRUE(cell_a.grid() == cell_b.grid());
+  store.set(SourceLayer::Draft, cell_a, BathyCell{-9.0, 0.4});
+  store.set(SourceLayer::Draft, cell_b, BathyCell{-8.0, 0.4});
+
+  // A 1x1 processed raster at the NW corner covers exactly cell A.
+  const auto tif = writeTestTiff(dir_ / "proc.tif", store.level(), 1, 1, {-30.0f}, {0.1f});
+  const auto result = importGeoTiff(store, SourceLayer::Processed, tif);
+
+  EXPECT_EQ(result.cells_imported, 1u);
+  EXPECT_EQ(result.draft_cells_cleared, 1u);
+  ASSERT_EQ(result.draft_tiles_touched.size(), 1u);
+  EXPECT_TRUE(result.draft_tiles_touched.front() == cell_a.grid());
+
+  // Cell A: Draft cleared (reads no-data), Processed now holds the imported value.
+  const auto draft_a = store.get(SourceLayer::Draft, cell_a);
+  ASSERT_TRUE(draft_a.has_value());
+  EXPECT_FALSE(draft_a->hasData());
+  EXPECT_DOUBLE_EQ(store.get(SourceLayer::Processed, cell_a)->depth, -30.0);
+
+  // Cell B: not covered by the import, so the Draft value survives untouched.
+  const auto draft_b = store.get(SourceLayer::Draft, cell_b);
+  ASSERT_TRUE(draft_b.has_value());
+  ASSERT_TRUE(draft_b->hasData());
+  EXPECT_DOUBLE_EQ(draft_b->depth, -8.0);
+}
+
+TEST_F(GeoTiffImportTest, AntiClobberGatedDropHolePreservesDraft)
+{
+  // The invariant that mandates CELL-WISE (not tile-wise) clearing: a processed
+  // re-run leaves gated-drop holes (no-data cells). Draft data under such a hole
+  // must SURVIVE — the query overlay shows it where Processed has nothing.
+  BathymetryStore store(11);
+  const auto cell_a = nwCell(store, store.level());        // will be covered (data)
+  const auto cell_hole = nwCellEast(store, store.level());  // processed no-data hole
+  store.set(SourceLayer::Draft, cell_a, BathyCell{-9.0, 0.4});
+  store.set(SourceLayer::Draft, cell_hole, BathyCell{-8.0, 0.4});
+
+  // 2x1 processed raster: col 0 has data (covers A), col 1 is no-data (the hole
+  // over cell_hole).
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const auto tif = writeTestTiff(
+    dir_ / "hole.tif", store.level(), 2, 1, {-30.0f, nan}, {0.1f, nan});
+  const auto result = importGeoTiff(store, SourceLayer::Processed, tif);
+
+  EXPECT_EQ(result.cells_imported, 1u);      // only the col-0 pixel has data
+  EXPECT_EQ(result.draft_cells_cleared, 1u);  // only cell A cleared
+
+  // Covered cell A: Draft cleared.
+  EXPECT_FALSE(store.get(SourceLayer::Draft, cell_a)->hasData());
+  // Gated-drop hole cell: Processed has no data there, so Draft SURVIVES.
+  const auto draft_hole = store.get(SourceLayer::Draft, cell_hole);
+  ASSERT_TRUE(draft_hole.has_value());
+  ASSERT_TRUE(draft_hole->hasData());
+  EXPECT_DOUBLE_EQ(draft_hole->depth, -8.0);
+}
+
+TEST_F(GeoTiffImportTest, ProcessedImportCreatesNoSpuriousDraftTile)
+{
+  // Clearing must never CREATE a Draft tile where none existed: importing
+  // Processed into a store with no Draft data leaves the Draft layer empty.
+  BathymetryStore store(11);
+  const auto tif = writeTestTiff(dir_ / "proc.tif", store.level(), 1, 1, {-30.0f}, {0.1f});
+  const auto result = importGeoTiff(store, SourceLayer::Processed, tif);
+
+  EXPECT_EQ(result.cells_imported, 1u);
+  EXPECT_EQ(result.draft_cells_cleared, 0u);
+  EXPECT_TRUE(result.draft_tiles_touched.empty());
+  EXPECT_TRUE(store.tiles(SourceLayer::Draft).empty());
+}
+
+TEST_F(GeoTiffImportTest, DraftImportDoesNotClearAnything)
+{
+  // Only a Processed import clears Draft. A Draft import returns zeroed anti-clobber
+  // fields (and, trivially, does not clear itself).
+  BathymetryStore store(11);
+  const auto tif = writeTestTiff(dir_ / "draft.tif", store.level(), 1, 1, {-30.0f}, {0.1f});
+  const auto result = importGeoTiff(store, SourceLayer::Draft, tif);
+
+  EXPECT_EQ(result.cells_imported, 1u);
+  EXPECT_EQ(result.draft_cells_cleared, 0u);
+  EXPECT_TRUE(result.draft_tiles_touched.empty());
 }
