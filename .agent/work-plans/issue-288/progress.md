@@ -168,8 +168,8 @@ Out-of-scope (not findings for this PR): stale `~/data/stores/` paths in `docs/s
 **CI**: failures-noted — `marine_autonomy_integration_tests` `test_command_bridge_routes_to_mission_manager` (launch_testing timing flake: "Expected clear_tasks ... got []" + KeyboardInterrupt teardown; both reported failures are the same test double-counted across Test.xml/xunit). Diff is docs-only + one help-text string — cannot affect command_bridge/mission_manager. jazzy branch green at 08-18. Failed-job re-run triggered 2026-08-20 to confirm flake.
 
 ### Findings
-- [ ] (trivial, Copilot) plan.md item-6 lead-in sentence hard to parse (flagged as unmatched paren; parens balance but the 4-line parenthetical is unreadable) — reword — `.agent/work-plans/issue-288/plan.md:85-88`
-- [ ] (trivial, Copilot) "(expanded)" wording ambiguous: `vdatum_query.cpp` does NOT expand `~`/env vars (verified — no wordexp/getenv), so state that literal absolute paths must be passed; also nest the `VDatumConfig` line under its parent bullet for correct Markdown structure — `marine_vertical_datum/README.md:72-75`
+- [x] (trivial, Copilot) plan.md item-6 lead-in sentence hard to parse (flagged as unmatched paren; parens balance but the 4-line parenthetical is unreadable) — reword — `.agent/work-plans/issue-288/plan.md:85-88`
+- [x] (trivial, Copilot) "(expanded)" wording ambiguous: `vdatum_query.cpp` does NOT expand `~`/env vars (verified — no wordexp/getenv), so state that literal absolute paths must be passed; also nest the `VDatumConfig` line under its parent bullet for correct Markdown structure — `marine_vertical_datum/README.md:72-75`
 
 ### False positives
 - (none)
@@ -177,3 +177,22 @@ Out-of-scope (not findings for this PR): stale `~/data/stores/` paths in `docs/s
 **Local-timeline reconciliation**: pre-push rounds 1–2 findings (provenance
 wording, datum/user symmetry caveat) all resolved before publish; Copilot raised
 neither, and raised nothing overlapping — no cross-source confirmations.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-20 14:10 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**PR**: #312 at `0d8e93c`
+**Addressed**: Integrated Review (2026-08-20 10:07 -04:00, PR #312 at `d439d7d`)
+**Commits**: `a7de8ae`, `0d8e93c`
+
+### Actions
+- [x] (trivial, Copilot) Reworded plan.md item-6: pulled the "explicitly blocked on item 2 / s57_tools#28 status" clause out of the header's parenthetical into its own **Blocked on item 2's outcome** sentence, so the lead-in reads as a clean `(GATED — in mru_transform)` header — `.agent/work-plans/issue-288/plan.md:86-90`
+- [x] (trivial, Copilot) Replaced the ambiguous "(expanded)" annotation on the `VDatumConfig` example: verified `vdatum_query.cpp` has no `wordexp`/`getenv`/`expanduser` (grep clean across `src/` + `include/`), so the README now states literal absolute paths must be passed (`~`/env vars are used as-is and will not resolve) and shows a `/home/<user>/…` canonical example instead of the misleading tilde form; continuation lines stay indented under the parent bullet — `marine_vertical_datum/README.md:72-76`
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a
+fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 288 --skill review-code
