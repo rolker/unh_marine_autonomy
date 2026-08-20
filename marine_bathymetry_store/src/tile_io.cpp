@@ -251,9 +251,15 @@ void migrateLegacySurveyDir(const std::string & dir)
   namespace fs = std::filesystem;
   const fs::path survey = fs::path(dir) / "survey";
   const fs::path processed = fs::path(dir) / layerDirName(SourceLayer::Processed);
-  std::error_code ec;
-  const bool has_survey = fs::is_directory(survey, ec);
-  const bool has_processed = fs::is_directory(processed, ec);
+  // Separate error_codes per probe: a single shared `ec` would carry only the
+  // LAST call's state, so anyone who later reads it to see WHICH path failed to
+  // stat would be misled. Each is_directory() records its own path's outcome. A
+  // stat error is treated as "absent" either way (the safe default — a store we
+  // cannot even stat is not one we silently rename).
+  std::error_code survey_ec;
+  std::error_code processed_ec;
+  const bool has_survey = fs::is_directory(survey, survey_ec);
+  const bool has_processed = fs::is_directory(processed, processed_ec);
   if (!has_survey) {
     return;   // nothing to migrate (fresh/new-layout store)
   }
