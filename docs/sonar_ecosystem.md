@@ -62,8 +62,10 @@ The adopted on-disk root is **`~/data/world/`**, organized by theme × provenanc
 ```
 
 For the **depth** theme the four provenance layers replace ADR-0002 A2's
-`survey`/`reference` pair, ranked `processed > draft > reference > chart` for the
-best-source query (ADR-0010 D4/D8):
+`survey`/`reference` pair, walked `processed > draft > reference > chart` for the
+best-source query (ADR-0010 D4/D8) — the survey-first half (`processed > draft`)
+is settled, but the `reference > chart` tail is the **documented placeholder**:
+ADR-0010 D4 defers the real reference-vs-chart arbitration:
 
 | Layer | What | Lifecycle |
 |-------|------|-----------|
@@ -92,7 +94,7 @@ cells). The full migration off the legacy `~/data/stores/` root — nav2
 | **Store — backscatter** | Two-tier backscatter store (GeoCoder, draft/processed) | [#180](https://github.com/rolker/unh_marine_autonomy/issues/180) | 0006 / 0007 | 🔨 **M3/MBES half ✅ done**: [cube#80] offline producer merged → `marine_mbes_backscatter_store`; **sidescan half 🔨 in flight**: durable `processed` build with best-source compositing + registry, DEM orthorectification and a `projection.json` provenance sidecar ([#297]); GeoCoder radiometry (beam pattern, slope, EGN) still 📋 |
 | **Store — provenance** | Cross-store multi-platform source-id + registry | [#179](https://github.com/rolker/unh_marine_autonomy/issues/179) | 0005 | 📋 deferred (multi-platform later tier) |
 | **Live transport** | `SonarVisualizationTile` + anti-entropy tile-sync | [#230](https://github.com/rolker/unh_marine_autonomy/issues/230) (= #86-Phase-6 / #171-I3) | 0008 | ✅ **end-to-end**: #230 transport + [cube#78] producer + [camp#121] consumer (live cache) all merged |
-| **Costmap** | Bathy → Nav2 costmap layer | [#127](https://github.com/rolker/unh_marine_autonomy/issues/127) | — | ✅ **usable** — tide-frame fix [uma#220] + latch-hardening [uma#223] merged (PR#222). Midpoint+uncertainty cost-model rework is a separate enhancement, not a blocker |
+| **Costmap** | Bathy → Nav2 costmap layer | [#127](https://github.com/rolker/unh_marine_autonomy/issues/127) | — | ✅ **usable** — tide-frame fix [uma#220] + latch-hardening [uma#223] merged (PR#222). Midpoint+uncertainty cost-model rework ✅ **landed** ([#290](https://github.com/rolker/unh_marine_autonomy/pull/290)) — an ADR-0010 D7 precondition for chart ingestion (see the frontier), not just an enhancement |
 | **Render — CAMP** | Unified band-select + colormap raster render + live cache | [#175](https://github.com/rolker/unh_marine_autonomy/issues/175) (I4), [camp#121], [camp#108], [camp#63] | 0001 / 0008 | ✅ file-store display + GPU raster ([camp#90]), band-select ([camp#108], PR [camp#124] merged), and live cache ([camp#121], PR [camp#139] merged) all landed |
 | **Render — web** | Browser SA viewer (contacts + bathy + sidescan) | [#166](https://github.com/rolker/unh_marine_autonomy/issues/166) | — | 📋 |
 | **Reprocess** | Offline M3 bag → store tiles; PINGMapper offline sidescan EGN | [#171](https://github.com/rolker/unh_marine_autonomy/issues/171) (C1) | — | ✅ M3 import landed ([cube#63] closed); 📋 sidescan offline pipeline to validate; ⚠️ draft→**processed** promotion workflow thin |

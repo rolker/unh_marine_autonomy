@@ -222,7 +222,7 @@ Ready for code review (`review-code`). No push, no GitHub actions taken.
 **Round**: 1 | **Ship**: recommended — no must-fix; 4 optional doc-consistency polish items
 
 ### Findings
-- [ ] (suggestion) Arc-1 Costmap status row still calls the cost-model rework "a separate enhancement, not a blocker" — contradicts this PR's own frontier update ("✅ landed #290") and ADR-0010 D7's precondition framing — `docs/sonar_ecosystem.md:95`
-- [ ] (suggestion) "ranked `processed > draft > reference > chart`" stated as settled; ADR-0010 D4 defers reference-vs-chart arbitration (the 4-way walk is a documented placeholder) — `docs/sonar_ecosystem.md:64`
-- [ ] (suggestion) Cost-model rework cited as issue `uma#276` in ADR-0010 D7 body but PR `uma#290` in the new implementing-PR table + frontier, with no link between the two identifiers — `docs/decisions/0010-geospatial-world-model.md:323`
-- [ ] (suggestion) gardening_dispositions.md header calls the seven items "the full set from ADR-0010's Consequences section," but #151 and #189/#256 derive from D9/D7, not the Consequences list — `.agent/work-plans/issue-311/gardening_dispositions.md:9`
+- [x] (suggestion) Arc-1 Costmap status row still calls the cost-model rework "a separate enhancement, not a blocker" — contradicts this PR's own frontier update ("✅ landed #290") and ADR-0010 D7's precondition framing — `docs/sonar_ecosystem.md:95`
+- [x] (suggestion) "ranked `processed > draft > reference > chart`" stated as settled; ADR-0010 D4 defers reference-vs-chart arbitration (the 4-way walk is a documented placeholder) — `docs/sonar_ecosystem.md:64`
+- [x] (suggestion) Cost-model rework cited as issue `uma#276` in ADR-0010 D7 body but PR `uma#290` in the new implementing-PR table + frontier, with no link between the two identifiers — `docs/decisions/0010-geospatial-world-model.md:323`
+- [x] (suggestion) gardening_dispositions.md header calls the seven items "the full set from ADR-0010's Consequences section," but #151 and #189/#256 derive from D9/D7, not the Consequences list — `.agent/work-plans/issue-311/gardening_dispositions.md:9`

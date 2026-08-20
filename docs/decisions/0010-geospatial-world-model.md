@@ -320,7 +320,10 @@ Export rules (`s57_to_geotiff`, new tool in `s57_tools`, feeding the existing
 
 **Chart ingestion is gated on the cost-model rework** — a precondition, not a
 parallel track, and satisfied by
-[uma#276](https://github.com/rolker/unh_marine_autonomy/issues/276).
+[uma#276](https://github.com/rolker/unh_marine_autonomy/issues/276) (the tracking
+issue), which landed as
+[PR uma#290](https://github.com/rolker/unh_marine_autonomy/pull/290) — the
+identifier the implementing-PR table and `sonar_ecosystem.md` frontier cite.
 `bathymetry_layer`'s former `max_uncertainty` gate treated over-uncertain cells
 as not-reliable → LETHAL, so CATZOC-grade σ entering the store would have
 rendered chart-only regions wholesale keepout (or forced a global gate

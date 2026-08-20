@@ -6,9 +6,11 @@ section below gives the **disposition** (the state change the host makes) and th
 signature block included. The host posts each with operator confirmation; the
 final open/close call rests with the operator at post time.
 
-All citations are host-verified 2026-08-20. This is the full set from ADR-0010's
-own Consequences section: uma#163, uma#151, uma#189/#256, mru_transform#8,
-s57_tools#23, s57_tools#26, echoboats#276.
+All citations are host-verified 2026-08-20. These seven items are the ADR-0010
+gardening set: most come from the ADR's own Consequences/housekeeping list
+(uma#163, mru_transform#8, s57_tools#23, s57_tools#26, echoboats#276), while
+uma#151 derives from decision D9 (staged refinement / multi-level) and
+uma#189/#256 from decision D7 (atomic tile writes gating live chart regen).
 
 ---
 
