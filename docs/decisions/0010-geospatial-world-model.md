@@ -113,7 +113,12 @@ load-bearing: an operator authorized to work inside a restricted area waives
 ├── imagery/      sidescan store (two-tier, ADR-0006) +
 │                 MBES backscatter store (CUBE-coupled, ADR-0007)
 ├── features/     contacts (ADR-0004); chart features thin — see D11
-└── charts/       the ENC corpus itself + edition registry (cron-managed, D7)
+├── charts/       the ENC corpus itself + edition registry (cron-managed, D7)
+├── s100/         S-100 family products; S-102 import cache at s100/s102/
+│                 (updater-managed; amended 2026-08-20, #288)
+└── datum/        vertical-datum support data: geoid/ + vdatum/ grids
+                  (updater-managed) + user/ override polygons materialized
+                  from git (amended 2026-08-20, #288 — see amendment below)
 ```
 
 Provenance layers for the depth theme, replacing ADR-0002 A2's
@@ -143,6 +148,30 @@ split — it is **re-classified wholesale to `processed/`**, which is accurate:
 the current Massabesic stores were regenerated via `import_bag` (the
 authoritative path). `draft/` starts empty. Beyond that, path changes are
 config migration.
+
+#### D3 amendment (2026-08-20, #288) — `datum/` and `s100/` siblings
+
+**`datum/` is support data, not a store** — geoid and VDatum regional grids
+plus user override polygons, consumed across themes (S-102 depth imports, the
+D6 datum library and its CAMP/operator use, `chart_datum_node`). Because no
+single store owns it and it is neither a feature set nor a registry (D1), it
+sits as a **top-level sibling** rather than inside `charts/` or `depths/`.
+Grids (`datum/geoid/`, `datum/vdatum/`) are **updater-managed** like the ENC
+corpus (D7).
+
+**`datum/user/` is the one git-authored exception** to the
+regenerable-from-source posture: override polygons (e.g.
+`massabesic_datum_polygons.yaml`) are safety-relevant and stay PR-reviewed in
+their project repo, which remains the source of truth; a deploy step
+**materializes** a copy into `world/datum/user/` for discovery. The invariant
+holds with git as the source — the copy is regenerable, never hand-edited in
+place, and never updater-authored.
+
+**`s100/`** hosts S-100 family products as their own top-level sibling
+(decided at the #288 plan checkpoint): the family will span both raster
+(S-102) and feature (S-101) products, so it does not belong under `charts/`.
+The S-102 import cache moves from `~/data/stores/s102_cache` to
+`~/data/world/s100/s102/`.
 
 ### D4 — Layers encode process; σ encodes trust
 
