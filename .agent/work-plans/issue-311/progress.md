@@ -104,3 +104,16 @@ From the consequences map:
 ### Actions
 - [ ] `sonar_ecosystem.md` reframe must include: D3 taxonomy (chart/reference/draft/processed), `~/data/world/` root, clearOverlappedDraft (D8), depths-overviews sidecar (D9), ADR-0010 in the ADR spine table, and an updated "Where to direct efforts" frontier.
 - [ ] ADR-0010 status flip should cite implementing PRs and date explicitly.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-08-20 00:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-311/plan.md` at `428ba68`
+**Branch**: feature/issue-311 at `428ba68`
+**Phases**: single
+
+### Open questions
+- [ ] For #163: is the lake-contour-prior import idea actively wanted as a follow-on issue, or definitively out of scope?
+- [ ] For mru_transform#8: is the issue tracking only the datum design (answered by ADR-0010), or also a broader TF frame hierarchy doc?
