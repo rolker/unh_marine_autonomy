@@ -226,3 +226,32 @@ Ready for code review (`review-code`). No push, no GitHub actions taken.
 - [x] (suggestion) "ranked `processed > draft > reference > chart`" stated as settled; ADR-0010 D4 defers reference-vs-chart arbitration (the 4-way walk is a documented placeholder) — `docs/sonar_ecosystem.md:64`
 - [x] (suggestion) Cost-model rework cited as issue `uma#276` in ADR-0010 D7 body but PR `uma#290` in the new implementing-PR table + frontier, with no link between the two identifiers — `docs/decisions/0010-geospatial-world-model.md:323`
 - [x] (suggestion) gardening_dispositions.md header calls the seven items "the full set from ADR-0010's Consequences section," but #151 and #189/#256 derive from D9/D7, not the Consequences list — `.agent/work-plans/issue-311/gardening_dispositions.md:9`
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-20 22:13 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-311 at `3a1af69`
+**Addressed**: `## Local Review (Pre-Push)` (When 2026-08-20 22:08 +00:00, branch `6f5a57c`)
+**Commits**: `3a1af69`
+
+Doc-polish round (host scope: final before publish). All four suggestions from
+the latest pre-push review were applied exactly — wording precision only, no
+structural change — in a single commit (`3a1af69`) alongside the box-checks.
+
+### Actions
+- [x] Costmap row no longer contradicts the frontier — cost-model rework marked ✅ landed ([#290](https://github.com/rolker/unh_marine_autonomy/pull/290)), framed as an ADR-0010 D7 precondition rather than "a separate enhancement, not a blocker" — `docs/sonar_ecosystem.md:95`
+- [x] Best-source walk `processed > draft > reference > chart` qualified: survey-first half settled, `reference > chart` tail is the documented placeholder pending ADR-0010 D4 arbitration — `docs/sonar_ecosystem.md:64`
+- [x] ADR-0010 D7 now links the tracking issue uma#276 to its implementing PR uma#290, the identifier the implementing-PR table and frontier cite — `docs/decisions/0010-geospatial-world-model.md:321-323`
+- [x] gardening_dispositions.md header corrected: Consequences/housekeeping list yields five items (uma#163, mru_transform#8, s57_tools#23, s57_tools#26, echoboats#276); uma#151 derives from D9 and uma#189/#256 from D7 — `.agent/work-plans/issue-311/gardening_dispositions.md:9`
+
+### Verification
+- Pre-commit hooks ran on `3a1af69` (no `--no-verify`); docs-only change.
+- Reference-style link defs in both edited docs confirmed resolvable; new #290 links are inline full URLs.
+- No structural/scope change — the ADR decision content, spine table, and disposition texts are untouched beyond the four wording fixes.
+
+### Next step
+
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). No push,
+no GitHub actions taken (FOREGROUND, host performs pushes).
