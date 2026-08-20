@@ -113,5 +113,28 @@ Recommendations:
 **Round**: 1 | **Ship**: continue — one mechanical wording contradiction (grids labeled "updater-managed" vs. this PR's verified "not yet provisioned"); design itself sound, expect fast convergence
 
 ### Findings
-- [ ] (must-fix) ADR-0010 D3 + marine_vertical_datum README present datum grids as "updater-managed"/"populated by the updater", contradicting item-2's verified fact that the updater does not provision grids (provisioning is a queued follow-on); reword to intended/future or state provisioning is currently manual [cross-pass confirmed: Lens A + Lens B] — `docs/decisions/0010-geospatial-world-model.md:120,159`, `marine_vertical_datum/README.md:61`
-- [ ] (suggestion) `s100/` is also tagged "(updater-managed)" but the S-102 cache is populated by the operator-run `s102_import` CLI, not the cron updater — attribute to import tooling — `docs/decisions/0010-geospatial-world-model.md:118`
+- [x] (must-fix) ADR-0010 D3 + marine_vertical_datum README present datum grids as "updater-managed"/"populated by the updater", contradicting item-2's verified fact that the updater does not provision grids (provisioning is a queued follow-on); reword to intended/future or state provisioning is currently manual [cross-pass confirmed: Lens A + Lens B] — `docs/decisions/0010-geospatial-world-model.md:120,159`, `marine_vertical_datum/README.md:61`
+- [x] (suggestion) `s100/` is also tagged "(updater-managed)" but the S-102 cache is populated by the operator-run `s102_import` CLI, not the cron updater — attribute to import tooling — `docs/decisions/0010-geospatial-world-model.md:118`
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-20 13:30 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-288 at `e0812f8`
+**Addressed**: Local Review (Pre-Push) (2026-08-20 13:26 +00:00, branch feature/issue-288 at `040c945`)
+**Commits**: `e0812f8`
+
+### Actions
+- [x] (must-fix) Reworded datum grids from "updater-managed"/"populated by the updater" to "intended to be updater-managed"; state the updater does not yet provision grids (projsync geoid + VDatum bundle is a queued s57_tools follow-on) and they are currently placed manually — `docs/decisions/0010-geospatial-world-model.md:119-121,162-165`, `marine_vertical_datum/README.md:61-63`
+- [x] (suggestion) Re-attributed the `s100/` S-102 import cache from "(updater-managed)" to the operator-run `s102_import` CLI, not the cron updater — `docs/decisions/0010-geospatial-world-model.md:117-119`
+
+Both findings corrected the same "updater-managed" provenance mislabel and fell
+within one contiguous ADR diff hunk (the D3 tree diagram), so they landed in a
+single commit rather than split.
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a
+fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 288 --skill review-code
