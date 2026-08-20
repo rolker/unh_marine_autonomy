@@ -306,3 +306,97 @@ TEST(Store, ImportTilesHonorsChartGate)
   BathymetryStore staging(5, /*reference_writable=*/false, /*chart_staging_writable=*/true);
   EXPECT_EQ(staging.importTiles(SourceLayer::Chart, oneTile(cell, BathyCell{-20.0, 1.5})), 1u);
 }
+
+// --- Public cell-wise anti-clobber API: clearOverlappedDraft (ADR-0010 D8) ---
+// Direct-call coverage of the store operation extracted from importGeoTiff (#308),
+// so cube's `saveTile`-based regen paths that bypass the importer exercise the same
+// semantics. importGeoTiff's own anti-clobber tests (test_geotiff_import.cpp) cover
+// the importer wiring; these hit the store API on the direct path.
+
+TEST(Store, ClearOverlappedDraftIsCellWiseAndPreservesGatedDropHoles)
+{
+  // The invariant that mandates CELL-WISE (not tile-wise) clearing on the direct
+  // path: a processed tile clears only draft cells it has data for; a processed
+  // no-data cell (a gated-drop hole) leaves the overlapping draft cell intact, and a
+  // processed cell where draft has no data clears nothing.
+  BathymetryStore store(11);
+  const gggs::GridIndex grid = store.level().gridIndex(43.0, -70.5);
+  const gggs::CellIndex cell_a(grid, 0, 0);   // draft data + processed data -> cleared
+  const gggs::CellIndex cell_b(grid, 0, 1);   // draft data + processed hole  -> survives
+  const gggs::CellIndex cell_c(grid, 0, 2);   // draft empty + processed data -> nothing
+  ASSERT_TRUE(cell_a.valid() && cell_b.valid() && cell_c.valid());
+  store.set(SourceLayer::Draft, cell_a, BathyCell{-9.0, 0.4});
+  store.set(SourceLayer::Draft, cell_b, BathyCell{-8.0, 0.4});
+  // cell_c intentionally left with no draft data.
+
+  marine_bathymetry_store::BathymetryTile processed(grid);
+  processed.set(0, 0, BathyCell{-30.0, 0.1});  // covers A
+  processed.set(0, 2, BathyCell{-31.0, 0.1});  // covers C (draft empty there)
+  // (0, 1) left no-data: the gated-drop hole over B.
+
+  const auto result = store.clearOverlappedDraft(processed);
+
+  EXPECT_EQ(result.cells_cleared, 1u);            // only cell A
+  ASSERT_EQ(result.tiles_touched.size(), 1u);
+  EXPECT_TRUE(result.tiles_touched.front() == grid);
+
+  // Cell A: draft cleared (reads no-data).
+  const auto draft_a = store.get(SourceLayer::Draft, cell_a);
+  ASSERT_TRUE(draft_a.has_value());
+  EXPECT_FALSE(draft_a->hasData());
+  // Cell B: processed no-data hole -> draft SURVIVES.
+  const auto draft_b = store.get(SourceLayer::Draft, cell_b);
+  ASSERT_TRUE(draft_b.has_value());
+  ASSERT_TRUE(draft_b->hasData());
+  EXPECT_DOUBLE_EQ(draft_b->depth, -8.0);
+  // Cell C: draft never had data, so nothing to clear (still no-data).
+  const auto draft_c = store.get(SourceLayer::Draft, cell_c);
+  ASSERT_TRUE(draft_c.has_value());  // the A/B writes created the tile
+  EXPECT_FALSE(draft_c->hasData());
+}
+
+TEST(Store, ClearOverlappedDraftNeverCreatesDraftTile)
+{
+  // Clearing must never CREATE a Draft tile where none existed: a processed tile
+  // over an empty Draft layer clears nothing and leaves Draft empty (no spurious
+  // all-NaN on-disk artifact).
+  BathymetryStore store(11);
+  const gggs::GridIndex grid = store.level().gridIndex(43.0, -70.5);
+  marine_bathymetry_store::BathymetryTile processed(grid);
+  processed.set(0, 0, BathyCell{-30.0, 0.1});
+
+  const auto result = store.clearOverlappedDraft(processed);
+
+  EXPECT_EQ(result.cells_cleared, 0u);
+  EXPECT_TRUE(result.tiles_touched.empty());
+  EXPECT_TRUE(store.tiles(SourceLayer::Draft).empty());
+}
+
+TEST(Store, ClearOverlappedDraftTileMapAggregatesAcrossTiles)
+{
+  // The tile-map overload clears across several grids in one call (a bulk regen),
+  // aggregating the count and listing each touched grid once.
+  BathymetryStore store(11);
+  const gggs::GridIndex grid1 = store.level().gridIndex(43.0, -70.5);
+  const gggs::GridIndex grid2 = store.level().gridIndex(44.0, -69.0);
+  ASSERT_FALSE(grid1 == grid2);
+  const gggs::CellIndex c1(grid1, 0, 0);
+  const gggs::CellIndex c2(grid2, 0, 0);
+  store.set(SourceLayer::Draft, c1, BathyCell{-9.0, 0.4});
+  store.set(SourceLayer::Draft, c2, BathyCell{-7.0, 0.4});
+
+  std::map<gggs::GridIndex, marine_bathymetry_store::BathymetryTile> processed;
+  marine_bathymetry_store::BathymetryTile t1(grid1);
+  t1.set(0, 0, BathyCell{-30.0, 0.1});
+  marine_bathymetry_store::BathymetryTile t2(grid2);
+  t2.set(0, 0, BathyCell{-31.0, 0.1});
+  processed.emplace(grid1, std::move(t1));
+  processed.emplace(grid2, std::move(t2));
+
+  const auto result = store.clearOverlappedDraft(processed);
+
+  EXPECT_EQ(result.cells_cleared, 2u);
+  EXPECT_EQ(result.tiles_touched.size(), 2u);
+  EXPECT_FALSE(store.get(SourceLayer::Draft, c1)->hasData());
+  EXPECT_FALSE(store.get(SourceLayer::Draft, c2)->hasData());
+}
