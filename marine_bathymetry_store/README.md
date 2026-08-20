@@ -217,7 +217,7 @@ ed3.0.0) for a geographic area and imports it into a store layer:
 ```bash
 ros2 run marine_bathymetry_store s102_import \
   --area -70.75,42.90,-70.55,43.05 \
-  --store /path/to/scratch_store --cache ~/data/world/charts/s102 \
+  --store /path/to/scratch_store --cache ~/data/world/s100/s102 \
   --datum vdatum --geoid <geoid.tif> --vdatum-grids <gtx_dir>
 ```
 
