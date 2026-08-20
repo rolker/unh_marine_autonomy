@@ -152,3 +152,35 @@ transparent — doc comment only.
 The enum change intentionally breaks `cube_bathymetry`'s build: its writers still
 target `SourceLayer::Survey`. rolker/cube_bathymetry#133 retargets them to `Draft`
 and must land in lockstep (ADR-0002 A3.4). The enum change is kept clean for that.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-20 17:30 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-308 at `467aeb1`
+**Mode**: pre-push
+**Depth**: Deep (reason: >1000 lines, cross-package, ADR-0002 amendment)
+**Must-fix**: 1 | **Suggestions**: 5
+**Round**: 1 | **Ship**: continue — one self-inflicted UX regression warrants an author decision before push; core is sound (261 tests pass)
+
+Specialists: Static Analysis (cppcheck — no actionable findings, only cross-TU
+`unusedStructMember` false positives + style nits on unchanged lines);
+Governance (clean); Plan Drift (faithful, no scope creep); Claude Adversarial
+Lens A (logic) + Lens B (systemic). Copilot off (default); Local Adversarial
+skipped (Ollama not installed on this host).
+
+### Findings
+- [ ] (must-fix) New `--bathy-layers` default `processed,draft,reference` makes `BathyDem` warn "'draft/' does not exist … reduced coverage" on every offline/migrated store (draft/ starts empty, never created until live CUBE ingest) — false-alarms the #297 observability guard on the common path — `marine_sidescan_mosaic/src/bathy_dem.cpp:45,199`
+- [ ] (suggestion) Sidecar fixtures use `processed,reference`, inconsistent with new default `processed,draft,reference` (cosmetic; legacy round-trip fixtures) — `marine_sidescan_mosaic/test/test_tier2_processed_dem.cpp:897,967,1032`
+- [ ] (suggestion) `migrateLegacySurveyDir` reuses one `std::error_code ec` across both `is_directory` calls (benign today; ec never read) — `marine_bathymetry_store/src/tile_io.cpp:254`
+- [ ] (suggestion) `fs::rename(survey, processed)` throwing overload yields `filesystem_error`, not the `runtime_error` "refuse loudly" idiom used for both-exist — `marine_bathymetry_store/src/tile_io.cpp:268`
+- [ ] (suggestion) load()/loadWindow() mutate the on-disk store (migration rename) as a side effect of a read: undocumented write-access requirement + concurrent-open race on shared stores — `marine_bathymetry_store/src/tile_io.cpp:~380,~437`
+- [ ] (suggestion) Symlinked `survey/` is followed and renamed (no symlink guard, unlike `replaceChartLayer`) — `marine_bathymetry_store/src/tile_io.cpp:254,268`
+
+### Next step
+Verdict is changes-requested → host should dispatch `address-findings` to work the
+open items above (the must-fix needs an author decision: suppress absent-draft
+when processed present / drop draft from default / accept+document), then
+re-dispatch `review-code`. Diff is not pushed until a pre-push review returns approved.
