@@ -68,3 +68,16 @@ Recommendations:
 - [ ] Add `docs/sonar_ecosystem.md` reframe to the work item list (or explicitly defer it with a reason); it is listed in ADR-0010's own Consequences and is omitted here.
 - [ ] Verify `~/data/stores/survey_index.db` path migration is captured in item 4 (repoint consumers).
 - [ ] Confirm s57_tools#28 is filed before or alongside item 1 (ADR-0010 amendment).
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-08-20 14:10 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-288/plan.md` at `d10e736`
+**Branch**: feature/issue-288 at `d10e736`
+**Phases**: multiple (6 work items; items 1+3 land on this branch, items 4–6 in cross-repo sub-PRs)
+
+### Open questions
+- [ ] Confirm whether s57_tools#28 (shipped/closed) was extended to `datum/` grids, or if a follow-on s57_tools issue is needed.
+- [ ] Confirm S-102 cache path choice: `world/charts/s102` vs `world/s100/` — record in ADR amendment or updater PR.
