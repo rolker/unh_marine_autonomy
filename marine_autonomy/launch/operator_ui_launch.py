@@ -37,7 +37,6 @@ from launch.substitutions import LaunchConfiguration
 def generate_launch_description():
     namespace = LaunchConfiguration('namespace')
     robot_namespace = LaunchConfiguration('robot_namespace')
-    background_chart = LaunchConfiguration('background_chart')
     rqt = LaunchConfiguration('rqt')
     rqt_perspective = LaunchConfiguration('rqt_perspective')
     rviz = LaunchConfiguration('rviz')
@@ -49,13 +48,6 @@ def generate_launch_description():
     )
     robot_namespace_arg = DeclareLaunchArgument(
         "robot_namespace", default_value="ben"
-    )
-    background_chart_arg = DeclareLaunchArgument(
-        "background_chart",
-         default_value=PathJoinSubstitution([
-              FindPackageShare('camp'),
-               'workspace/13283/13283_2.KAP'
-         ])
     )
     rqt_arg = DeclareLaunchArgument(
         "rqt", default_value="false"
@@ -106,9 +98,12 @@ def generate_launch_description():
         package='camp',
         executable='CCOMAutonomousMissionPlanner',
         name='camp',
+        # Workspace directory only. CAMP no longer needs a background raster
+        # supplied at launch: it carries an OpenStreetMap backdrop, and charts
+        # are app state it persists and restores itself. The 13283 raster this
+        # used to force is obsolete.
         arguments=[
-           PathJoinSubstitution([ FindPackageShare('camp'), 'workspace/']),
-           background_chart],
+           PathJoinSubstitution([ FindPackageShare('camp'), 'workspace/'])],
         namespace=namespace,
         parameters=[{'robot_namespace': robot_namespace}],
         respawn=True,
@@ -121,8 +116,7 @@ def generate_launch_description():
         executable='CCOMAutonomousMissionPlanner',
         name='camp2',
         arguments=[
-           PathJoinSubstitution([ FindPackageShare('camp'), '/workspace/']),
-           background_chart],
+           PathJoinSubstitution([ FindPackageShare('camp'), 'workspace/'])],
         namespace=namespace,
         parameters=[{'robot_namespace': robot_namespace}],
         condition=IfCondition(dual_camp),
@@ -132,7 +126,6 @@ def generate_launch_description():
     return LaunchDescription([
         namespace_arg,
         robot_namespace_arg,
-        background_chart_arg,
         rqt_arg,
         rqt_perspective_arg,
         rviz_arg,
