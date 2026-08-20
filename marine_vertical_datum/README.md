@@ -55,6 +55,12 @@ matching the bathymetry store's convention.
 Grids live **wherever imports run** — dev machines and the boat as offline
 tooling — never on the navigation runtime (ADR-0010 D6/D7).
 
+The **canonical on-host location** is the world tree (ADR-0010 D3, amended
+by [#288](https://github.com/rolker/unh_marine_autonomy/issues/288)):
+`~/data/world/datum/geoid/` for the geoid file and `~/data/world/datum/vdatum/`
+for the regional `.gtx` directory, populated by the updater/provisioning step
+rather than hand-managed.
+
 - **Geoid** (ellipsoid → NAVD88): e.g. `us_noaa_g2018u0.tif`, via
   `projsync --file us_noaa_g2018u0.tif` or from
   <https://cdn.proj.org/>.
@@ -62,9 +68,10 @@ tooling — never on the navigation runtime (ADR-0010 D6/D7).
   VDatum grid bundles from NOAA (<https://vdatum.noaa.gov/>) and extract the
   `*.gtx` files into one directory; the query scans it recursively for
   `*_mllw*.gtx` / `*_mhhw*.gtx`.
-- Point `VDatumConfig` at both. PROJ networking is disabled in this library,
-  so nothing is fetched at query time — missing grids fail setup loudly via
-  `DiagFn`.
+- Point `VDatumConfig` at both — canonically
+  `{"~/data/world/datum/geoid/us_noaa_g2018u0.tif", "~/data/world/datum/vdatum"}`
+  (expanded). PROJ networking is disabled in this library, so nothing is
+  fetched at query time — missing grids fail setup loudly via `DiagFn`.
 
 Where VDatum has no coverage (inland lakes), use the polygon config /
 lake-datum override instead — that is the precedence chain's job.

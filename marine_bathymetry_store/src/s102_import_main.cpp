@@ -56,6 +56,7 @@ void usage()
     "                   [--offline] [--force]\n"
     "\n"
     "Fetches NOAA S-102 ed3.0.0 tiles intersecting --area into --cache\n"
+    "(canonical: ~/data/world/s100/s102 — ADR-0010 D3 as amended by #288)\n"
     "(SHA256-verified, idempotent), converts them to store convention\n"
     "(geographic WGS84, per-cell MLLW->ellipsoid via --datum), and imports\n"
     "each at the GGGS level matching its native resolution.\n"
