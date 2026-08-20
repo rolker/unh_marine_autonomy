@@ -381,3 +381,27 @@ enum change breaks cube's build until it lands (ADR-0002 A3.4).
 
 Lifecycle: **Implementation** → **review-code**. Do **not** push — the host pushes to
 open PR #313.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-20 18:14 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-308 at `7048669`
+**Mode**: pre-push
+**Depth**: Deep (reason: >1000 lines, cross-package, ADR-0002 substantive amendment)
+**Must-fix**: 0 | **Suggestions**: 1
+**Round**: 3 | **Ship**: recommended — no must-fix; the round's new public `clearOverlappedDraft` API is correct under two adversarial passes + static analysis; sole finding is a no-reachable-impact defensive hardening
+
+Specialists: Static Analysis (cppcheck clean on changed non-test C++); Governance (clean — ADR-0010 D8, ADR-0002 A3.1/A3.2 same-PR amendment, ADR-0001, ADR-0013 all satisfied); Plan Drift (faithful — public-API scope extension operator-approved + recorded in plan revision history, no scope creep); Claude Adversarial Lens A (logic) + Lens B (systemic) — Lens B clean (confirmed enum renumber persists no numeric value on disk); Copilot off (default); Local Adversarial skipped (Ollama not installed on this host).
+
+### Findings
+- [ ] (suggestion) `migrateLegacySurveyDir` never checks `symlink_ec` from `fs::is_symlink`; on a probe error it silently skips the refuse-loudly guard — defensive only, unreachable in practice (line is reached only after the stricter symlink-following `is_directory` already succeeded on the same path). Harden to `if (fs::is_symlink(survey, symlink_ec) || symlink_ec)` — `marine_bathymetry_store/src/tile_io.cpp:271`
+
+### Notes (informational, not findings)
+- [ ] `marine_sidescan_mosaic` + `bathymetry_layer` not locally buildable (pre-existing geodesy header gap in untouched `projection.hpp`) — confirm green CI before merge
+- [ ] cube_bathymetry#133 must co-land in lockstep (enum change intentionally breaks cube's build) — ADR-0002 A3.4
+
+### Next step
+Verdict is **approved** → lifecycle: Local Review → push / open PR #313 → triage-reviews. The single suggestion is optional and non-blocking.
