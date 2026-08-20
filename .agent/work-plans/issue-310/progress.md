@@ -157,3 +157,13 @@ Static analysis: ament lint via colcon (my E501 caught + fixed; remaining failur
 
 ### False positives
 - (none)
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-20 19:02 -04:00
+**By**: Claude Code Agent (Claude Fable 5)
+
+**Scope**: dev-host data migration executed (operator-run script, plan step 6) + verified.
+
+- Executed by the operator 2026-08-20 evening; verification against disk: depths = chart 54 (16 Lewes-era + 38 Shoals eval unioned, 0 collisions) + reference 47 + processed 37 (= pre-D8 survey/ folded once) = 138 ✓; imagery/sidescan 1576 ✓ unchanged; imagery/backscatter 37 ✓ (delta = deleted _archive per operator cleanup directive); survey_index.db at world root ✓; eval store dir removed ✓; residual ~/data/stores = s102_cache + s102_shoals only (#288 scope) ✓.
+- Noted seam (tracked, uma#316): merged chart editions.json registers only the 13 Shoals cells — the 16 pre-registry Lewes chart tiles will drop on the next Shoals-region wholesale regen (regenerable; acceptable).
