@@ -222,6 +222,23 @@ bool isDroppedCompanionTile(const std::string & filename)
   return hasSuffix("_time.tif") || hasSuffix("_source.tif");
 }
 
+/// @brief True if @p dir_name is the depth overview-pyramid sidecar directory or
+///        one of its crash-safe-swap transients (`overviews.tmp/`/`overviews.old/`).
+///
+/// The `build_depth_overviews` builder (ADR-0010 D9 / ADR-0011) writes the flat
+/// `overviews/` sidecar next to a `draft/`/`processed/` layer's fine tiles, plus
+/// the two staging siblings the crash-safe rename-aside swap leaves transiently
+/// (`overviews.tmp/` while building or as crashed-run debris, `overviews.old/` in
+/// the mid-swap window). These are a known, expected part of a depth layer dir —
+/// the flat-layout scan below must skip them **silently**, not warn as if they were
+/// stale epoch-layout tiles (ADR-0011 Consequences: the loader fix that lands with
+/// the pyramid). Any OTHER subdirectory is still unexpected and still warns.
+bool isOverviewSidecarDir(const std::string & dir_name)
+{
+  return dir_name == "overviews" || dir_name == "overviews.tmp" ||
+         dir_name == "overviews.old";
+}
+
 /// @brief Auto-migrate a legacy `survey/` layer dir to `processed/` (ADR-0010 D8).
 ///
 /// The pre-D8 fused `survey/` layer carries no per-cell live-vs-re-run provenance
@@ -425,6 +442,15 @@ std::size_t load(
     // discarded. Warn so the dropped tiles are not a silent surprise.
     for (const auto & entry : fs::directory_iterator(layer_dir)) {
       if (entry.is_directory()) {
+        // The depth overview-pyramid sidecar (`overviews/`) and its crash-safe
+        // swap transients (`overviews.tmp/`/`overviews.old/`) are an expected part
+        // of a draft/processed layer dir (ADR-0010 D9 / ADR-0011) — skip them
+        // SILENTLY. The store loads its coarse levels from the fine tiles' own
+        // level-tagged names, not from this sidecar, so there is nothing to load
+        // here and nothing to warn about (ADR-0011 Consequences).
+        if (isOverviewSidecarDir(entry.path().filename().string())) {
+          continue;
+        }
         std::cerr << "[marine_bathymetry_store] WARNING: ignoring unexpected "
                   << "subdirectory in flat-layout store: " << entry.path()
                   << " — old epoch-layout tiles are not migrated (#221); its "
@@ -482,6 +508,15 @@ std::size_t loadWindow(
     // Flat layout (#221): value tiles live directly under <dir>/<layer>/.
     for (const auto & entry : fs::directory_iterator(layer_dir)) {
       if (entry.is_directory()) {
+        // The depth overview-pyramid sidecar (`overviews/`) and its crash-safe
+        // swap transients (`overviews.tmp/`/`overviews.old/`) are an expected part
+        // of a draft/processed layer dir (ADR-0010 D9 / ADR-0011) — skip them
+        // SILENTLY. The store loads its coarse levels from the fine tiles' own
+        // level-tagged names, not from this sidecar, so there is nothing to load
+        // here and nothing to warn about (ADR-0011 Consequences).
+        if (isOverviewSidecarDir(entry.path().filename().string())) {
+          continue;
+        }
         std::cerr << "[marine_bathymetry_store] WARNING: ignoring unexpected "
                   << "subdirectory in flat-layout store: " << entry.path()
                   << " — old epoch-layout tiles are not migrated (#221); its "

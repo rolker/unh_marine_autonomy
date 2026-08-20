@@ -193,6 +193,45 @@ Caller contract: run only while no consumer holds the store open (D7's nav-down
 precondition). Aside dirs (`.chart_backup.stale.<n>/`) are not layer dirs, so
 `load()` ignores them; clear them by hand.
 
+#### Depth overview pyramids (`build_depth_overviews`, ADR-0010 D9 / ADR-0011)
+
+`build_depth_overviews` is an **offline batch** builder that generates a coarse
+overview pyramid for a depth layer, so survey bathymetry participates in
+world-zoom display and level-aware coarse queries. It folds a layer's fine tiles
+into coarser parents, level by level, into a flat `overviews/` sidecar next to
+the fine tiles (`<layer>/overviews/<level>_<row>_<col>.tif` — the level rides in
+the filename, exactly as in the fine layer):
+
+```bash
+# Rebuild the sidecar for a store's processed layer (fine tiles at GGGS level 13,
+# build every coarser level down to the apex).
+ros2 run marine_bathymetry_store build_depth_overviews /path/to/store/processed
+# Same for the draft layer, stopping at level 6, with a dry run first.
+ros2 run marine_bathymetry_store build_depth_overviews /path/to/store/draft \
+  --fine-level 13 --min-level 6 --dry-run
+```
+
+- **Layer scope (D9).** Only `draft/` and `processed/` get a generated pyramid.
+  `chart/` inherits the ENC scale ladder and `reference/` stays as-imported —
+  point the builder at a `draft/` or `processed/` layer dir, not those.
+- **Shallowest-preserving fold (D9).** Each coarse cell carries its shoalest
+  reliable child's whole `{depth, uncertainty}` pair — the **maximum** ellipsoidal
+  height (the cell most hazardous to navigation), never a mean, and the σ always
+  travels with the depth it describes. A coarse corridor query then plans around
+  the rock rather than averaging it away.
+- **Never upsamples.** Only coarser levels are built (`--min-level` must be below
+  `--fine-level`); the fine tiles are the finest data.
+- **Wholesale + crash-safe.** Each run rebuilds the whole sidecar (derived,
+  regenerable — safe to re-run after every ingest) into a staging `overviews.tmp/`
+  and swaps it in only once complete (rename-aside via `overviews.old/`), so an
+  interrupted or failing run never displaces a complete sidecar with a partial one.
+  A malformed/unreconstructable fine-tile name is skipped loudly and **refuses the
+  swap** (exit 4). `overviews.tmp/` doubles as the per-layer run lock.
+- **Loader-transparent.** `load()` / `loadWindow()` skip `overviews/` (and the
+  `overviews.tmp/`/`overviews.old/` swap transients) silently; the store recovers
+  each tile's level from its own filename, so the sidecar is not loaded as fine
+  data (ADR-0011 Consequences).
+
 ## Build & test
 
 This package lives in the `unh_marine_autonomy` repo and builds in `core_ws`:
@@ -202,11 +241,14 @@ colcon build --symlink-install --packages-select marine_bathymetry_store
 colcon test --packages-select marine_bathymetry_store
 ```
 
-Tests (`test_store`, `test_query`, `test_tile_io`, `test_geotiff_import`) are
-headless GTest and cover priority precedence, no-data handling, the height-aware
-shallowest-reliable semantics, persistence round-trip (depth + uncertainty),
-incremental (dirty-only) save, level-mismatch rejection, the GeoTIFF importer,
-and the coarse `StoreMetadata` round-trip.
+Tests (`test_store`, `test_query`, `test_tile_io`, `test_geotiff_import`,
+`test_depth_overview`) are headless GTest and cover priority precedence, no-data
+handling, the height-aware shallowest-reliable semantics, persistence round-trip
+(depth + uncertainty), incremental (dirty-only) save, level-mismatch rejection,
+the GeoTIFF importer, the depth overview-pyramid builder (shallowest-preserving
+fold, {depth, σ} pair coherence, no-upsample invariant, malformed-filename
+skip→swap-refusal, and the loader's silent `overviews/` skip), and the coarse
+`StoreMetadata` round-trip.
 
 The chart suite additionally covers the write gates (`set` / `importTiles` on a
 normal store, and both the constructor and `fromCellSize` staging opt-ins), the
