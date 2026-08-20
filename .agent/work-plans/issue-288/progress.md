@@ -196,3 +196,25 @@ Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand of
 fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 288 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-20 14:17 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-288 at `10a0e17`
+**Mode**: pre-push
+**Depth**: Deep (reason: substantive ADR-0010 D3 rewrite [Deep trigger])
+**Must-fix**: 1 | **Suggestions**: 0
+**Round**: 3 | **Ship**: continue — one NEW must-fix (must-fix rose 0→1 vs. round-2 approve): the ADR names a phantom S-102 cache origin path; single-line factual correction in a decision record, fast convergence expected
+
+### Findings
+- [ ] (must-fix) ADR amendment states the S-102 cache "moves from `~/data/stores/s102_cache`" — a phantom path found nowhere else in the repo; the real prior location (README on origin/jazzy, and what this PR itself edits) was `~/data/world/charts/s102`, and the plan Context says s102_import had no default cache path at all. Change the "from" to `~/data/world/charts/s102` (or drop the phantom origin). [cross-pass confirmed: Lens A + Lens B] — `docs/decisions/0010-geospatial-world-model.md:179`
+
+### Notes
+- Verified load-bearing claim: `marine_vertical_datum/README.md`'s assertion that the datum library does not expand `~`/env vars is code-accurate — `vdatum_query.cpp` passes `geoid_grid`/`vdatum_grid_dir` verbatim into the filesystem scan + PROJ pipeline (no wordexp/getenv/expanduser/HOME).
+- S-102 cache path (`s100/s102`) consistent across all four changed files; Lens B grep confirms no stale `charts/s102` stragglers in any consumer.
+- Round-2 residual suggestion (datum/user/ "queued follow-on" symmetry caveat) resolved in the amendment prose — not re-raised.
+- Local Adversarial skipped: Ollama unreachable (localhost:11434 down; ollama not on PATH). Copilot Adversarial off (default; --copilot not passed).
+- Plan drift: none — diff matches plan items 1+3 (this-branch scope); items 4–6 are separate cross-repo PRs.
