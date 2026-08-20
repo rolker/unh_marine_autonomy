@@ -116,7 +116,7 @@ def generate_launch_description():
         executable='CCOMAutonomousMissionPlanner',
         name='camp2',
         arguments=[
-           PathJoinSubstitution([ FindPackageShare('camp'), '/workspace/'])],
+           PathJoinSubstitution([ FindPackageShare('camp'), 'workspace/'])],
         namespace=namespace,
         parameters=[{'robot_namespace': robot_namespace}],
         condition=IfCondition(dual_camp),
