@@ -129,8 +129,19 @@ std::size_t save(
 /// to loading (ADR-0002 §D2). Subdirectory entries (stale old-style epoch dirs, if
 /// any) are ignored — there is no production data to migrate (#221). If @p
 /// metadata is non-null, `registry.json` is loaded into it. Loaded tiles are clean.
+///
+/// @note **Read with a write side effect (ADR-0010 D8):** on a pre-D8 store this
+///   auto-migrates a legacy `survey/` layer dir to `processed/` (a single rename;
+///   see `migrateLegacySurveyDir`) *before* scanning. So `load()` is not a pure
+///   read on such a store — it MUTATES @p dir and therefore requires write access
+///   to it; a read-only store or filesystem throws (a needed migration that cannot
+///   commit is refused loudly, not skipped). It is also not concurrency-safe across
+///   processes: two opening the same un-migrated shared store can race on the rename
+///   (one wins; the loser may see a transient half-state or throw). Both are
+///   one-shot — once migrated, every later open is a pure read.
 /// @return The number of tiles loaded.
-/// @throws std::runtime_error on any GDAL failure or a per-file level mismatch;
+/// @throws std::runtime_error on any GDAL failure, a per-file level mismatch, or an
+///         ambiguous/failed/symlinked `survey/` auto-migration;
 ///         std::filesystem::filesystem_error (a std::runtime_error subclass) on a
 ///         directory-iteration failure.
 std::size_t load(
@@ -160,8 +171,15 @@ std::size_t load(
 ///   tile-insertion is undefined behaviour — acceptable before issue #189 because
 ///   the store is currently single-threaded. The #189 implementer must re-audit.
 ///
+/// @note **Read with a write side effect (ADR-0010 D8):** like `load()`, this
+///   auto-migrates a legacy `survey/` dir to `processed/` before scanning, so on a
+///   pre-D8 store it MUTATES @p dir (needs write access; throws if it cannot commit)
+///   and can race across processes on a shared un-migrated store. One-shot — see
+///   `load()`'s note.
+///
 /// @return The number of tiles loaded (already-resident tiles not counted).
-/// @throws std::runtime_error on any GDAL failure or a per-file level mismatch;
+/// @throws std::runtime_error on any GDAL failure, a per-file level mismatch, or an
+///         ambiguous/failed/symlinked `survey/` auto-migration;
 ///         std::filesystem::filesystem_error on a directory-iteration failure.
 std::size_t loadWindow(
   BathymetryStore & store, const std::string & dir,

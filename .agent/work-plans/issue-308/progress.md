@@ -176,7 +176,7 @@ skipped (Ollama not installed on this host).
 - [x] (suggestion) Sidecar fixtures use `processed,reference`, inconsistent with new default `processed,draft,reference` (cosmetic; legacy round-trip fixtures) — `marine_sidescan_mosaic/test/test_tier2_processed_dem.cpp:897,967,1032`
 - [x] (suggestion) `migrateLegacySurveyDir` reuses one `std::error_code ec` across both `is_directory` calls (benign today; ec never read) — `marine_bathymetry_store/src/tile_io.cpp:254`
 - [x] (suggestion) `fs::rename(survey, processed)` throwing overload yields `filesystem_error`, not the `runtime_error` "refuse loudly" idiom used for both-exist — `marine_bathymetry_store/src/tile_io.cpp:268`
-- [ ] (suggestion) load()/loadWindow() mutate the on-disk store (migration rename) as a side effect of a read: undocumented write-access requirement + concurrent-open race on shared stores — `marine_bathymetry_store/src/tile_io.cpp:~380,~437`
+- [x] (suggestion) load()/loadWindow() mutate the on-disk store (migration rename) as a side effect of a read: undocumented write-access requirement + concurrent-open race on shared stores — `marine_bathymetry_store/src/tile_io.cpp:~380,~437`
 - [x] (suggestion) Symlinked `survey/` is followed and renamed (no symlink guard, unlike `replaceChartLayer`) — `marine_bathymetry_store/src/tile_io.cpp:254,268`
 
 ### Next step

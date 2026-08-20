@@ -406,7 +406,10 @@ std::size_t load(
 {
   namespace fs = std::filesystem;
   // Auto-migrate a legacy `survey/` layer to `processed/` before scanning
-  // (ADR-0010 D8); refuses if both dirs exist. See migrateLegacySurveyDir.
+  // (ADR-0010 D8); refuses if both dirs exist. See migrateLegacySurveyDir. NOTE:
+  // this makes a read MUTATE the store on a pre-D8 dir (needs write access; races
+  // across processes on a shared un-migrated store) — documented on the header
+  // declaration so callers know a load is not always a pure read.
   migrateLegacySurveyDir(dir);
   std::size_t loaded = 0;
   bool any_layer_dir_present = false;
@@ -463,7 +466,10 @@ std::size_t loadWindow(
 {
   namespace fs = std::filesystem;
   // Auto-migrate a legacy `survey/` layer to `processed/` before scanning
-  // (ADR-0010 D8); refuses if both dirs exist. See migrateLegacySurveyDir.
+  // (ADR-0010 D8); refuses if both dirs exist. See migrateLegacySurveyDir. NOTE:
+  // this makes a read MUTATE the store on a pre-D8 dir (needs write access; races
+  // across processes on a shared un-migrated store) — documented on the header
+  // declaration so callers know a load is not always a pure read.
   migrateLegacySurveyDir(dir);
   std::size_t loaded = 0;
   bool any_layer_dir_present = false;
