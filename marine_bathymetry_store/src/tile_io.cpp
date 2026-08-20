@@ -263,6 +263,19 @@ void migrateLegacySurveyDir(const std::string & dir)
   if (!has_survey) {
     return;   // nothing to migrate (fresh/new-layout store)
   }
+  // A symlinked `survey/` slipped past is_directory() above — it follows links —
+  // but rename() moves the LINK itself, leaving `processed/` a symlink pointing
+  // out of the store: the same out-of-store-link hazard replaceChartLayer refuses.
+  // Migration must adopt a real directory, not a link's target, so refuse loudly.
+  std::error_code symlink_ec;
+  if (fs::is_symlink(survey, symlink_ec)) {
+    throw std::runtime_error(
+            "marine_bathymetry_store: legacy 'survey/' in store '" + dir +
+            "' is a symlink — refusing to auto-migrate it to 'processed/' (ADR-0010 "
+            "D8). A symlinked layer would make 'processed/' point outside the store; "
+            "resolve by hand (replace the link with a real directory, or migrate its "
+            "target).");
+  }
   if (has_processed) {
     throw std::runtime_error(
             "marine_bathymetry_store: store '" + dir + "' has BOTH a legacy 'survey/' "

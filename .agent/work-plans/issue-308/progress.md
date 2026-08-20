@@ -177,7 +177,7 @@ skipped (Ollama not installed on this host).
 - [x] (suggestion) `migrateLegacySurveyDir` reuses one `std::error_code ec` across both `is_directory` calls (benign today; ec never read) — `marine_bathymetry_store/src/tile_io.cpp:254`
 - [x] (suggestion) `fs::rename(survey, processed)` throwing overload yields `filesystem_error`, not the `runtime_error` "refuse loudly" idiom used for both-exist — `marine_bathymetry_store/src/tile_io.cpp:268`
 - [ ] (suggestion) load()/loadWindow() mutate the on-disk store (migration rename) as a side effect of a read: undocumented write-access requirement + concurrent-open race on shared stores — `marine_bathymetry_store/src/tile_io.cpp:~380,~437`
-- [ ] (suggestion) Symlinked `survey/` is followed and renamed (no symlink guard, unlike `replaceChartLayer`) — `marine_bathymetry_store/src/tile_io.cpp:254,268`
+- [x] (suggestion) Symlinked `survey/` is followed and renamed (no symlink guard, unlike `replaceChartLayer`) — `marine_bathymetry_store/src/tile_io.cpp:254,268`
 
 ### Next step
 Verdict is changes-requested → host should dispatch `address-findings` to work the

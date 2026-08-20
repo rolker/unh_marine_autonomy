@@ -518,6 +518,25 @@ TEST_F(TileIoTest, MigrationRefuseBothExist)
   EXPECT_TRUE(fs::is_directory(dir_ / "processed"));
 }
 
+TEST_F(TileIoTest, MigrationRefusesSymlinkedSurveyDir)
+{
+  // is_directory() follows symlinks, so a symlinked `survey/` would pass the
+  // "has survey" probe — but rename() moves the LINK, leaving `processed/` a
+  // symlink into out-of-store data. Refuse loudly (throw) and leave both the link
+  // and its target untouched, mirroring replaceChartLayer's symlink guard.
+  const fs::path real_target = dir_ / "real_survey_target";
+  fs::create_directories(real_target);
+  fs::create_directory_symlink(real_target, dir_ / "survey");
+  ASSERT_TRUE(fs::is_symlink(dir_ / "survey"));
+
+  BathymetryStore reloaded(5);
+  EXPECT_THROW(marine_bathymetry_store::load(reloaded, dir_.string()), std::runtime_error);
+  // Nothing was moved: the link survives and no real `processed/` was created.
+  EXPECT_TRUE(fs::is_symlink(dir_ / "survey"));
+  EXPECT_TRUE(fs::is_directory(real_target));
+  EXPECT_FALSE(fs::exists(dir_ / "processed"));
+}
+
 TEST_F(TileIoTest, MigrationIdempotentReopen)
 {
   // After a first load migrates survey/ -> processed/, a second open of the same
