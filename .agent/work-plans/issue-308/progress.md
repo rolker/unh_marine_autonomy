@@ -313,3 +313,71 @@ Lifecycle: **Implementation** → **review-code** (re-review the fix). Host push
 open PR #313. Hand off to a fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 308 --skill review-code
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-20 18:05 +00:00
+**By**: Claude Opus
+
+**PR**: #313 (open)
+**Branch**: feature/issue-308 at `39f1fd0`
+**Scope**: operator-approved extension — public cell-wise anti-clobber store API
+(cube_bathymetry#133 plan review MF1)
+**Commits**: `1d8c3a8`, `a517ce6`, `39f1fd0`
+
+### Summary
+
+Extracted the cell-wise D8 anti-clobber (which lived only inside `importGeoTiff`'s
+anonymous `clearOverlappedDraftCells`) into a public store operation so cube's
+regeneration paths (`import_bag`/`batch_regen`), which write processed tiles via
+direct `saveTile()` and bypass the importer, can apply the same "regeneration clears
+overlapped draft" semantics ADR-0010 D8 mandates — instead of duplicating the loop
+in cube (operator-approved shared-API option).
+
+- **Public API** — `BathymetryStore::clearOverlappedDraft` in two overloads: a
+  tile-map form (bulk) and an incremental single-tile form
+  (`clearOverlappedDraft(const BathymetryTile&)`) so a live/replay writer can clear
+  draft right after each direct `saveTile`. Returns
+  `DraftClearResult{cells_cleared, tiles_touched}` (the latter is the camp#171/#172
+  display-cache invalidation seam). Semantics identical to the prior internal
+  behavior: clears draft cells **only where the processed data has populated cells**
+  (a gated-drop hole leaves the overlapping draft cell intact), writes no-data via
+  `set(Draft, …, {})` through the normal dirty-tile save path, and never creates a
+  spurious empty draft tile. Mutates only the ungated `Draft` layer.
+- **Refactor** — `importGeoTiff` deletes the anonymous helper and **delegates** to
+  `store.clearOverlappedDraft(tiles)`, mapping the result into
+  `ProcessedImportResult` — **zero behavior change**: the two existing anti-clobber
+  tests (`AntiClobberCellWiseClearsOnlyCoveredDraftCells`,
+  `AntiClobberGatedDropHolePreservesDraft`) pass **unmodified**.
+- **Docs** — API docstring cites ADR-0010 D8; `bathy_cell.hpp` / `bathymetry_store.hpp`
+  class-doc cross-refs updated to name the store operation and its two callers;
+  ADR-0002 **A3.2** retitled ("owned by the store") and amended to record the public
+  operation and enumerate the anti-clobber entry points (importer + cube regen);
+  `plan.md` synced with the scope-extension rationale.
+
+### Actions
+- [x] Extract + publish `clearOverlappedDraft` (tile-map + incremental single-tile) — `bathymetry_store.hpp/.cpp` (`1d8c3a8`)
+- [x] Refactor `importGeoTiff` to delegate; zero behavior change — `geotiff_import.cpp/.hpp` (`1d8c3a8`)
+- [x] Direct-call unit tests incl. gated-drop-hole survival on the direct path — `test_store.cpp` (`a517ce6`)
+- [x] Docstring (ADR-0010 D8), ADR-0002 A3.2 entry-point enumeration, plan.md sync — `bathy_cell.hpp`, `docs/decisions/0002…`, `plan.md` (`1d8c3a8`, `39f1fd0`)
+
+### Tests
+
+- `marine_bathymetry_store`: **265 tests, 0 errors, 0 failures, 33 skipped**
+  (`./core_ws/build.sh` + `./core_ws/test.sh` in the worktree), up from 262 — the
+  three new direct-API tests (`ClearOverlappedDraftIsCellWiseAndPreservesGatedDropHoles`,
+  `ClearOverlappedDraftNeverCreatesDraftTile`,
+  `ClearOverlappedDraftTileMapAggregatesAcrossTiles`) present and passing; both
+  pre-existing importGeoTiff anti-clobber tests pass unmodified. Project lint suite
+  (cppcheck/cpplint/uncrustify/copyright, run as tests) clean.
+
+### Co-land (unchanged)
+
+`cube_bathymetry#133` now consumes this public API (instead of duplicating the
+clearing loop) and must still co-land in lockstep — the `SourceLayer::Survey → Draft`
+enum change breaks cube's build until it lands (ADR-0002 A3.4).
+
+### Next step
+
+Lifecycle: **Implementation** → **review-code**. Do **not** push — the host pushes to
+open PR #313.
