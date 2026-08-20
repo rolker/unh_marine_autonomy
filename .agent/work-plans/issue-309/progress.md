@@ -77,3 +77,22 @@ merging in parallel and does not interact with this issue per the issue body.
 
 ### Open questions
 - [ ] No open questions — plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-08-20 20:38 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-309/plan.md` at `30ad0eb`
+**PR**: PR-less (--issue 309, layer worktree)
+**Verdict**: approve-with-suggestions
+
+### Findings
+- [ ] (suggestion) Step 2's "reuse `gridIndexFromTileFilename` (expose it, or inline)" conflicts with "mirrors sidescan exactly". That helper lives in tile_io.cpp's anonymous namespace (not the public header) and *throws* `std::runtime_error` on a malformed filename — so a single bad name would abort the whole run, defeating sidescan's skip-loudly-and-refuse safety property (grid-reconstruction skip → `tiles_skipped>0` → swap refused, so a partial pyramid never displaces a complete sidecar). Prefer inlining sidescan's `gridFromName` pattern (incl. the `tileFilename(grid)==name` round-trip check); if instead exposing the helper, add `tile_io.hpp` (+ de-anon-namespace) to the Files-to-Change table and wrap its throw into a skip. — `plan.md:47`
+- [ ] (suggestion) Files-to-Change table lists only `tile_io.cpp` MODIFY; the "expose it" option in step 2 would also touch `tile_io.hpp`. Record the inline-vs-expose decision so the table stays accurate. — `plan.md:97`
+
+### Notes
+- review-issue must-fixes both covered: tile_io loader silent-skip → step 4; fold-policy unit tests → step 5.
+- Verified against sources: ADR-0011 (sidecar/crash-safe swap/depth SHALLOWEST-PRESERVING), `marine_sidescan_mosaic/src/overview_pyramid.cpp` (mirrored path), `overview_builder.hpp` (`buildParentTile`/`CellFoldPolicy`/`CellValidPolicy` signatures), `bathymetry_tile.hpp` (2-band Float64, NaN no-data — matches `kBands=2`/`!isnan(cell[0])`), and `CMakeLists.txt` (sidescan `test_overview_pyramid` links `${PROJECT_NAME}` only — validates the "no GDAL/OpenSSL for the test" claim; GDAL is transitive via marine_tiled_raster_store).
+- Doc & Instruction Impact section is present and non-silent (README.md stale doc lands in PR; agent-instruction candidates "None" with reason).
+- Scope: 6 files, single component — appropriate for one PR.
