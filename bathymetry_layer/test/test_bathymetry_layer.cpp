@@ -93,13 +93,13 @@ TEST(BathymetryLayer, ExpandUserPathHandlesTilde)
   ::setenv("HOME", "/home/tester", 1);
 
   EXPECT_EQ(
-    BathymetryLayerForTest::expandUserPath("~/data/stores/bathymetry"),
-    "/home/tester/data/stores/bathymetry");
+    BathymetryLayerForTest::expandUserPath("~/data/world/depths"),
+    "/home/tester/data/world/depths");
   EXPECT_EQ(BathymetryLayerForTest::expandUserPath("~"), "/home/tester");
   // Absolute, relative, and empty paths are returned unchanged.
   EXPECT_EQ(
-    BathymetryLayerForTest::expandUserPath("/home/field/data/stores/bathymetry"),
-    "/home/field/data/stores/bathymetry");
+    BathymetryLayerForTest::expandUserPath("/home/field/data/world/depths"),
+    "/home/field/data/world/depths");
   EXPECT_EQ(BathymetryLayerForTest::expandUserPath("relative/path"), "relative/path");
   EXPECT_EQ(BathymetryLayerForTest::expandUserPath(""), "");
   // The unsupported "~user" form is left untouched (not expanded).

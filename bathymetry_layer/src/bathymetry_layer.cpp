@@ -30,7 +30,7 @@ using marine_bathymetry_store::DepthSample;
 using marine_bathymetry_store::reliableSamples;
 
 // Expand a leading "~" or "~/" in a path to $HOME so one portable store_path
-// value (e.g. "~/data/stores/bathymetry") resolves on both the boat (field user)
+// value (e.g. "~/data/world/depths") resolves on both the boat (field user)
 // and a dev/sim host with a different home. std::filesystem does no such
 // expansion. A bare absolute/relative path, an empty string, or the unsupported
 // "~user" form is returned unchanged (the latter would need getpwnam).

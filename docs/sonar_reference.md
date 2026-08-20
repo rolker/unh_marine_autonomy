@@ -65,8 +65,8 @@ noted):
 
 | What | Where | Notes |
 |---|---|---|
-| Tiled stores | `~/data/stores/{bathymetry,backscatter,sidescan}/` | Regenerable caches over the bags |
-| Survey index | `~/data/stores/survey_index.db` | v2 (134 Massabesic bags); v1 backup `survey_index.v1.db.bak` |
+| Tiled stores | `~/data/world/{depths,imagery}/` (bathymetry → `depths/`; backscatter + sidescan → `imagery/`) | Regenerable caches over the bags |
+| Survey index | `~/data/world/survey_index.db` | v2 (134 Massabesic bags); dev-tooling metadata, so it sits at the world root rather than in a themed store (#310) |
 | Retrofitted-bag originals | `salmon:~/data/retrofit_backups_2026-07-02/` | 10 `.orig` files — the pre-retrofit **data of record** |
 | Surface sound speed | `~/surface_sound_speed/` | 1 Hz deliverable; gap-filled freshwater Marczak (1997), global offset ≈ +1.07 m/s |
 

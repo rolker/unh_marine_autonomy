@@ -105,8 +105,8 @@ value tiles directly (ADR-0006 D9 — a file-level dependency, no
 
 ```bash
 ros2 run marine_sidescan_mosaic sidescan_tier2_processed \
-    ~/data/stores/sidescan/tier1/2026-06-19.sst1 /tmp/tier2_dem \
-    --bathy-store ~/data/stores/bathymetry \
+    ~/data/world/imagery/sidescan/tier1/2026-06-19.sst1 /tmp/tier2_dem \
+    --bathy-store ~/data/world/depths \
     [--bathy-layers processed,draft,reference] [--min-dem-coverage 0.5] \
     [--datum-check-warn-m 1.0] [--bathy-cache-tiles 8] [--allow-mixed-projection]
 ```
@@ -254,7 +254,7 @@ regenerable, so a rebuild is idempotent and safe to re-run.
 
 ```bash
 ros2 run marine_sidescan_mosaic build_sidescan_overviews \
-    ~/data/stores/sidescan/processed [--fine-level 13] [--min-level 0] [--dry-run]
+    ~/data/world/imagery/sidescan/processed [--fine-level 13] [--min-level 0] [--dry-run]
 ```
 
 Each level is folded from the one below it, down to `--min-level` (0 = apex). The

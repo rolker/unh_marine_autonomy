@@ -89,7 +89,7 @@ it as unsurveyed would be a safety regression), and no longer wholesale keepout
 | Parameter | Type | Default | Meaning |
 |---|---|---|---|
 | `enabled` | bool | `true` | Enable the layer. |
-| `store_path` | string | `""` | Path to the on-disk store directory. Empty = contributes no cost. A leading `~`/`~/` is expanded to `$HOME`, so one portable value (`~/data/stores/bathymetry`) resolves on both the boat (`field` user) and a dev/sim host. |
+| `store_path` | string | `""` | Path to the on-disk store directory. Empty = contributes no cost. A leading `~`/`~/` is expanded to `$HOME`, so one portable value (`~/data/world/depths`) resolves on both the boat (`field` user) and a dev/sim host. |
 | `minimum_depth` | double | `1.0` | Clearance (m) below which a cell is `LETHAL_OBSTACLE`. |
 | `maximum_caution_depth` | double | `2.5` | Clearance (m) at/above which a cell is `FREE_SPACE`; between `minimum_depth` and this the cost ramps. |
 | `confidence_gate` | double | `0.5` | 1-sigma vertical-uncertainty **trust threshold** (m). A sample with `σ ≤ confidence_gate` is *trusted* and may drive a cell to `LETHAL_OBSTACLE` when its worst-case clearance (`clearance − σ`) is below `minimum_depth`. A sample with larger σ is *costed as caution* (never LETHAL on uncertainty alone); only `σ = ∞ / NaN` (unknown quality) stays conservatively LETHAL. **Renamed from `max_uncertainty` (#276) — see the migration note below; this is NOT the old reject-filter.** |
