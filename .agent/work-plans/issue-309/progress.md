@@ -96,3 +96,69 @@ merging in parallel and does not interact with this issue per the issue body.
 - Verified against sources: ADR-0011 (sidecar/crash-safe swap/depth SHALLOWEST-PRESERVING), `marine_sidescan_mosaic/src/overview_pyramid.cpp` (mirrored path), `overview_builder.hpp` (`buildParentTile`/`CellFoldPolicy`/`CellValidPolicy` signatures), `bathymetry_tile.hpp` (2-band Float64, NaN no-data — matches `kBands=2`/`!isnan(cell[0])`), and `CMakeLists.txt` (sidescan `test_overview_pyramid` links `${PROJECT_NAME}` only — validates the "no GDAL/OpenSSL for the test" claim; GDAL is transitive via marine_tiled_raster_store).
 - Doc & Instruction Impact section is present and non-silent (README.md stale doc lands in PR; agent-instruction candidates "None" with reason).
 - Scope: 6 files, single component — appropriate for one PR.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-20 20:55 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-309
+**Commits**:
+- `cf72b94` plan: fold in plan-review suggestions for #309 (both suggestions folded in, operator-approved, no second review)
+- `90afd98` feat: depth overview pyramids for draft/processed layers (#309)
+
+### What landed
+Shallowest-preserving depth overview pyramids for the bathymetry store's
+`draft`/`processed` layers (ADR-0010 D9 / ADR-0011), on the shared #188 fold
+engine (`marine_tiled_raster_store/overview_builder.hpp`). Files match the plan's
+Files-to-Change table exactly (6 files, single component):
+
+| File | Change |
+|------|--------|
+| `marine_bathymetry_store/include/marine_bathymetry_store/overview_pyramid.hpp` | NEW — public API (`DepthOverviewOptions`, `DepthArgStatus`, `DepthOverviewBuildResult`, `parseDepthOverviewArgs`, `buildDepthOverviewPyramid`) |
+| `marine_bathymetry_store/src/overview_pyramid.cpp` | NEW — streaming production path; shallowest-preserving fold |
+| `marine_bathymetry_store/src/build_depth_overviews.cpp` | NEW — thin CLI main() |
+| `marine_bathymetry_store/src/tile_io.cpp` | MODIFY — load()/loadWindow() silently skip `overviews/` + `overviews.tmp/`/`overviews.old/` |
+| `marine_bathymetry_store/test/test_depth_overview.cpp` | NEW — fold policy, pair coherence, no-upsample, NaN gate, malformed→refusal, end-to-end, loader silent-skip |
+| `marine_bathymetry_store/CMakeLists.txt` | MODIFY — lib source + `build_depth_overviews` executable + `test_depth_overview` |
+| `marine_bathymetry_store/README.md` | MODIFY (Doc & Instruction Impact) — `build_depth_overviews` CLI usage + test list |
+
+### Key decisions
+- **Fold policy (D9):** `depthShallowestFold` selects the valid contributor with
+  the **maximum** ellipsoidal height (band 0) and returns its whole `{depth, σ}`
+  cell — never a mean; the pair travels together so σ stays coherent with the
+  depth it describes. `validCell` gates on `!isnan(cell[0])` (NaN is the per-band
+  no-data sentinel from `bathymetry_tile.hpp`). `kBands = BathymetryTile::value_band_count` (2).
+- **Grid-from-filename (Plan Review resolution):** inlined sidescan's `gridFromName`
+  (with the `tileFilename(grid) == name` round-trip check) rather than exposing
+  tile_io's throwing `gridIndexFromTileFilename`. Preserves skip-loudly-and-refuse:
+  a malformed/unparseable tile is skipped + counted in `tiles_skipped`, and any
+  skip refuses the sidecar swap (`sidecar_replaced` stays false) so a partial
+  pyramid never displaces a complete one. `tile_io.hpp` untouched — Files-to-Change
+  table stayed accurate.
+- **Loader fix (ADR-0011 Consequences):** the flat-layout `is_directory()` branch
+  now skips the sidecar + its two swap transients **silently** via a new
+  `isOverviewSidecarDir` helper, and still WARNs on any other unexpected subdir
+  (regression-guarded by a test).
+- Crash-safe rename-aside swap, `overviews.tmp/` run lock, band-shape probe,
+  empty-layer guard, and no-upsample range check all mirror
+  `build_sidescan_overviews` exactly.
+
+### Build & test — all green (foreground)
+- `colcon build --packages-up-to marine_bathymetry_store` → 5 packages finished
+  (deps were unbuilt in this worktree; had to build the chain, not just
+  `--packages-select`). Only pre-existing GDAL `-Wunused-result` warnings in
+  unrelated `test_s102_*` fixtures; no warnings from the new code.
+- `colcon test --packages-select marine_bathymetry_store` → **16/16 tests passed,
+  0 failed**, including copyright/cppcheck/cpplint/uncrustify/lint_cmake/xmllint on
+  the new files. The `test_depth_overview` gtest binary: **16/16 cases pass**,
+  covering all five mandatory tests (shallowest-preserving selection, {depth,σ}
+  pair coherence, no-upsample invariant, malformed-filename skip→swap-refusal,
+  loader silent-skip) plus NaN gate, all-NaN parent, end-to-end swap/idempotency/
+  run-lock, and band-shape guard.
+- `marine_tiled_raster_store` not touched — no separate build/test needed.
+
+### Next step
+Ready for `review-code`. No push / no GitHub performed (host handles pushes).
+No follow-ups opened; the voyage-planner target-resolution bound (ADR-0002 D2)
+remains a tracked follow-on, out of scope for this PR as the plan noted.
