@@ -27,8 +27,11 @@ namespace bathymetry_layer
 
 /// @brief Nav2 costmap layer fed by the bathymetric store (marine_bathymetry_store).
 ///
-/// Reads the store's persisted layers (`survey/` and the read-only `reference/`
-/// prior — the post-#248 taxonomy, ADR-0002 A2.1) from disk and turns *clearance*
+/// Reads the store's persisted layers (`processed/` + `draft/` and the read-only
+/// `reference/` prior — ADR-0010 D8 split the pre-D8 `survey/` into processed/draft)
+/// from disk — transparently, via the store's best-source query overlay
+/// (`bestSource`/`shallowestReliable`, data-driven over `source_layers_by_priority`),
+/// so this layer needs no per-layer knowledge — and turns *clearance*
 /// — the water-surface ellipsoidal height minus the seafloor ellipsoidal height —
 /// into occupancy cost so the planner routes around shoals. This is the D1
 /// (prior-only, static) deliverable of issue #164: no live re-read of the store

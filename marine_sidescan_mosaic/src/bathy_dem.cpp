@@ -36,7 +36,13 @@ namespace marine_sidescan_mosaic
 namespace fs = std::filesystem;
 namespace mtrs = marine_tiled_raster_store;
 
-const char kDefaultBathyLayers[] = "survey,reference";
+// ADR-0010 D8 split the pre-D8 fused `survey/` layer into `processed/` (offline
+// re-run, authoritative) and `draft/` (live CUBE). The old `survey,reference`
+// default is preserved in behaviour by consulting both new layers in store
+// priority order (`processed > draft`) plus the `reference` prior — pre-D8
+// `survey/` fused live+re-run, so equivalent coverage post-D8 is
+// `processed` ∪ `draft`.
+const char kDefaultBathyLayers[] = "processed,draft,reference";
 
 namespace
 {
@@ -184,15 +190,16 @@ BathyDem::BathyDem(
 
   // A layer that is absent or holds no tiles while ANOTHER requested layer does
   // is not an error — reference-only coverage is a legitimate configuration —
-  // but it must never be silent: after ADR-0010 D3 re-classifies `survey/` as
-  // `processed/`, a run asking for `survey,reference` would otherwise quietly
-  // orthorectify against the coarse regional layer alone (#297 review).
+  // but it must never be silent: after ADR-0010 D8 re-classifies `survey/` as
+  // `processed/` (+ a new `draft/`), a run asking for the old `survey,reference`
+  // would otherwise quietly orthorectify against the coarse regional layer alone
+  // (#297 review).
   for (const auto & name : missing) {
     warnings_.push_back(
       "requested bathy layer '" + name + "/' does not exist under " + store_root_ +
       "; continuing with the layer(s) that do. If the store re-classified its layers "
-      "(ADR-0010 D3 renames survey/ to processed/), pass --bathy-layers instead of "
-      "accepting the reduced coverage.");
+      "(ADR-0010 D8 renames survey/ to processed/ and adds draft/), pass "
+      "--bathy-layers instead of accepting the reduced coverage.");
   }
   for (const auto & name : empty) {
     warnings_.push_back(
@@ -207,8 +214,9 @@ BathyDem::BathyDem(
     for (const auto & name : requested) {
       msg << " " << name << "/";
     }
-    msg << "). A bathy store that renamed its layers (ADR-0010 D3 re-classifies";
-    msg << " survey/ as processed/) is a --bathy-layers change, not an empty store.";
+    msg << "). A bathy store that renamed its layers (ADR-0010 D8 re-classifies";
+    msg << " survey/ as processed/ and adds draft/) is a --bathy-layers change, "
+           "not an empty store.";
     throw std::runtime_error(msg.str());
   }
   if (tile_count_ == 0) {
