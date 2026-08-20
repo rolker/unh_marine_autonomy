@@ -268,7 +268,7 @@ Verdict is **approved** → lifecycle: Local Review → push / open PR → triag
 **CI**: all-pass (build ✅, copilot-pull-request-reviewer ✅) — satisfies R2's "confirm green CI before merge" note (sidescan/bathymetry_layer were not locally buildable)
 
 ### Findings
-- [ ] (minor, Copilot) `importGeoTiff` docstring claims it bulk-inserts "(merging into any existing surface; last-write-wins per cell)", but `BathymetryStore::importTiles` replaces any resident tile wholesale via `insert_or_assign` — a partial GeoTIFF patch drops previously stored cells inside touched tiles rather than merging per cell. The wording predates this PR (this PR only added the adjacent D8 anti-clobber paragraph), but it directly contradicts the correct per-tile-replacement contract documented on `importTiles` (bathymetry_store.hpp, incl. its additive-merge footgun note) and misleads callers: the S-102 run loop (`s102/run.cpp`) imports multiple products sequentially into one layer, where a GGGS tile shared across a product seam would be clobbered by the later import. Fix: correct the parenthetical to per-tile replacement semantics ("each touched tile replaces any resident tile at that grid; the lowest-uncertainty-on-contention rule applies only among this import's own pixels") and cross-reference `importTiles`' merge note — `marine_bathymetry_store/include/marine_bathymetry_store/geotiff_import.hpp:107-108`
+- [x] (minor, Copilot) `importGeoTiff` docstring claims it bulk-inserts "(merging into any existing surface; last-write-wins per cell)", but `BathymetryStore::importTiles` replaces any resident tile wholesale via `insert_or_assign` — a partial GeoTIFF patch drops previously stored cells inside touched tiles rather than merging per cell. The wording predates this PR (this PR only added the adjacent D8 anti-clobber paragraph), but it directly contradicts the correct per-tile-replacement contract documented on `importTiles` (bathymetry_store.hpp, incl. its additive-merge footgun note) and misleads callers: the S-102 run loop (`s102/run.cpp`) imports multiple products sequentially into one layer, where a GGGS tile shared across a product seam would be clobbered by the later import. Fix: correct the parenthetical to per-tile replacement semantics ("each touched tile replaces any resident tile at that grid; the lowest-uncertainty-on-contention rule applies only among this import's own pixels") and cross-reference `importTiles`' merge note — `marine_bathymetry_store/include/marine_bathymetry_store/geotiff_import.hpp:107-108`
 
 ### False positives
 - (none)
@@ -277,3 +277,39 @@ Verdict is **approved** → lifecycle: Local Review → push / open PR → triag
 - The tile-replacement behavior itself is the deliberate #221 single-fused-grid contract and predates this PR — the required fix here is documentation-only (Documentation Accuracy principle: never document from assumptions). Whether multi-product S-102 imports can actually share a GGGS tile at product seams (potential cell loss) is a pre-existing, out-of-scope question; consider a follow-up issue if seam-adjacent products are a real workflow.
 - Prior rounds fully resolved: R1 @ `467aeb1` raised 1 must-fix + 5 suggestions, all addressed (commits `e36a6f6`..`c46c25f`); R2 @ `1707ea2` LGTM, Ship: recommended. Copilot's finding is new (not raised locally), so no cross-source confirmations.
 - R2 carry-over still applies: cube_bathymetry#133 must co-land in lockstep (enum change intentionally breaks cube's build) — ADR-0002 A3.4.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-20 17:49 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**PR**: #313 at `75bbab8`
+**Addressed**: `## Integrated Review` (2026-08-20 13:47 -04:00, PR #313 @ `cd99aad`) — its single open finding
+**Commits**: this commit (docstring reword + box-check + this entry, one atomic commit per host scope)
+
+### Summary
+
+Reworded the `importGeoTiff` docstring parenthetical at
+`marine_bathymetry_store/include/marine_bathymetry_store/geotiff_import.hpp:106-108`
+to the correct per-tile replacement semantics. The old wording ("merging into any
+existing surface; last-write-wins per cell") mis-described `BathymetryStore::importTiles`,
+which replaces **per tile** (each touched grid's tile wholesale-replaces any resident
+tile), so a partial GeoTIFF patch drops previously stored cells inside a touched tile
+rather than merging per cell — and the lowest-uncertainty-on-contention rule applies
+only among this import's own pixels. The new text states that explicitly and
+cross-references `importTiles`' additive-merge footgun note (bathymetry_store.hpp) for
+the shrinking-re-import consequence. Documentation-only; no code changes.
+
+### Actions
+- [x] (minor, Copilot) Correct `importGeoTiff` docstring to per-tile replacement semantics + cross-reference `importTiles`' merge note — `marine_bathymetry_store/include/marine_bathymetry_store/geotiff_import.hpp:106-108`
+
+### Tests
+
+None run — documentation-only comment change, no compiled code affected.
+
+### Next step
+
+Lifecycle: **Implementation** → **review-code** (re-review the fix). Host pushes to
+open PR #313. Hand off to a fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 308 --skill review-code

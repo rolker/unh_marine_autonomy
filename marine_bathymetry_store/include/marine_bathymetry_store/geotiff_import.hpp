@@ -104,8 +104,12 @@ struct ProcessedImportResult
 /// target level (every store cell a pixel covers, so a coarser-than-store source
 /// still produces coverage), converts the vertical datum at import (§D4), keeps
 /// the lowest-uncertainty value on contention, and bulk-inserts the resulting
-/// tiles into @p layer via `BathymetryStore::importTiles` (merging into any
-/// existing surface; last-write-wins per cell).
+/// tiles into @p layer via `BathymetryStore::importTiles`. That insert replaces
+/// **per tile**: each touched tile replaces any resident tile at that grid, so a
+/// partial GeoTIFF patch drops previously stored cells inside a touched tile
+/// rather than merging per cell — the lowest-uncertainty-on-contention rule
+/// applies only among this import's own pixels. See `importTiles`' additive-merge
+/// footgun note for the shrinking-re-import consequence.
 ///
 /// **Anti-clobber (ADR-0010 D8):** when @p layer is `Processed`, after the insert
 /// the importer clears overlapped `Draft` cells **cell-wise — only where this
