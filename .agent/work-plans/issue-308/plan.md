@@ -274,6 +274,17 @@ either merges — the enum change intentionally breaks cube's build until that c
 
 ## Plan revision history
 
+- **Implementation sync** — deviations from the plan as built: both anti-clobber
+  tests (`AntiClobberCellWise`, `AntiClobberGatedDropHole`) live in
+  `test_geotiff_import.cpp` (not split into `test_store.cpp`) because they need
+  `importGeoTiff` + the file's `writeTestTiff`/`nwCell` helpers; added
+  `ProcessedImportCreatesNoSpuriousDraftTile`, `DraftImportDoesNotClearAnything`,
+  and `LoadWindowMigratesLegacySurveyDir` as extra coverage. `marine_bathymetry_store`
+  builds and passes 261 tests. `bathymetry_layer` and `marine_sidescan_mosaic` cannot
+  be built/tested in this worktree due to a **pre-existing** missing `geodesy` header
+  (`ecef.h` / `geodesics.h` — the installed `ros-jazzy-geodesy` 1.0.6 has only
+  `utm.h`/`wgs84.h`), in files this issue does not touch; the changes to those two
+  packages are string/doc-comment level.
 - **a9152e3** — initial plan (Plan Authored).
 - **this revision** — folded all Plan Review findings (SHA `a9152e3`): cell-wise anti-clobber
   (must-fix #1), feasible `set(Draft, cell, {})` persistent clearing (must-fix #2), result-struct
