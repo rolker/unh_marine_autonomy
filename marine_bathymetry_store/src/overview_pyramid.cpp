@@ -76,6 +76,73 @@
 namespace marine_bathymetry_store
 {
 
+// Depth-band indices and the fold policy live in `detail` (declared in the header)
+// so the fold's determinism is directly unit-testable — feeding the same
+// contributors in two orders must yield one {depth, σ}. Everything else is
+// file-local (anonymous namespace below).
+namespace detail
+{
+
+using Cell = marine_tiled_raster_store::CellValues<double>;
+
+// The on-disk depth value tile is 2-band Float64: depth (band 0, ellipsoidal
+// height in metres) + uncertainty (band 1, σ in metres). NaN is the per-band
+// no-data sentinel (bathymetry_tile.hpp).
+constexpr std::size_t kDepthBand = 0;   // shoalest-selection + no-data band
+constexpr std::size_t kSigmaBand = 1;   // uncertainty (σ): the equal-depth tie-break key
+
+// Total order for shallowest-preserving selection: true when candidate @p c should
+// displace the current best @p best. The order is lexicographic and therefore
+// TOTAL:
+//   1. depth (band 0) DESCENDING — the larger ellipsoidal height (shoaler, most
+//      hazardous to navigation) wins; both depths are non-NaN here (validCell gate);
+//   2. on an EXACT depth tie, a finite σ beats a NaN σ (prefer the pair that
+//      carries a real uncertainty); then
+//   3. still tied, the SMALLER σ wins — the more reliable of two equally-shoal
+//      pairs (ADR-0010 D9 "shoalest-reliable").
+// When depth AND σ are both equal (or both σ NaN), the two cells carry identical
+// {depth, σ}, so keeping the first is result-identical. The fold is thus a function
+// of the contributor SET, not its order — buckets fill in filesystem-iteration
+// order (overview_builder.hpp), which is not guaranteed, so an order-sensitive
+// tie-break would make the sidecar non-idempotent.
+inline bool shoalerThenMoreReliable(const Cell & c, const Cell & best)
+{
+  if (c[kDepthBand] != best[kDepthBand]) {
+    return c[kDepthBand] > best[kDepthBand];
+  }
+  const bool c_sigma_nan = std::isnan(c[kSigmaBand]);
+  const bool best_sigma_nan = std::isnan(best[kSigmaBand]);
+  if (c_sigma_nan != best_sigma_nan) {
+    return best_sigma_nan;   // finite σ preferred over NaN σ
+  }
+  if (c_sigma_nan) {
+    return false;   // both σ NaN: identical {depth, σ}, keep the first
+  }
+  return c[kSigmaBand] < best[kSigmaBand];   // both finite: smaller σ wins
+}
+
+// Shallowest-preserving fold (ADR-0010 D9). Among the valid contributors, select
+// the shoalest — MAXIMUM ellipsoidal height (band 0) — and return its WHOLE
+// {depth, σ} pair, so the coarse cell's uncertainty stays coherent with the depth
+// it describes. Never a mean: a coarse corridor query must not average a rock away,
+// and a mixed depth/σ pair would describe a cell that never existed. Equal-depth
+// ties break deterministically by σ (see shoalerThenMoreReliable), so the result
+// depends only on the contributor SET, never enumeration order — the sidecar stays
+// idempotent. Called only with >=1 contributor (the engine gates on validCell
+// first), each carrying a non-NaN depth.
+Cell depthShallowestFold(const std::vector<Cell> & contributors)
+{
+  const Cell * best = &contributors.front();
+  for (const Cell & c : contributors) {
+    if (shoalerThenMoreReliable(c, *best)) {
+      best = &c;
+    }
+  }
+  return *best;   // the whole pair, depth AND its paired uncertainty
+}
+
+}  // namespace detail
+
 namespace
 {
 
@@ -83,38 +150,15 @@ namespace fs = std::filesystem;
 using marine_tiled_raster_store::TiledRasterTile;
 using Cell = marine_tiled_raster_store::CellValues<double>;
 
-// The on-disk depth value tile is 2-band Float64: depth (band 0, ellipsoidal
-// height in metres) + uncertainty (band 1, σ in metres). NaN is the per-band
-// no-data sentinel (bathymetry_tile.hpp).
+// Full band count of the on-disk depth tile (depth + uncertainty).
 constexpr std::size_t kBands = BathymetryTile::value_band_count;   // 2
-constexpr std::size_t kDepthBand = 0;   // the shoalest-selection + no-data band
-
-// Shallowest-preserving fold (ADR-0010 D9). Among the valid contributors, select
-// the one with the MAXIMUM ellipsoidal height (band 0) — the shoalest, most
-// hazardous cell — and return its WHOLE {depth, σ} pair, so the coarse cell's
-// uncertainty stays coherent with the depth it describes. Never a mean: a coarse
-// corridor query must not average a rock away, and a mixed depth/σ pair would
-// describe a cell that never existed. Called only with >=1 contributor (the
-// engine gates on validCell first), each carrying a non-NaN depth.
-Cell depthShallowestFold(const std::vector<Cell> & contributors)
-{
-  const Cell * shoalest = &contributors.front();
-  for (const Cell & c : contributors) {
-    // Strict `>`: ties keep the first contributor. Both are non-NaN here
-    // (validCell gate), so no NaN-propagation surprise in the comparison.
-    if (c[kDepthBand] > (*shoalest)[kDepthBand]) {
-      shoalest = &c;
-    }
-  }
-  return *shoalest;   // the whole pair, depth AND its paired uncertainty
-}
 
 // Contributor gate. NaN in the DEPTH band (band 0) is the no-data sentinel
 // (bathymetry_tile.hpp initialises empty cells to {NaN, NaN}). A cell with a real
 // depth participates even if its uncertainty happens to be NaN — the depth is the
 // navigable quantity and the pair is carried as-is; gating on band 0 alone
 // matches how the store itself distinguishes surveyed from unsurveyed cells.
-bool validCell(const Cell & cell) {return !std::isnan(cell[kDepthBand]);}
+bool validCell(const Cell & cell) {return !std::isnan(cell[detail::kDepthBand]);}
 
 // Reconstruct the GridIndex named `<level>_<row>_<col>` through the public
 // geographic lookup (the (level,row,col) ctor is Level-private by design): the
@@ -260,7 +304,7 @@ LevelCounts buildLevel(
       marine_tiled_raster_store::buildParentTile<double>(
       group.first, child_ptrs,
       std::vector<double>(kBands, nan),
-      validCell, depthShallowestFold);
+      validCell, detail::depthShallowestFold);
     marine_tiled_raster_store::saveTile<double>(
       parent_tile,
       (out_dir / marine_tiled_raster_store::tileFilename(group.first)).string(),

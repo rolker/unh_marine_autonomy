@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <iosfwd>
 #include <string>
+#include <vector>
 
 /// @file
 /// @brief Testable production path for the depth overview-pyramid builder
@@ -136,6 +137,26 @@ struct DepthOverviewBuildResult
 ///   (concurrent run or crashed-run debris); also on any tile I/O failure.
 DepthOverviewBuildResult buildDepthOverviewPyramid(
   const DepthOverviewOptions & opts, std::ostream * progress = nullptr);
+
+/// @brief Internals exposed for unit testing — not a stable public API.
+namespace detail
+{
+
+/// @brief The shallowest-preserving depth fold policy (ADR-0010 D9), exposed so
+///        its DETERMINISM is directly testable.
+///
+/// Each contributor is one child cell's whole `{depth (band 0), σ (band 1)}` pair.
+/// Returns the shoalest contributor's pair verbatim — maximum ellipsoidal height
+/// (band 0), never a mean, the σ carried coherently with its depth. An exact
+/// depth tie is broken by a TOTAL order on σ (finite preferred over NaN, then
+/// smaller σ — the more reliable pair), so the result depends only on the
+/// contributor SET, not its order (the fold engine buckets contributors in
+/// unspecified filesystem-iteration order). Precondition: at least one
+/// contributor, each with a non-NaN depth (the engine's valid-cell gate).
+std::vector<double> depthShallowestFold(
+  const std::vector<std::vector<double>> & contributors);
+
+}  // namespace detail
 
 }  // namespace marine_bathymetry_store
 

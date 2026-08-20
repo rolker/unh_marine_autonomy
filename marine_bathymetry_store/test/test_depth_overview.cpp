@@ -21,12 +21,15 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -289,6 +292,69 @@ TEST(DepthOverviewFold, DepthUncertaintyPairStaysCoherent)
       ASSERT_EQ(tile.get(row, col, 1), 0.25) <<
         "the winning depth's own uncertainty must travel with it";
     }
+  }
+}
+
+// --- fold determinism (order independence) ----------------------------------
+
+// The shallowest-preserving fold must be a function of the contributor SET, not
+// its order. Contributors reach a parent cell GEOGRAPHICALLY (~4 per cell, from
+// possibly different child tiles), and per-bucket order derives from the fold
+// engine's filesystem-iteration order (overview_builder.hpp) — not guaranteed. An
+// equal-depth / different-σ (or NaN-σ) tie must therefore break deterministically,
+// or the sidecar would be non-idempotent. Every permutation of a contributor set
+// must fold to one identical {depth, σ}.
+TEST(DepthOverviewFold, FoldIsOrderIndependent)
+{
+  struct Case
+  {
+    const char * name;
+    std::vector<std::vector<double>> contributors;   // each {depth, σ}
+    std::vector<double> expected;                    // {depth, σ}
+  };
+  const std::vector<Case> cases = {
+    // Equal-depth tie broken by the smaller σ (the more reliable pair), never by
+    // enumeration order. Order the input so a keep-first tie-break would pick the
+    // wrong (σ = 2.0) pair.
+    {"equal-depth-different-sigma",
+      {{-5.0, 2.0}, {-8.0, 1.0}, {-5.0, 0.5}}, {-5.0, 0.5}},
+    // Equal-depth tie where one contender's σ is the NaN no-data sentinel: the
+    // finite σ is preferred over NaN.
+    {"equal-depth-finite-sigma-beats-nan-sigma",
+      {{-5.0, kNaN}, {-9.0, 3.0}, {-5.0, 1.5}}, {-5.0, 1.5}},
+    // The shoalest pair legitimately carries a NaN σ (real depth, unknown
+    // uncertainty): it still wins on depth and its NaN σ travels through.
+    {"shoalest-carries-nan-sigma",
+      {{-5.0, kNaN}, {-8.0, 1.0}}, {-5.0, kNaN}},
+    // All σ NaN at equal depth: the pair is identical whichever contributor wins.
+    {"equal-depth-all-nan-sigma",
+      {{-5.0, kNaN}, {-5.0, kNaN}}, {-5.0, kNaN}},
+  };
+
+  for (const auto & tc : cases) {
+    // Permute by INDEX — the contributor vectors may contain NaN, so ordering the
+    // vectors themselves with operator< would be undefined.
+    std::vector<std::size_t> order(tc.contributors.size());
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    do {
+      std::vector<std::vector<double>> permuted;
+      permuted.reserve(order.size());
+      for (const std::size_t i : order) {
+        permuted.push_back(tc.contributors[i]);
+      }
+
+      const std::vector<double> got = mbs::detail::depthShallowestFold(permuted);
+      ASSERT_EQ(got.size(), 2u) << tc.name;
+      EXPECT_DOUBLE_EQ(got[0], tc.expected[0]) <<
+        tc.name << ": depth must be order-independent";
+      if (std::isnan(tc.expected[1])) {
+        EXPECT_TRUE(std::isnan(got[1])) <<
+          tc.name << ": the winning pair's NaN σ must travel through";
+      } else {
+        EXPECT_DOUBLE_EQ(got[1], tc.expected[1]) <<
+          tc.name << ": paired σ must be order-independent";
+      }
+    } while (std::next_permutation(order.begin(), order.end()));
   }
 }
 
