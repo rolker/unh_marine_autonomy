@@ -157,14 +157,14 @@ bool tileOverlapsBox(
 }
 
 /// @brief Warn when a store directory holds content but exposes no recognized
-/// `survey/`/`reference/`/`chart/` layer subdirectory — an old-layout (or
-/// foreign) store from which NOTHING loads.
+/// `draft/`/`processed/`/`reference/`/`chart/` layer subdirectory — a foreign or
+/// old-layout store from which NOTHING loads.
 ///
 /// This is a navigation-safety *observability* guard: `load()`/`loadWindow()`
-/// skip a layer whose subdir is absent, so a store written only in the still-
-/// obsolete taxonomy (`draft/`, `processed/` — D8, not yet implemented) loads as
-/// **empty** without error. (`chart/` is a real layer since #275, so it is
-/// recognized here and no longer part of the obsolete set.)
+/// skip a layer whose subdir is absent, so a store whose only tiles live under an
+/// unrecognized name loads as **empty** without error. A lone legacy `survey/` is
+/// NOT such a case — it auto-migrates to `processed/` before this check runs (D8,
+/// see migrateLegacySurveyDir), so it never reaches here as "unrecognized".
 /// With `BathymetryLayer`'s `unsurveyed_is_lethal_ == false` default, an empty
 /// bathy prior reads as *navigable*, so a silently-empty load must not pass
 /// unnoticed. Matches the store's existing stale-subdir WARNING idiom.
@@ -196,11 +196,12 @@ void warnIfUnrecognizedStoreLayout(const std::string & dir, bool any_layer_dir_p
     return;   // empty store, or metadata-only sidecar — legitimately nothing loaded
   }
   std::cerr << "[marine_bathymetry_store] WARNING: store directory '" << dir
-            << "' has content but no recognized 'survey/', 'reference/', or "
-            << "'chart/' layer subdirectory — NOTHING was loaded. A pre-#248 "
-            << "old-layout store (draft/processed) is not migrated (#221/#248); "
-            << "regenerate it. An empty bathy prior reads as unsurveyed (navigable "
-            << "unless unsurveyed_is_lethal is set).\n";
+            << "' has content but no recognized 'draft/', 'processed/', "
+            << "'reference/', or 'chart/' layer subdirectory — NOTHING was loaded. "
+            << "A legacy 'survey/' auto-migrates to 'processed/' (ADR-0010 D8), so "
+            << "this is a foreign or otherwise old-layout store; regenerate it. An "
+            << "empty bathy prior reads as unsurveyed (navigable unless "
+            << "unsurveyed_is_lethal is set).\n";
 }
 
 /// @brief True if @p filename is a dropped pre-#248 companion raster
@@ -219,6 +220,55 @@ bool isDroppedCompanionTile(const std::string & filename)
              filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) == 0;
     };
   return hasSuffix("_time.tif") || hasSuffix("_source.tif");
+}
+
+/// @brief Auto-migrate a legacy `survey/` layer dir to `processed/` (ADR-0010 D8).
+///
+/// The pre-D8 fused `survey/` layer carries no per-cell live-vs-re-run provenance
+/// (A2 dropped it), so there is nothing to split — it is re-classified wholesale
+/// to `processed/` (ADR-0010 D1/D8: the Massabesic stores were regenerated via the
+/// authoritative `import_bag` path, so `processed/` is accurate; `draft/` starts
+/// empty). Called by BOTH `load()` and `loadWindow()` before the layer scan so an
+/// existing on-disk store opens transparently under the new taxonomy.
+///
+/// Mechanism (operator decision, 2026-08-20): a **single same-filesystem
+/// `rename(survey/ → processed/)`** — the atomic commit point. `survey/` and
+/// `processed/` are siblings under @p dir, so the rename is always intra-filesystem
+/// and cannot hit EXDEV. The rename is the sole state change; there is no
+/// layer-keyed registry/metadata to update (`registry.json` is a store-root
+/// sidecar, untouched by the layer rename), so re-opening a migrated store is
+/// naturally idempotent — the second open finds only `processed/` and this is a
+/// no-op.
+///
+/// Refuses **loudly** (throws) only if BOTH `survey/` and `processed/` exist: that
+/// is an ambiguous half-migrated or hand-edited store, and silently merging or
+/// picking one could lose the authoritative surface. The operator must resolve it.
+///
+/// `save()` and `evictOutside()` deliberately do NOT migrate: they operate on an
+/// already-migrated / freshly-written store and never touch a legacy `survey/` dir.
+void migrateLegacySurveyDir(const std::string & dir)
+{
+  namespace fs = std::filesystem;
+  const fs::path survey = fs::path(dir) / "survey";
+  const fs::path processed = fs::path(dir) / layerDirName(SourceLayer::Processed);
+  std::error_code ec;
+  const bool has_survey = fs::is_directory(survey, ec);
+  const bool has_processed = fs::is_directory(processed, ec);
+  if (!has_survey) {
+    return;   // nothing to migrate (fresh/new-layout store)
+  }
+  if (has_processed) {
+    throw std::runtime_error(
+            "marine_bathymetry_store: store '" + dir + "' has BOTH a legacy 'survey/' "
+            "and a 'processed/' layer dir — refusing to auto-migrate an ambiguous "
+            "store (ADR-0010 D8). Resolve by hand: 'survey/' is the pre-D8 fused "
+            "layer, re-classified wholesale to 'processed/'; merge or remove one.");
+  }
+  // The atomic commit point: a single intra-filesystem rename.
+  fs::rename(survey, processed);
+  std::cerr << "[marine_bathymetry_store] migrated legacy 'survey/' layer to "
+            << "'processed/' in '" << dir << "' (ADR-0010 D8: the pre-D8 fused "
+            << "layer is the authoritative import_bag re-run; draft/ starts empty).\n";
 }
 
 }  // namespace
@@ -258,7 +308,8 @@ std::string tileFilename(const gggs::GridIndex & grid)
 std::string layerDirName(SourceLayer layer)
 {
   switch (layer) {
-    case SourceLayer::Survey: return "survey";
+    case SourceLayer::Processed: return "processed";
+    case SourceLayer::Draft: return "draft";
     case SourceLayer::Reference: return "reference";
     case SourceLayer::Chart: return "chart";
   }
@@ -325,6 +376,9 @@ std::size_t load(
   BathymetryStore & store, const std::string & dir, StoreMetadata * metadata)
 {
   namespace fs = std::filesystem;
+  // Auto-migrate a legacy `survey/` layer to `processed/` before scanning
+  // (ADR-0010 D8); refuses if both dirs exist. See migrateLegacySurveyDir.
+  migrateLegacySurveyDir(dir);
   std::size_t loaded = 0;
   bool any_layer_dir_present = false;
   for (const SourceLayer layer : source_layers_by_priority) {
@@ -379,6 +433,9 @@ std::size_t loadWindow(
   StoreMetadata * metadata)
 {
   namespace fs = std::filesystem;
+  // Auto-migrate a legacy `survey/` layer to `processed/` before scanning
+  // (ADR-0010 D8); refuses if both dirs exist. See migrateLegacySurveyDir.
+  migrateLegacySurveyDir(dir);
   std::size_t loaded = 0;
   bool any_layer_dir_present = false;
   for (const SourceLayer layer : source_layers_by_priority) {
@@ -449,8 +506,8 @@ std::size_t evictOutside(
       const gggs::GridIndex & grid = it->first;
       const BathymetryTile & tile = it->second;
       if (!tileOverlapsBox(grid, min_pt, max_pt)) {
-        // Dirty-tile guard: a dirty (unsaved) Survey tile is live sensor data that
-        // has not yet reached disk; evicting it would lose that data with no
+        // Dirty-tile guard: a dirty (unsaved) Draft tile is live CUBE sensor data
+        // that has not yet reached disk; evicting it would lose that data with no
         // reload path.  Reference tiles are always clean (never mutated at
         // runtime) and are always safely evictable.  Skip dirty tiles here and
         // let them survive until they are either saved (clearing the flag) or

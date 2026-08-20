@@ -72,11 +72,14 @@ std::size_t evictOutside(
 /// stored tiles.
 ///
 /// Source priority is a **non-destructive query-time overlay** (see
-/// `query.hpp`): the layers are independent, so a live CUBE write never clobbers
-/// the read-only prior. The single fused surface within a layer is
-/// last-write-wins per cell (there is no provenance ordering); `survey >
-/// reference > chart` layer priority is the only provenance axis (ADR-0002 A2.1;
-/// `Chart` added #275 per ADR-0010 D3/D7, lowest under the D4 placeholder order).
+/// `query.hpp`): the layers are independent, so a live CUBE (`Draft`) write never
+/// clobbers the read-only prior. The single fused surface within a layer is
+/// last-write-wins per cell (there is no provenance ordering); `processed > draft
+/// > reference > chart` layer priority is the only provenance axis (ADR-0010 D8
+/// re-split `survey` into `Processed`+`Draft`; `Chart` added #275 per ADR-0010
+/// D3/D7, lowest under the D4 placeholder order). Cross-layer anti-clobber (a
+/// `Processed` import clears overlapped `Draft` cells, cell-wise) lives in the
+/// importer (`geotiff_import.hpp`), not this query overlay.
 ///
 /// This phase has no ROS interface or distribution — just storage, in-process
 /// queries (`query.hpp`), per-tile GeoTIFF persistence (`tile_io.hpp`), and the

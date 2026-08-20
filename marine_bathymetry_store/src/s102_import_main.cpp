@@ -47,7 +47,9 @@ void usage()
     "usage: s102_import --area minLon,minLat,maxLon,maxLat\n"
     "                   --store <dir> --cache <dir>\n"
     "                   --datum <constant:<mllw_z_m>|vdatum>\n"
-    "                   [--layer survey|reference]   (default reference)\n"
+    "                   [--layer draft|processed|reference] (default reference;\n"
+    "                                                'survey' is a deprecated alias\n"
+    "                                                for 'processed', ADR-0010 D8)\n"
     "                   [--catalog <url|path>]       (default: newest in bucket)\n"
     "                   [--geoid <path>]             (vdatum: geoid grid)\n"
     "                   [--vdatum-grids <dir>]       (vdatum: .gtx directory)\n"
@@ -168,13 +170,22 @@ int main(int argc, char * argv[])
     }
   }
 
-  if (layer_text == "survey") {
-    options.layer = marine_bathymetry_store::SourceLayer::Survey;
+  if (layer_text == "processed") {
+    options.layer = marine_bathymetry_store::SourceLayer::Processed;
+  } else if (layer_text == "draft") {
+    options.layer = marine_bathymetry_store::SourceLayer::Draft;
+  } else if (layer_text == "survey") {
+    // Deprecated alias for `processed` (ADR-0010 D8 split survey into
+    // processed/draft). Accept it but warn rather than silently retargeting.
+    std::cerr << "warning: --layer 'survey' is deprecated; use 'processed' "
+      "(ADR-0010 D8)\n";
+    options.layer = marine_bathymetry_store::SourceLayer::Processed;
   } else if (layer_text == "reference") {
     options.layer = marine_bathymetry_store::SourceLayer::Reference;
   } else {
     std::cerr << "unknown --layer '" << layer_text <<
-      "' (expected survey|reference)\n";
+      "' (expected draft|processed|reference; 'survey' is a deprecated alias "
+      "for processed)\n";
     return 1;
   }
 

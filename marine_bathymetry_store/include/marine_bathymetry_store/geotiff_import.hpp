@@ -27,7 +27,9 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <vector>
 
+#include "marine_autonomy/gggs.h"
 #include "marine_bathymetry_store/bathymetry_store.hpp"
 
 /// @file
@@ -72,6 +74,30 @@ struct GeoTiffImportOptions
   std::optional<uint8_t> level = std::nullopt;
 };
 
+/// @brief Result of a GeoTIFF import, including the anti-clobber side effect.
+///
+/// `draft_tiles_touched` is the cross-layer coordination seam for the display
+/// cache (camp#171/#172, ADR-0008): after a `Processed` import clears overlapped
+/// `Draft` cells cell-wise (ADR-0010 D8), it lists the `Draft` tiles that were
+/// **touched** (marked dirty) — NOT removed. Nothing is removed on disk under
+/// cell-wise clearing: a cleared draft cell is written no-data (NaN) in place and
+/// persisted through the normal dirty-tile save path. A cache consumer invalidates
+/// exactly these tiles. For non-`Processed` imports the draft fields stay
+/// zero/empty (only a `Processed` import clears `Draft`).
+struct ProcessedImportResult
+{
+  /// Distinct cells written into @p layer (a new cell; replacements don't recount).
+  std::size_t cells_imported = 0;
+  /// `Draft` cells transitioned from data → no-data (cell-wise anti-clobber).
+  /// Only cells the processed import populated AND that `Draft` already held data
+  /// at are counted — a processed no-data cell (gated-drop hole) leaves the
+  /// overlapping draft cell intact.
+  std::size_t draft_cells_cleared = 0;
+  /// `Draft` tiles with ≥1 cleared cell (each appears once). Cache-invalidation
+  /// seam for camp#171/#172; these tiles are touched (dirtied), not removed.
+  std::vector<gggs::GridIndex> draft_tiles_touched;
+};
+
 /// @brief Import @p path into @p layer's single fused surface.
 ///
 /// Reads the GeoTIFF, fills each pixel's **footprint** of GGGS cells at the
@@ -81,13 +107,25 @@ struct GeoTiffImportOptions
 /// tiles into @p layer via `BathymetryStore::importTiles` (merging into any
 /// existing surface; last-write-wins per cell).
 ///
-/// @return The number of distinct cells imported.
+/// **Anti-clobber (ADR-0010 D8):** when @p layer is `Processed`, after the insert
+/// the importer clears overlapped `Draft` cells **cell-wise — only where this
+/// import has data** — by writing them no-data via `BathymetryStore::set(Draft,
+/// …, {})` (persisted through the normal dirty-tile save path; there is no
+/// tile/cell-erase API and `save()` never deletes on-disk tiles). Draft cells in
+/// the re-run's gated-drop holes (cells this import left no-data) survive — the
+/// query overlay resolves them under `Processed > Draft` where the processed
+/// surface has data, and shows the surviving draft where it does not. Clearing
+/// operates at this import's cell/level granularity; draft data at a *different*
+/// GGGS level is not reached (in practice draft and processed both come from CUBE
+/// at the store level). Non-`Processed` imports clear nothing.
+///
+/// @return A `ProcessedImportResult` (cells imported + anti-clobber side effect).
 /// @throws std::invalid_argument on a bad band index;
 ///         std::logic_error if @p layer is `Reference` and the store is not
 ///         `reference_writable` (the read-only-prior gate);
 ///         std::runtime_error on GDAL failure, a non-WGS84 / rotated raster, or
 ///         a missing geotransform.
-std::size_t importGeoTiff(
+ProcessedImportResult importGeoTiff(
   BathymetryStore & store, SourceLayer layer,
   const std::string & path,
   const GeoTiffImportOptions & options = GeoTiffImportOptions{});

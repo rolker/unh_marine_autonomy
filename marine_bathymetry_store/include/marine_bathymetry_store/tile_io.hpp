@@ -47,10 +47,13 @@
 /// cache, the per-cell time band's only reader (the costmap staleness gate) was
 /// retired, and per-cell source provenance is a constant for a single platform.
 ///
-/// The quality/maturity axis (Survey / Reference / Chart) is encoded as the
-/// on-disk subdirectory (`survey/`, `reference/`, `chart/`); each holds **one
-/// fused** set of value tiles directly (no per-day epoch subdirectory since
-/// #221). `chart/` (official navigation products, #275/ADR-0010 D3/D7) is written
+/// The quality/maturity axis (Processed / Draft / Reference / Chart) is encoded as
+/// the on-disk subdirectory (`processed/`, `draft/`, `reference/`, `chart/`); each
+/// holds **one fused** set of value tiles directly (no per-day epoch subdirectory
+/// since #221). ADR-0010 D8 re-split the pre-D8 fused `survey/` into `processed/`
+/// (offline re-run) and `draft/` (live CUBE); `load()`/`loadWindow()` auto-migrate
+/// a legacy `survey/` to `processed/` (see `migrateLegacySurveyDir` in the .cpp).
+/// `chart/` (official navigation products, #275/ADR-0010 D3/D7) is written
 /// only via the wholesale atomic swap (`replaceChartLayer`), never incrementally.
 /// Coarse provenance moves to the store-wide `registry.json` `StoreMetadata`
 /// (ADR-0005 #248) — it lives at the store root, not inside any layer dir.
@@ -71,8 +74,8 @@ namespace marine_bathymetry_store
 std::string tileFilename(const gggs::GridIndex & grid);
 
 /// @brief Subdirectory name for a source layer
-///        (`"survey"` / `"reference"` / `"chart"`). Each holds one fused set of
-///        value tiles directly (#221).
+///        (`"processed"` / `"draft"` / `"reference"` / `"chart"`). Each holds one
+///        fused set of value tiles directly (#221).
 std::string layerDirName(SourceLayer layer);
 
 /// @brief Write one tile as a single value GeoTIFF at @p path (`<grid>.tif`).
@@ -173,8 +176,8 @@ std::size_t loadWindow(
 /// `loadWindow`).
 ///
 /// **Dirty-tile guard (safety invariant)**: a tile flagged `dirty()` is **never**
-/// evicted, regardless of its position. A dirty Survey tile is live sensor data that
-/// has not yet reached disk; evicting it would lose that data with no reload path.
+/// evicted, regardless of its position. A dirty Draft tile is live CUBE sensor data
+/// that has not yet reached disk; evicting it would lose that data with no reload path.
 /// Reference tiles are always clean (never mutated at runtime) and are always
 /// safely evictable. Save the store before calling `evictOutside` if you want all
 /// outside tiles to be eligible for eviction.
@@ -197,7 +200,7 @@ std::size_t evictOutside(
 /// @p staged_chart_dir, then calls this to swap it in. The rename is the
 /// single commit point: a failure at any step leaves the previous `chart/`
 /// fully intact. Always targets `chart/` — deliberately NOT parameterized by
-/// SourceLayer, so no caller can wholesale-replace survey/reference data.
+/// SourceLayer, so no caller can wholesale-replace processed/draft/reference data.
 ///
 /// Sequence: validate the store dir and staged dir (staged exists as a real
 /// directory — not a symlink — does not alias the live `chart/` or its backup,

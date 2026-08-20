@@ -22,16 +22,17 @@
 /// @file
 /// @brief CLI: import a depth/uncertainty GeoTIFF into a store layer.
 ///
-/// usage: import_geotiff <store_dir> <layer> <geotiff>          (survey/reference)
+/// usage: import_geotiff <store_dir> <layer> <geotiff>          (draft/processed/reference)
 ///        import_geotiff --stage <staged_dir> chart <geotiff>   (build chart layer)
 ///        import_geotiff --commit <staged_dir> <store_dir>      (atomic chart swap)
 ///                       [--cell-size m] [--level N]
 ///                       [--uncertainty m] [--depth-scale s] [--depth-offset m]
 ///                       [--platform P] [--sensor S] [--survey K] [--date D]
 ///
-/// For `survey`/`reference` this loads any existing tiles under <store_dir>,
-/// imports the GeoTIFF into <layer>'s single fused surface (#221 — no per-day
-/// epoch), then saves.
+/// For `draft`/`processed`/`reference` this loads any existing tiles under
+/// <store_dir>, imports the GeoTIFF into <layer>'s single fused surface (#221 — no
+/// per-day epoch), then saves. A `processed` import also clears overlapped `draft`
+/// cells cell-wise (ADR-0010 D8). `survey` is a deprecated alias for `processed`.
 ///
 /// The `chart` layer follows ADR-0010 D7's wholesale-regeneration semantics
 /// (#275): it is never written into the live store incrementally. Instead
@@ -65,13 +66,15 @@ namespace fs = std::filesystem;
 void usage()
 {
   std::cout <<
-    "usage: import_geotiff <store_dir> <layer> <geotiff>          (survey/reference)\n"
+    "usage: import_geotiff <store_dir> <layer> <geotiff>          (draft/processed/reference)\n"
     "       import_geotiff --stage <staged_dir> chart <geotiff>   (build chart layer)\n"
     "       import_geotiff --commit <staged_dir> <store_dir>      (atomic chart swap)\n"
     "                      [--cell-size m] [--level N]\n"
     "                      [--uncertainty m] [--depth-scale s] [--depth-offset m]\n"
     "                      [--platform P] [--sensor S] [--survey K] [--date D]\n"
-    "  layer:      survey | reference | chart\n"
+    "  layer:      draft | processed | reference | chart\n"
+    "              ('survey' is a deprecated alias for 'processed'; ADR-0010 D8)\n"
+    "              a 'processed' import clears overlapped 'draft' cells cell-wise\n"
     "  --stage <staged_dir>: build the write-gated chart layer into <staged_dir>\n"
     "               (ADR-0010 D7). Layer must be 'chart'. The live store is not\n"
     "               touched; tiles land in <staged_dir>/chart/. Point repeated\n"
@@ -108,8 +111,19 @@ void usage()
 
 marine_bathymetry_store::SourceLayer layerFromName(const std::string & name)
 {
+  if (name == "processed") {
+    return marine_bathymetry_store::SourceLayer::Processed;
+  }
+  if (name == "draft") {
+    return marine_bathymetry_store::SourceLayer::Draft;
+  }
   if (name == "survey") {
-    return marine_bathymetry_store::SourceLayer::Survey;
+    // Deprecated alias: the pre-D8 fused `survey` layer is re-classified as
+    // `processed` (ADR-0010 D8). Accept it so existing operator workflows keep
+    // working, but warn loudly rather than silently retargeting.
+    std::cerr << "warning: layer name 'survey' is deprecated; use 'processed' "
+              << "(ADR-0010 D8 split survey into processed/draft)\n";
+    return marine_bathymetry_store::SourceLayer::Processed;
   }
   if (name == "reference") {
     return marine_bathymetry_store::SourceLayer::Reference;
@@ -117,7 +131,9 @@ marine_bathymetry_store::SourceLayer layerFromName(const std::string & name)
   if (name == "chart") {
     return marine_bathymetry_store::SourceLayer::Chart;
   }
-  std::cerr << "unknown layer '" << name << "' (expected survey|reference|chart)\n";
+  std::cerr << "unknown layer '" << name
+            << "' (expected draft|processed|reference|chart; 'survey' is a "
+            << "deprecated alias for processed)\n";
   exit(1);
 }
 
@@ -312,7 +328,7 @@ int main(int argc, char * argv[])
       options.default_uncertainty = constant_uncertainty;
     }
     const std::size_t imported = marine_bathymetry_store::importGeoTiff(
-      store, layer, geotiff, options);
+      store, layer, geotiff, options).cells_imported;
     std::cout << "imported " << imported << " cell(s) into chart\n";
 
     // Provenance flags are rejected above, so the staged store never carries a
@@ -361,9 +377,20 @@ int main(int argc, char * argv[])
     options.uncertainty_band = 0;
     options.default_uncertainty = constant_uncertainty;
   }
-  const std::size_t imported = marine_bathymetry_store::importGeoTiff(
-    store, layer, geotiff, options);
-  std::cout << "imported " << imported << " cell(s) into " << positional[1] << "\n";
+  const marine_bathymetry_store::ProcessedImportResult import_result =
+    marine_bathymetry_store::importGeoTiff(store, layer, geotiff, options);
+  std::cout << "imported " << import_result.cells_imported << " cell(s) into "
+            << positional[1] << "\n";
+  // ADR-0010 D8 anti-clobber: a processed import supersedes overlapped live draft
+  // cells. Report what it cleared (the draft_tiles_touched list is the cache-
+  // invalidation seam for camp#171/#172).
+  if (layer == marine_bathymetry_store::SourceLayer::Processed &&
+    import_result.draft_cells_cleared > 0)
+  {
+    std::cout << "cleared " << import_result.draft_cells_cleared
+              << " overlapped draft cell(s) across "
+              << import_result.draft_tiles_touched.size() << " draft tile(s)\n";
+  }
 
   // Write the coarse StoreMetadata only if any field was supplied; otherwise
   // preserve whatever registry.json already held (loaded above).

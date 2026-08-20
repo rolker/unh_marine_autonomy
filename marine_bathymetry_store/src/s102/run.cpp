@@ -184,7 +184,8 @@ S102ImportSummary runS102Import(const S102ImportOptions & options)
     import_options.level =
       gggs::Level::fromCellSize(static_cast<float>(record.resolution_m)).level();
     const std::size_t cells =
-      importGeoTiff(store, options.layer, converted.string(), import_options);
+      importGeoTiff(store, options.layer, converted.string(), import_options)
+      .cells_imported;
     std::cout << "s102: imported " << cells << " cell(s) from " <<
       record.tile_id << " at level " <<
       static_cast<int>(*import_options.level) << "\n";
