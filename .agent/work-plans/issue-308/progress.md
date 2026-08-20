@@ -232,3 +232,27 @@ Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand of
 fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 308 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-20 17:24 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-308 at `1707ea2`
+**Mode**: pre-push
+**Depth**: Deep (reason: 200+ lines, 20+ files, ADR-0002 substantive amendment, cross-package)
+**Must-fix**: 0 | **Suggestions**: 0
+**Round**: 2 | **Ship**: recommended — no must-fix; all Round-1 findings (1 must-fix + 5 suggestions) addressed and verified, core logic clean under two adversarial passes + static analysis
+
+Specialists: Static Analysis (project ament cppcheck/cpplint/uncrustify/copyright pass in CI; manual cppcheck only style nits on mostly-untouched lines — filtered); Governance (clean — ADR-0001 same-PR amendment, ADR-0010 D8, ADR-0002 A3, ADR-0013 all satisfied); Plan Drift (faithful, no scope creep); Claude Adversarial Lens A (logic) + Lens B (systemic) — both clean; Copilot off (default); Local Adversarial skipped (Ollama absent).
+
+### Findings
+- [ ] No must-fix or suggestion findings. LGTM.
+
+### Notes (informational, not findings)
+- [ ] `marine_sidescan_mosaic` + `bathymetry_layer` not locally buildable (pre-existing geodesy header gap in an untouched `projection.hpp`); the sidescan must-fix fix + regression test verified by inspection — confirm green CI before merge — `marine_sidescan_mosaic/src/bathy_dem.cpp:207`
+- [ ] cube_bathymetry#133 must co-land in lockstep (enum change intentionally breaks cube's build) — ADR-0002 A3.4
+
+### Next step
+Verdict is **approved** → lifecycle: Local Review → push / open PR → triage-reviews.
