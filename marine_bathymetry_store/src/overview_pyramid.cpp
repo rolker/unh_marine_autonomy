@@ -500,7 +500,9 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
         buildLevel(children, staging, child_level, native, derived);
       const std::size_t native_here = native.countAt(static_cast<uint8_t>(level));
       if (progress != nullptr) {
-        *progress << "level " << child_level << " -> " << level << ": " <<
+        // child_level is uint8_t: without the cast it streams as a character.
+        *progress << "level " << static_cast<unsigned>(child_level) << " -> " <<
+          level << ": " <<
           counts.in << " tile(s) in, " << counts.out << " overview tile(s) out, " <<
           counts.suppressed_by_native << " left to native, " << native_here <<
           " native tile(s) already at level " << level << "\n";

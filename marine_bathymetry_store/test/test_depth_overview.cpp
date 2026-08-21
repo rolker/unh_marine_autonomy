@@ -627,21 +627,14 @@ TEST(TileIoLoader, StillWarnsOnUnexpectedSubdir)
 namespace
 {
 
-// Every level-13 grid nested under one level-11 grid (16 in a temperate band),
-// and the level-12 grids between them. The Isles of Shoals `reference/` shape in
-// miniature: a fine harbour band nested entirely inside a coarser compiled band.
-std::vector<gggs::GridIndex> nestedGrids(int level, const gggs::GridIndex & root)
+// The fine band of the Isles of Shoals `reference/` shape in miniature: the
+// level-13 children of one level-12 grid, nested entirely inside a coarser
+// compiled band. Kept to one parent's worth of tiles on purpose — each tile is a
+// real 960x960 two-band GeoTIFF, so a wider fixture buys nothing the assertions
+// use and costs seconds of I/O.
+std::vector<gggs::GridIndex> fineBandUnder(const gggs::GridIndex & l12)
 {
-  std::vector<gggs::GridIndex> current{root};
-  while (!current.empty() && current.front().level() < level) {
-    std::vector<gggs::GridIndex> next;
-    for (const gggs::GridIndex & g : current) {
-      const std::vector<gggs::GridIndex> kids = gggs::children(g);
-      next.insert(next.end(), kids.begin(), kids.end());
-    }
-    current.swap(next);
-  }
-  return current;
+  return gggs::children(l12);
 }
 
 std::size_t countSidecarLevel(const fs::path & layer_dir, int level)
@@ -661,13 +654,11 @@ std::size_t countSidecarLevel(const fs::path & layer_dir, int level)
 TEST(MixedLevelPyramid, LevelCoveredEntirelyByNativeTilesStillSwaps)
 {
   ScratchDir dir("native_covered_level");
-  const gggs::GridIndex l11 = gggs::Level(11).gridIndex(kLat, kLon);
-  for (const gggs::GridIndex & g : nestedGrids(13, l11)) {
+  const gggs::GridIndex l12 = gggs::Level(12).gridIndex(kLat, kLon);
+  for (const gggs::GridIndex & g : fineBandUnder(l12)) {
     writeUniformDepthTile(dir.path(), g, -9.0, 0.5);      // the fine band
   }
-  for (const gggs::GridIndex & g : gggs::children(l11)) {
-    writeUniformDepthTile(dir.path(), g, -30.0, 4.0);     // the compiled band
-  }
+  writeUniformDepthTile(dir.path(), l12, -30.0, 4.0);      // the compiled band
 
   mbs::DepthOverviewOptions opts;
   opts.layer_dir = dir.path().string();
@@ -679,11 +670,11 @@ TEST(MixedLevelPyramid, LevelCoveredEntirelyByNativeTilesStillSwaps)
   EXPECT_FALSE(r.level_uncovered);
   EXPECT_EQ(r.tiles_skipped, 0u);
   EXPECT_EQ(r.native_levels, (std::vector<int>{12, 13}));
-  // Level 12 is entirely native, so nothing is written there and every one of its
-  // four parents is counted as suppressed.
+  // Level 12 is entirely native, so nothing is written there and its parent-slot
+  // is counted as suppressed instead.
   EXPECT_EQ(countSidecarLevel(dir.path(), 12), 0u) <<
     "native tiles must never be overwritten by derived ones";
-  EXPECT_EQ(r.tiles_suppressed_by_native, 4u);
+  EXPECT_EQ(r.tiles_suppressed_by_native, 1u);
   EXPECT_EQ(r.derived_by_level.count(12), 0u);
   // Level 11 has no native tile, so it IS derived — from the native level-12
   // tiles, since that level's derived set is empty.
@@ -699,7 +690,8 @@ TEST(MixedLevelPyramid, IntermediateLevelIsDerivedAndCoarseNativeIsLeftAlone)
 {
   ScratchDir dir("intermediate_derived");
   const gggs::GridIndex l11 = gggs::Level(11).gridIndex(kLat, kLon);
-  for (const gggs::GridIndex & g : nestedGrids(13, l11)) {
+  const gggs::GridIndex l12 = gggs::Level(12).gridIndex(kLat, kLon);
+  for (const gggs::GridIndex & g : fineBandUnder(l12)) {
     writeUniformDepthTile(dir.path(), g, -9.0, 0.5);
   }
   writeUniformDepthTile(dir.path(), l11, -30.0, 4.0);   // native at 11, none at 12
@@ -711,7 +703,7 @@ TEST(MixedLevelPyramid, IntermediateLevelIsDerivedAndCoarseNativeIsLeftAlone)
   const mbs::DepthOverviewBuildResult r = mbs::buildDepthOverviewPyramid(opts);
   ASSERT_TRUE(r.sidecar_replaced);
   EXPECT_EQ(r.native_levels, (std::vector<int>{11, 13}));
-  EXPECT_EQ(countSidecarLevel(dir.path(), 12), 4u) <<
+  EXPECT_EQ(countSidecarLevel(dir.path(), 12), 1u) <<
     "level 12 holds no native tiles, so it is filled from the fine band";
   EXPECT_EQ(countSidecarLevel(dir.path(), 11), 0u);
   EXPECT_EQ(r.tiles_suppressed_by_native, 1u);
@@ -759,14 +751,14 @@ TEST(MixedLevelPyramid, RegionDisjointBandsAreBothCarriedDown)
 TEST(MixedLevelPyramid, BandShapeProbeCoversEveryDiscoveredLevel)
 {
   ScratchDir dir("probe_every_level");
-  const gggs::GridIndex l11 = gggs::Level(11).gridIndex(kLat, kLon);
-  for (const gggs::GridIndex & g : nestedGrids(13, l11)) {
+  const gggs::GridIndex l12 = gggs::Level(12).gridIndex(kLat, kLon);
+  for (const gggs::GridIndex & g : fineBandUnder(l12)) {
     writeUniformDepthTile(dir.path(), g, -9.0, 0.5);   // correct 2-band shape
   }
-  for (const gggs::GridIndex & g : gggs::children(l11)) {
-    mtrs::TiledRasterTile<double> tile(g, 3, 0.0);     // wrong shape at level 12
+  {
+    mtrs::TiledRasterTile<double> tile(l12, 3, 0.0);   // wrong shape at level 12
     mtrs::saveTile<double>(
-      tile, (dir.path() / mtrs::tileFilename(g)).string(),
+      tile, (dir.path() / mtrs::tileFilename(l12)).string(),
       {std::nullopt, std::nullopt, std::nullopt});
   }
 
@@ -814,7 +806,8 @@ TEST(DerivedCoverageManifest, RidesTheSwapAndCarriesSaturatedGeometricError)
 {
   ScratchDir dir("derived_manifest");
   const gggs::GridIndex l11 = gggs::Level(11).gridIndex(kLat, kLon);
-  for (const gggs::GridIndex & g : nestedGrids(13, l11)) {
+  const gggs::GridIndex l12 = gggs::Level(12).gridIndex(kLat, kLon);
+  for (const gggs::GridIndex & g : fineBandUnder(l12)) {
     writeUniformDepthTile(dir.path(), g, -9.0, 0.5);
   }
 
@@ -831,13 +824,12 @@ TEST(DerivedCoverageManifest, RidesTheSwapAndCarriesSaturatedGeometricError)
   const std::optional<mtrs::CoverageManifest> manifest =
     mtrs::loadCoverageManifest(manifest_path);
   ASSERT_TRUE(manifest.has_value());
-  EXPECT_EQ(manifest->countAt(12), 4u);
+  EXPECT_EQ(manifest->countAt(12), 1u);
   EXPECT_EQ(manifest->countAt(11), 1u);
 
   // Saturation (uma-ADR-0013 D2): a parent's error is at least its children's,
   // and where nothing records a finer error it degenerates to the level's own
   // nominal ground sample distance — today's level-as-resolution behaviour.
-  const gggs::GridIndex l12 = gggs::children(l11).front();
   ASSERT_TRUE(manifest->geometricError(l12).has_value());
   ASSERT_TRUE(manifest->geometricError(l11).has_value());
   EXPECT_DOUBLE_EQ(*manifest->geometricError(l12), gggs::levels[12].nominal_cell_size);
