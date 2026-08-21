@@ -87,7 +87,47 @@ pair — are expressible alongside simple per-band means (imagery). Overviews
 are a derived, regenerable `overviews/` sidecar per layer; see ADR-0011 for
 the layout contract.
 
+## Coverage manifest (#331 / uma-ADR-0013 D1–D3)
+
+`coverage_manifest.hpp` declares **which `(level, index)` zones a layer actually
+holds**, at mixed levels, in one object — uma-ADR-0013 D3. A conventional pyramid
+is the degenerate case where that set is ancestrally closed, so a region-disjoint
+native ladder (the ENC chart store, a mixed-level `reference/`) and a generated
+sidecar are the same model over the same GGGS.
+
+- `CoverageManifest` — `add`/`contains`/`countAt`/`levels`/`gridsAt`, run-encoded
+  for storage as contiguous column runs per row (OGC 2D TMS 2.0
+  `TileMatrixSetLimits`; Cesium `layer.json` `available`). Each run carries an
+  optional `geometric_error_m`, uma-ADR-0013 D1's per-tile error; runs merge only
+  across tiles that agree on it, so a per-tile value is never silently widened.
+- `scanCoverage(dir)` — recover the same set from an all-level directory scan.
+  This is the fallback for a layer with no manifest **and** the input path for a
+  producer that must know which regions hold data at which level before it can
+  pyramid them. It is a different thing from uma-ADR-0013's *consumer-side*
+  fallback to level-as-resolution when a geometric error is absent.
+- `gridsInDir(dir, level, skipped)` — filename-only grid enumeration with an
+  optional level filter, shared by both overview builders. Skips loudly and never
+  throws: one malformed tile name skips its own file (and is counted, so a caller
+  can refuse a swap) rather than aborting the run.
+- `saveCoverageManifest` / `loadCoverageManifest` — `coverage.json`, tmp+rename
+  atomic publish, tolerant read (a missing, malformed, or wrong-schema document
+  warns and yields `nullopt` instead of throwing).
+
+**The manifest is derived and advisory.** uma-ADR-0013 D8: a stale or absent
+manifest is a rendering artifact, never a safety one. Shoal-finding, least-depth
+and clearance queries must keep reading tiles to the finest available level and
+must never consult a manifest — or an LOD level — to decide what to read.
+Additive by construction: a layer with no `coverage.json` still reads, because
+`scanCoverage()` recovers the same answer.
+
+`test_coverage_manifest` covers the all-level scan (including its mixed-level and
+loud-skip cases), the run encoding and its refusal to merge across differing
+geometric errors, the JSON round-trip, the tolerant read, and the refusal to
+expand a run wider than its level's grid extent.
+
 ## Dependencies
 
 - `marine_autonomy` — the GGGS spatial index (`gggs::Level` / `GridIndex`).
 - GDAL — GeoTIFF persistence (private; in `tile_io.cpp` only).
+- `nlohmann_json` — the coverage manifest (private; in `coverage_manifest.cpp`
+  only).
