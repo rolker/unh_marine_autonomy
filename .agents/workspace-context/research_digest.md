@@ -327,3 +327,40 @@ over those, not another launch replacement. Because `udp_bridge` has no service 
 the operator-station control surface likely wants a command topic with request ids plus
 a latched status topic — idempotent and retryable over a lossy link, which is the better
 shape regardless.
+
+**Upstream direction (checked 2026-08-21, Jazzy → Kilted → Lyrical)**: sources —
+[launch CHANGELOG](https://raw.githubusercontent.com/ros2/launch/rolling/launch/CHANGELOG.rst),
+[launch_ros#430](https://github.com/ros2/launch_ros/pull/430),
+[launch_ros#449](https://github.com/ros2/launch_ros/pull/449),
+[launch_ros#445](https://github.com/ros2/launch_ros/issues/445),
+[Lyrical Luth release notes](https://docs.ros.org/en/kilted/Releases/Release-Lyrical-Luth.html)
+
+- `LifecycleNode(autostart=True)` landed in `launch_ros` (PR #430, merged to rolling
+  2025-02-19, **backported to Jazzy the same day**, Humble 2025-08-08; PR #449 fixed the
+  same-executable-twice case, issue #445). Verified present in the local Jazzy install
+  (`launch_ros` 0.26.12, `actions/lifecycle_node.py:48`, new
+  `utilities/lifecycle_event_manager.py`).
+- **It is still one-shot.** `lifecycle_node.py:121-131` shows `autostart=True` simply
+  builds a `LifecycleTransition` from the node's already-substituted `node_name` and
+  returns it as an execute-time action. It removes the `PythonExpression` namespace
+  concat needed to name the node, but nothing re-drives the transition if the process
+  respawns — so a respawned lifecycle node still comes back `unconfigured`. Upstream
+  fixed the ergonomics, not the durability.
+- **No upstream launch-daemon effort exists.** ros2/launch#32 remains closed with
+  nothing replacing it; open issues are ergonomics/bugs (#666 signal handling, #975
+  `--print-description`, #970 XML boolean attrs). No REP or redesign thread found.
+- **Launch changed additively since Jazzy**: `ForEach` (3.8.0), `PathSubstitution` with
+  `/` operator (3.9.5), boolean launch arguments (3.9.7), `TimerAction` environment
+  capture (3.9.6); Lyrical Luth (May 2026) adds per-message log severity and
+  string-join/path-join substitutions. **No breaking changes to `LaunchService`, event
+  handlers, or `ExecuteProcess`** — the surfaces `ros2launch_session` binds to are
+  stable across three distros.
+- Lifecycle is becoming *more* first-class in launch (`lifecycle_node` and
+  `composable_lifecycle_node` now exposed in the XML/YAML frontends), so declaring
+  lifecycle targets in config runs with the grain rather than against it.
+- Kilted made Zenoh a Tier 1 RMW — already the workspace's field configuration.
+
+**Consequence for the design**: keep `autostart=True` in launch files (it preserves
+standalone `ros2 launch` usability on the bench) and have the manager *converge* to the
+target lifecycle state — read current state, transition only when off-target — rather
+than emit transitions blindly, so the two cannot race.
