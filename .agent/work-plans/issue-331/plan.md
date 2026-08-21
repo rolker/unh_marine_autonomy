@@ -44,18 +44,23 @@ Note this is a **rendering-value** decision, not a mechanical necessity: because
 level-6 pass takes native ancestry, the harbour band's contribution below level 6 is
 discarded regardless of whether level 7 is written.
 
-**Q2 — coverage manifest on-disk form: two manifests, each co-located with the artifact
-it describes.**
-- `<layer>/coverage.json` — **native** coverage. Written by the builder's initial scan
-  (and later by importers); regenerable from a directory scan.
+**Q2 — coverage manifest on-disk form: ONE persisted manifest,
+`<layer>/overviews/coverage.json`.** *(Amended after plan review — the plan originally
+proposed persisting a second, native manifest at `<layer>/coverage.json`.)*
 - `<layer>/overviews/coverage.json` — **derived** coverage. Written into
   `overviews.tmp/` and swapped in by ADR-0011's existing rename-aside, so it is
   crash-consistent with the sidecar it describes **for free**.
+- **Native** coverage is held **in memory only** (`scanCoverage()` at the start of each
+  run). The builder does not own the native tiles, so a `<layer>/coverage.json` it wrote
+  would go stale on the next `s102_import` with nothing able to detect it — the scan
+  fallback fires on a manifest's *absence*, not on its staleness. Persisting native
+  coverage belongs with the importers, if and when a consumer needs it. Nothing consumes
+  it today.
 
-One combined manifest is rejected: a single file outside `overviews/` cannot be kept
-consistent with the wholesale sidecar swap (a crash between the rename and the rewrite
-leaves the manifest disagreeing with the sidecar), which would defeat the property
-ADR-0011 §2 exists to guarantee. Consumers union the two.
+A single combined file outside `overviews/` was rejected for the same reason it would
+have been anyway: it cannot be kept consistent with the wholesale sidecar swap (a crash
+between the rename and the rewrite leaves the manifest disagreeing with the sidecar),
+which would defeat the property ADR-0011 §2 exists to guarantee.
 
 Additive by construction: a layer with neither file still reads (per ADR-0013's
 Consequences), because `scanCoverage()` — the directory scan — is both the fallback and
@@ -77,25 +82,37 @@ to explicit pairs for a sparse one. **Safety statement to record in the ADR adde
 the manifest is derived and advisory — a stale manifest is a rendering artifact only,
 and D8 safety queries must keep reading the tiles, never the manifest.
 
-**Q3 — per-tile geometric error: SIBLING PR, with the schema field reserved.**
-ADR-0013 D2 makes saturation a **cross-producer** obligation (`overview_builder`, the
-depth pyramid builder, `s102_import`, `s57_to_geotiff`). Emitting it from this driver
-alone yields a partially-saturated store — a descendant error exceeding its ancestor's,
-which is precisely the wrong-cut failure D2 warns about, and worse than emitting nothing
-(consumers fall back to level-as-resolution today). Where ε lives (GeoTIFF metadata tag
-vs. manifest field) is its own contract decision. This PR reserves an optional
-`geometric_error_m` on a manifest run so the sibling is purely additive. File the sibling
-issue as part of this work.
+**Q3 — per-tile geometric error: IN THIS PR.** *(Amended after plan review — the plan's
+deferral argument was wrong.)* `uma-ADR-0013` D2 says verbatim: *"Producers that cannot
+compute a meaningful error must record a conservative upper bound rather than omit the
+field."* An "unknown" sentinel is that omission wearing a hat. The bounded form
+`max(level GSD, max child ε)` is computable from **this producer alone**: GGGS's nominal
+cell size is monotone in level, so a child whose own ε is unrecorded contributes at most
+its level's GSD — strictly smaller than the parent's — and saturation holds even across
+an edge where no native ε exists. Where nothing records a finer error the value
+degenerates to exactly the level's ground sample distance, which is today's
+level-as-resolution fallback, so consumers see no behaviour change from its arrival.
+ε rides the manifest (`RowRun::geometric_error_m`), not a GeoTIFF tag — no tile-format
+change, and the manifest is the object consumers read for coverage anyway. A follow-up
+issue covers the **other three** D2 producers.
 
-**Q4 — CLI surface.** Keep `--fine-level N`, change its meaning from *the* level to an
-**assertion**: "this layer is single-level at N" — the builder scans all levels and errors
-if any other level is found. Omitted, the builder discovers the native level set. This
-preserves `draft`/`processed` bit-for-bit for the explicit invocation in use (discovery
-of `{13}` ⇒ finest = 13 ⇒ loop 12…0 ⇒ no native collisions at any coarser level ⇒
-byte-identical sidecar), keeps the mis-pointed-path guard the flag exists for, and does
-not break existing scripts. `--min-level` keeps its meaning, validated against the
-**discovered finest** native level (still the no-upsample guard). `--dry-run` gains a
-per-level discovered-coverage report.
+**Q4 — CLI surface: DELETE `--fine-level` outright.** *(Amended after plan review +
+operator decision — the plan recommended keeping it as an assertion.)* Host-verified: it
+appears only at `marine_bathymetry_store/README.md:224,236`; no script, cron job, launch
+file, or automation passes it, so the "does not break existing invocations" premise was
+empty and the standing remove-outright preference applies. The generalised "no usable
+native tiles under `<dir>`" refusal plus `--dry-run`'s discovered-levels report cover the
+same failure. The flag is rejected as an unknown argument, so a stale invocation fails
+loudly rather than quietly building something else. `draft`/`processed` stay bit-for-bit
+(discovery of `{13}` ⇒ finest = 13 ⇒ loop 12…0 ⇒ no native collisions at any coarser
+level), pinned by a golden-fixture regression test. `--min-level` keeps its meaning,
+validated at build time against the **discovered finest** native level (still the
+no-upsample guard; it moved out of arg parsing, which cannot know the layer's levels).
+
+`marine_sidescan_mosaic`'s `build_sidescan_overviews` **keeps its own `--fine-level`**:
+that store is genuinely single-level, so the flag still asserts something true there. The
+divergence is stated explicitly in both READMEs and in the source headers so it does not
+read as an oversight.
 
 ## Approach
 
@@ -120,22 +137,44 @@ per-level discovered-coverage report.
    `derived_written(L) > 0 || native_count(L) > 0`. Refuse the swap only when a level
    above `min_level` has *neither*. Without this the Shoals layer refuses its own swap at
    level 6 (measured above). Rename `early_empty` → `level_uncovered` and report the level.
-5. **Emit both manifests** — native to `<layer>/coverage.json` (written only on a
-   successful run, after the swap), derived into `overviews.tmp/coverage.json` before the
-   swap so it rides the rename-aside.
-6. **CLI + options** per Q4: `DepthOverviewOptions::fine_level` (`int`) →
-   `asserted_native_level` (`std::optional<int>`); result gains `derived_by_level`,
-   `tiles_suppressed_by_native`, `native_levels`. Update usage text and exit codes.
-7. **Amend ADR-0010 D9** — replace the bare `reference`: "as imported" line with the
-   native-wins rule and its ADR-0013 D8 rationale; drop the now-false layer-scope
-   statements in `overview_pyramid.{hpp,cpp}` headers and the CLI usage text.
-8. **ADR-0011 addendum** — the fold's scope clause (derived fills gaps, never merges into
-   native) and the two-manifest placement + why it is not one file.
-9. **Tests** (see below), then a real run against `~/data/world/s102_shoals/reference/`
-   with `--min-level 0`, asserting: 25 derived level-7 tiles, 0 derived level-6 tiles,
-   14 native level-6 collisions counted, swap succeeds, and re-running is idempotent.
-10. **File the sibling issue** for ADR-0013 D1/D2 per-tile geometric error across all
-    four producers.
+5. **Generalise the two other `fine_level`-keyed pre-flight guards** *(added after plan
+   review)*: the mis-pointed-path refusal becomes "no usable native tiles at **some**
+   level", and the 2-band depth-shape probe opens **one tile per discovered level** —
+   a mixed-level layer can hold a wrong-shape band at a level the finest-level probe
+   never opens. Note also that an unreadable tile name at **any** level now refuses the
+   swap; that widening is correct under discovery, since its coverage would be missing
+   from every level built beneath it.
+6. **Emit ε per derived tile** — `max(level GSD, max child ε)`, recorded on the manifest
+   run (Q3).
+7. **Emit the derived manifest only** — into `overviews.tmp/coverage.json` before the
+   swap, so it rides the rename-aside (Q2).
+8. **CLI + options** per Q4: `DepthOverviewOptions::fine_level` removed; result gains
+   `derived_by_level`, `tiles_suppressed_by_native`, `native_levels`, `uncovered_level`.
+   Update usage text and exit codes.
+9. **Amend ADR-0010 D9** — replace the bare `reference`: "as imported" line with the
+   native-wins rule, its ADR-0013 D8 rationale, and — stated together — the fact that
+   native-wins is a **storage** rule the **display inverts** (derived L7 composites over
+   native L6 on the same ground; intended and ECDIS-consistent). Drop the now-false
+   layer-scope statements in `overview_pyramid.{hpp,cpp}` headers and the CLI usage text.
+10. **Amend ADR-0011 §2** *(added after plan review — the planned addendum did not cover
+    it)*: its "refuses to replace `overviews/` unless the layer holds fine tiles **at the
+    declared level**" clause becomes false under discovery, and its tiles-only sidecar
+    description is extended by putting `coverage.json` inside it — a contract §2 names
+    camp's LOD loader as party to. Plus the fold's scope clause (derived fills gaps,
+    never merges into native).
+11. **Port the sidescan duplicate** *(added after plan review)*: drop
+    `marine_sidescan_mosaic`'s near-verbatim `gridFromName`/`gridsInDir` copy in favour of
+    the hoisted shared version, rather than leaving two implementations of one contract to
+    drift.
+12. **Tests** (see below), then a real run against `~/data/world/s102_shoals/reference/`
+    **copied to scratch** (`--dry-run` first against the real store; the real store is
+    never modified), asserting: 25 derived level-7 tiles, 0 derived level-6 tiles, 10
+    native level-6 collisions counted, swap succeeds, re-running is byte-identical, and —
+    *added after plan review* — a **value comparison across the derived/compiled edge**
+    (the existing step checked counts only; adjacent to #316's seam concern).
+13. **File the follow-up issue** for the remaining three ADR-0013 D1/D2 ε producers
+    (`s102_import`, `s57_to_geotiff`, sidescan overviews) — filed as
+    [#332](https://github.com/rolker/unh_marine_autonomy/issues/332).
 
 ## Files to Change
 
@@ -144,28 +183,41 @@ per-level discovered-coverage report.
 | `marine_tiled_raster_store/include/marine_tiled_raster_store/coverage_manifest.hpp` | New — `RowRun`, `CoverageManifest`, `scanCoverage`/`load`/`save` (ADR-0013 D3) |
 | `marine_tiled_raster_store/src/coverage_manifest.cpp` | New — scan, run-encode, tolerant JSON I/O, atomic write |
 | `marine_tiled_raster_store/{CMakeLists.txt,package.xml}` | Add `nlohmann_json` dep; build + export the new source |
-| `marine_bathymetry_store/include/.../overview_pyramid.hpp` | `fine_level` → `optional asserted_native_level`; result fields; `early_empty` → `level_uncovered`; rewrite the layer-scope doc block |
+| `marine_bathymetry_store/include/.../overview_pyramid.hpp` | `fine_level` removed; result fields; `early_empty` → `level_uncovered` + `uncovered_level`; `detail::saturatedGeometricError`; rewrite the layer-scope doc block |
 | `marine_bathymetry_store/src/overview_pyramid.cpp` | Multi-level scan, native-wins skip, generalised loop + empty-level rule, manifest emit; drop hoisted helpers |
 | `marine_bathymetry_store/src/build_depth_overviews.cpp` | Usage text, per-level/suppression reporting, exit codes |
 | `marine_tiled_raster_store/test/test_coverage_manifest.cpp` | New — scan, run encoding, round-trip, malformed-file tolerance |
 | `marine_bathymetry_store/test/test_depth_overview.cpp` | Single-level regression pin + mixed-level cases (below) |
+| `marine_bathymetry_store/test/depth_overview_regression_fixture.hpp` | New — pinned fixture + decoded-raster digest helpers for the regression pin |
+| `marine_bathymetry_store/test/data/depth_overview_single_level_golden.txt` | New — golden digest captured from the PRE-change binary |
+| `marine_sidescan_mosaic/src/overview_pyramid.cpp` | Drop the duplicated `gridFromName`/`gridsInDir`; call the shared version |
+| `marine_sidescan_mosaic/README.md` | State why its `--fine-level` is retained while the depth builder's was deleted |
+| `docs/decisions/0011-overview-pyramid.md` §2 | Amend the "at the declared level" clause and the tiles-only sidecar description |
 | `docs/decisions/0010-geospatial-world-model.md` | D9 `reference` line → the native-wins rule + D8 rationale |
 | `docs/decisions/0011-overview-pyramid.md` | Addendum: gap-fill scope, two-manifest placement, why not one file |
 | `marine_bathymetry_store/README.md`, `marine_tiled_raster_store/README.md` | Builder scope + manifest contract |
 
 ## Tests
 
-- **Regression pin (load-bearing):** a single-level layer built with an explicit
-  `--fine-level` produces a sidecar **byte-identical** to the pre-change build — capture
-  the tile set + per-tile checksums in the test, not just counts. Preserves
-  `draft`/`processed` bit-for-bit as the issue requires.
+- **Regression pin (load-bearing):** *(method corrected after plan review — the original
+  specification was circular, since a post-change test cannot produce "the pre-change
+  build".)* Golden values are generated from the **pre-change binary** and committed as
+  fixture data (`test/data/depth_overview_single_level_golden.txt`). The fixture inputs
+  are **pinned** by closed form (existing tests build fixtures at runtime in `ScratchDir`)
+  and digested alongside the sidecar, so fixture drift fails as a distinct assertion.
+  Digests are over **decoded per-band rasters plus the exact tile-name set**, never file
+  bytes, which are GDAL-version brittle.
 - Mixed-level fixture mirroring the Shoals shape (natives at L6 and L8, L8 nested
   entirely under L6): asserts derived tiles at L7, **zero** derived at L6, no native tile
   overwritten, swap succeeds (the case that refuses today).
 - Region-disjoint fixture (L6 band + L10 band on non-overlapping columns, the S-102 ×
   GRANIT shape): every level from 9 down to `min_level` is covered, no refusal.
 - A level with genuinely no coverage above `min_level` still refuses the swap.
-- `--fine-level` assertion fails loudly when the layer holds a second level.
+- `--fine-level` is rejected as an unknown flag (it was deleted, not retained).
+- The 2-band probe fires on a wrong-shape band at a *coarse* discovered level, not only
+  at the finest.
+- The derived manifest lands inside `overviews/` and carries a saturated ε per level; no
+  native `coverage.json` is written beside the tiles.
 - Idempotency: a second run over the same layer reproduces the same sidecar and manifests.
 - Existing `MalformedTileNameSkipsAndRefusesSwap`, `EndToEndSidecarSwapIdempotentAndLocked`,
   `RefusesLayerWhoseTilesAreNotTheDepthBandShape`, `TileIoLoader.*` must pass unchanged.
@@ -185,13 +237,14 @@ per-level discovered-coverage report.
 |---|---|---|
 | ADR-0010 D9 | Yes | The `reference`: "as imported" line is amended by this PR (work item 3). |
 | ADR-0011 | Yes | Derived tiles stay in the `overviews/` sidecar, wholesale + crash-safe; the derived manifest rides the existing rename-aside; addendum records the gap-fill scope and manifest placement. |
-| ADR-0013 (PR #330) D1/D2 | Deferred | Sibling issue; schema reserves `geometric_error_m`. This PR's derived tiles carry no ε, so consumers keep today's fallback. |
+| ADR-0013 (PR #330) D1/D2 | Yes | Implemented here: `max(level GSD, max child ε)`, saturated, recorded on the manifest run. Follow-up [#332](https://github.com/rolker/unh_marine_autonomy/issues/332) covers the other three D2 producers. |
 | ADR-0013 D3 | Yes | The coverage manifest is this ADR's first implementation. |
 | ADR-0013 D8 | Yes | No query path touches `overviews/`; the native-wins rule's safety argument rests on D8 and is recorded in the amended D9. |
 | ADR-0002 | No | No fine-tile format change. |
 
-Ordering note: ADR-0013 is still on PR #330. This PR references it as accepted; if #330
-has not merged when this is ready, rebase this branch on it rather than duplicating the ADR.
+Ordering note: ADR-0013 was still open on PR #330 (branch `feature/issue-329`) when
+implementation began, so this branch was **rebased onto `feature/issue-329`** rather than
+duplicating the ADR file — a stacked PR. #330 must merge first.
 
 ## Consequences
 
@@ -202,7 +255,9 @@ has not merged when this is ready, rebase this branch on it rather than duplicat
 | A new `coverage.json` in layer dirs | `tile_io.cpp` loader — **verified no change needed** (`:463` skips non-`.tif` files silently); add a test asserting no WARNING | Yes |
 | `marine_tiled_raster_store` gains `nlohmann_json` | `package.xml`, `CMakeLists.txt`, downstream `ament_export_dependencies` | Yes |
 | Derived overview levels now exist for `reference` | camp's LOD loader would need to read the sidecar to benefit — nothing reads `overviews/` today | No — follow-up (camp side), file after this lands |
-| Per-tile geometric error | `overview_builder`, `s102_import`, `s57_to_geotiff`, depth pyramid | No — sibling issue (Q3) |
+| Per-tile geometric error | depth pyramid | Yes (Q3) |
+| Per-tile geometric error | `overview_builder`, `s102_import`, `s57_to_geotiff` | No — follow-up [#332](https://github.com/rolker/unh_marine_autonomy/issues/332) |
+| `gridFromName`/`gridsInDir` hoisted to the shared package | `marine_sidescan_mosaic/src/overview_pyramid.cpp`'s near-verbatim duplicate | Yes — ported in this PR |
 
 ## Documentation & Instruction Impact
 
@@ -217,15 +272,17 @@ has not merged when this is ready, rebase this branch on it rather than duplicat
 
 ## Open Questions
 
-- `--fine-level` is kept as an optional single-level **assertion**. The alternative,
-  consistent with "remove obsolete features outright rather than making them opt-in", is
-  to delete the flag and let `--dry-run`'s discovered-levels report replace its
-  mis-pointed-path guard. Recommendation is to keep it (one line, preserves existing
-  invocations, retains a real guard) — but this is the one item wanting operator sign-off.
+*(All resolved by operator decision before implementation began — recorded in the
+`## Plan Review` and `## Implementation` entries of `progress.md`.)*
+
+- ~~`--fine-level` kept as an assertion vs. deleted outright~~ → **deleted outright**;
+  see Q4 above.
 
 ## Estimated Scope
 
-Single PR (driver generalisation + coverage manifest + ADR-0010 D9 amendment +
-ADR-0011 addendum + tests), plus one sibling issue filed for ADR-0013 D1/D2 per-tile
-geometric error. The manifest is not separable — it is the driver's own input structure,
-and splitting it out would land the ADR-0011 addendum with no consumer.
+Single PR (driver generalisation + coverage manifest + per-tile geometric error +
+ADR-0010 D9 amendment + ADR-0011 §2 amendment + sidescan de-duplication + tests), plus
+one follow-up issue ([#332](https://github.com/rolker/unh_marine_autonomy/issues/332))
+for the remaining three ADR-0013 D2 ε producers. The manifest is not separable — it is
+the driver's own input structure, and splitting it out would land the ADR-0011 amendment
+with no consumer.
