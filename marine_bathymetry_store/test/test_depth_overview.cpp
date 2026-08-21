@@ -42,15 +42,22 @@
 #include "marine_bathymetry_store/bathymetry_store.hpp"
 #include "marine_bathymetry_store/overview_pyramid.hpp"
 #include "marine_bathymetry_store/tile_io.hpp"
+#include "marine_tiled_raster_store/coverage_manifest.hpp"
 #include "marine_tiled_raster_store/tile_io.hpp"
 #include "marine_tiled_raster_store/tiled_raster_tile.hpp"
 
-// [ADR-0010 D9 / ADR-0011] Coverage for the depth overview-pyramid builder: the
-// shallowest-preserving fold policy (the shoalest child's {depth, σ} pair wins,
-// never a mean, and the pair stays coherent), the no-upsample invariant, the NaN
-// no-data gate, the malformed-filename skip -> swap-refusal safety property, the
-// end-to-end sidecar swap, and the tile_io loader's SILENT skip of the overviews/
-// sidecar. Exercised on real GeoTIFF tiles, not just the header engine.
+#include "depth_overview_regression_fixture.hpp"
+
+// [uma-ADR-0010 D9 / uma-ADR-0011 / uma-ADR-0013] Coverage for the depth
+// overview-pyramid builder: the shallowest-preserving fold policy (the shoalest
+// child's {depth, σ} pair wins, never a mean, and the pair stays coherent), the
+// no-upsample invariant, the NaN no-data gate, the malformed-filename skip ->
+// swap-refusal safety property, the end-to-end sidecar swap, the tile_io loader's
+// SILENT skip of the overviews/ sidecar, and — from #331 — mixed-level native-wins
+// discovery, the generalised level-coverage rule, the derived coverage manifest
+// with its saturated geometric error, and a golden-fixture pin that the
+// single-level case is unchanged. Exercised on real GeoTIFF tiles, not just the
+// header engine.
 
 namespace
 {
@@ -183,13 +190,11 @@ geographic_msgs::msg::GeoPoint geoPoint(double lat, double lon)
 
 TEST(ParseDepthOverviewArgs, ValidArgsPopulateOptions)
 {
-  char a0[] = "prog", a1[] = "/store/draft", a2[] = "--fine-level", a3[] = "12",
-    a4[] = "--min-level", a5[] = "8";
-  char * argv[] = {a0, a1, a2, a3, a4, a5};
+  char a0[] = "prog", a1[] = "/store/draft", a2[] = "--min-level", a3[] = "8";
+  char * argv[] = {a0, a1, a2, a3};
   mbs::DepthOverviewOptions opts;
-  EXPECT_EQ(mbs::parseDepthOverviewArgs(6, argv, opts), mbs::DepthArgStatus::kOk);
+  EXPECT_EQ(mbs::parseDepthOverviewArgs(4, argv, opts), mbs::DepthArgStatus::kOk);
   EXPECT_EQ(opts.layer_dir, "/store/draft");
-  EXPECT_EQ(opts.fine_level, 12);
   EXPECT_EQ(opts.min_level, 8);
 }
 
@@ -199,8 +204,8 @@ TEST(ParseDepthOverviewArgs, DefaultsWhenOnlyLayerGiven)
   char * argv[] = {a0, a1};
   mbs::DepthOverviewOptions opts;
   EXPECT_EQ(mbs::parseDepthOverviewArgs(2, argv, opts), mbs::DepthArgStatus::kOk);
-  EXPECT_EQ(opts.fine_level, 13);
   EXPECT_EQ(opts.min_level, 0);
+  EXPECT_FALSE(opts.dry_run);
 }
 
 TEST(ParseDepthOverviewArgs, HelpRequested)
@@ -219,15 +224,34 @@ TEST(ParseDepthOverviewArgs, NonNumericLevelIsErrorNotSilentZero)
   EXPECT_EQ(mbs::parseDepthOverviewArgs(4, argv, opts), mbs::DepthArgStatus::kError);
 }
 
-// No-upsample as a usage error: a coarsest level not strictly below the fine level
-// would ask the builder to "build" the fine level (or finer) — rejected at parse.
-TEST(ParseDepthOverviewArgs, MinLevelNotBelowFineIsError)
+// `--fine-level` was DELETED by #331, not retained as an assertion: the builder
+// discovers the layer's native levels, so declaring one is meaningless for a
+// mixed-level layer. It must now be rejected as an unknown flag rather than
+// silently ignored — a stale invocation has to fail loudly, not quietly build
+// something other than what it asked for.
+TEST(ParseDepthOverviewArgs, FineLevelFlagIsRejected)
 {
-  char a0[] = "prog", a1[] = "/store/draft", a2[] = "--fine-level", a3[] = "5",
-    a4[] = "--min-level", a5[] = "5";
-  char * argv[] = {a0, a1, a2, a3, a4, a5};
+  char a0[] = "prog", a1[] = "/store/draft", a2[] = "--fine-level", a3[] = "13";
+  char * argv[] = {a0, a1, a2, a3};
   mbs::DepthOverviewOptions opts;
-  EXPECT_EQ(mbs::parseDepthOverviewArgs(6, argv, opts), mbs::DepthArgStatus::kError);
+  EXPECT_EQ(mbs::parseDepthOverviewArgs(4, argv, opts), mbs::DepthArgStatus::kError);
+}
+
+// An out-of-range --min-level is still a usage error. The no-upsample check
+// (min_level below the layer's FINEST DISCOVERED native level) cannot live here
+// any more — argv alone does not know the layer's levels — so it throws from the
+// build instead; see NoUpsampleMinLevelAtOrAboveFineThrows.
+TEST(ParseDepthOverviewArgs, OutOfRangeMinLevelIsError)
+{
+  char a0[] = "prog", a1[] = "/store/draft", a2[] = "--min-level", a3[] = "21";
+  char * argv[] = {a0, a1, a2, a3};
+  char * argv_negative[] = {a0, a1, a2, a3};
+  char neg[] = "-1";
+  argv_negative[3] = neg;
+  mbs::DepthOverviewOptions opts;
+  EXPECT_EQ(mbs::parseDepthOverviewArgs(4, argv, opts), mbs::DepthArgStatus::kError);
+  EXPECT_EQ(
+    mbs::parseDepthOverviewArgs(4, argv_negative, opts), mbs::DepthArgStatus::kError);
 }
 
 // --- shallowest-preserving fold + pair coherence ----------------------------
@@ -244,7 +268,6 @@ TEST(DepthOverviewFold, ShallowestPreservingSelectsMaxHeight)
 
   mbs::DepthOverviewOptions opts;
   opts.layer_dir = dir.path().string();
-  opts.fine_level = kFineLevel;
   opts.min_level = kFineLevel - 1;   // just the L(fine-1) parent
 
   const mbs::DepthOverviewBuildResult r = mbs::buildDepthOverviewPyramid(opts);
@@ -278,7 +301,6 @@ TEST(DepthOverviewFold, DepthUncertaintyPairStaysCoherent)
 
   mbs::DepthOverviewOptions opts;
   opts.layer_dir = dir.path().string();
-  opts.fine_level = kFineLevel;
   opts.min_level = kFineLevel - 1;
   mbs::buildDepthOverviewPyramid(opts);
 
@@ -360,8 +382,10 @@ TEST(DepthOverviewFold, FoldIsOrderIndependent)
 
 // --- no-upsample invariant --------------------------------------------------
 
-// min_level == fine_level (and coarser-than-fine) is refused: the builder never
-// produces a level equal to or finer than the fine tiles.
+// min_level == the finest DISCOVERED native level (and finer) is refused: the
+// builder never produces a level equal to or finer than the native tiles. The
+// check moved from parse-time to build-time when --fine-level was deleted, so
+// this pins that it still fires — and still as std::invalid_argument.
 TEST(DepthOverviewFold, NoUpsampleMinLevelAtOrAboveFineThrows)
 {
   ScratchDir dir("noupsample_arg");
@@ -370,7 +394,6 @@ TEST(DepthOverviewFold, NoUpsampleMinLevelAtOrAboveFineThrows)
   }
   mbs::DepthOverviewOptions opts;
   opts.layer_dir = dir.path().string();
-  opts.fine_level = kFineLevel;
   opts.min_level = kFineLevel;   // not below fine -> would be "upsample"
   EXPECT_THROW(mbs::buildDepthOverviewPyramid(opts), std::invalid_argument);
 }
@@ -385,7 +408,6 @@ TEST(DepthOverviewFold, BuildProducesOnlyCoarserLevels)
   }
   mbs::DepthOverviewOptions opts;
   opts.layer_dir = dir.path().string();
-  opts.fine_level = kFineLevel;
   opts.min_level = kFineLevel - 2;   // build L(fine-1) and L(fine-2)
   mbs::buildDepthOverviewPyramid(opts);
 
@@ -411,7 +433,6 @@ TEST(DepthOverviewFold, NaNDepthCellsDoNotContribute)
   }
   mbs::DepthOverviewOptions opts;
   opts.layer_dir = dir.path().string();
-  opts.fine_level = kFineLevel;
   opts.min_level = kFineLevel - 1;
   mbs::buildDepthOverviewPyramid(opts);
 
@@ -437,7 +458,6 @@ TEST(DepthOverviewFold, AllNaNChildrenYieldAllNaNParent)
   }
   mbs::DepthOverviewOptions opts;
   opts.layer_dir = dir.path().string();
-  opts.fine_level = kFineLevel;
   opts.min_level = kFineLevel - 1;
   mbs::buildDepthOverviewPyramid(opts);
 
@@ -472,7 +492,6 @@ TEST(DepthOverviewFold, MalformedTileNameSkipsAndRefusesSwap)
 
   mbs::DepthOverviewOptions opts;
   opts.layer_dir = dir.path().string();
-  opts.fine_level = kFineLevel;
   opts.min_level = kFineLevel - 1;
 
   mbs::DepthOverviewBuildResult r;
@@ -495,7 +514,6 @@ TEST(DepthOverviewFold, EndToEndSidecarSwapIdempotentAndLocked)
   }
   mbs::DepthOverviewOptions opts;
   opts.layer_dir = dir.path().string();
-  opts.fine_level = kFineLevel;
   opts.min_level = kFineLevel - 1;
 
   const mbs::DepthOverviewBuildResult first = mbs::buildDepthOverviewPyramid(opts);
@@ -539,7 +557,6 @@ TEST(DepthOverviewFold, RefusesLayerWhoseTilesAreNotTheDepthBandShape)
 
   mbs::DepthOverviewOptions opts;
   opts.layer_dir = dir.path().string();
-  opts.fine_level = kFineLevel;
   opts.min_level = kFineLevel - 1;
 
   EXPECT_THROW(mbs::buildDepthOverviewPyramid(opts), std::runtime_error);
@@ -603,6 +620,311 @@ TEST(TileIoLoader, StillWarnsOnUnexpectedSubdir)
   EXPECT_NE(cap.str().find("WARNING"), std::string::npos) <<
     "an unexpected subdir must still warn";
   EXPECT_NE(cap.str().find("epoch_2020"), std::string::npos);
+}
+
+// --- #331: mixed-level, native-wins ------------------------------------------
+
+namespace
+{
+
+// Every level-13 grid nested under one level-11 grid (16 in a temperate band),
+// and the level-12 grids between them. The Isles of Shoals `reference/` shape in
+// miniature: a fine harbour band nested entirely inside a coarser compiled band.
+std::vector<gggs::GridIndex> nestedGrids(int level, const gggs::GridIndex & root)
+{
+  std::vector<gggs::GridIndex> current{root};
+  while (!current.empty() && current.front().level() < level) {
+    std::vector<gggs::GridIndex> next;
+    for (const gggs::GridIndex & g : current) {
+      const std::vector<gggs::GridIndex> kids = gggs::children(g);
+      next.insert(next.end(), kids.begin(), kids.end());
+    }
+    current.swap(next);
+  }
+  return current;
+}
+
+std::size_t countSidecarLevel(const fs::path & layer_dir, int level)
+{
+  const fs::path overviews = layer_dir / "overviews";
+  return fs::is_directory(overviews) ? countLevelFiles(overviews, level) : 0u;
+}
+
+}  // namespace
+
+// THE CASE THAT REFUSED ITS OWN SWAP BEFORE #331. When every parent at a level
+// is already native, that level writes ZERO derived tiles — and it is
+// nevertheless fully covered. The pre-#331 rule ("a level that produced nothing
+// means the chain is broken") aborted the whole build there, which is exactly
+// what the staged Shoals `reference/` layer does: all ten level-6 ancestors of
+// its level-8 harbour band are native.
+TEST(MixedLevelPyramid, LevelCoveredEntirelyByNativeTilesStillSwaps)
+{
+  ScratchDir dir("native_covered_level");
+  const gggs::GridIndex l11 = gggs::Level(11).gridIndex(kLat, kLon);
+  for (const gggs::GridIndex & g : nestedGrids(13, l11)) {
+    writeUniformDepthTile(dir.path(), g, -9.0, 0.5);      // the fine band
+  }
+  for (const gggs::GridIndex & g : gggs::children(l11)) {
+    writeUniformDepthTile(dir.path(), g, -30.0, 4.0);     // the compiled band
+  }
+
+  mbs::DepthOverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.min_level = 11;
+
+  const mbs::DepthOverviewBuildResult r = mbs::buildDepthOverviewPyramid(opts);
+  EXPECT_TRUE(r.sidecar_replaced) <<
+    "a level covered entirely by native tiles must not refuse the swap";
+  EXPECT_FALSE(r.level_uncovered);
+  EXPECT_EQ(r.tiles_skipped, 0u);
+  EXPECT_EQ(r.native_levels, (std::vector<int>{12, 13}));
+  // Level 12 is entirely native, so nothing is written there and every one of its
+  // four parents is counted as suppressed.
+  EXPECT_EQ(countSidecarLevel(dir.path(), 12), 0u) <<
+    "native tiles must never be overwritten by derived ones";
+  EXPECT_EQ(r.tiles_suppressed_by_native, 4u);
+  EXPECT_EQ(r.derived_by_level.count(12), 0u);
+  // Level 11 has no native tile, so it IS derived — from the native level-12
+  // tiles, since that level's derived set is empty.
+  EXPECT_EQ(countSidecarLevel(dir.path(), 11), 1u);
+  EXPECT_EQ(r.derived_by_level.at(11), 1u);
+  EXPECT_EQ(r.tiles_written, 1u);
+}
+
+// An intermediate level holding no native tiles is derived (the Shoals level-7
+// case: 25 parents of the harbour band, with no native level 7 anywhere), while
+// the coarser level that IS native is left alone.
+TEST(MixedLevelPyramid, IntermediateLevelIsDerivedAndCoarseNativeIsLeftAlone)
+{
+  ScratchDir dir("intermediate_derived");
+  const gggs::GridIndex l11 = gggs::Level(11).gridIndex(kLat, kLon);
+  for (const gggs::GridIndex & g : nestedGrids(13, l11)) {
+    writeUniformDepthTile(dir.path(), g, -9.0, 0.5);
+  }
+  writeUniformDepthTile(dir.path(), l11, -30.0, 4.0);   // native at 11, none at 12
+
+  mbs::DepthOverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.min_level = 11;
+
+  const mbs::DepthOverviewBuildResult r = mbs::buildDepthOverviewPyramid(opts);
+  ASSERT_TRUE(r.sidecar_replaced);
+  EXPECT_EQ(r.native_levels, (std::vector<int>{11, 13}));
+  EXPECT_EQ(countSidecarLevel(dir.path(), 12), 4u) <<
+    "level 12 holds no native tiles, so it is filled from the fine band";
+  EXPECT_EQ(countSidecarLevel(dir.path(), 11), 0u);
+  EXPECT_EQ(r.tiles_suppressed_by_native, 1u);
+}
+
+// Two region-disjoint native bands at different levels (the S-102 x GRANIT
+// shape). Every level from just under the finest down to min_level must be
+// covered — neither band may vanish, and the coarse band's own ground must not
+// be blank at levels the fine band alone cannot reach.
+TEST(MixedLevelPyramid, RegionDisjointBandsAreBothCarriedDown)
+{
+  ScratchDir dir("region_disjoint");
+  const gggs::GridIndex fine_root = gggs::Level(12).gridIndex(kLat, kLon);
+  for (const gggs::GridIndex & g : gggs::children(fine_root)) {
+    writeUniformDepthTile(dir.path(), g, -9.0, 0.5);        // fine band at L13
+  }
+  // A second region far away, native at a coarser level only.
+  const gggs::GridIndex coarse = gggs::Level(10).gridIndex(40.0, -74.0);
+  writeUniformDepthTile(dir.path(), coarse, -25.0, 3.0);
+  ASSERT_NE(gggs::Level(10).gridIndex(kLat, kLon), coarse) <<
+    "the two bands must sit on genuinely disjoint ground";
+
+  mbs::DepthOverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.min_level = 8;
+
+  const mbs::DepthOverviewBuildResult r = mbs::buildDepthOverviewPyramid(opts);
+  ASSERT_TRUE(r.sidecar_replaced);
+  EXPECT_FALSE(r.level_uncovered);
+  EXPECT_EQ(r.native_levels, (std::vector<int>{10, 13}));
+  // The fine band alone covers 12 and 11; at 10 the coarse band is native, so the
+  // fine band's own level-10 parent is derived beside it. Below that both fold
+  // together, and each level must hold BOTH regions.
+  EXPECT_EQ(countSidecarLevel(dir.path(), 12), 1u);
+  EXPECT_EQ(countSidecarLevel(dir.path(), 11), 1u);
+  EXPECT_EQ(countSidecarLevel(dir.path(), 10), 1u) <<
+    "the fine band's level-10 parent is derived; the coarse band's is native";
+  EXPECT_EQ(countSidecarLevel(dir.path(), 9), 2u) << "both regions at level 9";
+  EXPECT_EQ(countSidecarLevel(dir.path(), 8), 2u) << "both regions at level 8";
+}
+
+// The 2-band depth-shape probe must open ONE TILE PER DISCOVERED LEVEL. A layer
+// whose finest level is the right shape but whose coarse level is not is still
+// not a depth layer, and must not be rebuilt with the depth policy.
+TEST(MixedLevelPyramid, BandShapeProbeCoversEveryDiscoveredLevel)
+{
+  ScratchDir dir("probe_every_level");
+  const gggs::GridIndex l11 = gggs::Level(11).gridIndex(kLat, kLon);
+  for (const gggs::GridIndex & g : nestedGrids(13, l11)) {
+    writeUniformDepthTile(dir.path(), g, -9.0, 0.5);   // correct 2-band shape
+  }
+  for (const gggs::GridIndex & g : gggs::children(l11)) {
+    mtrs::TiledRasterTile<double> tile(g, 3, 0.0);     // wrong shape at level 12
+    mtrs::saveTile<double>(
+      tile, (dir.path() / mtrs::tileFilename(g)).string(),
+      {std::nullopt, std::nullopt, std::nullopt});
+  }
+
+  const fs::path overviews = dir.path() / "overviews";
+  fs::create_directories(overviews);
+  const fs::path sentinel = overviews / "10_1_1.tif";
+  std::ofstream(sentinel) << "keep";
+
+  mbs::DepthOverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.min_level = 10;
+
+  EXPECT_THROW(mbs::buildDepthOverviewPyramid(opts), std::runtime_error);
+  EXPECT_TRUE(fs::exists(sentinel));
+  EXPECT_FALSE(fs::exists(dir.path() / "overviews.tmp"));
+}
+
+// The mis-pointed-path guard, generalised: with --fine-level gone, the refusal is
+// "no usable native tiles at ANY level under <dir>". An empty or wrong directory
+// must still never destroy a good sidecar.
+TEST(MixedLevelPyramid, EmptyLayerRefusesWithoutTouchingTheSidecar)
+{
+  ScratchDir dir("empty_layer");
+  const fs::path overviews = dir.path() / "overviews";
+  fs::create_directories(overviews);
+  const fs::path sentinel = overviews / "12_1_1.tif";
+  std::ofstream(sentinel) << "keep";
+
+  mbs::DepthOverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.min_level = 0;
+
+  EXPECT_THROW(mbs::buildDepthOverviewPyramid(opts), std::runtime_error);
+  EXPECT_TRUE(fs::exists(sentinel));
+  EXPECT_FALSE(fs::exists(dir.path() / "overviews.tmp"));
+}
+
+// --- #331: derived coverage manifest + geometric error -----------------------
+
+// uma-ADR-0013 D3: the derived coverage is written INTO STAGING, so it rides
+// uma-ADR-0011's rename-aside and is crash-consistent with the sidecar it
+// describes. D1/D2: every derived tile carries a saturated conservative
+// geometric error.
+TEST(DerivedCoverageManifest, RidesTheSwapAndCarriesSaturatedGeometricError)
+{
+  ScratchDir dir("derived_manifest");
+  const gggs::GridIndex l11 = gggs::Level(11).gridIndex(kLat, kLon);
+  for (const gggs::GridIndex & g : nestedGrids(13, l11)) {
+    writeUniformDepthTile(dir.path(), g, -9.0, 0.5);
+  }
+
+  mbs::DepthOverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.min_level = 11;
+  const mbs::DepthOverviewBuildResult r = mbs::buildDepthOverviewPyramid(opts);
+  ASSERT_TRUE(r.sidecar_replaced);
+
+  const std::string manifest_path =
+    (dir.path() / "overviews" / mtrs::coverageManifestFilename()).string();
+  ASSERT_TRUE(fs::exists(manifest_path)) <<
+    "the derived manifest must land inside overviews/, not beside it";
+  const std::optional<mtrs::CoverageManifest> manifest =
+    mtrs::loadCoverageManifest(manifest_path);
+  ASSERT_TRUE(manifest.has_value());
+  EXPECT_EQ(manifest->countAt(12), 4u);
+  EXPECT_EQ(manifest->countAt(11), 1u);
+
+  // Saturation (uma-ADR-0013 D2): a parent's error is at least its children's,
+  // and where nothing records a finer error it degenerates to the level's own
+  // nominal ground sample distance — today's level-as-resolution behaviour.
+  const gggs::GridIndex l12 = gggs::children(l11).front();
+  ASSERT_TRUE(manifest->geometricError(l12).has_value());
+  ASSERT_TRUE(manifest->geometricError(l11).has_value());
+  EXPECT_DOUBLE_EQ(*manifest->geometricError(l12), gggs::levels[12].nominal_cell_size);
+  EXPECT_DOUBLE_EQ(*manifest->geometricError(l11), gggs::levels[11].nominal_cell_size);
+  EXPECT_GT(*manifest->geometricError(l11), *manifest->geometricError(l12)) <<
+    "a coarser tile's error must dominate its children's";
+}
+
+// The NATIVE coverage is deliberately NOT persisted by this builder: it does not
+// own the native tiles, so a file it wrote would go stale on the next import
+// with nothing able to notice (the scan fallback fires on absence, not
+// staleness). Only the derived manifest is written.
+TEST(DerivedCoverageManifest, NativeCoverageIsNotPersisted)
+{
+  ScratchDir dir("no_native_manifest");
+  for (const auto & g : fineSiblings()) {
+    writeUniformDepthTile(dir.path(), g, -5.0, 0.5);
+  }
+  mbs::DepthOverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.min_level = kFineLevel - 1;
+  ASSERT_TRUE(mbs::buildDepthOverviewPyramid(opts).sidecar_replaced);
+
+  EXPECT_FALSE(fs::exists(dir.path() / mtrs::coverageManifestFilename())) <<
+    "the builder must not write a native coverage.json it cannot keep fresh";
+}
+
+// The saturation formula itself (uma-ADR-0013 D1/D2), directly: max(level GSD,
+// max child ε), with an absent child ε standing in as the child level's GSD.
+TEST(GeometricError, SaturatesOverChildrenAndFallsBackToLevelGsd)
+{
+  const double l12_gsd = gggs::levels[12].nominal_cell_size;
+  const double l11_gsd = gggs::levels[11].nominal_cell_size;
+
+  // No child records an error (every child native): the level's own GSD wins,
+  // because GSD is monotone in level.
+  EXPECT_DOUBLE_EQ(
+    mbs::detail::saturatedGeometricError(11, 12, {std::nullopt, std::nullopt}),
+    l11_gsd);
+  // A child with a modest recorded error does not displace the level's GSD.
+  EXPECT_DOUBLE_EQ(
+    mbs::detail::saturatedGeometricError(11, 12, {l12_gsd, std::nullopt}), l11_gsd);
+  // A child with a LARGER error does: saturation is what makes top-down
+  // refinement correct.
+  EXPECT_DOUBLE_EQ(
+    mbs::detail::saturatedGeometricError(11, 12, {l11_gsd * 3.0, l12_gsd}),
+    l11_gsd * 3.0);
+}
+
+// --- #331: single-level regression pin ---------------------------------------
+
+// draft/processed behaviour must be preserved through the mixed-level
+// generalisation. The reference is a digest captured from the PRE-#331 binary
+// (see test/data/depth_overview_single_level_golden.txt) — a post-change test
+// cannot produce "the pre-change build", so it is committed as data.
+//
+// The fixture inputs are digested too, and asserted FIRST: if the fixture
+// generator drifts, that assertion fails and says so, instead of the sidecar
+// assertion failing and being mistaken for a fold regression.
+TEST(SingleLevelRegression, SidecarMatchesThePreChangeGolden)
+{
+  namespace dor = depth_overview_regression;
+  ScratchDir dir("regression_pin");
+  dor::writeFixture(dir.path());
+
+  const std::string golden_inputs =
+    dor::readGolden(DEPTH_OVERVIEW_GOLDEN_FILE, "input");
+  ASSERT_FALSE(golden_inputs.empty()) <<
+    "golden data file missing or unreadable: " << DEPTH_OVERVIEW_GOLDEN_FILE;
+  ASSERT_EQ(dor::digestTileDir(dir.path(), "input"), golden_inputs) <<
+    "the pinned fixture drifted — the golden below it no longer describes this "
+    "input, so regenerate both from the pre-change binary before trusting it";
+
+  mbs::DepthOverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.min_level = dor::kFixtureMinLevel;
+  const mbs::DepthOverviewBuildResult r = mbs::buildDepthOverviewPyramid(opts);
+  ASSERT_TRUE(r.sidecar_replaced);
+  EXPECT_EQ(r.tiles_suppressed_by_native, 0u) <<
+    "a single-level layer has no native tile at any coarser level";
+
+  const std::string golden_sidecar =
+    dor::readGolden(DEPTH_OVERVIEW_GOLDEN_FILE, "sidecar");
+  ASSERT_FALSE(golden_sidecar.empty());
+  EXPECT_EQ(dor::digestTileDir(dir.path() / "overviews", "sidecar"), golden_sidecar) <<
+    "the single-level pyramid changed: same tile names, same per-band values is "
+    "the contract draft/ and processed/ depend on";
 }
 
 int main(int argc, char ** argv)

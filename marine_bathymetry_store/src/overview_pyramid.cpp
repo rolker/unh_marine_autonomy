@@ -19,16 +19,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-// [ADR-0010 D9 / ADR-0011] Batch overview-pyramid builder for a depth store
-// layer (draft/processed) — production path (grid reconstruction, per-level
-// fold, level loop, argument parsing). The `build_depth_overviews` CLI is a thin
+// [uma-ADR-0010 D9 / uma-ADR-0011 / uma-ADR-0013] Batch overview-pyramid builder
+// for a depth store layer — production path (level discovery, per-level fold,
+// level loop, argument parsing). The `build_depth_overviews` CLI is a thin
 // main() over these.
 //
-// Folds the layer's fine tiles (native GGGS level) into coarser parent tiles,
-// level by level, into the layer's `overviews/` sidecar (flat dir,
-// `<level>_<row>_<col>.tif` — level rides in the filename, same as the fine
-// layer). Overviews are DERIVED + REGENERABLE: each run rebuilds the sidecar
-// (idempotent; safe to re-run after every ingest).
+// Folds the layer's native tiles into coarser parent tiles, level by level, into
+// the layer's `overviews/` sidecar (flat dir, `<level>_<row>_<col>.tif` — level
+// rides in the filename, same as the native layer). Overviews are DERIVED +
+// REGENERABLE: each run rebuilds the sidecar (idempotent; safe to re-run after
+// every ingest).
 //
 // Fold policy (depth, ADR-0010 D9): SHALLOWEST-PRESERVING. Among the valid
 // contributors that land in one coarse cell, the one with the MAXIMUM ellipsoidal
@@ -40,17 +40,31 @@
 // — see overview_builder.hpp CellFoldPolicy). VALID means band 0 (depth) is not
 // NaN — NaN is the store's per-band no-data sentinel (see bathymetry_tile.hpp).
 //
-// Layer scope (ADR-0010 D9): only draft/processed get a generated pyramid; chart
-// inherits the ENC scale ladder and reference stays as-imported (neither is a
-// caller of this path). No upsampling — only parent levels are built (the
-// min_level < fine_level range check plus the fold-toward-apex loop enforce it).
+// Layer scope (uma-ADR-0010 D9, as amended by #331): draft, processed AND
+// reference get a generated pyramid; chart is exempt — its ENC scale ladder is a
+// cartographer-curated, shoal-biased native pyramid. No upsampling: only parent
+// levels are built (the min_level < discovered-finest check plus the
+// fold-toward-apex loop enforce it).
 //
-// Memory: tiles are grouped by parent FROM FILENAMES and loaded <=4 children at a
-// time (a whole-level in-memory fold would grow without bound with store size;
-// this path peaks around one parent tile's contributor buckets — see
+// NATIVE-WINS, and the display inverts it. On disk a derived tile is written
+// only where no native tile occupies that (level, index): nothing compiled is
+// overwritten, and no merge policy is needed or implied. On screen a consumer
+// composites every level <= its selection with finer over coarser, so a derived
+// level 7 folded from harbour-band data draws OVER a native level 6 compiled at
+// a coarser scale wherever both exist. Both halves are the intended behaviour
+// (uma-ADR-0013 D3's ECDIS-consistent corollary) and must be read together.
+//
+// Safety (uma-ADR-0013 D8): nothing in the query path reads this sidecar or its
+// manifest. shallowestReliable() keeps scanning native tiles to the finest
+// available level for a region, so declining to merge finer data into a compiled
+// coarse tile carries no operational risk.
+//
+// Memory: tiles are grouped by parent FROM GRID INDICES and loaded <=4 children
+// at a time (a whole-level in-memory fold would grow without bound with store
+// size; this path peaks around one parent tile's contributor buckets — see
 // overview_builder.hpp — and that peak does not grow with store size). Each level
-// is built from the level below it (already in the sidecar), not by re-reading
-// the fine data.
+// is built from the level below it — the native tiles there plus the derived
+// tiles just written there — not by re-reading the finest data.
 
 #include "marine_bathymetry_store/overview_pyramid.hpp"
 
@@ -61,7 +75,6 @@
 #include <limits>
 #include <map>
 #include <optional>
-#include <regex>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -70,6 +83,7 @@
 #include "marine_autonomy/gggs.h"
 #include "marine_autonomy/gggs/index_math.h"
 #include "marine_bathymetry_store/bathymetry_tile.hpp"
+#include "marine_tiled_raster_store/coverage_manifest.hpp"
 #include "marine_tiled_raster_store/overview_builder.hpp"
 #include "marine_tiled_raster_store/tile_io.hpp"
 
@@ -141,6 +155,41 @@ Cell depthShallowestFold(const std::vector<Cell> & contributors)
   return *best;   // the whole pair, depth AND its paired uncertainty
 }
 
+// Saturated conservative per-tile geometric error (uma-ADR-0013 D1/D2).
+//
+// D2 makes error nesting a PRODUCER obligation — a tile's error must be at least
+// the maximum of its descendants' — and requires a producer that cannot compute
+// a meaningful error to "record a conservative upper bound rather than omit the
+// field". An "unknown" sentinel would be that same omission wearing a hat, so
+// this records the bound: max(level GSD, max child ε).
+//
+// It is computable from this producer alone. GGGS's nominal cell size halves
+// with each level, so a child whose own ε is unrecorded contributes at most its
+// level's GSD — strictly smaller than the parent's — and saturation holds even
+// across an edge where no native ε exists. Where nothing records a finer error
+// the value degenerates to exactly the level's ground sample distance, which is
+// the level-as-resolution behaviour consumers already fall back to, so its
+// arrival changes nothing for them and its later refinement (once the other
+// three D2 writers record real errors) is purely additive.
+//
+// nominal_cell_size is the equatorial cell size; away from the equator the true
+// ground sample is smaller in longitude, so the equatorial figure is itself an
+// upper bound — which is the direction a conservative error must err.
+double saturatedGeometricError(
+  int level, int child_level,
+  const std::vector<std::optional<double>> & child_errors)
+{
+  const double child_gsd = gggs::levels[child_level].nominal_cell_size;
+  double error = gggs::levels[level].nominal_cell_size;
+  for (const std::optional<double> & child_error : child_errors) {
+    const double value = child_error.value_or(child_gsd);
+    if (value > error) {
+      error = value;
+    }
+  }
+  return error;
+}
+
 }  // namespace detail
 
 namespace
@@ -160,126 +209,46 @@ constexpr std::size_t kBands = BathymetryTile::value_band_count;   // 2
 // matches how the store itself distinguishes surveyed from unsurveyed cells.
 bool validCell(const Cell & cell) {return !std::isnan(cell[detail::kDepthBand]);}
 
-// Reconstruct the GridIndex named `<level>_<row>_<col>` through the public
-// geographic lookup (the (level,row,col) ctor is Level-private by design): the
-// filename parts give the grid's south/west corner via the level spec, and the
-// centre point maps back through Level::gridIndex. tileFilename round-trip
-// verifies the arithmetic — a mismatch (e.g. a future spec change) skips the file
-// loudly instead of folding it into the wrong parent. Inlined from the sidescan
-// builder rather than reusing tile_io's `gridIndexFromTileFilename`: that helper
-// THROWS on a malformed name, which would abort the whole run and defeat the
-// skip-loudly-and-refuse property below (a partial pyramid must never displace a
-// complete sidecar).
-//
-// NOTE: the column width uses the latitude-based gggs::latitudeScaleFactor(double)
-// overload, which disagrees with the authoritative row-based
-// LevelSpec::latitudeScaleFactor(row) exactly on the 72/80 degree polar band
-// boundaries. The depth survey envelope is non-polar (|lat| < 72; see
-// tile_io.hpp), so the two agree here; on a polar tile they could diverge, but
-// the tileFilename round-trip check below would then fail and skip the file
-// rather than mis-place it — so the assumption fails safe.
-gggs::GridIndex gridFromName(
-  uint8_t level, uint32_t row, uint32_t col, const std::string & name)
-{
-  const double span = gggs::levels[level].grid_angular_span;
-  const double south = -96.0 + row * span;
-  const double lat = south + span / 2.0;
-  const double lon_span = span * gggs::latitudeScaleFactor(lat);
-  const double west = -180.0 + col * lon_span;
-  const double lon = west + lon_span / 2.0;
-  gggs::GridIndex grid;
-  try {
-    // A row/column field far out of range puts `lat`/`lon` outside the geodetic
-    // domain and gggs::Level::gridIndex throws — one malformed filename must skip
-    // its own file, not abort the whole run.
-    grid = gggs::Level(level).gridIndex(lat, lon);
-  } catch (const std::exception & e) {
-    std::cerr << "warning: skipping " << name <<
-      " (grid reconstruction failed: " << e.what() << ")\n";
-    return gggs::GridIndex();
-  }
-  if (marine_tiled_raster_store::tileFilename(grid) != name) {
-    std::cerr << "warning: skipping " << name <<
-      " (grid reconstruction mismatch)\n";
-    return gggs::GridIndex();
-  }
-  return grid;
-}
-
-// Enumerate `<level>_<row>_<col>.tif` grids at @p level in @p dir (names only —
-// nothing is loaded). Each name that matches the level but fails grid
-// reconstruction increments @p skipped.
-std::vector<gggs::GridIndex> gridsInDir(
-  const fs::path & dir, uint8_t level, std::size_t & skipped)
-{
-  // `.tif` only: tileFilename() emits nothing else, so a `.tiff` here is not one
-  // of our tiles — matching it would only produce a misleading "grid
-  // reconstruction mismatch" for a file we never wrote.
-  static const std::regex kName(R"((\d+)_(\d+)_(\d+)\.tif)");
-  std::vector<gggs::GridIndex> grids;
-  if (!fs::is_directory(dir)) {
-    return grids;
-  }
-  for (const auto & entry : fs::directory_iterator(dir)) {
-    std::smatch m;
-    const std::string name = entry.path().filename().string();
-    if (!entry.is_regular_file() || !std::regex_match(name, m, kName)) {
-      continue;
-    }
-    // The regex only proves the fields are digits — an overlong one still
-    // overflows std::stoul. A malformed name must skip its own file loudly, as
-    // documented, not abort the whole run with an uncaught out_of_range.
-    unsigned long parts[3] = {0, 0, 0};   // NOLINT(runtime/int) — stoul's type
-    bool parsed = true;
-    for (std::size_t p = 0; p < 3 && parsed; ++p) {
-      try {
-        parts[p] = std::stoul(m[p + 1]);
-      } catch (const std::exception &) {
-        parsed = false;
-      }
-    }
-    constexpr unsigned long kMaxIndex = 0xFFFFFFFFUL;   // NOLINT(runtime/int)
-    if (!parsed || parts[1] > kMaxIndex || parts[2] > kMaxIndex) {
-      std::cerr << "warning: skipping " << name <<
-        " (level/row/column out of representable range)\n";
-      ++skipped;
-      continue;
-    }
-    if (parts[0] != level) {
-      continue;
-    }
-    const gggs::GridIndex grid = gridFromName(
-      level, static_cast<uint32_t>(parts[1]), static_cast<uint32_t>(parts[2]), name);
-    if (grid.valid()) {
-      grids.push_back(grid);
-    } else {
-      ++skipped;
-    }
-  }
-  return grids;
-}
-
 // One level's tile counts: how many child tiles were read, how many parents were
-// written. The IN count is the diagnostic one for a partial store — an operator
-// seeing "40 in" for a 1000-tile layer knows immediately what is wrong.
+// written, and how many parents were left to a native tile. The IN count is the
+// diagnostic one for a partial store — an operator seeing "40 in" for a
+// 1000-tile layer knows immediately what is wrong.
 struct LevelCounts
 {
   std::size_t in = 0;
   std::size_t out = 0;
+  std::size_t suppressed_by_native = 0;
 };
 
-// Build one coarser level: children at @p child_level read from @p src_dir,
-// parents written to @p out_dir. Grid-reconstruction skips accumulate into
-// @p skipped (and are not counted in @c LevelCounts::in).
+// Where one contributor tile lives. Children at a given level come from two
+// places at once in a mixed-level layer: the native tiles in the layer dir, and
+// the derived tiles this run just wrote into staging. The two sets are disjoint
+// by construction (a derived tile is never written where a native one exists),
+// so a flat list with each tile's directory is enough — no precedence rule is
+// needed here, because there is never a collision to resolve.
+struct SourceTile
+{
+  gggs::GridIndex grid;
+  const fs::path * dir;
+};
+
+// Build one coarser level. @p children are the contributor tiles at
+// @p child_level; parents are written to @p out_dir. A parent whose
+// `(level, index)` is already occupied by a NATIVE tile is skipped and counted —
+// native data always wins on disk. Each written parent is added to
+// @p derived with its saturated geometric error (uma-ADR-0013 D1/D2), read back
+// from @p derived for children that were themselves derived.
 LevelCounts buildLevel(
-  const fs::path & src_dir, const fs::path & out_dir, uint8_t child_level,
-  std::size_t & skipped)
+  const std::vector<SourceTile> & children, const fs::path & out_dir,
+  uint8_t child_level,
+  const marine_tiled_raster_store::CoverageManifest & native,
+  marine_tiled_raster_store::CoverageManifest & derived)
 {
   LevelCounts counts;
-  std::map<gggs::GridIndex, std::vector<gggs::GridIndex>> by_parent;
-  for (const gggs::GridIndex & child : gridsInDir(src_dir, child_level, skipped)) {
+  std::map<gggs::GridIndex, std::vector<SourceTile>> by_parent;
+  for (const SourceTile & child : children) {
     ++counts.in;
-    const gggs::GridIndex parent_grid = gggs::parent(child);
+    const gggs::GridIndex parent_grid = gggs::parent(child.grid);
     if (parent_grid.valid()) {
       by_parent[parent_grid].push_back(child);
     }
@@ -289,16 +258,28 @@ LevelCounts buildLevel(
   const std::vector<std::optional<double>> nodata(
     kBands, std::optional<double>(nan));
   for (const auto & group : by_parent) {
-    std::vector<TiledRasterTile<double>> children;
-    children.reserve(group.second.size());
+    // NATIVE-WINS. Compiled data is never overwritten and never merged into, so
+    // the "what should a fold of harbour data into an approach-band tile mean?"
+    // question is not answered here — it is removed.
+    if (native.contains(group.first)) {
+      ++counts.suppressed_by_native;
+      continue;
+    }
+    std::vector<TiledRasterTile<double>> child_tiles;
+    child_tiles.reserve(group.second.size());
     std::vector<const TiledRasterTile<double> *> child_ptrs;
-    for (const gggs::GridIndex & grid : group.second) {
+    std::vector<std::optional<double>> child_errors;
+    child_errors.reserve(group.second.size());
+    for (const SourceTile & child : group.second) {
       const fs::path path =
-        src_dir / marine_tiled_raster_store::tileFilename(grid);
-      children.push_back(
+        *child.dir / marine_tiled_raster_store::tileFilename(child.grid);
+      child_tiles.push_back(
         marine_tiled_raster_store::loadTile<double>(
           path.string(), gggs::Level(child_level), kBands));
-      child_ptrs.push_back(&children.back());
+      child_ptrs.push_back(&child_tiles.back());
+      // nullopt for a native child: no producer records an error for those yet,
+      // and saturatedGeometricError substitutes the child level's GSD.
+      child_errors.push_back(derived.geometricError(child.grid));
     }
     const TiledRasterTile<double> parent_tile =
       marine_tiled_raster_store::buildParentTile<double>(
@@ -309,6 +290,10 @@ LevelCounts buildLevel(
       parent_tile,
       (out_dir / marine_tiled_raster_store::tileFilename(group.first)).string(),
       nodata);
+    derived.add(
+      group.first,
+      detail::saturatedGeometricError(
+        group.first.level(), child_level, child_errors));
     ++counts.out;
   }
   return counts;
@@ -343,11 +328,7 @@ DepthArgStatus parseDepthOverviewArgs(
   out = DepthOverviewOptions{};
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
-    if (arg == "--fine-level" && i + 1 < argc) {
-      if (!parseInt(argv[++i], out.fine_level)) {
-        return DepthArgStatus::kError;
-      }
-    } else if (arg == "--min-level" && i + 1 < argc) {
+    if (arg == "--min-level" && i + 1 < argc) {
       if (!parseInt(argv[++i], out.min_level)) {
         return DepthArgStatus::kError;
       }
@@ -361,12 +342,11 @@ DepthArgStatus parseDepthOverviewArgs(
       return DepthArgStatus::kError;
     }
   }
-  // min_level < fine_level is also the no-upsample guard: the coarsest level built
-  // is strictly finer-numbered than (i.e. coarser than) the fine tiles, never the
-  // reverse.
-  if (out.layer_dir.empty() || out.fine_level <= 0 || out.fine_level > 20 ||
-    out.min_level < 0 || out.min_level >= out.fine_level)
-  {
+  // The no-upsample guard (min_level strictly below the layer's finest native
+  // level) can no longer be checked here: the finest level is DISCOVERED from the
+  // layer, so the check moved into buildDepthOverviewPyramid, where it throws
+  // std::invalid_argument. Parsing validates only what argv alone can decide.
+  if (out.layer_dir.empty() || out.min_level < 0 || out.min_level > 20) {
     return DepthArgStatus::kError;
   }
   return DepthArgStatus::kOk;
@@ -375,69 +355,103 @@ DepthArgStatus parseDepthOverviewArgs(
 DepthOverviewBuildResult buildDepthOverviewPyramid(
   const DepthOverviewOptions & opts, std::ostream * progress)
 {
-  // Level-range guard (also the no-upsample invariant): min_level must be strictly
-  // below fine_level, so the build only ever produces coarser tiles.
-  if (opts.fine_level <= 0 || opts.fine_level > 20 ||
-    opts.min_level < 0 || opts.min_level >= opts.fine_level)
-  {
+  if (opts.min_level < 0 || opts.min_level > 20) {
     throw std::invalid_argument(
-      "buildDepthOverviewPyramid: level range out of bounds");
+      "buildDepthOverviewPyramid: min_level out of bounds");
   }
   const fs::path layer_dir(opts.layer_dir);
   if (!fs::is_directory(layer_dir)) {
     throw std::runtime_error("not a directory: " + opts.layer_dir);
   }
 
-  // Guard: never wipe the sidecar for an empty or mis-pointed layer. Require at
-  // least one fine tile at the declared level before touching overviews/ — a
-  // wrong --fine-level or a path typo must not destroy a previously-good build.
+  // Level discovery (uma-ADR-0013 D3). One all-level scan yields the layer's
+  // native coverage, which is both the guard below and the fold's input: a
+  // mixed-level layer cannot be pyramided without knowing which regions hold data
+  // at which level.
+  //
+  // The manifest is held IN MEMORY only and never written to <layer>/. This
+  // builder does not own the native tiles, so a native coverage.json it wrote
+  // would go stale on the next s102_import with nothing able to notice — the
+  // scan fallback fires on a manifest's ABSENCE, not on its staleness. Only the
+  // derived manifest, which this builder does own, is persisted (into
+  // overviews.tmp/, so it rides uma-ADR-0011's rename-aside).
   std::size_t guard_skipped = 0;
-  const std::vector<gggs::GridIndex> fine_grids =
-    gridsInDir(layer_dir, static_cast<uint8_t>(opts.fine_level), guard_skipped);
-  if (fine_grids.empty()) {
-    // Distinguish "nothing there" (a path or --fine-level typo) from "tiles are
-    // there but none could be reconstructed" — the same message for both sends
-    // the operator hunting a typo that does not exist.
+  const marine_tiled_raster_store::CoverageManifest native =
+    marine_tiled_raster_store::scanCoverage(layer_dir.string(), guard_skipped);
+
+  // Guard: never wipe the sidecar for an empty or mis-pointed layer. Require at
+  // least one usable native tile at SOME level before touching overviews/ — a
+  // path typo must not destroy a previously-good build. This generalises the old
+  // "no fine tiles at the declared level" refusal; there is no declared level to
+  // mistype any more.
+  if (native.empty()) {
+    // Distinguish "nothing there" (a path typo) from "tiles are there but none
+    // could be reconstructed" — the same message for both sends the operator
+    // hunting a typo that does not exist.
     throw std::runtime_error(
-      "no usable fine tiles at level " + std::to_string(opts.fine_level) +
-      " under " + opts.layer_dir +
+      "no usable native tiles under " + opts.layer_dir +
             (guard_skipped > 0 ?
-            " (" + std::to_string(guard_skipped) + " tile name(s) matched that level "
-            "but failed grid reconstruction — see the warnings above; not a path or "
-            "--fine-level typo)" :
-            " (no tile matched that level — check the path and --fine-level)") +
+            " (" + std::to_string(guard_skipped) + " tile name(s) were present "
+            "but failed grid reconstruction — see the warnings above; not a path typo)" :
+            " (no tile of the form <level>_<row>_<col>.tif — check the path)") +
       "; refusing to replace overviews/");
   }
 
-  // The enumeration above is filename-only. Another store's layer whose tiles
-  // happen to be named <fine_level>_<row>_<col>.tif would pass it and be rebuilt
-  // with the depth shallowest-preserving policy (and its band semantics). Open one
-  // tile and require the 2-band depth shape before touching anything.
-  const std::string probe_path =
-    (layer_dir / marine_tiled_raster_store::tileFilename(fine_grids.front())).string();
-  const int probe_bands = marine_tiled_raster_store::tileRasterCount(probe_path);
-  if (probe_bands != static_cast<int>(kBands)) {
-    throw std::runtime_error(
-      "not a depth layer: " + probe_path + " has " +
-      std::to_string(probe_bands) + " band(s), expected " +
-      std::to_string(kBands) + " (depth, uncertainty); refusing to replace "
-      "overviews/ with a depth-policy pyramid");
+  const std::vector<uint8_t> native_levels = native.levels();
+  const int finest = static_cast<int>(native_levels.back());
+  // No-upsample invariant, now against the DISCOVERED finest level: the coarsest
+  // level built must be strictly coarser than the layer's finest native data, so
+  // the build only ever produces coarser tiles.
+  if (opts.min_level >= finest) {
+    throw std::invalid_argument(
+      "buildDepthOverviewPyramid: min_level " + std::to_string(opts.min_level) +
+      " is not below the layer's finest native level " + std::to_string(finest) +
+      " (that would ask for an upsample)");
+  }
+
+  // The scan is filename-only. Another store's layer whose tiles happen to be
+  // named <level>_<row>_<col>.tif would pass it and be rebuilt with the depth
+  // shallowest-preserving policy (and its band semantics). Probe ONE TILE PER
+  // DISCOVERED LEVEL — a mixed-level layer can hold a wrong-shape band at a level
+  // the finest-level probe never opens.
+  for (const uint8_t level : native_levels) {
+    const std::vector<gggs::GridIndex> at_level = native.gridsAt(level);
+    const std::string probe_path =
+      (layer_dir /
+      marine_tiled_raster_store::tileFilename(at_level.front())).string();
+    const int probe_bands = marine_tiled_raster_store::tileRasterCount(probe_path);
+    if (probe_bands != static_cast<int>(kBands)) {
+      throw std::runtime_error(
+        "not a depth layer: " + probe_path + " has " +
+        std::to_string(probe_bands) + " band(s), expected " +
+        std::to_string(kBands) + " (depth, uncertainty); refusing to replace "
+        "overviews/ with a depth-policy pyramid");
+    }
+  }
+
+  DepthOverviewBuildResult result;
+  result.tiles_skipped = guard_skipped;
+  for (const uint8_t level : native_levels) {
+    result.native_levels.push_back(static_cast<int>(level));
   }
 
   // --dry-run stops here: the guards above are exactly the checks that catch a
   // mistyped path or wrong layer, and nothing below this point is reached without
-  // writing. Report what the run would do and touch nothing.
+  // writing. Report the discovered coverage — the report that replaces
+  // --fine-level's mis-pointed-path guard — and touch nothing.
   if (opts.dry_run) {
-    DepthOverviewBuildResult preview;
-    preview.tiles_skipped = guard_skipped;
     if (progress != nullptr) {
-      *progress << "dry run: " << fine_grids.size() << " usable fine tile(s) at "
-        "level " << opts.fine_level << " under " << opts.layer_dir <<
-        " (" << guard_skipped << " unreconstructable); would build levels " <<
-        (opts.fine_level - 1) << "..." << opts.min_level <<
-        " and replace " << (layer_dir / "overviews").string() << "\n";
+      *progress << "dry run: " << native.size() << " usable native tile(s) under " <<
+        opts.layer_dir << " (" << guard_skipped << " unreconstructable)\n";
+      for (const uint8_t level : native_levels) {
+        *progress << "  native level " << static_cast<unsigned>(level) << ": " <<
+          native.countAt(level) << " tile(s)\n";
+      }
+      *progress << "  would build levels " << (finest - 1) << "..." <<
+        opts.min_level << " and replace " <<
+        (layer_dir / "overviews").string() << "\n";
     }
-    return preview;
+    return result;
   }
 
   const fs::path overviews = layer_dir / "overviews";
@@ -463,28 +477,67 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
             "crashed run left it behind; remove it to retry)"));
   }
 
-  DepthOverviewBuildResult result;
+  // The derived coverage this run produces (uma-ADR-0013 D3), accumulated as the
+  // levels are built. It is both the record written into the sidecar and the
+  // lookup for a derived child's geometric error on the next level down.
+  marine_tiled_raster_store::CoverageManifest derived;
   try {
-    // The finest overview level folds the fine layer itself; every subsequent
-    // level folds the staging level just written.
-    for (int level = opts.fine_level; level > opts.min_level; --level) {
-      const fs::path src = (level == opts.fine_level) ? layer_dir : staging;
-      const LevelCounts counts = buildLevel(
-        src, staging, static_cast<uint8_t>(level), result.tiles_skipped);
-      if (progress != nullptr) {
-        *progress << "level " << level << " -> " << (level - 1) << ": " <<
-          counts.in << " tile(s) in, " << counts.out << " overview tile(s) out\n";
+    // Fold from just under the finest native level toward the apex. Contributors
+    // at each child level are the NATIVE tiles there plus the DERIVED tiles this
+    // run just wrote there — disjoint by construction, so no precedence rule is
+    // needed between them.
+    for (int level = finest - 1; level >= opts.min_level; --level) {
+      const uint8_t child_level = static_cast<uint8_t>(level + 1);
+      std::vector<SourceTile> children;
+      for (const gggs::GridIndex & grid : native.gridsAt(child_level)) {
+        children.push_back(SourceTile{grid, &layer_dir});
       }
-      if (counts.out == 0) {
-        // A level above min_level produced nothing: the fine-tile chain broke (a
-        // healthy store folds down to min_level without an empty level, since
-        // gggs::parent stays valid to level 0). Surface it; do not swap in a
-        // partial pyramid.
-        result.early_empty = true;
+      for (const gggs::GridIndex & grid : derived.gridsAt(child_level)) {
+        children.push_back(SourceTile{grid, &staging});
+      }
+
+      const LevelCounts counts =
+        buildLevel(children, staging, child_level, native, derived);
+      const std::size_t native_here = native.countAt(static_cast<uint8_t>(level));
+      if (progress != nullptr) {
+        *progress << "level " << child_level << " -> " << level << ": " <<
+          counts.in << " tile(s) in, " << counts.out << " overview tile(s) out, " <<
+          counts.suppressed_by_native << " left to native, " << native_here <<
+          " native tile(s) already at level " << level << "\n";
+      }
+      result.tiles_suppressed_by_native += counts.suppressed_by_native;
+      if (counts.out == 0 && native_here == 0) {
+        // A level above min_level has NO coverage at all — neither a derived tile
+        // written nor a native tile already present. The tile chain broke (a
+        // healthy layer folds down to min_level without a gap, since gggs::parent
+        // stays valid to level 0). Surface it; do not swap in a partial pyramid.
+        //
+        // The `|| native` half is what makes a mixed-level layer buildable: a
+        // level whose every parent is already native writes zero derived tiles
+        // and is nevertheless fully covered. In the staged Shoals reference/
+        // layer every one of the ten level-6 ancestors of the level-8 harbour
+        // band is native, so the pre-#331 "wrote nothing = broken" rule refused
+        // that layer's own swap.
+        result.level_uncovered = true;
+        result.uncovered_level = level;
         break;
       }
-      result.tiles_written += counts.out;
-      result.coarsest_level = level - 1;
+      if (counts.out > 0) {
+        result.tiles_written += counts.out;
+        result.derived_by_level[level] = counts.out;
+        result.coarsest_level = level;
+      }
+    }
+
+    // The derived manifest is written INTO STAGING, before the swap, so it rides
+    // the rename-aside and is crash-consistent with the sidecar it describes
+    // (uma-ADR-0011 §2). Skipped when the build is about to be refused — that
+    // staging dir is removed rather than swapped.
+    if (!result.level_uncovered && result.tiles_skipped == 0) {
+      marine_tiled_raster_store::saveCoverageManifest(
+        derived,
+        (staging / marine_tiled_raster_store::coverageManifestFilename()).string(),
+        "derived");
     }
   } catch (...) {
     // Best-effort: cleanup must not throw here, or it would replace the original
@@ -495,10 +548,10 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
   }
 
   // Refuse the swap unless the pyramid is complete: a partial one must never
-  // displace a previously-complete sidecar. `early_empty` means the fine-tile
-  // chain broke; `tiles_skipped` means one or more fine tiles failed grid
+  // displace a previously-complete sidecar. `level_uncovered` means the tile
+  // chain broke; `tiles_skipped` means one or more native tiles failed grid
   // reconstruction, so their coverage is simply missing from every level built.
-  if (result.early_empty || result.tiles_skipped > 0) {
+  if (result.level_uncovered || result.tiles_skipped > 0) {
     // Best-effort: a throwing cleanup would replace the refusal result (and its
     // skip/empty diagnostics) with an exception, and leave the run-lock debris
     // regardless. Warn so the cleanup failure is still visible.
