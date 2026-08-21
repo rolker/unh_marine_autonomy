@@ -194,6 +194,16 @@ if(BUILD_TESTING)
   ament_add_gtest(test_s102_run test/test_s102_run.cpp)
   target_link_libraries(test_s102_run s102_import_core ${GDAL_LIBRARIES})
   target_include_directories(test_s102_run PRIVATE ${GDAL_INCLUDE_DIRS})
+
+  # Subprocess test of the built s102_import binary (#288): the --cache
+  # resolution in main() (canonical default under $HOME when omitted, explicit
+  # override, fail-loud on unset HOME, still-required args) is otherwise
+  # untested. Offline-only, so no GDAL/network fixtures — the binary path is
+  # injected as a compile definition and the binary is built first.
+  ament_add_gtest(test_s102_import_cli test/test_s102_import_cli.cpp)
+  target_compile_definitions(test_s102_import_cli PRIVATE
+    S102_IMPORT_BINARY="$<TARGET_FILE:s102_import>")
+  add_dependencies(test_s102_import_cli s102_import)
 endif()
 
 ament_package()

@@ -28,6 +28,7 @@
 /// s102/run.hpp. Never point --store at a store a live costmap reads.
 
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -45,8 +46,11 @@ void usage()
 {
   std::cout <<
     "usage: s102_import --area minLon,minLat,maxLon,maxLat\n"
-    "                   --store <dir> --cache <dir>\n"
+    "                   --store <dir>\n"
     "                   --datum <constant:<mllw_z_m>|vdatum>\n"
+    "                   [--cache <dir>]              (default:\n"
+    "                                                ~/data/world/s100/s102,\n"
+    "                                                ADR-0010 D3 as amended by #288)\n"
     "                   [--layer draft|processed|reference] (default reference;\n"
     "                                                'survey' is a deprecated alias\n"
     "                                                for 'processed', ADR-0010 D8)\n"
@@ -58,10 +62,16 @@ void usage()
     "                   [--offline] [--force]\n"
     "\n"
     "Fetches NOAA S-102 ed3.0.0 tiles intersecting --area into --cache\n"
-    "(canonical: ~/data/world/s100/s102 — ADR-0010 D3 as amended by #288)\n"
     "(SHA256-verified, idempotent), converts them to store convention\n"
     "(geographic WGS84, per-cell MLLW->ellipsoid via --datum), and imports\n"
     "each at the GGGS level matching its native resolution.\n"
+    "\n"
+    "--cache defaults to the canonical S-102 import cache\n"
+    "~/data/world/s100/s102 (tilde-expanded via $HOME; ADR-0010 D3 as amended\n"
+    "by #288); an explicit --cache overrides it. OPERATOR-RUN ONLY: nothing in\n"
+    "the updater, provisioner, or deploy path invokes s102_import, so S-102 is\n"
+    "never generated or fetched by default on field hosts (pandy/gabby). Giving\n"
+    "--cache a default is safe only because this tool never runs unattended.\n"
     "\n"
     "--datum constant:<m>  fixed MLLW ellipsoidal height (scratch use only)\n"
     "--datum vdatum        marine_vertical_datum grids (--geoid/--vdatum-grids)\n"
@@ -72,6 +82,26 @@ void usage()
     "treats high-uncertainty cells as reject->LETHAL; chart-grade sigma\n"
     "under a live costmap would render charted regions keepout.\n";
   exit(1);
+}
+
+/// Canonical S-102 import cache when --cache is omitted (ADR-0010 D3 as amended
+/// by #288). Tilde-expanded via $HOME.
+///
+/// OPERATOR CONSTRAINT (Roland, 2026-08-20): s102_import is operator-run only —
+/// nothing in the updater/provisioner/deploy path may invoke it, so S-102 is
+/// never generated or fetched by default on field hosts. A default cache path
+/// is acceptable *only* because this tool never runs unattended.
+///
+/// @throws std::runtime_error if $HOME is unset/empty — fail loud rather than
+/// anchor the default under a relative "data/world/..." in the CWD.
+std::string defaultCacheDir()
+{
+  const char * home = std::getenv("HOME");
+  if (home == nullptr || home[0] == '\0') {
+    throw std::runtime_error(
+            "--cache omitted and $HOME is unset; pass --cache explicitly");
+  }
+  return std::string(home) + "/data/world/s100/s102";
 }
 
 }  // namespace
@@ -140,10 +170,19 @@ int main(int argc, char * argv[])
       usage();
     }
   }
-  if (area_text.empty() || options.store_dir.empty() ||
-    options.cache_dir.empty() || datum_text.empty())
-  {
+  if (area_text.empty() || options.store_dir.empty() || datum_text.empty()) {
     usage();
+  }
+  // --cache is optional: an explicit --cache (parsed above) wins; otherwise
+  // fall back to the canonical import cache. See defaultCacheDir()'s note for
+  // why a default is safe (operator-run-only tool).
+  if (options.cache_dir.empty()) {
+    try {
+      options.cache_dir = defaultCacheDir();
+    } catch (const std::exception & e) {
+      std::cerr << "s102_import: " << e.what() << "\n";
+      return 1;
+    }
   }
 
   {
