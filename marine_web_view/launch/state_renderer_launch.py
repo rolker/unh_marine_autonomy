@@ -38,6 +38,10 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     """Build the launch description."""
+    # Every declared node parameter is exposed and forwarded, so the launch
+    # surface matches the node and the documented dry-run (which passes
+    # track_local_path:=) actually reaches the renderer. Names, defaults and
+    # order mirror StateRenderer.__init__.
     args = [
         # The node discovers its own nav topics from PlatformList, so the only
         # thing it needs to be told is which platform it is following.
@@ -48,6 +52,16 @@ def generate_launch_description():
                               default_value='/ben/sensors/nav/position',
                               description='Fallback position topic when no '
                                           'PlatformList is published.'),
+        DeclareLaunchArgument('msg_type', default_value='navsatfix',
+                              description="'navsatfix' or 'geopoint' "
+                                          '(geographic_msgs/GeoPointStamped).'),
+        DeclareLaunchArgument('orientation_topic', default_value='',
+                              description='Fallback heading topic; normally '
+                                          'discovered from PlatformList.'),
+        DeclareLaunchArgument('platforms_topic',
+                              default_value='/marine/platforms',
+                              description='PlatformList topic to self-configure '
+                                          'from.'),
         DeclareLaunchArgument('interval', default_value='1.0',
                               description='Seconds between uploads. S3 PUTs '
                                           'bill per request, so this is the '
@@ -58,6 +72,21 @@ def generate_launch_description():
         DeclareLaunchArgument('dry_run', default_value='false',
                               description='Write to local_path instead of S3.'),
         DeclareLaunchArgument('local_path', default_value='/tmp/position.geojson'),
+        DeclareLaunchArgument('track_key', default_value='live/track.geojson'),
+        DeclareLaunchArgument('track_local_path',
+                              default_value='/tmp/track.geojson',
+                              description='Track file written under dry_run.'),
+        DeclareLaunchArgument('track_seconds', default_value='14400.0',
+                              description='How much history the track retains.'),
+        DeclareLaunchArgument('track_max_points', default_value='1200',
+                              description='Safety cap on track vertices.'),
+        DeclareLaunchArgument('track_interval', default_value='30.0',
+                              description='Seconds between track publications.'),
+        # Fallback hull, used only until the first PlatformList arrives.
+        DeclareLaunchArgument('vessel_length', default_value='4.25'),
+        DeclareLaunchArgument('vessel_width', default_value='1.7'),
+        DeclareLaunchArgument('reference_x', default_value='0.525'),
+        DeclareLaunchArgument('reference_y', default_value='0.5'),
     ]
 
     node = Node(
@@ -68,12 +97,24 @@ def generate_launch_description():
         parameters=[{
             'platform_name': LaunchConfiguration('platform_name'),
             'topic': LaunchConfiguration('topic'),
+            'msg_type': LaunchConfiguration('msg_type'),
+            'orientation_topic': LaunchConfiguration('orientation_topic'),
+            'platforms_topic': LaunchConfiguration('platforms_topic'),
             'interval': LaunchConfiguration('interval'),
             'bucket': LaunchConfiguration('bucket'),
             'key': LaunchConfiguration('key'),
             'profile': LaunchConfiguration('profile'),
             'dry_run': LaunchConfiguration('dry_run'),
             'local_path': LaunchConfiguration('local_path'),
+            'track_key': LaunchConfiguration('track_key'),
+            'track_local_path': LaunchConfiguration('track_local_path'),
+            'track_seconds': LaunchConfiguration('track_seconds'),
+            'track_max_points': LaunchConfiguration('track_max_points'),
+            'track_interval': LaunchConfiguration('track_interval'),
+            'vessel_length': LaunchConfiguration('vessel_length'),
+            'vessel_width': LaunchConfiguration('vessel_width'),
+            'reference_x': LaunchConfiguration('reference_x'),
+            'reference_y': LaunchConfiguration('reference_y'),
         }],
     )
 
