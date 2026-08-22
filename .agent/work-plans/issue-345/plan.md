@@ -183,3 +183,43 @@ approach as #342 so overlaid depth matches the basemap's depth scale.
 
 Single PR, builds on #341 (`marine_web_view` package). Approximately 350–450 lines of new
 Python (node + reconciler + gggs math) + tests + launch. No C++ changes.
+
+## Operator decisions (2026-08-22)
+
+Resolving two must-fix findings from the Plan Review.
+
+### Branch prerequisite — merge #346 first
+
+`marine_web_view` exists only on `feature/issue-341` (PR #346). Rather than stack
+`feature/issue-345` on it, **#346 is to be reviewed and merged first**, then this
+branch rebased onto the default branch. Implementation of #345 does not begin
+until that lands.
+
+### Colour treatment — shared scale, deliberately distinguishable
+
+Operator decision: combine the two candidate approaches. Coverage uses the
+**same fixed 0–40 m scale and the same 24-point ramp as the basemap in #342**
+— extracted empirically from CCOM's published `BTY_4m_HighRes_BlueGreen_DRA`
+service, so it is a cited source rather than a hand-rolled LUT — **but tweaked
+slightly so the two layers read as visibly different when overlaid.**
+
+Rationale: the layers are composited, so they must share a scale to be
+comparable, yet a viewer has to be able to tell surveyed coverage from the
+background bathymetry at a glance. Identical palettes would make the coverage
+layer invisible against the basemap; unrelated palettes would break
+comparability.
+
+The tweak is deliberately small — a modest hue/saturation or lightness offset
+applied to the shared ramp, not a different palette. Exact treatment to be
+settled during implementation and shown to the operator.
+
+**This supersedes** the plan's `depth_max = 50 m` and its bespoke 256-entry
+"deep blue → shallow green" LUT. The correct range is **0–40 m**; the ramp
+control points come from #342's `web/index.html` (`RAMP`, `MAX_DEPTH`, `STEP`)
+so the two cannot drift.
+
+**ADR-0001**: this is an explicit, recorded interim deviation. `marine_colormap`
+is the mandated single source of truth but is C++-only today (no Python binding
+— tracked by #137), so it cannot be called from this node. Add an ADR-0001 row
+to the compliance table stating the deviation and its expiry condition (adopt
+`marine_colormap` once a Python binding exists).
