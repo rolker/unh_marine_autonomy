@@ -264,6 +264,16 @@ interrupted run leaves the previous sidecar intact. `--dry-run` runs the layer
 guards and reports what would be built without writing. See ADR-0011 for the
 sidecar layout and fold-policy contract.
 
+`--fine-level` is retained here on purpose. The sidescan store is genuinely
+single-level, so declaring its level is a real assertion — a mis-pointed path or
+a wrong level refuses the run before anything is written. The **depth** builder
+(`build_depth_overviews`) deleted its own copy of the flag in
+[#331](https://github.com/rolker/unh_marine_autonomy/issues/331), because
+`reference/` became mixed-level and a single declared level is meaningless there;
+it discovers the layer's native levels instead. The divergence is deliberate, not
+an oversight. If this store ever gains a second native level, adopt the depth
+builder's discovery loop rather than adding a second flag.
+
 ## Build & test
 
 ```bash

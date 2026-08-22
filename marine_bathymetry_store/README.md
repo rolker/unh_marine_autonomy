@@ -206,44 +206,83 @@ Caller contract: run only while no consumer holds the store open (D7's nav-down
 precondition). Aside dirs (`.chart_backup.stale.<n>/`) are not layer dirs, so
 `load()` ignores them; clear them by hand.
 
-#### Depth overview pyramids (`build_depth_overviews`, ADR-0010 D9 / ADR-0011)
+#### Depth overview pyramids (`build_depth_overviews`, uma-ADR-0010 D9 / uma-ADR-0011 / uma-ADR-0013)
 
 `build_depth_overviews` is an **offline batch** builder that generates a coarse
 overview pyramid for a depth layer, so survey bathymetry participates in
-world-zoom display and level-aware coarse queries. It folds a layer's fine tiles
-into coarser parents, level by level, into a flat `overviews/` sidecar next to
-the fine tiles (`<layer>/overviews/<level>_<row>_<col>.tif` — the level rides in
-the filename, exactly as in the fine layer):
+world-zoom **display**. (Display only — no query path reads the sidecar; see the
+uma-ADR-0013 D8 note below.) It folds a layer's native
+tiles into coarser parents, level by level, into a flat `overviews/` sidecar next
+to them (`<layer>/overviews/<level>_<row>_<col>.tif` — the level rides in the
+filename, exactly as in the native layer):
 
 ```bash
-# Rebuild the sidecar for a store's processed layer (fine tiles at GGGS level 13,
-# build every coarser level down to the apex).
+# Rebuild the sidecar for a store's processed layer, every coarser level down to
+# the apex. The layer's native levels are discovered — nothing to declare.
 ros2 run marine_bathymetry_store build_depth_overviews /path/to/store/processed
-# Same for the draft layer, stopping at level 6, with a dry run first.
-ros2 run marine_bathymetry_store build_depth_overviews /path/to/store/draft \
-  --fine-level 13 --min-level 6 --dry-run
+# The mixed-level reference layer, stopping at level 6, with a dry run first.
+ros2 run marine_bathymetry_store build_depth_overviews /path/to/store/reference \
+  --min-level 6 --dry-run
 ```
 
-- **Layer scope (D9).** Only `draft/` and `processed/` get a generated pyramid.
-  `chart/` inherits the ENC scale ladder and `reference/` stays as-imported —
-  point the builder at a `draft/` or `processed/` layer dir, not those.
+- **Layer scope (D9).** `draft/`, `processed/` **and `reference/`** get a
+  generated pyramid. `chart/` does not — it inherits the ENC scale ladder, a
+  cartographer-curated shoal-biased native pyramid. Point the builder at one of
+  the first three, not at `chart/`.
+- **Mixed-level, native-wins.** The layer's native levels are **discovered**;
+  there is no `--fine-level` to declare (it was deleted in
+  [#331](https://github.com/rolker/unh_marine_autonomy/issues/331), not kept as
+  an assertion). The build folds from the finest native level toward the apex,
+  writing a derived tile **only where no native tile exists** at that
+  `(level, index)`. Nothing compiled is overwritten or merged into. A level whose
+  every parent is already native writes zero derived tiles and is still fully
+  covered — that is the ordinary case for a mixed-level layer, not a failure.
+
+  **The display inverts this rule, and both halves matter.** On disk native
+  always wins. On screen a consumer composites every level ≤ its selection with
+  finer over coarser, so a *derived* level 7 folded from 3.6 m harbour data draws
+  *over* a *native* level 6 compiled at 14.5 m wherever both exist. That is
+  intended and ECDIS-consistent (uma-ADR-0013 D3's corollary).
+  (`marine_sidescan_mosaic`'s `build_sidescan_overviews` keeps its own
+  `--fine-level`: that store is genuinely single-level, so the flag still asserts
+  something true there. The divergence is deliberate.)
 - **Shallowest-preserving fold (D9).** Each coarse cell carries its shoalest
   reliable child's whole `{depth, uncertainty}` pair — the **maximum** ellipsoidal
   height (the cell most hazardous to navigation), never a mean, and the σ always
   travels with the depth it describes. A coarse corridor query then plans around
   the rock rather than averaging it away.
-- **Never upsamples.** Only coarser levels are built (`--min-level` must be below
-  `--fine-level`); the fine tiles are the finest data.
+- **Never upsamples.** Only coarser levels are built — `--min-level` must be
+  strictly below the layer's finest **discovered** native level; the native tiles
+  are the finest data.
+- **Coverage manifest + geometric error (uma-ADR-0013 D1/D2/D3).** Each run
+  writes `overviews/coverage.json` declaring which `(level, index)` zones the
+  sidecar holds and each derived tile's geometric error in metres
+  (`max(level GSD, max child ε)` — a saturated conservative bound). It is staged
+  inside `overviews.tmp/`, so it rides the swap and is crash-consistent with the
+  tiles it describes. The layer's **native** coverage is *not* written here: this
+  builder does not own those tiles, so a file it wrote would go stale on the next
+  import with nothing able to detect it.
+- **Safety is untouched (uma-ADR-0013 D8).** No query path reads the sidecar or
+  the manifest. `shallowestReliable()` keeps scanning native tiles to the finest
+  available level for a region, so native-wins is a display-and-storage decision
+  with no operational consequence.
 - **Wholesale + crash-safe.** Each run rebuilds the whole sidecar (derived,
   regenerable — safe to re-run after every ingest) into a staging `overviews.tmp/`
-  and swaps it in only once complete (rename-aside via `overviews.old/`), so an
-  interrupted or failing run never displaces a complete sidecar with a partial one.
-  A malformed/unreconstructable fine-tile name is skipped loudly and **refuses the
-  swap** (exit 4). `overviews.tmp/` doubles as the per-layer run lock.
+  and swaps it in only once complete, so an interrupted or failing run never
+  displaces a complete sidecar with a partial one. The swap prefers
+  `renameat2(RENAME_EXCHANGE)` so `overviews/` is never momentarily absent for a
+  concurrent reader (CAMP treats a missing `overviews/` as "no overviews"), and
+  falls back to rename-aside via `overviews.old/` where the filesystem cannot
+  exchange directory entries.
+  A malformed/unreconstructable tile name is skipped loudly and **refuses the
+  swap** (exit 4) — at **any** level, since under discovery that name's coverage
+  would be missing from every level built beneath it. `overviews.tmp/` doubles as
+  the per-layer run lock.
 - **Loader-transparent.** `load()` / `loadWindow()` skip `overviews/` (and the
   `overviews.tmp/`/`overviews.old/` swap transients) silently; the store recovers
   each tile's level from its own filename, so the sidecar is not loaded as fine
-  data (ADR-0011 Consequences).
+  data (uma-ADR-0011 Consequences). `coverage.json` is not a `.tif`, so the
+  flat-layout loaders already skip it silently too.
 
 ## Build & test
 

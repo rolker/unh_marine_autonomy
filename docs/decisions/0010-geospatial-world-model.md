@@ -23,6 +23,13 @@ Implementing PRs (all merged; host-verified 2026-08-20):
 | D9 — depths overview pyramid (shallowest-preserving `overviews/` sidecar) | [uma#320](https://github.com/rolker/unh_marine_autonomy/pull/320) |
 | D10 — `s57_layer` depth/obstacle split | [s57_tools#31](https://github.com/rolker/s57_tools/pull/31) (issue [s57_tools#30](https://github.com/rolker/s57_tools/issues/30)) |
 
+**In flight** (not yet merged — kept out of the table above, which records only
+merged, host-verified work):
+
+- D9 — `reference` native-wins pyramid (mixed-level generalisation; amends the
+  `reference` line below) —
+  [uma#331](https://github.com/rolker/unh_marine_autonomy/issues/331)
+
 Open follow-ons (adopted target, not yet fully materialized):
 
 - **Store-root migration** off `~/data/stores/` onto `~/data/world/` —
@@ -398,7 +405,43 @@ full-data replay remain offline properties).
   generated ([uma#188](https://github.com/rolker/unh_marine_autonomy/issues/188))
   with **shallowest-preserving aggregation** — never a mean; the rock must
   survive the downsample.
-- **`reference`**: as imported.
+- **`reference`**: overview levels are generated, **native-wins**
+  ([#331](https://github.com/rolker/unh_marine_autonomy/issues/331)). Fold
+  upward from the layer's finest native level toward the apex, writing a derived
+  tile only at a `(level, index)` pair that has **no native tile**. Nothing
+  compiled is ever overwritten or merged into.
+
+  *Why this replaced "as imported".* That line was defensible when `reference`
+  held one hand-placed grid imported once. `s102_import` made it false: it maps
+  each S-102 dataset's native resolution through `gggs::Level::fromCellSize()`,
+  so one import populates several levels over disjoint ground — and below each
+  region's coarsest native level the layer renders **nothing**. At Isles of
+  Shoals that is the whole prior disappearing below level 6, and the NH GRANIT
+  prior disappearing below level 10.
+
+  *Why native-wins is safe, not merely conservative.* [ADR-0013](0013-bounded-lod-navigation.md)
+  D8: safety queries never consult an LOD level. `shallowestReliable()` reads to
+  the finest available data for a region regardless of what is drawn, so a
+  compiled coarse cell being less shoal-biased than a hypothetical merge carries
+  no operational risk. This is the same argument that exempts `chart` above.
+
+  *Native-wins is a **storage** rule; the display **inverts** it — read the two
+  together.* On disk, native always wins: nothing compiled is overwritten. On
+  screen, a consumer composites every level ≤ its selection with **finer over
+  coarser**, so a derived level 7 folded from 3.6 m harbour data draws *over* a
+  native level 6 compiled at 14.5 m wherever both exist. That inversion is
+  intended and ECDIS-consistent
+  ([ADR-0013](0013-bounded-lod-navigation.md) D3's corollary: fill from a more
+  general purpose, draw at one scale, flag overscale). Reading either half alone
+  predicts the wrong picture: the storage rule alone suggests the compiled tile
+  is what you see at level 7, and the display rule alone suggests compiled data
+  gets overwritten. Neither is true.
+
+  *Residual cost, worth documenting.* A future region holding compiled coarse
+  data **and** a finer survey that found something shallower will show the
+  compiled value at coarse zoom. That is ECDIS behaviour, the safety path is
+  unaffected, and the eventual answer is a coverage-aware "finer data exists
+  here" indication rather than a silent merge.
 - **Never upsample**: coarse data is never rasterized finer than its source;
   consumers wanting finer fall through to coarser levels (the level-aware
   query already does this).

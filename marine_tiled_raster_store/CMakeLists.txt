@@ -13,8 +13,12 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(marine_autonomy REQUIRED)
 find_package(GDAL CONFIG REQUIRED)
+# nlohmann_json backs the coverage manifest (uma-ADR-0013 D3, #331): a layer's
+# `coverage.json` declaration of which (level, index) zones it holds.
+find_package(nlohmann_json REQUIRED)
 
 add_library(${PROJECT_NAME}
+  src/coverage_manifest.cpp
   src/tile_io.cpp
   src/tile_catalog.cpp
 )
@@ -38,8 +42,11 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 target_link_libraries(${PROJECT_NAME} PUBLIC
   marine_autonomy::marine_autonomy
 )
+# nlohmann_json is header-only and used only inside coverage_manifest.cpp (the
+# public header keeps it out of its interface), so it is PRIVATE like GDAL.
 target_link_libraries(${PROJECT_NAME} PRIVATE
   GDAL::GDAL
+  nlohmann_json::nlohmann_json
 )
 
 # Headers are laid out as include/${PROJECT_NAME}/*.hpp, so install the include/
@@ -55,7 +62,7 @@ install(TARGETS ${PROJECT_NAME}
 )
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(marine_autonomy GDAL)
+ament_export_dependencies(marine_autonomy GDAL nlohmann_json)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -70,6 +77,11 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_overview_builder test/test_overview_builder.cpp)
   target_link_libraries(test_overview_builder ${PROJECT_NAME})
+
+  # Coverage manifest (uma-ADR-0013 D3, #331): the all-level directory scan, run
+  # encoding, JSON round-trip, and the tolerant read of a malformed document.
+  ament_add_gtest(test_coverage_manifest test/test_coverage_manifest.cpp)
+  target_link_libraries(test_coverage_manifest ${PROJECT_NAME})
 endif()
 
 ament_package()

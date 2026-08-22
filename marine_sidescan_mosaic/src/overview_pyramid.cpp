@@ -20,8 +20,21 @@
 // THE SOFTWARE.
 
 // [#188 / ADR-0011] Batch overview-pyramid builder for a sidescan store layer —
-// production path (grid reconstruction, per-level fold, level loop, argument
-// parsing). The `build_sidescan_overviews` CLI is a thin main() over these.
+// production path (per-level fold, level loop, argument parsing). The
+// `build_sidescan_overviews` CLI is a thin main() over these.
+//
+// Grid reconstruction lives in marine_tiled_raster_store/coverage_manifest.hpp
+// (`gridsInDir`), shared with the depth builder — this file carried a
+// near-verbatim copy until #331 hoisted it. The skip-loudly-never-throw contract
+// (a malformed tile name skips its own file and refuses the swap, rather than
+// aborting the run) and the non-polar-envelope caveat are documented there.
+//
+// This store is genuinely SINGLE-LEVEL, so `--fine-level` stays here as a real
+// assertion. The depth builder deleted its own copy of the flag in #331 because
+// `reference/` became mixed-level and a single declared level is meaningless
+// there. The divergence is deliberate, not an oversight; if the sidescan store
+// ever gains a second native level, the depth builder's discovery loop is the
+// pattern to adopt.
 //
 // Folds the layer's fine tiles (default GGGS level 13) into coarser parent
 // tiles, level by level, into the layer's `overviews/` sidecar (flat dir,
@@ -54,7 +67,6 @@
 #include <iostream>
 #include <map>
 #include <optional>
-#include <regex>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -62,6 +74,7 @@
 
 #include "marine_autonomy/gggs.h"
 #include "marine_autonomy/gggs/index_math.h"
+#include "marine_tiled_raster_store/coverage_manifest.hpp"
 #include "marine_tiled_raster_store/overview_builder.hpp"
 #include "marine_tiled_raster_store/tile_io.hpp"
 
@@ -110,101 +123,6 @@ Cell imageryMeanFold(const std::vector<Cell> & contributors)
 // fold, or every shadow is erased and the overview biases bright.
 bool validCell(const Cell & cell) {return cell[kQualityBand] != kNoData;}
 
-// Reconstruct the GridIndex named `<level>_<row>_<col>` through the public
-// geographic lookup (the (level,row,col) ctor is Level-private by design): the
-// filename parts give the grid's south/west corner via the level spec, and the
-// centre point maps back through Level::gridIndex. tileFilename round-trip
-// verifies the arithmetic — a mismatch (e.g. a future spec change) skips the
-// file loudly instead of folding it into the wrong parent.
-//
-// NOTE: the column width uses the latitude-based gggs::latitudeScaleFactor(double)
-// overload, which disagrees with the authoritative row-based
-// LevelSpec::latitudeScaleFactor(row) exactly on the 72/80 degree polar band
-// boundaries. The sidescan survey envelope is non-polar (|lat| < 72; see
-// tile_io.hpp), so the two agree here; on a polar tile they could diverge, but
-// the tileFilename round-trip check below would then fail and skip the file
-// rather than mis-place it — so the assumption fails safe.
-gggs::GridIndex gridFromName(
-  uint8_t level, uint32_t row, uint32_t col, const std::string & name)
-{
-  const double span = gggs::levels[level].grid_angular_span;
-  const double south = -96.0 + row * span;
-  const double lat = south + span / 2.0;
-  const double lon_span = span * gggs::latitudeScaleFactor(lat);
-  const double west = -180.0 + col * lon_span;
-  const double lon = west + lon_span / 2.0;
-  gggs::GridIndex grid;
-  try {
-    // A row/column field far out of range puts `lat`/`lon` outside the geodetic
-    // domain and gggs::Level::gridIndex throws — one malformed filename must
-    // skip its own file, not abort the whole run.
-    grid = gggs::Level(level).gridIndex(lat, lon);
-  } catch (const std::exception & e) {
-    std::cerr << "warning: skipping " << name <<
-      " (grid reconstruction failed: " << e.what() << ")\n";
-    return gggs::GridIndex();
-  }
-  if (marine_tiled_raster_store::tileFilename(grid) != name) {
-    std::cerr << "warning: skipping " << name <<
-      " (grid reconstruction mismatch)\n";
-    return gggs::GridIndex();
-  }
-  return grid;
-}
-
-// Enumerate `<level>_<row>_<col>.tif` grids at @p level in @p dir (names only —
-// nothing is loaded). Each name that matches the level but fails grid
-// reconstruction increments @p skipped.
-std::vector<gggs::GridIndex> gridsInDir(
-  const fs::path & dir, uint8_t level, std::size_t & skipped)
-{
-  // `.tif` only: tileFilename() emits nothing else, so a `.tiff` here is not one
-  // of our tiles — matching it would only produce a misleading "grid
-  // reconstruction mismatch" for a file we never wrote.
-  static const std::regex kName(R"((\d+)_(\d+)_(\d+)\.tif)");
-  std::vector<gggs::GridIndex> grids;
-  if (!fs::is_directory(dir)) {
-    return grids;
-  }
-  for (const auto & entry : fs::directory_iterator(dir)) {
-    std::smatch m;
-    const std::string name = entry.path().filename().string();
-    if (!entry.is_regular_file() || !std::regex_match(name, m, kName)) {
-      continue;
-    }
-    // The regex only proves the fields are digits — an overlong one still
-    // overflows std::stoul. A malformed name must skip its own file loudly, as
-    // documented, not abort the whole run with an uncaught out_of_range.
-    unsigned long parts[3] = {0, 0, 0};   // NOLINT(runtime/int) — stoul's type
-    bool parsed = true;
-    for (std::size_t p = 0; p < 3 && parsed; ++p) {
-      try {
-        parts[p] = std::stoul(m[p + 1]);
-      } catch (const std::exception &) {
-        parsed = false;
-      }
-    }
-    constexpr unsigned long kMaxIndex = 0xFFFFFFFFUL;   // NOLINT(runtime/int)
-    if (!parsed || parts[1] > kMaxIndex || parts[2] > kMaxIndex) {
-      std::cerr << "warning: skipping " << name <<
-        " (level/row/column out of representable range)\n";
-      ++skipped;
-      continue;
-    }
-    if (parts[0] != level) {
-      continue;
-    }
-    const gggs::GridIndex grid = gridFromName(
-      level, static_cast<uint32_t>(parts[1]), static_cast<uint32_t>(parts[2]), name);
-    if (grid.valid()) {
-      grids.push_back(grid);
-    } else {
-      ++skipped;
-    }
-  }
-  return grids;
-}
-
 // One level's tile counts: how many child tiles were read, how many parents were
 // written. The IN count is the diagnostic one for a partial store — an operator
 // seeing "40 in" for a 1000-tile layer knows immediately what is wrong.
@@ -223,7 +141,10 @@ LevelCounts buildLevel(
 {
   LevelCounts counts;
   std::map<gggs::GridIndex, std::vector<gggs::GridIndex>> by_parent;
-  for (const gggs::GridIndex & child : gridsInDir(src_dir, child_level, skipped)) {
+  for (const gggs::GridIndex & child :
+    marine_tiled_raster_store::gridsInDir(
+      src_dir.string(), child_level, skipped))
+  {
     ++counts.in;
     const gggs::GridIndex parent_grid = gggs::parent(child);
     if (parent_grid.valid()) {
@@ -331,7 +252,8 @@ OverviewBuildResult buildOverviewPyramid(
   // wrong --fine-level or a path typo must not destroy a previously-good build.
   std::size_t guard_skipped = 0;
   const std::vector<gggs::GridIndex> fine_grids =
-    gridsInDir(layer_dir, static_cast<uint8_t>(opts.fine_level), guard_skipped);
+    marine_tiled_raster_store::gridsInDir(
+    layer_dir.string(), static_cast<uint8_t>(opts.fine_level), guard_skipped);
   if (fine_grids.empty()) {
     // Distinguish "nothing there" (a path or --fine-level typo) from "tiles are
     // there but none could be reconstructed" — the same message for both sends

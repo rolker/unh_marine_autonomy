@@ -47,15 +47,22 @@ pairing).
    (idempotent; safe after every ingest), it is never merged into the fine
    layer, and it never enters anti-entropy/possession sets. Native coarse
    data can never be confused with derived overviews. Regeneration is
-   **crash-safe** — not atomic, since POSIX offers no atomic directory swap: a
-   builder writes into a sibling `overviews.tmp/` and swaps it in only after
-   every level succeeds, so an interrupted or failed run leaves the previous
-   sidecar intact rather than a truncated one a consumer would read as
-   complete. The swap is **rename-aside**: `overviews/` → `overviews.old/`,
-   staging → `overviews/`, then `overviews.old/` is deleted. The previous
-   sidecar therefore exists at every instant; a crash between the two renames
-   leaves it as `overviews.old/`, recoverable by hand, and a failing second
-   rename is rolled back. A builder also refuses to replace `overviews/` unless
+   **crash-safe, and atomic where the filesystem allows it**: a builder writes
+   into a sibling `overviews.tmp/` and swaps it in only after every level
+   succeeds, so an interrupted or failed run leaves the previous sidecar intact
+   rather than a truncated one a consumer would read as complete. The swap
+   prefers **`renameat2(RENAME_EXCHANGE)`**, which exchanges the two directory
+   entries atomically, so `overviews/` resolves to a complete sidecar at every
+   instant and a concurrent reader never observes a missing directory. Where
+   that is unavailable (pre-3.15 kernels, NFS, some overlay/FUSE mounts) the
+   swap falls back to **rename-aside**: `overviews/` → `overviews.old/`,
+   staging → `overviews/`, then `overviews.old/` is deleted. On the fallback
+   path the previous sidecar's *contents* are never destroyed before the new one
+   is in place, but the *path* `overviews/` is briefly absent between the two
+   renames — **a consumer must treat a missing `overviews/` as "re-scan", not as
+   a cached "this layer has none"**. A crash between the two renames leaves the
+   previous sidecar as `overviews.old/`, recoverable by hand, and a failing
+   second rename is rolled back. A builder also refuses to replace `overviews/` unless
    the layer holds fine tiles at the declared level (an empty or mis-pointed
    layer never destroys a good sidecar), and refuses when any fine tile was
    skipped (a partial pyramid must not displace a complete one).
@@ -68,6 +75,48 @@ pairing).
    deletes any leftover `overviews.old/` before retiring the current sidecar,
    and it is created only after staging is complete, so it is never the sole
    copy).
+
+   **Amended by [#331](https://github.com/rolker/unh_marine_autonomy/issues/331)
+   (mixed-level layers).** Two clauses above are superseded for the depth
+   builder; both remain as written for `build_sidescan_overviews`, whose store is
+   genuinely single-level.
+
+   - *"refuses to replace `overviews/` unless the layer holds fine tiles **at the
+     declared level**"* — there is no declared level any more. The depth builder
+     **discovers** the layer's native levels with one all-level scan
+     ([ADR-0013](0013-bounded-lod-navigation.md) D3), and `--fine-level` is
+     deleted rather than kept as an assertion. The guard generalises to: refuse
+     unless the layer holds at least one usable native tile **at some level**.
+     The refusal-on-any-skip clause is unchanged but now has a **wider surface** —
+     an unreadable tile name at any level refuses the swap, because under
+     discovery that name's coverage would be missing from every level built
+     beneath it.
+   - *"tiles are named `<level>_<row>_<col>.tif`"* — the sidecar is no longer
+     tiles only. It also holds **`overviews/coverage.json`**, the run's derived
+     coverage manifest ([ADR-0013](0013-bounded-lod-navigation.md) D3), including
+     each derived tile's geometric error (D1/D2). It is written into
+     `overviews.tmp/` **before** the swap, so it rides the rename-aside above and
+     is crash-consistent with the tiles it describes for free — the property this
+     clause exists to guarantee, extended rather than weakened. Consumers of this
+     contract (CAMP's LOD loader, the level-aware query) must therefore expect one
+     non-`.tif` file in the sidecar; the flat-layout tile loaders already skip
+     non-`.tif` regular files silently, so no loader change was needed.
+
+   The **native** coverage manifest is *not* written by the overview builder. It
+   does not own the native tiles, so a file it wrote would go stale on the next
+   import with nothing able to detect it — the scan fallback fires on a
+   manifest's absence, not on its staleness. Persisting native coverage belongs
+   with the importers, if and when a consumer needs it.
+
+   **Fold scope (#331): derived overviews FILL GAPS beneath native data; they
+   never merge into it.** A derived tile is written only at a `(level, index)`
+   that holds no native tile. This is deliberately *not* a merge policy: folding
+   a fine harbour band up into a natively-compiled coarse tile would collide
+   universally, and declining to create that fold removes the question of what it
+   should mean. See [ADR-0010](0010-geospatial-world-model.md) D9's `reference`
+   entry for the rule, its [ADR-0013](0013-bounded-lod-navigation.md) D8 safety
+   argument, and the storage-rule/display-rule inversion that must be read with
+   it.
 
 3. **The fold's load-bearing mapping is `gggs::parent()` / `gggs::children()`
    (`marine_autonomy/gggs/index_math.h`) plus per-cell geographic
@@ -96,7 +145,10 @@ pairing).
      level-aware query; the conservative (shoal-exaggerating) world-zoom look
      is accepted — cartographic generalization does the same. **Reserved, not
      implemented here** — the depths pyramid follows the ADR-0010 D8
-     re-split.
+     re-split. (Shipped in
+     [uma#320](https://github.com/rolker/unh_marine_autonomy/pull/320);
+     generalised to mixed-level layers in
+     [#331](https://github.com/rolker/unh_marine_autonomy/issues/331).)
 
 5. **Batch first, incremental later.** `build_sidescan_overviews` regenerates
    the sidescan sidecar as an offline batch step after ingest. The live

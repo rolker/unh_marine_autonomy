@@ -154,8 +154,19 @@ if(BUILD_TESTING)
   # malformed-filename skip -> swap refusal, end-to-end sidecar swap, and the
   # tile_io loader's silent skip of overviews/. GeoTIFF I/O comes transitively from
   # marine_tiled_raster_store (linked via ${PROJECT_NAME}) — no direct GDAL/OpenSSL.
-  ament_add_gtest(test_depth_overview test/test_depth_overview.cpp)
+  # TIMEOUT above the ament default of 60s: these are integration tests over real
+  # 960x960 two-band GeoTIFFs (the point — the fold, the swap and the manifest are
+  # disk behaviour), and #331 added the mixed-level and golden-pin cases on top.
+  # The fixtures are already kept to the minimum tile count each assertion needs.
+  ament_add_gtest(test_depth_overview test/test_depth_overview.cpp TIMEOUT 300)
   target_link_libraries(test_depth_overview ${PROJECT_NAME})
+  # The pinned single-level regression guard (#331) reads its fixture helpers
+  # from test/ and its golden digest — captured from the PRE-#331 binary — from
+  # test/data/, injected as a compile definition so the test needs no runtime cwd
+  # assumption.
+  target_include_directories(test_depth_overview PRIVATE test)
+  target_compile_definitions(test_depth_overview PRIVATE
+    DEPTH_OVERVIEW_GOLDEN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/test/data/depth_overview_single_level_golden.txt")
 
   # The GeoTIFF importer test writes fixture rasters with GDAL directly, so it
   # links GDAL (PRIVATE in the library target).
