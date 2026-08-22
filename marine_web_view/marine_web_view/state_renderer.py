@@ -70,12 +70,15 @@ from sensor_msgs.msg import NavSatFix
 # survey lines is exactly the information worth keeping.
 #
 # Bands are (max_age_seconds, tolerance_metres). The newest band has tolerance
-# 0.0, meaning every fix is kept.
+# 0.0, meaning every fix is kept. The oldest band is a catch-all (max_age inf)
+# so the whole retained history renders however far back track_seconds keeps it
+# -- a finite ceiling here would silently drop everything older than it, so a
+# track_seconds larger than the ceiling would never fully render.
 TRACK_BANDS = (
-    (120.0, 0.0),      # last 2 min: full resolution
-    (900.0, 3.0),      # to 15 min: gentle
-    (3600.0, 10.0),    # to 1 hour
-    (14400.0, 30.0),   # to 4 hours: rough path only
+    (120.0, 0.0),           # last 2 min: full resolution
+    (900.0, 3.0),           # to 15 min: gentle
+    (3600.0, 10.0),         # to 1 hour
+    (float('inf'), 30.0),   # older than 1 hour: rough path only
 )
 
 
