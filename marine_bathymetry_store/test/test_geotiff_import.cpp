@@ -453,6 +453,33 @@ gggs::CellIndex nwCellEast(const BathymetryStore & store, const gggs::Level & le
 }
 }  // namespace
 
+/// [#339] The merge flag must be refused for Processed, not merely unused there.
+///
+/// Seeding from the resident layer puts cells OUTSIDE the import footprint into
+/// the tiles map, and a Processed import hands that same map to
+/// clearOverlappedDraft (ADR-0010 D8) — which would clear Draft under
+/// previously-imported Processed data the import never covered. Unreachable via
+/// the CLI today (the flag is set only on the chart-only --stage path), so this
+/// pins the guard against a future caller rather than a current bug.
+TEST_F(GeoTiffImportTest, MergeIntoResidentIsRefusedForProcessed)
+{
+  BathymetryStore store(11);
+  const std::vector<float> depth{-30.0f, -31.0f, -32.0f, -33.0f};
+  const std::vector<float> unc{0.1f, 0.2f, 0.3f, 0.4f};
+  const auto tif = writeTestTiff(dir_ / "merge_guard.tif", store.level(), 2, 2, depth, unc);
+
+  GeoTiffImportOptions options;
+  options.merge_into_resident = true;
+  EXPECT_THROW(
+    importGeoTiff(store, SourceLayer::Processed, tif, options),
+    std::invalid_argument);
+
+  // Chart is the intended use and must still be accepted.
+  BathymetryStore chart_store =
+    BathymetryStore::fromCellSize(store.level().cellSize(), false, true);
+  EXPECT_NO_THROW(importGeoTiff(chart_store, SourceLayer::Chart, tif, options));
+}
+
 TEST_F(GeoTiffImportTest, AntiClobberCellWiseClearsOnlyCoveredDraftCells)
 {
   // ADR-0010 D8: a Processed import clears overlapped Draft cells CELL-WISE — only

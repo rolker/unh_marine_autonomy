@@ -55,6 +55,22 @@ ProcessedImportResult importGeoTiff(
   if (options.depth_band < 1) {
     throw std::invalid_argument("importGeoTiff: depth_band must be >= 1");
   }
+  if (options.merge_into_resident && layer == SourceLayer::Processed) {
+    // Seeding from the resident layer puts cells OUTSIDE this import's footprint
+    // into `tiles`, and a Processed import hands that same map to
+    // clearOverlappedDraft (ADR-0010 D8) — which would then clear Draft under
+    // previously-imported Processed data, well beyond what this import touched.
+    // Anti-clobber destroys data, so refuse rather than trust the caller.
+    //
+    // The flag is for assembling a layer from many disjoint sources (a chart
+    // layer built cell-by-cell from ENC cells). A Processed re-import is meant
+    // to supersede per tile — a shrinking survey must drop the cells it no
+    // longer covers — so merging is the wrong semantics there anyway.
+    throw std::invalid_argument(
+      "importGeoTiff: merge_into_resident is not supported for the Processed "
+      "layer — seeded cells outside the import footprint would drive "
+      "clearOverlappedDraft to clear Draft data this import never covered");
+  }
   if (options.uncertainty_band < 0) {
     throw std::invalid_argument("importGeoTiff: uncertainty_band must be >= 0 (0 = none)");
   }

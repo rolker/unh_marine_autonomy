@@ -46,6 +46,7 @@
 /// --date flags and is written to <store_dir>/registry.json.
 
 #include <gdal_priv.h>
+#include <ogr_spatialref.h>
 
 #include <algorithm>
 #include <cmath>
@@ -197,9 +198,24 @@ sourceGeoBounds(const std::string & path)
   if (!ds) {
     throw std::runtime_error("could not open " + path);
   }
+  // Same guards importGeoTiff enforces, applied BEFORE any adoption. Without
+  // them a projected (metres) or rotated source yields a lon/lat box that is
+  // wildly wrong, so loadWindow adopts far too many staged tiles — the very
+  // O(total tiles) cost the windowing exists to avoid — and only then does the
+  // import fail on its own guard. Fail fast instead.
+  const OGRSpatialReference * srs = ds->GetSpatialRef();
+  OGRErr axis_error = OGRERR_NONE;
+  if (srs == nullptr || !srs->IsGeographic() ||
+    std::abs(srs->GetSemiMajor(&axis_error) - 6378137.0) > 1.0 || axis_error != OGRERR_NONE)
+  {
+    throw std::runtime_error("not a geographic WGS84 raster: " + path);
+  }
   double gt[6] = {0, 1, 0, 0, 0, 1};
   if (ds->GetGeoTransform(gt) != CE_None) {
     throw std::runtime_error("missing geotransform in " + path);
+  }
+  if (gt[2] != 0.0 || gt[4] != 0.0) {
+    throw std::runtime_error("rotated geotransform unsupported in " + path);
   }
   const double x0 = gt[0];
   const double y0 = gt[3];
