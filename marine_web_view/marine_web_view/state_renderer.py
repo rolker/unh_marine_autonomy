@@ -60,6 +60,93 @@ from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from sensor_msgs.msg import NavSatFix
 
+# Track decimation ------------------------------------------------------------
+#
+# Older parts of the track are simplified rather than dropped, so the rough path
+# survives while the artifact stays small. Douglas-Peucker is used because it is
+# shape-preserving: it keeps the vertices where the path actually turns and
+# collapses straight runs to their endpoints. Uniform "every Nth point"
+# decimation does the opposite -- it rounds off corners, which for lawnmower
+# survey lines is exactly the information worth keeping.
+#
+# Bands are (max_age_seconds, tolerance_metres). The newest band has tolerance
+# 0.0, meaning every fix is kept.
+TRACK_BANDS = (
+    (120.0, 0.0),      # last 2 min: full resolution
+    (900.0, 3.0),      # to 15 min: gentle
+    (3600.0, 10.0),    # to 1 hour
+    (14400.0, 30.0),   # to 4 hours: rough path only
+)
+
+
+def _to_local(points, lat0):
+    """Project lat/lon to local metres about lat0 (equirectangular).
+
+    Accurate to well under a metre over the tens of kilometres a track spans,
+    and it keeps the tolerances above in real metres rather than degrees.
+    """
+    scale = math.cos(math.radians(lat0))
+    return [(lon * 111319.49 * scale, lat * 111319.49) for _, lat, lon in points]
+
+
+def _rdp_mask(xy, tolerance):
+    """Return a keep-mask for Douglas-Peucker simplification of xy."""
+    n = len(xy)
+    keep = [False] * n
+    if n == 0:
+        return keep
+    keep[0] = keep[n - 1] = True
+    stack = [(0, n - 1)]
+    while stack:
+        first, last = stack.pop()
+        if last <= first + 1:
+            continue
+        ax, ay = xy[first]
+        bx, by = xy[last]
+        dx, dy = bx - ax, by - ay
+        span = math.hypot(dx, dy)
+        worst, worst_i = -1.0, -1
+        for i in range(first + 1, last):
+            px, py = xy[i]
+            if span == 0.0:
+                dist = math.hypot(px - ax, py - ay)
+            else:
+                # perpendicular distance from the chord
+                dist = abs(dy * px - dx * py + bx * ay - by * ax) / span
+            if dist > worst:
+                worst, worst_i = dist, i
+        if worst > tolerance:
+            keep[worst_i] = True
+            stack.append((first, worst_i))
+            stack.append((worst_i, last))
+    return keep
+
+
+def decimate_track(points, now):
+    """Simplify a track, progressively more so with age.
+
+    points is a sequence of (stamp, lat, lon), oldest first. Each age band is
+    simplified independently at its own tolerance and the results concatenated,
+    so a band boundary never drops a point that anchors the newer segment.
+    """
+    if len(points) < 3:
+        return list(points)
+    out = []
+    previous_age = -1.0
+    for max_age, tolerance in TRACK_BANDS:
+        band = [p for p in points
+                if previous_age < (now - p[0]) <= max_age]
+        previous_age = max_age
+        if not band:
+            continue
+        if tolerance <= 0.0 or len(band) < 3:
+            out.extend(band)
+            continue
+        mask = _rdp_mask(_to_local(band, band[0][1]), tolerance)
+        out.extend(p for p, k in zip(band, mask) if k)
+    out.sort(key=lambda p: p[0])
+    return out
+
 
 class StateRenderer(Node):
     """Publish a vessel's live position and heading as a GeoJSON artifact."""
@@ -79,6 +166,15 @@ class StateRenderer(Node):
         self.declare_parameter('interval', 1.0)
         self.declare_parameter('dry_run', False)
         self.declare_parameter('local_path', '/tmp/position.geojson')
+        self.declare_parameter('track_key', 'live/track.geojson')
+        self.declare_parameter('track_local_path', '/tmp/track.geojson')
+        self.declare_parameter('track_seconds', 14400.0)
+        self.declare_parameter('track_max_points', 1200)
+        # The track is published on its OWN, slower timer. Old track does not
+        # change, so re-sending it at the position rate is waste: at 1 Hz a
+        # ~14 kB track is ~1.2 GB/day per open viewer against ~34 MB for the
+        # point alone.
+        self.declare_parameter('track_interval', 30.0)
         # Fallback hull, used only until the first PlatformList arrives.
         # PlatformList is VOLATILE rather than latched, so that can take a
         # few seconds after start-up.
@@ -96,6 +192,11 @@ class StateRenderer(Node):
         self.interval = float(self._param('interval'))
         self.dry_run = bool(self._param('dry_run'))
         self.local_path = self._param('local_path')
+        self.track_key = self._param('track_key')
+        self.track_local_path = self._param('track_local_path')
+        self.track_seconds = float(self._param('track_seconds'))
+        self.track_max_points = int(self._param('track_max_points'))
+        self.track_interval = float(self._param('track_interval'))
         self.platform_name = (self._param('platform_name')
                               or self.topic.strip('/').split('/')[0])
         self.vessel = {
@@ -114,6 +215,8 @@ class StateRenderer(Node):
         self._skipped = 0
         self._last_sent_stamp = None
         self._dyn_subs = {}
+        self._history = []
+        self._track_stamp = None
 
         fix_type = (GeoPointStamped if self.msg_type == 'geopoint'
                     else NavSatFix)
@@ -124,6 +227,7 @@ class StateRenderer(Node):
             PlatformList, self._param('platforms_topic'),
             self._on_platforms, 10)
         self.create_timer(self.interval, self._tick)
+        self.create_timer(self.track_interval, self._track_tick)
 
         target = (self.local_path if self.dry_run
                   else 's3://{}/{}'.format(self.bucket, self.key))
@@ -137,8 +241,21 @@ class StateRenderer(Node):
         return self.get_parameter(name).value
 
     def _on_fix(self, msg):
-        """Record the newest position fix."""
+        """Record the newest position fix and append it to the track.
+
+        History is accumulated at the full message rate, independently of the
+        upload interval: the track a viewer sees is where the vessel went, not
+        an artifact of when anyone happened to poll.
+        """
         self._fix = msg
+        latitude, longitude, _ = self._lat_lon_alt(msg)
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if self._history and stamp <= self._history[-1][0]:
+            return
+        self._history.append((stamp, latitude, longitude))
+        cutoff = stamp - self.track_seconds
+        if self._history[0][0] < cutoff:
+            self._history = [p for p in self._history if p[0] >= cutoff]
 
     def _on_imu(self, msg):
         """Record the newest orientation."""
@@ -218,10 +335,15 @@ class StateRenderer(Node):
         return stamp.sec + stamp.nanosec * 1e-9
 
     def _geojson(self):
-        """Return the GeoJSON Feature for the current state."""
+        """Return the vessel-position Feature.
+
+        Deliberately just the current point. The track is a separate, larger
+        object on a slower timer -- see _track_geojson.
+        """
         latitude, longitude, altitude = self._lat_lon_alt(self._fix)
         stamp = self._fix_stamp()
         properties = {
+            'role': 'vessel',
             'heading': self._heading_deg(),
             'altitude': altitude,
             'frame_id': self._fix.header.frame_id,
@@ -239,10 +361,57 @@ class StateRenderer(Node):
             # Leaflet's L.marker([lat, lng]).
             'geometry': {
                 'type': 'Point',
-                'coordinates': [longitude, latitude],
+                'coordinates': [round(longitude, 6), round(latitude, 6)],
             },
             'properties': properties,
         }, separators=(',', ':'))
+
+    def _track_geojson(self, stamp):
+        """Return the decimated track as a LineString Feature."""
+        track = decimate_track(self._history, stamp)
+        if len(track) > self.track_max_points:
+            # Safety net only. Trimming the oldest beats unbounded growth; if
+            # this fires routinely the bands want widening, not the cap
+            # lowering -- the point of the bands is to keep the whole path.
+            self.get_logger().warn(
+                'track hit the {} point cap; oldest fixes trimmed'.format(
+                    self.track_max_points))
+            track = track[-self.track_max_points:]
+        if len(track) < 2:
+            return None
+        return json.dumps({
+            'type': 'Feature',
+            'geometry': {
+                'type': 'LineString',
+                'coordinates': [[round(lon, 6), round(lat, 6)]
+                                for _, lat, lon in track],
+            },
+            'properties': {
+                'role': 'track',
+                'points': len(track),
+                'raw_points': len(self._history),
+                'span_seconds': round(stamp - track[0][0], 1),
+                'generated': time.strftime('%Y-%m-%dT%H:%M:%SZ',
+                                           time.gmtime()),
+            },
+        }, separators=(',', ':'))
+
+    def _track_tick(self):
+        """Publish the track if it has grown since the last publication."""
+        if not self._history:
+            return
+        stamp = self._history[-1][0]
+        if stamp == self._track_stamp:
+            return
+        payload = self._track_geojson(stamp)
+        if payload is None:
+            return
+        if self.dry_run:
+            with open(self.track_local_path, 'w') as handle:
+                handle.write(payload)
+            self._track_stamp = stamp
+        elif self._put(payload, self.track_key, self.track_interval):
+            self._track_stamp = stamp
 
     def _tick(self):
         """Write the current state if it has changed since the last write."""
@@ -282,7 +451,13 @@ class StateRenderer(Node):
         self._writes += 1
 
     def _upload(self, payload, stamp):
-        """Upload the artifact to S3.
+        """Upload the position artifact."""
+        if self._put(payload, self.key, self.interval):
+            self._last_sent_stamp = stamp
+            self._writes += 1
+
+    def _put(self, payload, key, max_age):
+        """Write one object to S3; return True on success.
 
         Cache-Control drives CloudFront freshness. Invalidation is deliberately
         not used: it is billed per path beyond a small monthly allowance, which
@@ -290,9 +465,9 @@ class StateRenderer(Node):
         """
         command = [
             'aws', 's3', 'cp', '-',
-            's3://{}/{}'.format(self.bucket, self.key),
+            's3://{}/{}'.format(self.bucket, key),
             '--content-type', 'application/geo+json',
-            '--cache-control', 'max-age={}'.format(max(1, int(self.interval))),
+            '--cache-control', 'max-age={}'.format(max(1, int(max_age))),
             '--profile', self.profile,
         ]
         try:
@@ -300,15 +475,14 @@ class StateRenderer(Node):
                                     capture_output=True, timeout=20)
         except subprocess.TimeoutExpired:
             self._failures += 1
-            self.get_logger().error('upload timed out')
-            return
+            self.get_logger().error('upload of {} timed out'.format(key))
+            return False
         if result.returncode != 0:
             self._failures += 1
-            self.get_logger().error('upload failed: {}'.format(
-                result.stderr.decode().strip()[:300]))
-            return
-        self._last_sent_stamp = stamp
-        self._writes += 1
+            self.get_logger().error('upload of {} failed: {}'.format(
+                key, result.stderr.decode().strip()[:300]))
+            return False
+        return True
 
 
 def main(args=None):

@@ -99,8 +99,12 @@
 <script>
 // Relative URL on purpose: same-origin whether served by CloudFront or a local
 // http.server, so no bucket CORS config is ever needed.
-const SRC     = 'position.geojson';
-const POLL_MS = 1000;   // renderer writes at 1 Hz
+const SRC       = 'position.geojson';
+const TRACK_SRC = 'track.geojson';
+const POLL_MS   = 1000;
+// The track is a separate, larger object on a slower cadence: old track does
+// not change, so re-fetching it at the position rate would be waste.
+const TRACK_MS  = 30000;   // renderer writes at 1 Hz
 const STALE_S = 20;   // amber past this
 const DEAD_S  = 60;   // red past this
 
@@ -300,6 +304,10 @@ const FOLLOW_DURATION = 1.2;   // seconds; comfortably longer than the 1 Hz tick
 const TRIANGLE_M   = 15;   // triangle reach in PIXELS (CAMP: 15 * pixel_size)
 const HULL_PX_MIN  = 10;   // CAMP: triangle while pixel_size > max_size/10
 
+// Drawn from the server-side track, NOT accumulated from our own polls.
+// A client-accumulated trail shows where our polling happened to succeed
+// rather than where the vessel went -- background tabs get throttled, requests
+// drop, and a viewer arriving late would see no history at all.
 const trail = L.polyline([], { color:'#C2B280', weight:2, opacity:.9 }).addTo(map);
 const hull  = L.polygon([], { color:'#001D52', weight:1.5,
                               fillColor:'#C2B280', fillOpacity:.95 }).addTo(map);
@@ -399,7 +407,6 @@ function render(f) {
   const [lon, lat] = f.geometry.coordinates;
   last = f;
   drawBoat();
-  trail.addLatLng([lat, lon]);
   if (!haveFix) { map.setView([lat, lon], 16); haveFix = true; }
   else if ($('follow').checked) { followBoat(lat, lon); }
   const pr = f.properties || {};
@@ -420,6 +427,16 @@ function updateAge() {
   else                    setStatus('ok',   'live');
 }
 
+async function pollTrack() {
+  try {
+    const r = await fetch(TRACK_SRC, { cache: 'default' });
+    if (!r.ok) return;                        // no track yet is not an error
+    const t = await r.json();
+    // GeoJSON is [lon, lat]; Leaflet wants [lat, lon].
+    trail.setLatLngs(t.geometry.coordinates.map(c => [c[1], c[0]]));
+  } catch (e) { /* leave the previous track up */ }
+}
+
 async function poll() {
   try {
     const r = await fetch(SRC, { cache:'default' });   // no cache-buster: let
@@ -429,8 +446,17 @@ async function poll() {
 }
 
 poll();
+pollTrack();
 setInterval(poll, POLL_MS);
+setInterval(pollTrack, TRACK_MS);
 setInterval(updateAge, 1000);
+
+// Browsers throttle timers in hidden tabs -- Chrome to roughly once a minute
+// after a few minutes -- so a tab returned to can be well behind. Refresh
+// immediately on becoming visible rather than waiting for the next tick.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { poll(); pollTrack(); }
+});
 </script>
 </body>
 </html>

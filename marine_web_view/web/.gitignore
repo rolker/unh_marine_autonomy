@@ -1,0 +1,6 @@
+# Runtime artifacts written by state_renderer when serving this directory
+# locally (dry_run). The page fetches them by relative URL, so pointing the
+# renderer here is the natural way to preview -- but they are generated data,
+# not source.
+position.geojson
+track.geojson
