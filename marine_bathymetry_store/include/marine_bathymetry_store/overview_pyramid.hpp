@@ -116,18 +116,10 @@ struct DepthOverviewBuildResult
   /// That is the point — its coverage would be missing from every level built
   /// beneath it.
   std::size_t tiles_skipped = 0;
-  int coarsest_level = -1;         ///< coarsest level PRODUCED (-1 = none built)
-  /// A level above @c min_level ended up with **no coverage at all** — neither a
-  /// derived tile written nor a native tile already present. The fine-tile chain
-  /// is broken; do not swap in a partial pyramid.
-  ///
-  /// Note the `|| native` half: a level whose every parent is native writes zero
-  /// derived tiles and is nevertheless fully covered. That is the ordinary case
-  /// for a mixed-level layer (in the staged Shoals `reference/`, all ten level-6
-  /// ancestors of the level-8 harbour band are native), and treating "wrote
-  /// nothing" as "broken" would refuse every such layer's own swap.
-  bool level_uncovered = false;
-  int uncovered_level = -1;        ///< the level @c level_uncovered refers to
+  /// Coarsest level PRODUCED. Stays -1 when the fold wrote no derived tile at
+  /// any level — legal for a mixed-level layer whose coarser levels are already
+  /// native all the way down to @c min_level.
+  int coarsest_level = -1;
   /// Derived tiles written per level (level -> count). Levels covered entirely
   /// by native tiles are absent, not zero-valued.
   std::map<int, std::size_t> derived_by_level;
@@ -137,8 +129,8 @@ struct DepthOverviewBuildResult
   /// The native levels discovered in the layer, ascending (coarsest first).
   std::vector<int> native_levels;
   /// Whether the freshly-built pyramid actually replaced `overviews/`. False when
-  /// the build was refused (@c level_uncovered or @c tiles_skipped > 0), in which
-  /// case the previous sidecar is untouched and the staging dir is cleaned up.
+  /// the build was refused (@c tiles_skipped > 0), in which case the previous
+  /// sidecar is untouched and the staging dir is cleaned up.
   bool sidecar_replaced = false;
 };
 
@@ -193,11 +185,10 @@ struct DepthOverviewBuildResult
 ///
 /// @param progress Optional stream for per-level progress lines (nullptr = quiet).
 /// @return Counts, the discovered native levels, per-level derived counts, the
-///   native-suppression count, a @c level_uncovered flag, and
-///   @c sidecar_replaced telling whether the swap happened. The build is
-///   **refused** (previous sidecar left in place, staging cleaned up) when
-///   @c level_uncovered or @c tiles_skipped > 0; the caller should surface either
-///   loudly and exit non-zero.
+///   native-suppression count, and @c sidecar_replaced telling whether the swap
+///   happened. The build is **refused** (previous sidecar left in place, staging
+///   cleaned up) when @c tiles_skipped > 0; the caller should surface that loudly
+///   and exit non-zero.
 /// @throws std::invalid_argument if @c min_level is outside 0..20, or is not
 ///   strictly below the layer's finest DISCOVERED native level (the no-upsample
 ///   guard).

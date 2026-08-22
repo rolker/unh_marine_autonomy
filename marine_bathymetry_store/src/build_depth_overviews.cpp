@@ -87,16 +87,9 @@ int main(int argc, char ** argv)
       std::cerr << "dry run: nothing written\n";
       return 0;
     }
-    // Report the refusals before any success line: on level_uncovered or a skip
-    // the swap never happened (sidecar_replaced stays false), so "complete" would
-    // be a lie next to the error.
-    if (result.level_uncovered) {
-      std::cerr << "error: level " << result.uncovered_level <<
-        " (above --min-level " << opts.min_level << ") has no coverage at all — "
-        "no derived tile was written there and no native tile is present; the "
-        "tile chain is broken. overviews/ left unchanged\n";
-      return 3;
-    }
+    // Report the refusal before any success line: on a skip the swap never
+    // happened (sidecar_replaced stays false), so "complete" would be a lie next
+    // to the error.
     if (result.tiles_skipped > 0) {
       std::cerr << "error: " << result.tiles_skipped <<
         " input tile(s) failed grid reconstruction, so the pyramid is missing "
@@ -105,11 +98,23 @@ int main(int argc, char ** argv)
       return 4;
     }
     // Success: the swap happened (result.sidecar_replaced is true here).
-    std::cerr << "overview pyramid complete: " << result.tiles_written <<
-      " tile(s) written across levels " << result.coarsest_level << ".." <<
-      (result.native_levels.empty() ? 0 : result.native_levels.back() - 1) <<
-      "; " << result.tiles_suppressed_by_native <<
-      " parent(s) left to native tiles\n";
+    //
+    // tiles_written == 0 is legal for a mixed-level layer whose coarser levels
+    // are already native all the way down to --min-level: every parent is
+    // suppressed and nothing is derived. coarsest_level is still -1 there, so
+    // printing a range would read "across levels -1..7".
+    if (result.tiles_written == 0) {
+      std::cerr << "overview pyramid complete: no derived tile needed — every "
+        "level down to " << opts.min_level << " is already covered by native "
+        "tiles; " << result.tiles_suppressed_by_native <<
+        " parent(s) left to native tiles\n";
+    } else {
+      std::cerr << "overview pyramid complete: " << result.tiles_written <<
+        " tile(s) written across levels " << result.coarsest_level << ".." <<
+        (result.native_levels.empty() ? 0 : result.native_levels.back() - 1) <<
+        "; " << result.tiles_suppressed_by_native <<
+        " parent(s) left to native tiles\n";
+    }
     return 0;
   } catch (const std::exception & e) {
     std::cerr << "error: " << e.what() << "\n";

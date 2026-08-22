@@ -68,6 +68,7 @@
 
 #include "marine_bathymetry_store/overview_pyramid.hpp"
 
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -508,22 +509,21 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
           " native tile(s) already at level " << level << "\n";
       }
       result.tiles_suppressed_by_native += counts.suppressed_by_native;
-      if (counts.out == 0 && native_here == 0) {
-        // A level above min_level has NO coverage at all — neither a derived tile
-        // written nor a native tile already present. The tile chain broke (a
-        // healthy layer folds down to min_level without a gap, since gggs::parent
-        // stays valid to level 0). Surface it; do not swap in a partial pyramid.
-        //
-        // The `|| native` half is what makes a mixed-level layer buildable: a
-        // level whose every parent is already native writes zero derived tiles
-        // and is nevertheless fully covered. In the staged Shoals reference/
-        // layer every one of the ten level-6 ancestors of the level-8 harbour
-        // band is native, so the pre-#331 "wrote nothing = broken" rule refused
-        // that layer's own swap.
-        result.level_uncovered = true;
-        result.uncovered_level = level;
-        break;
-      }
+      // Invariant: a level can never end up with no coverage at all. `children`
+      // is non-empty at every iteration (the first reads the finest native level,
+      // which the native.empty() guard proved non-empty; each later one is
+      // reached only because the previous level derived a tile or holds a native
+      // one), and gggs::parent stays valid down to level 0, so by_parent is
+      // non-empty. Each parent group is then either written (counts.out++) or
+      // suppressed, and suppression requires a native tile AT THIS level
+      // (native_here >= 1). Hence counts.out == 0 implies native_here >= 1.
+      //
+      // This used to be a runtime refusal with its own result flag and CLI exit
+      // code. It cannot fire — see uma#331's review — so shipping it as a live
+      // safety guard misrepresented what the builder actually protects against.
+      // A broken tile chain surfaces through tiles_skipped instead.
+      assert(counts.out > 0 || native_here > 0);
+      (void)native_here;   // only read by the assert in NDEBUG builds
       if (counts.out > 0) {
         result.tiles_written += counts.out;
         result.derived_by_level[level] = counts.out;
@@ -535,7 +535,7 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
     // the rename-aside and is crash-consistent with the sidecar it describes
     // (uma-ADR-0011 §2). Skipped when the build is about to be refused — that
     // staging dir is removed rather than swapped.
-    if (!result.level_uncovered && result.tiles_skipped == 0) {
+    if (result.tiles_skipped == 0) {
       marine_tiled_raster_store::saveCoverageManifest(
         derived,
         (staging / marine_tiled_raster_store::coverageManifestFilename()).string(),
@@ -550,10 +550,10 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
   }
 
   // Refuse the swap unless the pyramid is complete: a partial one must never
-  // displace a previously-complete sidecar. `level_uncovered` means the tile
-  // chain broke; `tiles_skipped` means one or more native tiles failed grid
-  // reconstruction, so their coverage is simply missing from every level built.
-  if (result.level_uncovered || result.tiles_skipped > 0) {
+  // displace a previously-complete sidecar. `tiles_skipped` means one or more
+  // native tiles failed grid reconstruction, so their coverage is simply missing
+  // from every level built.
+  if (result.tiles_skipped > 0) {
     // Best-effort: a throwing cleanup would replace the refusal result (and its
     // skip/empty diagnostics) with an exception, and leave the run-lock debris
     // regardless. Warn so the cleanup failure is still visible.

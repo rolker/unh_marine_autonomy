@@ -667,7 +667,6 @@ TEST(MixedLevelPyramid, LevelCoveredEntirelyByNativeTilesStillSwaps)
   const mbs::DepthOverviewBuildResult r = mbs::buildDepthOverviewPyramid(opts);
   EXPECT_TRUE(r.sidecar_replaced) <<
     "a level covered entirely by native tiles must not refuse the swap";
-  EXPECT_FALSE(r.level_uncovered);
   EXPECT_EQ(r.tiles_skipped, 0u);
   EXPECT_EQ(r.native_levels, (std::vector<int>{12, 13}));
   // Level 12 is entirely native, so nothing is written there and its parent-slot
@@ -732,7 +731,6 @@ TEST(MixedLevelPyramid, RegionDisjointBandsAreBothCarriedDown)
 
   const mbs::DepthOverviewBuildResult r = mbs::buildDepthOverviewPyramid(opts);
   ASSERT_TRUE(r.sidecar_replaced);
-  EXPECT_FALSE(r.level_uncovered);
   EXPECT_EQ(r.native_levels, (std::vector<int>{10, 13}));
   // The fine band alone covers 12 and 11; at 10 the coarse band is native, so the
   // fine band's own level-10 parent is derived beside it. Below that both fold
