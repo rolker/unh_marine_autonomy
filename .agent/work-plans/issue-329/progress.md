@@ -71,14 +71,14 @@ Both new findings are Copilot R2's, and both are against the round-1
 `progress.md` entry this skill itself wrote — not against the ADR.
 
 ### Findings
-- [ ] (valid, Copilot R2) The round-1 `### Findings` checkbox is still
+- [x] (valid, Copilot R2) The round-1 `### Findings` checkbox is still
       unticked although `1f76ef1` fixed it in this same PR, so the timeline
       reads as having an open action item that is done. The checkbox exists
       precisely to be ticked (review-code: "so findings can be checked off as
       addressed"); the fix was applied by hand without the
       `address-findings` step that would normally tick it —
       `.agent/work-plans/issue-329/progress.md:21-30`
-- [ ] (valid, Copilot R2) A developer-local absolute path
+- [x] (valid, Copilot R2) A developer-local absolute path
       (a `/home/<user>/project11/docs/decisions/...` form) is committed into a
       repo-tracked file. No other agent or human can resolve it, and it encodes
       one machine's layout. AGENTS.md already forbids the same shape for
@@ -86,6 +86,7 @@ Both new findings are Copilot R2's, and both are against the round-1
       references"); a cross-repo link is the resolvable form. A workspace-wide
       `git grep` confirms this is the only such path in either branch's
       tracked markdown — `.agent/work-plans/issue-329/progress.md:35`
+      **Both fixed by `0ebe50e`.**
 
 ### False positives
 - (Copilot R1 @ `dfad2368`) "likely incorrect" — carried over from round 1 and
