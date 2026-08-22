@@ -167,13 +167,16 @@ gggs::GridIndex gridFromTileName(
 ///   `std::nullopt`, tiles at **every** level are returned. The all-level form
 ///   is what a mixed-level layer needs (`uma-ADR-0013` D3).
 /// @param skipped Incremented for every tile-shaped name that could not be
-///   turned into a grid — an out-of-representable-range field or a failed
-///   reconstruction. **Out-of-range names are counted regardless of @p level**
-///   (their level field is exactly what could not be trusted), while a
-///   reconstruction failure is counted only for names the @p level filter
-///   admits. A caller that treats any skip as fatal therefore has a wider
-///   refusal surface under the all-level form — deliberately so: under level
-///   discovery an unreadable name at any level is missing coverage.
+///   turned into a grid. A name whose level field **overflowed** is counted
+///   regardless of @p level — that field is exactly what could not be trusted,
+///   so the filter cannot honestly exclude it. Every other skip (a parsed level
+///   that is not a GGGS level, an out-of-range row/column, a failed geographic
+///   reconstruction) is counted only for names the @p level filter admits, so
+///   the level-filtered form ignores stray out-of-level files exactly as a
+///   single-level builder always has. A caller that treats any skip as fatal
+///   therefore has a wider refusal surface under the all-level form —
+///   deliberately so: under level discovery an unreadable name at any level is
+///   coverage that will be missing from every level built beneath it.
 /// @return The reconstructed grids; a non-existent @p dir yields an empty
 ///   vector rather than an error.
 std::vector<gggs::GridIndex> gridsInDir(

@@ -153,6 +153,31 @@ TEST(CoverageScan, OutOfRangeNameIsCountedRegardlessOfLevelFilter)
     "is filtered out";
 }
 
+// A parsed-but-not-a-GGGS level is trustworthy enough to filter on, unlike an
+// overflowed one. The level-filtered form must ignore it exactly as the
+// single-level sidescan builder did before these helpers were hoisted here —
+// otherwise a stray file that built fine yesterday starts refusing the swap.
+TEST(CoverageScan, StrayOutOfLevelNameIsIgnoredByTheFilteredFormButCountedByTheAllLevelForm)
+{
+  ScratchDir dir("stray_level");
+  writeTile(dir.path(), gridAt(13));
+  std::ofstream(dir.path() / "99_0_0.tif") << "not a GGGS level";
+
+  std::size_t filtered = 0;
+  const std::vector<gggs::GridIndex> at_thirteen =
+    mtrs::gridsInDir(dir.path().string(), static_cast<uint8_t>(13), filtered);
+  EXPECT_EQ(at_thirteen.size(), 1u);
+  EXPECT_EQ(filtered, 0u) <<
+    "a stray out-of-level file must not refuse a single-level builder's swap";
+
+  std::size_t all_levels = 0;
+  const std::vector<gggs::GridIndex> everything =
+    mtrs::gridsInDir(dir.path().string(), std::nullopt, all_levels);
+  EXPECT_EQ(everything.size(), 1u);
+  EXPECT_EQ(all_levels, 1u) <<
+    "under level discovery the same name IS missing coverage, so it counts";
+}
+
 TEST(CoverageScan, MissingDirectoryIsEmptyNotAnError)
 {
   std::size_t skipped = 0;
@@ -275,6 +300,89 @@ TEST(CoverageManifestIo, RefusesRunsOutsideTheLevelExtent)
     mtrs::loadCoverageManifest(path.string());
   ASSERT_TRUE(manifest.has_value());
   EXPECT_TRUE(manifest->empty()) << "the absurd run must be dropped, not expanded";
+}
+
+// The width-only bound this originally shipped admitted a run exactly one row
+// wide. At level 20 that is 47,185,920 columns — a ~200-byte document expanding
+// into tens of millions of allocations. Pin the boundary the old check let
+// through, not just the 0xFFFFFFFF case on the far side of it.
+TEST(CoverageManifestIo, RefusesAFullWidthRunAtTheDeepestLevel)
+{
+  ScratchDir dir("full_width_run");
+  const fs::path path = dir.path() / mtrs::coverageManifestFilename();
+  const uint8_t level = static_cast<uint8_t>(gggs::levels.size() - 1);
+  const uint32_t last_col =
+    static_cast<uint32_t>(gggs::levels[level].columnCount(0)) - 1;
+  std::ofstream(path) <<
+    R"({"schema":"coverage-manifest/1","kind":"derived","levels":[{"level":)" <<
+    static_cast<unsigned>(level) <<
+    R"(,"runs":[{"row":0,"col_min":0,"col_max":)" << last_col << R"(}]}]})";
+
+  const std::optional<mtrs::CoverageManifest> manifest =
+    mtrs::loadCoverageManifest(path.string());
+  ASSERT_TRUE(manifest.has_value());
+  EXPECT_TRUE(manifest->empty()) <<
+    "a full-row run must be refused by the expansion cap, not expanded into "
+    "tens of millions of grids";
+}
+
+// A run positioned entirely past the end of the row passed the width-only check
+// and failed safe only by throwing inside gggs deep in the expansion loop.
+TEST(CoverageManifestIo, RefusesARunPositionedOutsideTheRow)
+{
+  ScratchDir dir("offset_run");
+  const fs::path path = dir.path() / mtrs::coverageManifestFilename();
+  const uint32_t past_end =
+    static_cast<uint32_t>(gggs::levels[13].columnCount(1)) + 10;
+  std::ofstream(path) <<
+    R"({"schema":"coverage-manifest/1","kind":"derived","levels":[)"
+    R"({"level":13,"runs":[{"row":1,"col_min":)" << past_end <<
+    R"(,"col_max":)" << (past_end + 2) << R"(}]}]})";
+
+  const std::optional<mtrs::CoverageManifest> manifest =
+    mtrs::loadCoverageManifest(path.string());
+  ASSERT_TRUE(manifest.has_value());
+  EXPECT_TRUE(manifest->empty());
+}
+
+// "level": 256 passed is_number_unsigned(), truncated to 0, and then declared
+// coverage at the APEX level — silently, where every other malformed field in
+// this parser fails loudly.
+TEST(CoverageManifestIo, RefusesAnOutOfRangeLevelRatherThanTruncatingIt)
+{
+  ScratchDir dir("level_256");
+  const fs::path path = dir.path() / mtrs::coverageManifestFilename();
+  std::ofstream(path) <<
+    R"({"schema":"coverage-manifest/1","kind":"derived","levels":[)"
+    R"({"level":256,"runs":[{"row":0,"col_min":0,"col_max":3}]}]})";
+
+  EXPECT_FALSE(mtrs::loadCoverageManifest(path.string()).has_value()) <<
+    "level 256 must be rejected, never narrowed to level 0";
+}
+
+// Same narrowing hazard on the run indices: 2^32 would become column 0.
+TEST(CoverageManifestIo, RefusesRunIndicesBeyondTheGridRange)
+{
+  ScratchDir dir("col_wrap");
+  const fs::path path = dir.path() / mtrs::coverageManifestFilename();
+  std::ofstream(path) <<
+    R"({"schema":"coverage-manifest/1","kind":"derived","levels":[)"
+    R"({"level":13,"runs":[{"row":0,"col_min":4294967296,"col_max":4294967300}]}]})";
+
+  EXPECT_FALSE(mtrs::loadCoverageManifest(path.string()).has_value());
+}
+
+// A negative epsilon reads as "infinitely precise" to a consumer selecting on
+// geometric error — exactly backwards from what the value means.
+TEST(CoverageManifestIo, RefusesANegativeGeometricError)
+{
+  ScratchDir dir("negative_error");
+  const fs::path path = dir.path() / mtrs::coverageManifestFilename();
+  std::ofstream(path) <<
+    R"({"schema":"coverage-manifest/1","kind":"derived","levels":[{"level":13,)"
+    R"("runs":[{"row":0,"col_min":0,"col_max":1,"geometric_error_m":-5.0}]}]})";
+
+  EXPECT_FALSE(mtrs::loadCoverageManifest(path.string()).has_value());
 }
 
 int main(int argc, char ** argv)

@@ -31,9 +31,12 @@
 #include "marine_tiled_raster_store/coverage_manifest.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <regex>
 #include <stdexcept>
 #include <system_error>
@@ -128,19 +131,41 @@ std::vector<gggs::GridIndex> gridsInDir(
       }
     }
     constexpr unsigned long kMaxIndex = 0xFFFFFFFFUL;   // NOLINT(runtime/int)
-    constexpr unsigned long kMaxLevel = 20UL;           // NOLINT(runtime/int)
-    if (!parsed || parts[0] > kMaxLevel ||
-      parts[1] > kMaxIndex || parts[2] > kMaxIndex)
-    {
-      // Counted whatever @p level asks for: the level field is precisely the
-      // part that could not be trusted, so this name cannot be filtered out of
-      // the caller's attention on the strength of it.
+    const unsigned long kMaxLevel =                     // NOLINT(runtime/int)
+      static_cast<unsigned long>(gggs::levels.size() - 1);   // NOLINT(runtime/int)
+    if (!parsed) {
+      // stoul overflowed: the LEVEL field itself is untrustworthy, so this name
+      // cannot be filtered out of the caller's attention on the strength of it.
+      // Counted whatever @p level asks for.
       std::cerr << "warning: skipping " << name <<
         " (level/row/column out of representable range)\n";
       ++skipped;
       continue;
     }
+    if (parts[0] > kMaxLevel) {
+      // A parsed level above the deepest GGGS level. Unlike the overflow case
+      // the value IS trustworthy, and it cannot equal a filter that is itself a
+      // valid level — so the level-filtered form (build_sidescan_overviews)
+      // ignores it exactly as it did before these helpers were hoisted here.
+      // Only the all-level form counts it: there, the name really does represent
+      // coverage that will be missing from the pyramid.
+      if (level.has_value()) {
+        continue;
+      }
+      std::cerr << "warning: skipping " << name << " (level " << parts[0] <<
+        " is not a GGGS level)\n";
+      ++skipped;
+      continue;
+    }
     if (level.has_value() && parts[0] != *level) {
+      continue;
+    }
+    if (parts[1] > kMaxIndex || parts[2] > kMaxIndex) {
+      // The level is trustworthy and admitted by the filter; the row/column are
+      // not representable, so this tile's coverage is genuinely missing.
+      std::cerr << "warning: skipping " << name <<
+        " (row/column out of representable range)\n";
+      ++skipped;
       continue;
     }
     const gggs::GridIndex grid = gridFromTileName(
@@ -239,7 +264,16 @@ std::vector<LevelCoverage> CoverageManifest::encode() const
 CoverageManifest CoverageManifest::decode(const std::vector<LevelCoverage> & levels)
 {
   CoverageManifest manifest;
+  // Total grids this document may expand to. A real layer is thousands of tiles;
+  // this ceiling only ever trips on corruption, and is high enough that a
+  // legitimate store never approaches it.
+  constexpr uint64_t kMaxDecodedGrids = 5'000'000;
+  uint64_t decoded = 0;
+  bool truncated = false;
   for (const LevelCoverage & level : levels) {
+    if (truncated) {
+      break;
+    }
     if (static_cast<std::size_t>(level.level) >= gggs::levels.size()) {
       std::cerr << "warning: skipping coverage at level " <<
         static_cast<unsigned>(level.level) << " (not a GGGS level)\n";
@@ -253,13 +287,15 @@ CoverageManifest CoverageManifest::decode(const std::vector<LevelCoverage> & lev
           ")\n";
         continue;
       }
-      // A run wider than the level's own column count cannot describe real
-      // coverage, and expanding it would spend minutes warning about tens of
-      // millions of grids that do not exist. Refuse the run instead — a
-      // hand-edited or corrupt manifest must not become a denial of service.
+      // A run must lie INSIDE the level's grid extent — checking only its width
+      // (as this first did) admits both a full-width run and a run positioned
+      // entirely off the end of the row. At level 20 a single full-width run is
+      // 47,185,920 columns: a few hundred bytes of hand-edited or corrupt JSON
+      // would expand into tens of millions of string allocations and map nodes.
+      // Bound the position, and cap the document's total expansion, so a corrupt
+      // manifest degrades to a warning rather than becoming a denial of service.
       if (run.row >= gggs::levels[level.level].row_count ||
-        run.col_max - run.col_min >=
-        gggs::levels[level.level].columnCount(run.row))
+        run.col_max >= gggs::levels[level.level].columnCount(run.row))
       {
         std::cerr << "warning: skipping coverage run at level " <<
           static_cast<unsigned>(level.level) << " row " << run.row <<
@@ -267,6 +303,17 @@ CoverageManifest CoverageManifest::decode(const std::vector<LevelCoverage> & lev
           " (outside the level's grid extent)\n";
         continue;
       }
+      const uint64_t run_width =
+        static_cast<uint64_t>(run.col_max) - run.col_min + 1;
+      if (run_width > kMaxDecodedGrids - decoded) {
+        std::cerr << "warning: truncating coverage manifest at level " <<
+          static_cast<unsigned>(level.level) << " row " << run.row <<
+          " — more than " << kMaxDecodedGrids <<
+          " grids declared; the rest of the document is ignored\n";
+        truncated = true;
+        break;
+      }
+      decoded += run_width;
       for (uint32_t col = run.col_min; col <= run.col_max; ++col) {
         manifest.add(
           gridFromTileName(
@@ -380,8 +427,18 @@ std::optional<CoverageManifest> loadCoverageManifest(const std::string & path)
         " (a level entry is malformed)\n";
       return std::nullopt;
     }
+    // Range-check BEFORE narrowing. Without this, "level": 256 passes
+    // is_number_unsigned(), truncates to 0, then passes decode()'s
+    // level < gggs::levels.size() test and fabricates coverage at the apex level
+    // — silently, where every other malformed field here fails loudly.
+    const auto level_value = level_doc["level"].get<uint64_t>();
+    if (level_value >= gggs::levels.size()) {
+      std::cerr << "warning: ignoring coverage manifest " << path <<
+        " (level " << level_value << " is not a GGGS level)\n";
+      return std::nullopt;
+    }
     LevelCoverage level;
-    level.level = static_cast<uint8_t>(level_doc["level"].get<unsigned>());
+    level.level = static_cast<uint8_t>(level_value);
     for (const auto & run_doc : level_doc["runs"]) {
       if (!run_doc.is_object() || !run_doc.contains("row") ||
         !run_doc["row"].is_number_unsigned() || !run_doc.contains("col_min") ||
@@ -392,13 +449,36 @@ std::optional<CoverageManifest> loadCoverageManifest(const std::string & path)
           " (a run entry is malformed)\n";
         return std::nullopt;
       }
+      // Same narrowing hazard as `level` above: 4294967296 would truncate to 0
+      // and turn a nonsense run into a plausible-looking one starting at
+      // column 0.
+      const auto row_value = run_doc["row"].get<uint64_t>();
+      const auto col_min_value = run_doc["col_min"].get<uint64_t>();
+      const auto col_max_value = run_doc["col_max"].get<uint64_t>();
+      if (row_value > std::numeric_limits<uint32_t>::max() ||
+        col_min_value > std::numeric_limits<uint32_t>::max() ||
+        col_max_value > std::numeric_limits<uint32_t>::max())
+      {
+        std::cerr << "warning: ignoring coverage manifest " << path <<
+          " (a run index exceeds the 32-bit grid range)\n";
+        return std::nullopt;
+      }
       RowRun run;
-      run.row = run_doc["row"].get<uint32_t>();
-      run.col_min = run_doc["col_min"].get<uint32_t>();
-      run.col_max = run_doc["col_max"].get<uint32_t>();
+      run.row = static_cast<uint32_t>(row_value);
+      run.col_min = static_cast<uint32_t>(col_min_value);
+      run.col_max = static_cast<uint32_t>(col_max_value);
       const auto error_field = run_doc.find("geometric_error_m");
       if (error_field != run_doc.end() && error_field->is_number()) {
-        run.geometric_error_m = error_field->get<double>();
+        const double error_value = error_field->get<double>();
+        // A negative or non-finite epsilon would read as "infinitely precise" to
+        // an LOD consumer selecting on geometric error — exactly backwards.
+        if (!std::isfinite(error_value) || error_value < 0.0) {
+          std::cerr << "warning: ignoring coverage manifest " << path <<
+            " (geometric_error_m " << error_value << " is not a finite, "
+            "non-negative length)\n";
+          return std::nullopt;
+        }
+        run.geometric_error_m = error_value;
       }
       level.runs.push_back(run);
     }
