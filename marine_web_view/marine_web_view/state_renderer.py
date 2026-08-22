@@ -247,11 +247,15 @@ class StateRenderer(Node):
         upload interval: the track a viewer sees is where the vessel went, not
         an artifact of when anyone happened to poll.
         """
-        self._fix = msg
         latitude, longitude, _ = self._lat_lon_alt(msg)
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        # Newest wins: with several position subscriptions an out-of-order fix
+        # can arrive after a newer one. Reject it BEFORE it touches self._fix,
+        # or the published point would jump backward in time -- the opposite of
+        # the "newest message wins" contract this node is built on.
         if self._history and stamp <= self._history[-1][0]:
             return
+        self._fix = msg
         self._history.append((stamp, latitude, longitude))
         cutoff = stamp - self.track_seconds
         if self._history[0][0] < cutoff:
