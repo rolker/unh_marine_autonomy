@@ -21,7 +21,9 @@ all work from the operator station across the radio link.
 It replaces the tmux bringup scripts used on the boat and the operator station today —
 `bizzyboat_project11/scripts/start_tmux_project11.bash`,
 `start_tmux_operator_project11.bash`, and `stop_tmux_project11.bash` — which drive
-`tmux send-keys` into named windows with `sleep` for ordering.
+`tmux send-keys` into named windows with `sleep` for ordering. `bizzyboat_project11` is a
+package in the **`unh_echoboats_project11`** repository (checked out at
+`layers/main/platforms_ws/src/unh_echoboats_project11/` in this workspace).
 
 ### What is actually broken today
 
@@ -519,7 +521,9 @@ scenario, and run it under systemd with `Restart=always`.
 ## Implementation substrate
 
 The workspace already owns the two hardest pieces, which is why this is a thin manager
-rather than another launch replacement.
+rather than another launch replacement. Both are repositories of the same name in the
+underlay layer; the paths below are workspace-relative checkout locations, not upstream
+URLs.
 
 - **`ros2launch_session`** (`layers/main/underlay_ws/src/ros2launch_session`) provides
   `LaunchSession`: a long-lived `LaunchService` wrapper with guaranteed shutdown via
