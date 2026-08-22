@@ -50,6 +50,7 @@ See rolker/unh_marine_autonomy#341 and #333.
 
 import json
 import math
+import os
 import subprocess
 import time
 
@@ -423,8 +424,7 @@ class StateRenderer(Node):
         if payload is None:
             return
         if self.dry_run:
-            with open(self.track_local_path, 'w') as handle:
-                handle.write(payload)
+            self._write_atomic(self.track_local_path, payload)
             self._track_stamp = stamp
         elif self._put(payload, self.track_key, self.track_interval):
             self._track_stamp = stamp
@@ -459,10 +459,23 @@ class StateRenderer(Node):
         else:
             self._upload(payload, stamp)
 
+    @staticmethod
+    def _write_atomic(path, payload):
+        """Write payload to path atomically via a same-dir temp + os.replace.
+
+        The dry-run artifacts are served straight off disk by a plain
+        http.server that a viewer polls, so a reader must never observe a
+        half-written file. os.replace is atomic within a filesystem, and the
+        temp file is a sibling of the target so the rename stays on it.
+        """
+        tmp = '{}.tmp.{}'.format(path, os.getpid())
+        with open(tmp, 'w') as handle:
+            handle.write(payload)
+        os.replace(tmp, path)
+
     def _write_local(self, payload, stamp):
         """Write the artifact to the local filesystem."""
-        with open(self.local_path, 'w') as handle:
-            handle.write(payload)
+        self._write_atomic(self.local_path, payload)
         self._last_sent_stamp = stamp
         self._writes += 1
 
