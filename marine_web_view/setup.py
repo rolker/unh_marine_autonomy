@@ -48,8 +48,11 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'),
          glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
+        # Files only: running the local preview creates web/live/ (gitignored),
+        # and setuptools cannot copy a directory into data_files -- an unfiltered
+        # glob turns the documented preview workflow into a build failure.
         (os.path.join('share', package_name, 'web'),
-         glob(os.path.join('web', '*'))),
+         [f for f in glob(os.path.join('web', '*')) if os.path.isfile(f)]),
         (os.path.join('share', package_name, 'scripts'),
          glob(os.path.join('scripts', '*.py'))),
     ],
