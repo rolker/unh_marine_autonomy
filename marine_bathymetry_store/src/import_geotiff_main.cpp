@@ -448,44 +448,55 @@ int main(int argc, char * argv[])
     // GDAL cost, and skips tiles already resident, so each source pays only for
     // the tiles it actually touches. Loaded tiles are clean, so `save` below
     // still writes only the tiles this import dirtied.
-    const auto source_bounds = sourceGeoBounds(geotiff);
-    const std::size_t adopted = marine_bathymetry_store::loadWindow(
+    // Mirror the normal import path's error contract (see the try/catch around
+    // importGeoTiff/save below): a bad source must print a diagnosis and exit
+    // non-zero, never terminate. This block gained four throw sites with the
+    // windowed adoption (#339) — the two sourceGeoBounds guards and loadWindow
+    // — so on a regional regeneration one unreadable or non-geographic cell out
+    // of dozens would otherwise abort the whole run.
+    try {
+      const auto source_bounds = sourceGeoBounds(geotiff);
+      const std::size_t adopted = marine_bathymetry_store::loadWindow(
       store, stage_dir, source_bounds.first, source_bounds.second);
-    if (adopted > 0) {
-      std::cout << "adopted " << adopted <<
-        " already-staged tile(s) overlapping this source, to merge into\n";
-    }
+      if (adopted > 0) {
+        std::cout << "adopted " << adopted <<
+          " already-staged tile(s) overlapping this source, to merge into\n";
+      }
 
-    marine_bathymetry_store::GeoTiffImportOptions options;
-    options.depth_scale = depth_scale;
-    options.depth_offset = depth_offset;
-    if (level_set) {
-      options.level = static_cast<uint8_t>(level);
-    }
-    if (constant_uncertainty >= 0.0) {
-      options.uncertainty_band = 0;
-      options.default_uncertainty = constant_uncertainty;
-    }
-    options.merge_into_resident = true;
-    const auto staged = marine_bathymetry_store::importGeoTiff(
+      marine_bathymetry_store::GeoTiffImportOptions options;
+      options.depth_scale = depth_scale;
+      options.depth_offset = depth_offset;
+      if (level_set) {
+        options.level = static_cast<uint8_t>(level);
+      }
+      if (constant_uncertainty >= 0.0) {
+        options.uncertainty_band = 0;
+        options.default_uncertainty = constant_uncertainty;
+      }
+      options.merge_into_resident = true;
+      const auto staged = marine_bathymetry_store::importGeoTiff(
       store, layer, geotiff, options);
-    std::cout << "imported " << staged.cells_imported << " cell(s) into chart\n";
-    if (staged.resident_contentions > 0) {
+      std::cout << "imported " << staged.cells_imported << " cell(s) into chart\n";
+      if (staged.resident_contentions > 0) {
       // Expected zero: ENC cells partition their usage band, so no two of them
       // should claim the same cell. A non-zero count means two sources disagree
       // about the same ground (a rescheme overlap, or genuinely overlapping
       // products such as S-102 — see #316, where the arbitration rule is still
       // an open decision). The lowest-uncertainty rule resolved them; say so.
-      std::cout << "warning: " << staged.resident_contentions
-                << " contention(s) with already-staged data — two sources "
-                << "disagree about the same cell; kept the lower-uncertainty "
-                << "value\n";
-    }
+        std::cout << "warning: " << staged.resident_contentions
+                  << " contention(s) with already-staged data — two sources "
+                  << "disagree about the same cell; kept the lower-uncertainty "
+                  << "value\n";
+      }
 
-    // Provenance flags are rejected above, so the staged store never carries a
-    // registry.json (it would be dropped by the chart-only --commit anyway).
-    const std::size_t saved = marine_bathymetry_store::save(store, stage_dir, nullptr);
-    std::cout << "saved " << saved << " tile(s) under " << stage_dir << "\n";
+      // Provenance flags are rejected above, so the staged store never carries a
+      // registry.json (it would be dropped by the chart-only --commit anyway).
+      const std::size_t saved = marine_bathymetry_store::save(store, stage_dir, nullptr);
+      std::cout << "saved " << saved << " tile(s) under " << stage_dir << "\n";
+    } catch (const std::exception & e) {
+      std::cerr << "stage failed: " << e.what() << "\n";
+      return 1;
+    }
     return 0;
   }
 
