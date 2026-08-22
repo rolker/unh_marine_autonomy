@@ -66,3 +66,26 @@ Static analysis clean (ament_flake8 + ament_pep257 + ament_copyright + test_ramp
 - [x] (suggestion) Dry-run local writes are non-atomic (`open('w')`); the local http.server preview can read truncated JSON mid-write — use tmp+os.replace — `marine_web_view/marine_web_view/state_renderer.py:419,457`
 - [x] (suggestion) `--name` flows unsanitized into the local path and S3 key in the tile script (`../`/absolute escapes workdir or rewrites another prefix) — add a charset guard — `marine_web_view/scripts/refresh_chart_tiles.py:305`
 - [x] (suggestion) index.html hardcodes the CCOM live service 20230922 while the pre-render script picks the newest, and every public viewer pan hits gis.ccom.unh.edu until the #342 tile swap — gate public launch on that swap — `marine_web_view/web/index.html:243`
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-22 23:49 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-341 at `1b577ba`
+**Addressed**: Local Review (Pre-Push) of 2026-08-22 23:40 +00:00 at `7ced83e` (5 open findings — 1 must-fix, 4 suggestions)
+**Commits**: 889fa7b, 6837cad, f9ddd2b, 7527020, 1b577ba
+
+### Actions
+- [x] (must-fix) `_on_fix` no longer assigns `self._fix = msg` until the newest-stamp guard passes, so an out-of-order fix from a second position sub can't jump the published point backward — `marine_web_view/marine_web_view/state_renderer.py:250` → `889fa7b`
+- [x] (suggestion) Oldest `TRACK_BANDS` entry is now a catch-all (`float('inf')`) so the whole `track_seconds` window renders instead of being clipped at the hardcoded 14400 s — `marine_web_view/marine_web_view/state_renderer.py:74` → `6837cad`
+- [x] (suggestion) Dry-run position/track writes go through a new `_write_atomic` (same-dir temp + `os.replace`), so the local http.server never reads a truncated file — `marine_web_view/marine_web_view/state_renderer.py:419,457` → `f9ddd2b`
+- [x] (suggestion) `--name` is validated against `[A-Za-z0-9][A-Za-z0-9._-]*` right after parse, blocking `../`/absolute/slash escapes of the workdir and S3 key prefix — `marine_web_view/scripts/refresh_chart_tiles.py:305` → `7527020`
+- [x] (suggestion) index.html now fires a runtime `console.warn` while `IMG` still points at the live CCOM host, turning the passive "pre-render before public (uma#342)" comment into a loud public-launch gate; the pinned 20230922 date is documented as a deliberate placeholder retired by the #342 swap — `marine_web_view/web/index.html:243` → `1b577ba`
+
+Sanity pass (not a full re-review): `python3 -m py_compile` clean; ament flake8 clean on both changed Python files; `test_ramp_sync`, `test_flake8`, `test_pep257` all pass (3 passed). No findings deferred.
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 341 --skill review-code
