@@ -210,7 +210,8 @@ precondition). Aside dirs (`.chart_backup.stale.<n>/`) are not layer dirs, so
 
 `build_depth_overviews` is an **offline batch** builder that generates a coarse
 overview pyramid for a depth layer, so survey bathymetry participates in
-world-zoom display and level-aware coarse queries. It folds a layer's native
+world-zoom **display**. (Display only — no query path reads the sidecar; see the
+uma-ADR-0013 D8 note below.) It folds a layer's native
 tiles into coarser parents, level by level, into a flat `overviews/` sidecar next
 to them (`<layer>/overviews/<level>_<row>_<col>.tif` — the level rides in the
 filename, exactly as in the native layer):

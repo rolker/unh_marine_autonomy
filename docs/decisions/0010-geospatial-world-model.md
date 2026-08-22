@@ -21,8 +21,14 @@ Implementing PRs (all merged; host-verified 2026-08-20):
 | D7 — cost-model rework (worst-case clearance / `confidence_gate`, precondition) | [uma#290](https://github.com/rolker/unh_marine_autonomy/pull/290) |
 | D8 — `draft`/`processed` quality axis + cell-wise `clearOverlappedDraft` | [uma#313](https://github.com/rolker/unh_marine_autonomy/pull/313) + [cube_bathymetry#134](https://github.com/rolker/cube_bathymetry/pull/134) |
 | D9 — depths overview pyramid (shallowest-preserving `overviews/` sidecar) | [uma#320](https://github.com/rolker/unh_marine_autonomy/pull/320) |
-| D9 — `reference` native-wins pyramid (mixed-level generalisation; amends the `reference` line below) | [uma#331](https://github.com/rolker/unh_marine_autonomy/issues/331) |
 | D10 — `s57_layer` depth/obstacle split | [s57_tools#31](https://github.com/rolker/s57_tools/pull/31) (issue [s57_tools#30](https://github.com/rolker/s57_tools/issues/30)) |
+
+**In flight** (not yet merged — kept out of the table above, which records only
+merged, host-verified work):
+
+- D9 — `reference` native-wins pyramid (mixed-level generalisation; amends the
+  `reference` line below) —
+  [uma#331](https://github.com/rolker/unh_marine_autonomy/issues/331)
 
 Open follow-ons (adopted target, not yet fully materialized):
 

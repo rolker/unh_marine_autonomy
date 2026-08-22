@@ -212,7 +212,12 @@ read as an oversight.
   overwritten, swap succeeds (the case that refuses today).
 - Region-disjoint fixture (L6 band + L10 band on non-overlapping columns, the S-102 ×
   GRANIT shape): every level from 9 down to `min_level` is covered, no refusal.
-- A level with genuinely no coverage above `min_level` still refuses the swap.
+- ~~A level with genuinely no coverage above `min_level` still refuses the swap.~~
+  *(Amended after code review: this test cannot be written. The refusal it targets
+  is unreachable — `counts.out == 0` implies `native_here >= 1`, so the conjunction
+  never holds. The guard, its result field, and its CLI exit code were removed and
+  replaced by an assert stating the invariant; a broken tile chain surfaces through
+  `tiles_skipped` instead.)*
 - `--fine-level` is rejected as an unknown flag (it was deleted, not retained).
 - The 2-band probe fires on a wrong-shape band at a *coarse* discovered level, not only
   at the finest.
@@ -252,7 +257,7 @@ duplicating the ADR file — a stacked PR. #330 must merge first.
 |---|---|---|
 | `DepthOverviewOptions::fine_level` type | `build_depth_overviews.cpp` usage/parse, `test_depth_overview.cpp` `ParseDepthOverviewArgs.*` | Yes |
 | Builder scope now includes `reference` | ADR-0010 D9, `overview_pyramid.{hpp,cpp}` header comments, CLI usage text, `marine_bathymetry_store/README.md` | Yes |
-| A new `coverage.json` in layer dirs | `tile_io.cpp` loader — **verified no change needed** (`:463` skips non-`.tif` files silently); add a test asserting no WARNING | Yes |
+| A new `coverage.json` in `overviews/` | `tile_io.cpp` loader — **verified no change needed** (`:463` skips non-`.tif` files silently, and `:238` skips the whole `overviews*` sidecar); `TileIoLoader.SilentlySkipsOverviewsSidecar` pins it. *(Amended after the Q2 decision: no manifest is ever written into a layer dir, only into `overviews/`, so the originally planned layer-dir loader test had no subject.)* | Yes |
 | `marine_tiled_raster_store` gains `nlohmann_json` | `package.xml`, `CMakeLists.txt`, downstream `ament_export_dependencies` | Yes |
 | Derived overview levels now exist for `reference` | camp's LOD loader would need to read the sidecar to benefit — nothing reads `overviews/` today | No — follow-up (camp side), file after this lands |
 | Per-tile geometric error | depth pyramid | Yes (Q3) |
