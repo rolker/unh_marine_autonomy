@@ -130,3 +130,42 @@ a nicety.
       which has its own same-named `tile_io.cpp`), and separate the builder's scan fallback
       from ADR-0013's consumer-side level-as-resolution fallback — `plan.md:30-31`,
       `plan.md:59-64`
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-22 09:27 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-331 at `811d2c7`
+**Mode**: pre-push (base `feature/issue-329` — stacked; PR #330 still open)
+**Depth**: Deep (reason: 20 files / +2596 -423 across three packages + substantive amendments to two accepted ADRs)
+**Must-fix**: 9 | **Suggestions**: 14
+**Round**: 1 | **Ship**: continue — must-fix count is high and includes two genuine correctness concerns (a provably dead safety guard, an unbounded manifest decode) plus a false documented rationale
+**Specialists**: Static Analysis (run), Governance, Plan Drift, Claude Adversarial x2 (Lens A + Lens B, Deep). Copilot off (default). Local off (--no-local per workspace#590).
+
+### Findings
+- [ ] (must-fix) `level_uncovered` guard is provably unreachable — dead exit-code-3 path + ~150 words of header prose describing a protection that cannot fire; no test can distinguish it from deletion [cross-confirmed: Lens A + Plan Drift] — `marine_bathymetry_store/src/overview_pyramid.cpp:511-526`
+- [ ] (must-fix) decode() run-width bound is off by one grid row: a ~200-byte corrupt coverage.json expands to ~47M entries / ~3.4 GB RSS, and the in-code comment claims this is refused [cross-confirmed: Lens A + Lens B] — `marine_tiled_raster_store/src/coverage_manifest.cpp:258-270`
+- [ ] (must-fix) JSON numbers narrowed without range validation: `"level": 256` truncates to 0 and silently fabricates coverage at the apex level — `marine_tiled_raster_store/src/coverage_manifest.cpp:376-398`
+- [ ] (must-fix) "previous sidecar exists at every instant" is false of the path: `<layer>/overviews/` is absent between the two renames, and CAMP's cold open silently loads zero overview tiles — `marine_bathymetry_store/src/overview_pyramid.cpp:584-589`
+- [ ] (must-fix) Header rationale attributes a refusal to the pre-#331 rule that could not have occurred (old builder never suppressed, so counts.out was always > 0) — AGENTS.md documentation-accuracy — `marine_bathymetry_store/include/marine_bathymetry_store/overview_pyramid.hpp:126-131`
+- [ ] (must-fix) A build known futile at line 380 still claims the run lock, creates staging, and folds every level before refusing — `marine_bathymetry_store/src/overview_pyramid.cpp:378-380,556`
+- [ ] (must-fix) New row lands in a table headed "Implementing PRs (all merged)" with a "Merged as" column but cites the open issue #331 — `docs/decisions/0010-geospatial-world-model.md:24`
+- [ ] (must-fix) Merged camp-ADR-0014 quotes D9's `reference` line as "as imported" as load-bearing rationale; this PR falsifies that quote and no cross-repo follow-up is filed — `camp/docs/decisions/0014-gggs-viewport-scoped-residency.md:180` (out of diff)
+- [ ] (must-fix) No `## Implementation` progress entry exists although plan.md claims decisions are recorded in one; plan step 12's real-run validation numbers are unrecorded — `.agent/work-plans/issue-331/plan.md:213-215`
+- [ ] (suggestion) Sidescan de-dup changed semantics: a stray out-of-level filename that was silently ignored now trips the refuse-on-skip gate, and the diagnostic message points at the wrong files [cross-confirmed: Lens A + Lens B] — `marine_tiled_raster_store/src/coverage_manifest.cpp:129-142`
+- [ ] (suggestion) Success message prints "0 tile(s) written across levels -1..N" in the all-native case this PR exists to support [cross-confirmed: Lens A + Lens B + Governance] — `marine_bathymetry_store/src/build_depth_overviews.cpp:108-112`
+- [ ] (suggestion) Restore path uses the throwing rename overload inside catch(...), replacing the original diagnostic; nothing tells the operator the sidecar is at overviews.old/ [cross-confirmed: Lens A + Lens B] — `marine_bathymetry_store/src/overview_pyramid.cpp:597-599`
+- [ ] (suggestion) No fsync on the manifest or the staged tree: "crash-safe" holds against process death, not power loss — relevant for boats — `marine_tiled_raster_store/src/coverage_manifest.cpp:315-332`
+- [ ] (suggestion) Partial decode returns success, so the documented "consumer that cannot read it falls back to scanCoverage()" path never fires — `marine_tiled_raster_store/src/coverage_manifest.cpp:249-273`
+- [ ] (suggestion) Manifest carries no provenance (no generated_at / tile_count / native fingerprint), so its staleness relative to native tiles is undetectable by design — `marine_tiled_raster_store/src/coverage_manifest.cpp:296-306`
+- [ ] (suggestion) Staging doubles peak disk with no fs::space() pre-flight; a rebuild can now fail where the in-place approach succeeded — `marine_bathymetry_store/src/overview_pyramid.cpp:471,484-545`
+- [ ] (suggestion) SIGINT leaves staging debris that blocks every later run; no --force/--clear-lock, no PID/mtime stamp, and --dry-run returns before the lock is claimed so it cannot surface the one blocking condition — `marine_bathymetry_store/src/overview_pyramid.cpp:448,469-478`
+- [ ] (suggestion) geometric_error_m accepted on is_number() alone; a negative value reads as "infinitely precise" to an LOD consumer — `marine_tiled_raster_store/src/coverage_manifest.cpp:400`
+- [ ] (suggestion) CoverageManifest::add with nullopt erases a previously recorded geometric error — silent-downgrade footgun for the next producer — `marine_tiled_raster_store/src/coverage_manifest.cpp:145-157`
+- [ ] (suggestion) Level ceiling 20 hardcoded in three places rather than derived from gggs::levels.size() - 1 — `marine_tiled_raster_store/src/coverage_manifest.cpp:131`
+- [ ] (suggestion) README retains "level-aware coarse queries" as a purpose while the new D8 bullet states no query path reads the sidecar — the first is false and invites a future query path to read overviews — `marine_bathymetry_store/README.md:208-210`
+- [ ] (suggestion) Golden pin is credible in provenance but not re-derivable: the pre-change generator is not committed and --fine-level is gone, and the file's own header describes a different column layout than its lines use — `marine_bathymetry_store/test/data/depth_overview_single_level_golden.txt`
+- [ ] (suggestion) docs/sonar_ecosystem.md and .agents/README.md not updated for the D9 generalisation and the new public coverage-manifest API — `docs/sonar_ecosystem.md:96`, `.agents/README.md:19`
+- [ ] (suggestion) Plan Consequences row and two planned tests (idempotency re-reads the manifest; no-WARNING loader test) are stale or half-implemented after the Q2 amendment — `.agent/work-plans/issue-331/plan.md:255`
