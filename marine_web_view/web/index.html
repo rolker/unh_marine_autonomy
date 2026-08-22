@@ -240,8 +240,24 @@ function depthClasses() {
 //      patchwork (seam delta 23.1 vs 1.2 fixed), permanent once cached.
 //   2. interpolation=RSP_NearestNeighbor, so the server does not blend class
 //      colours while resampling.
+// The service compilation is pinned by date (20230922). The pre-render script
+// picks the NEWEST matching service instead; this pin is deliberate for the
+// placeholder so the dev preview and the fixed rule above stay reproducible,
+// and it goes away entirely when #342 swaps IMG to our static tiles.
 const IMG = 'https://gis.ccom.unh.edu/server/rest/services/WGOM-LI-SNE'
           + '/WGOM_LI_SNE_BTY_4m_20230922_WMAS_IS/ImageServer/exportImage';
+
+// PUBLIC-LAUNCH GATE (uma#342): IMG above is the LIVE CCOM ImageServer, so
+// every pan/zoom by every viewer renders on gis.ccom.unh.edu. This page must
+// not be served publicly until #342 swaps IMG to our pre-rendered static
+// tiles. Fire a console warning on every load so an accidental public deploy
+// in the pre-swap state is loud rather than silent.
+if (IMG.indexOf('gis.ccom.unh.edu') !== -1) {
+  console.warn(
+    'marine_web_view: bathymetry is served DIRECTLY from the live CCOM ' +
+    'ImageServer (gis.ccom.unh.edu) -- this is a pre-render placeholder. Do ' +
+    'NOT make this page public until uma#342 swaps to static tiles.');
+}
 
 // Remap bins elevations into class indices; Colormap paints them.
 // AllowUnmatched:false leaves land (elevation > 0) as NoData -> transparent,
