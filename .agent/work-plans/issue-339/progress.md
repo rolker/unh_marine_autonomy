@@ -159,3 +159,38 @@ the guard to `if (false)` makes the test FAIL. 334 tests, 0 failures.
 **Deviation, recorded**: applied host-inline rather than via a dispatched
 `address-findings`, same reasoning as round 1 — the remedy was an operator
 decision taken at the checkpoint.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-22 17:37 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+
+**PR**: #344 at `0c68b36` (round 3)
+**Sources**: 1 (Copilot @ `0c68b36`, current)
+**Cross-source confirmations**: 0
+**CI**: all pass (`build` success)
+**Round**: 3 | **Ship**: recommended — one finding, small and mechanical, with an
+existing pattern to copy 100 lines away. Returns are diminishing; this is the
+point the convergence guidance says to surface rather than loop.
+
+Round 2's two guards are resolved. One new finding.
+
+### Findings
+- [ ] (valid, Copilot) `--stage` does not wrap its import/save in
+      `try/catch`, so an exception terminates the process instead of printing a
+      clean message and returning 1. The **normal** import path already does
+      exactly this (`import_geotiff_main.cpp:574-579`, `:608-613`); `--stage`
+      is the odd one out —
+      `marine_bathymetry_store/src/import_geotiff_main.cpp:457`
+
+      **Pre-existing, not introduced here** (verified against `origin/jazzy`:
+      the stage block called `importGeoTiff` and `save` bare there too). But
+      this PR **adds four throw sites** to that path — the two
+      `sourceGeoBounds` guards plus `loadWindow` — so it goes from rarely
+      reachable to routinely reachable. It matters concretely for the pending
+      Boston->Shoals regeneration: one unreadable or non-geographic cell out of
+      ~80 would abort the whole run via `std::terminate` rather than skipping
+      or failing cleanly.
+
+### False positives
+- None this round.
