@@ -455,6 +455,18 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
     return result;
   }
 
+  // Refuse the swap unless every native tile name reconstructed: a pyramid
+  // missing a tile's coverage must never displace a previously-complete sidecar.
+  //
+  // This is decided from the guard scan alone, so it is settled BEFORE the run
+  // lock is claimed and before a single tile is folded. Doing it after the fold
+  // (as this originally did) burned a full staging copy and hours of I/O on a
+  // layer that was already known unbuildable, and held the per-layer lock for
+  // the whole futile run.
+  if (result.tiles_skipped > 0) {
+    return result;
+  }
+
   const fs::path overviews = layer_dir / "overviews";
   const fs::path staging = layer_dir / "overviews.tmp";
   const fs::path retired = layer_dir / "overviews.old";
@@ -533,37 +545,18 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
 
     // The derived manifest is written INTO STAGING, before the swap, so it rides
     // the rename-aside and is crash-consistent with the sidecar it describes
-    // (uma-ADR-0011 §2). Skipped when the build is about to be refused — that
-    // staging dir is removed rather than swapped.
-    if (result.tiles_skipped == 0) {
-      marine_tiled_raster_store::saveCoverageManifest(
-        derived,
-        (staging / marine_tiled_raster_store::coverageManifestFilename()).string(),
-        "derived");
-    }
+    // (uma-ADR-0011 §2). Reaching here means the build was not refused — the
+    // only refusal, tiles_skipped, returned before staging was ever created.
+    marine_tiled_raster_store::saveCoverageManifest(
+      derived,
+      (staging / marine_tiled_raster_store::coverageManifestFilename()).string(),
+      "derived");
   } catch (...) {
     // Best-effort: cleanup must not throw here, or it would replace the original
     // exception with its own.
     std::error_code ec;
     fs::remove_all(staging, ec);   // never leave a partial staging dir behind
     throw;
-  }
-
-  // Refuse the swap unless the pyramid is complete: a partial one must never
-  // displace a previously-complete sidecar. `tiles_skipped` means one or more
-  // native tiles failed grid reconstruction, so their coverage is simply missing
-  // from every level built.
-  if (result.tiles_skipped > 0) {
-    // Best-effort: a throwing cleanup would replace the refusal result (and its
-    // skip/empty diagnostics) with an exception, and leave the run-lock debris
-    // regardless. Warn so the cleanup failure is still visible.
-    std::error_code ec;
-    fs::remove_all(staging, ec);
-    if (ec) {
-      std::cerr << "warning: could not remove staging dir " <<
-        staging.string() << ": " << ec.message() << std::endl;
-    }
-    return result;
   }
 
   // Swap staging over the live sidecar, rename-aside rather than
