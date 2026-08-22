@@ -45,21 +45,28 @@
 /// provenance (StoreMetadata) may be set with the --platform/--sensor/--survey/
 /// --date flags and is written to <store_dir>/registry.json.
 
+#include <gdal_priv.h>
+#include <ogr_spatialref.h>
+
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <utility>
 
-#include <optional>
+#include <geographic_msgs/msg/geo_point.hpp>
 
 #include "marine_bathymetry_store/bathymetry_store.hpp"
 #include "marine_bathymetry_store/geotiff_import.hpp"
 #include "marine_bathymetry_store/registry.hpp"
-#include "marine_vertical_datum/vdatum_query.hpp"
 #include "marine_bathymetry_store/tile_io.hpp"
+#include "marine_vertical_datum/vdatum_query.hpp"
 
 namespace
 {
@@ -173,6 +180,54 @@ std::size_t countStagedChartTiles(const std::string & staged_dir)
     }
   }
   return tiles;
+}
+
+/// Geographic bounding box of @p path, from its geotransform alone.
+///
+/// Used to window the staged-tile adoption (#339): only tiles this source can
+/// possibly touch need loading. Opening the dataset here is one extra open of a
+/// file the importer opens anyway — negligible against the whole-staged-set
+/// `load()` it replaces.
+std::pair<geographic_msgs::msg::GeoPoint, geographic_msgs::msg::GeoPoint>
+sourceGeoBounds(const std::string & path)
+{
+  GDALAllRegister();
+  std::unique_ptr<GDALDataset, void (*)(GDALDataset *)> ds(
+    static_cast<GDALDataset *>(GDALOpen(path.c_str(), GA_ReadOnly)),
+    [](GDALDataset * d) {if (d) {GDALClose(d);}});
+  if (!ds) {
+    throw std::runtime_error("could not open " + path);
+  }
+  // Same guards importGeoTiff enforces, applied BEFORE any adoption. Without
+  // them a projected (metres) or rotated source yields a lon/lat box that is
+  // wildly wrong, so loadWindow adopts far too many staged tiles — the very
+  // O(total tiles) cost the windowing exists to avoid — and only then does the
+  // import fail on its own guard. Fail fast instead.
+  const OGRSpatialReference * srs = ds->GetSpatialRef();
+  OGRErr axis_error = OGRERR_NONE;
+  if (srs == nullptr || !srs->IsGeographic() ||
+    std::abs(srs->GetSemiMajor(&axis_error) - 6378137.0) > 1.0 || axis_error != OGRERR_NONE)
+  {
+    throw std::runtime_error("not a geographic WGS84 raster: " + path);
+  }
+  double gt[6] = {0, 1, 0, 0, 0, 1};
+  if (ds->GetGeoTransform(gt) != CE_None) {
+    throw std::runtime_error("missing geotransform in " + path);
+  }
+  if (gt[2] != 0.0 || gt[4] != 0.0) {
+    throw std::runtime_error("rotated geotransform unsupported in " + path);
+  }
+  const double x0 = gt[0];
+  const double y0 = gt[3];
+  const double x1 = x0 + gt[1] * ds->GetRasterXSize();
+  const double y1 = y0 + gt[5] * ds->GetRasterYSize();
+  geographic_msgs::msg::GeoPoint min_pt;
+  geographic_msgs::msg::GeoPoint max_pt;
+  min_pt.longitude = std::min(x0, x1);
+  min_pt.latitude = std::min(y0, y1);
+  max_pt.longitude = std::max(x0, x1);
+  max_pt.latitude = std::max(y0, y1);
+  return {min_pt, max_pt};
 }
 
 }  // namespace
@@ -380,24 +435,68 @@ int main(int argc, char * argv[])
       /*chart_staging_writable=*/true);
     std::cout << "store default level: " << static_cast<int>(store.level().level()) << "\n";
 
-    marine_bathymetry_store::GeoTiffImportOptions options;
-    options.depth_scale = depth_scale;
-    options.depth_offset = depth_offset;
-    if (level_set) {
-      options.level = static_cast<uint8_t>(level);
-    }
-    if (constant_uncertainty >= 0.0) {
-      options.uncertainty_band = 0;
-      options.default_uncertainty = constant_uncertainty;
-    }
-    const std::size_t imported = marine_bathymetry_store::importGeoTiff(
-      store, layer, geotiff, options).cells_imported;
-    std::cout << "imported " << imported << " cell(s) into chart\n";
+    // [#339] Adopt what is already staged WHERE THIS SOURCE LANDS, so this cell
+    // merges into it. Without any adoption the store starts empty and
+    // importTiles replaces whole tiles, so a cell sharing a GGGS tile with a
+    // previously staged neighbour discarded that neighbour's cells — silently,
+    // and depending on staging order.
+    //
+    // Windowed, not wholesale: `load()` GDAL-opens every staged tile, so
+    // staging N sources would cost O(N x total tiles) full-tile reads and a
+    // real regional corpus (~80 ENC cells) would never finish. `loadWindow`
+    // gates each tile on its FILENAME-derived bounding box before paying any
+    // GDAL cost, and skips tiles already resident, so each source pays only for
+    // the tiles it actually touches. Loaded tiles are clean, so `save` below
+    // still writes only the tiles this import dirtied.
+    // Mirror the normal import path's error contract (see the try/catch around
+    // importGeoTiff/save below): a bad source must print a diagnosis and exit
+    // non-zero, never terminate. This block gained four throw sites with the
+    // windowed adoption (#339) — the two sourceGeoBounds guards and loadWindow
+    // — so on a regional regeneration one unreadable or non-geographic cell out
+    // of dozens would otherwise abort the whole run.
+    try {
+      const auto source_bounds = sourceGeoBounds(geotiff);
+      const std::size_t adopted = marine_bathymetry_store::loadWindow(
+      store, stage_dir, source_bounds.first, source_bounds.second);
+      if (adopted > 0) {
+        std::cout << "adopted " << adopted <<
+          " already-staged tile(s) overlapping this source, to merge into\n";
+      }
 
-    // Provenance flags are rejected above, so the staged store never carries a
-    // registry.json (it would be dropped by the chart-only --commit anyway).
-    const std::size_t saved = marine_bathymetry_store::save(store, stage_dir, nullptr);
-    std::cout << "saved " << saved << " tile(s) under " << stage_dir << "\n";
+      marine_bathymetry_store::GeoTiffImportOptions options;
+      options.depth_scale = depth_scale;
+      options.depth_offset = depth_offset;
+      if (level_set) {
+        options.level = static_cast<uint8_t>(level);
+      }
+      if (constant_uncertainty >= 0.0) {
+        options.uncertainty_band = 0;
+        options.default_uncertainty = constant_uncertainty;
+      }
+      options.merge_into_resident = true;
+      const auto staged = marine_bathymetry_store::importGeoTiff(
+      store, layer, geotiff, options);
+      std::cout << "imported " << staged.cells_imported << " cell(s) into chart\n";
+      if (staged.resident_contentions > 0) {
+      // Expected zero: ENC cells partition their usage band, so no two of them
+      // should claim the same cell. A non-zero count means two sources disagree
+      // about the same ground (a rescheme overlap, or genuinely overlapping
+      // products such as S-102 — see #316, where the arbitration rule is still
+      // an open decision). The lowest-uncertainty rule resolved them; say so.
+        std::cout << "warning: " << staged.resident_contentions
+                  << " contention(s) with already-staged data — two sources "
+                  << "disagree about the same cell; kept the lower-uncertainty "
+                  << "value\n";
+      }
+
+      // Provenance flags are rejected above, so the staged store never carries a
+      // registry.json (it would be dropped by the chart-only --commit anyway).
+      const std::size_t saved = marine_bathymetry_store::save(store, stage_dir, nullptr);
+      std::cout << "saved " << saved << " tile(s) under " << stage_dir << "\n";
+    } catch (const std::exception & e) {
+      std::cerr << "stage failed: " << e.what() << "\n";
+      return 1;
+    }
     return 0;
   }
 
