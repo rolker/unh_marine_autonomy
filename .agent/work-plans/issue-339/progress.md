@@ -194,3 +194,18 @@ Round 2's two guards are resolved. One new finding.
 
 ### False positives
 - None this round.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-22 17:45 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+
+**Branch**: feature/issue-339 (PR #344, round 3 — final)
+
+- [x] `--stage` now wraps adoption/import/save in `try/catch`, mirroring the
+      normal import path's contract: print a diagnosis, return 1, never
+      terminate. **Verified end to end** with a UTM-reprojected source —
+      `stage failed: not a geographic WGS84 raster: ...`, exit code 1.
+
+334 tests, 0 failures. Operator elected to close the loop here (Ship:
+recommended at round 3); no round 4.
