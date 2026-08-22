@@ -86,3 +86,49 @@ convention).
 operator at the checkpoint (`loadWindow` over alternatives), and verifying it
 required running the real ENC corpus and comparing coverage against the previous
 run — host state a fresh-context sub-agent did not have.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-22 17:15 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+
+**PR**: #344 at `bdf5279` (round 2)
+**Sources**: 1 (Copilot @ `bdf5279`, current)
+**Cross-source confirmations**: 0
+**CI**: all pass (`build` success, first-try this round)
+
+Round 1's two findings are resolved (see the `## Implementation` above). Two new
+ones, both valid; the second is the more interesting.
+
+### Findings
+- [ ] (valid, Copilot) `sourceGeoBounds()` does not enforce the guards
+      `importGeoTiff` applies — geographic CRS and an unrotated geotransform. A
+      projected (metres) or rotated source yields bounds that are wildly wrong,
+      so `loadWindow` adopts far too many staged tiles — **reintroducing the
+      O(total tiles) load this round was meant to remove** — before the import
+      then fails on its own guard. Fail fast instead: apply the same checks in
+      `sourceGeoBounds` and throw before any adoption —
+      `marine_bathymetry_store/src/import_geotiff_main.cpp:214`
+- [ ] (valid, latent, Copilot — previously missed) With
+      `merge_into_resident` set, the local `tiles` map is seeded from the
+      resident layer, so it holds cells **outside the current import's
+      footprint**. `importGeoTiff` then passes that map to
+      `store.clearOverlappedDraft(tiles)` when the layer is `Processed`
+      (`geotiff_import.cpp:262`) — which would clear Draft under
+      *previously imported* Processed data, well beyond what this import touched.
+      ADR-0010 D8's anti-clobber destroys data, so this is the serious end of the
+      finding —
+      `marine_bathymetry_store/src/geotiff_import.cpp:200`
+
+      **Not reachable today** (verified): `merge_into_resident` is set in exactly
+      one place, the `--stage` path (`import_geotiff_main.cpp:453`), and
+      `--stage` is chart-only — a non-chart `--stage` is rejected at
+      `:484`. But the flag is public API on `GeoTiffImportOptions`, so the
+      footgun is one future caller away, and it fails silently and destructively.
+
+### False positives
+- None this round.
+
+### Notes (not findings)
+- Round 2 of the address-findings loop. Both remedies are small and concrete
+  (guard + guard); no design question outstanding.
