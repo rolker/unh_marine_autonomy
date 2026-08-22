@@ -266,8 +266,15 @@ injection surface, and a manager that accepts them is a remote-execution service
       compress:   {type: bool, default: false}
 ```
 
-A command carrying an undeclared argument, or a value failing its constraint, is
-**rejected** — the request is acknowledged with a rejection reason, and nothing starts.
+On the wire, `~/command` carries arguments as `diagnostic_msgs/KeyValue[]`, which is
+string-to-string. Values therefore travel as **string scalars** and are parsed and coerced
+against the declared `type` on receipt — `compress: "true"` becomes a bool before it is
+range-checked. A value that fails to parse as its declared type is rejected exactly as an
+out-of-range value is.
+
+A command carrying an undeclared argument, a value that fails to parse as its declared
+type, or a value failing its constraint, is **rejected** — the request is acknowledged with
+a rejection reason, and nothing starts.
 
 ## Group state machine
 
