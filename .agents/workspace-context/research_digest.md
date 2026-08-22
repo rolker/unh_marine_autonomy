@@ -1,6 +1,6 @@
 # Research Digest: Marine Robotics
 
-<!-- Last updated: 2026-07-27 -->
+<!-- Last updated: 2026-08-21 -->
 <!-- If older than 30 days, consider running /research --refresh; entries older than 90 days should be flagged for review -->
 
 ## ROS 2 Autonomous Surface Vehicles (ASVs)
@@ -278,3 +278,89 @@ internet, boat pulls over cell) or as a Massabesic backup. Rover side is the
 existing C-RTK 2HP (see entry above): corrections arrive over the already-present
 cell/WiFi link via ntrip_client → mavros, so no extra radio hardware on the boat;
 the RADIO-port telemetry-pair path remains a ROS-free fallback.
+
+---
+
+## ROS 2 Launch/Lifecycle Management Daemons (persistent launch manager)
+
+**Added**: 2026-08-21 | **Sources**: [ros2/launch#32](https://github.com/ros2/launch/issues/32), [ros2/launch#724](https://github.com/ros2/launch/issues/724), [rosmon](https://github.com/xqms/rosmon), [rqt_rosmon](https://index.ros.org/p/rqt_rosmon/), [better_launch](https://github.com/dfki-ric/better_launch) ([docs](https://dfki-ric.github.io/better_launch/), [JOSS](https://joss.theoj.org/papers/10.21105/joss.08958.pdf)), [system_modes](https://github.com/micro-ROS/system_modes) ([paper](https://rose-workshops.github.io/files/rose2021/papers/rose2021_4.pdf)), [ROS 1 capabilities](http://docs.ros.org/en/hydro/api/capabilities/html/index.html), [rqt_launch](https://github.com/ros-visualization/rqt_launch), [ROS 2 launch design](https://design.ros2.org/articles/roslaunch.html), [multi-machine launching design PR](https://github.com/ros2/design/pull/255/files)
+
+Surveyed for a manager that starts at boot, autostarts a comms-only subset, and brings
+up the rest of the stack on command (see [unh_marine_autonomy#327](https://github.com/rolker/unh_marine_autonomy/issues/327)).
+
+Key takeaways:
+- **Upstream gap is real and open.** ros2/launch#32 asked for a perpetually running
+  launch daemon with monitoring + relaunch and was closed with no implementation;
+  ros2/launch#724 asked for the non-blocking `LaunchService` wrapper underneath it.
+- **`rosmon`** (ROS 1, xqms) is the closest whole-system prior art: launcher *and*
+  monitoring daemon, ROS service API to start/stop/restart individual nodes, TUI plus
+  an `rqt_rosmon` GUI. Never ported to ROS 2; its README points at third-party
+  successors (`rosmon2`, `better_launch`).
+- **`better_launch`** (DFKI-RIC, MIT, JOSS 2025) is an actively developed ROS 2 launch
+  *replacement* whose TUI starts/stops nodes, triggers lifecycle transitions, and
+  changes log levels at runtime, and which can include stock ROS 2 launch files. No
+  documented daemon mode or remote ROS control surface — control is local TUI only.
+- **`system_modes`** (micro-ROS/Bosch) is the right conceptual model for "comms-only
+  mode vs full stack": hierarchical (sub)systems over managed nodes, modes defined as
+  parameter/state configurations, with a mode manager (services) and mode monitor.
+  **Unmaintained** — the repo is explicitly seeking a maintainer.
+- **Nav2 `lifecycle_manager`** manages node *state* (ordered transitions, bond
+  liveliness, `manage_nodes` service, RViz panel) but not *processes* — it cannot
+  relaunch something that died. Overlap with a launch manager is partial by nature.
+- **ROS 1 `capabilities`** (`capability_server`) started/stopped launch files on demand
+  via services with a preempting provider model and an internal "launch manager module"
+  wrapping roslaunch instances. Never ported to ROS 2.
+- Boot-only options (`robot_upstart`, systemd units, supervisord, snaps) give autostart
+  and nothing else — no ROS-visible per-subsystem state, no relaunch-this-part command.
+  `rqt_launch` (start/stop nodes from a launch file) is ROS 1 with no ROS 2 port.
+- **No ROS 2 project provides the union** of process supervision + lifecycle
+  management + a remote command/status surface + rqt and CLI front ends.
+
+**Relevance**: BizzyBoat and the operator station are brought up today by
+`start_tmux_*.bash` scripts (`send-keys` into tmux windows; ordering enforced by
+`sleep`). The workspace already owns the two hardest pieces of a manager —
+`ros2launch_session` (long-lived `LaunchService`, guaranteed teardown, readiness
+detection, `from_service()` injection into a running service) and `ros2launch_gui`
+(qt/tk/tui front ends, per-process output tabs, `QueryUserInterface` round-trip for
+pushing UI actions into a running launch system). The viable path is a thin manager node
+over those, not another launch replacement. Because `udp_bridge` has no service support,
+the operator-station control surface likely wants a command topic with request ids plus
+a latched status topic — idempotent and retryable over a lossy link, which is the better
+shape regardless.
+
+**Upstream direction (checked 2026-08-21, Jazzy → Kilted → Lyrical)**: sources —
+[launch CHANGELOG](https://raw.githubusercontent.com/ros2/launch/rolling/launch/CHANGELOG.rst),
+[launch_ros#430](https://github.com/ros2/launch_ros/pull/430),
+[launch_ros#449](https://github.com/ros2/launch_ros/pull/449),
+[launch_ros#445](https://github.com/ros2/launch_ros/issues/445),
+[Lyrical Luth release notes](https://docs.ros.org/en/lyrical/Releases/Release-Lyrical-Luth.html)
+
+- `LifecycleNode(autostart=True)` landed in `launch_ros` (PR #430, merged to rolling
+  2025-02-19, **backported to Jazzy the same day**, Humble 2025-08-08; PR #449 fixed the
+  same-executable-twice case, issue #445). Verified present in the local Jazzy install
+  (`launch_ros` 0.26.12, `actions/lifecycle_node.py:48`, new
+  `utilities/lifecycle_event_manager.py`).
+- **It is still one-shot.** `lifecycle_node.py:121-131` shows `autostart=True` simply
+  builds a `LifecycleTransition` from the node's already-substituted `node_name` and
+  returns it as an execute-time action. It removes the `PythonExpression` namespace
+  concat needed to name the node, but nothing re-drives the transition if the process
+  respawns — so a respawned lifecycle node still comes back `unconfigured`. Upstream
+  fixed the ergonomics, not the durability.
+- **No upstream launch-daemon effort exists.** ros2/launch#32 remains closed with
+  nothing replacing it; open issues are ergonomics/bugs (#666 signal handling, #975
+  `--print-description`, #970 XML boolean attrs). No REP or redesign thread found.
+- **Launch changed additively since Jazzy**: `ForEach` (3.8.0), `PathSubstitution` with
+  `/` operator (3.9.5), boolean launch arguments (3.9.7), `TimerAction` environment
+  capture (3.9.6); Lyrical Luth (May 2026) adds per-message log severity and
+  string-join/path-join substitutions. **No breaking changes to `LaunchService`, event
+  handlers, or `ExecuteProcess`** — the surfaces `ros2launch_session` binds to are
+  stable across three distros.
+- Lifecycle is becoming *more* first-class in launch (`lifecycle_node` and
+  `composable_lifecycle_node` now exposed in the XML/YAML frontends), so declaring
+  lifecycle targets in config runs with the grain rather than against it.
+- Kilted made Zenoh a Tier 1 RMW — already the workspace's field configuration.
+
+**Consequence for the design**: keep `autostart=True` in launch files (it preserves
+standalone `ros2 launch` usability on the bench) and have the manager *converge* to the
+target lifecycle state — read current state, transition only when off-target — rather
+than emit transitions blindly, so the two cannot race.
