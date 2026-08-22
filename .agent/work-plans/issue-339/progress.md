@@ -132,3 +132,30 @@ ones, both valid; the second is the more interesting.
 ### Notes (not findings)
 - Round 2 of the address-findings loop. Both remedies are small and concrete
   (guard + guard); no design question outstanding.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-22 17:27 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+
+**Branch**: feature/issue-339 at `0135f41` (PR #344, round 2)
+
+Works both findings from the round-2 `## Integrated Review` above.
+
+- [x] **`sourceGeoBounds` missing CRS / rotation guards** — now enforces the
+      same conditions `importGeoTiff` does (geographic WGS84, unrotated
+      geotransform) **before** any adoption, so a projected or rotated source
+      fails fast with the same diagnosis instead of first dragging in far too
+      many staged tiles.
+- [x] **`merge_into_resident` + Processed = Draft cleared beyond the footprint**
+      — now refused with `std::invalid_argument`. Not reachable today (flag set
+      only on the chart-only `--stage` path), so the guard pins it against a
+      future caller of what is public API on `GeoTiffImportOptions`.
+
+**Regression cover**: `MergeIntoResidentIsRefusedForProcessed` asserts both
+halves — Processed throws, Chart still imports. **Mutation-verified**: stubbing
+the guard to `if (false)` makes the test FAIL. 334 tests, 0 failures.
+
+**Deviation, recorded**: applied host-inline rather than via a dispatched
+`address-findings`, same reasoning as round 1 — the remedy was an operator
+decision taken at the checkpoint.
