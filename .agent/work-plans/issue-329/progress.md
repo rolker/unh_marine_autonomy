@@ -49,3 +49,59 @@ against.
   (#331, mixed-level overviews) targets this branch and is the first consumer of
   D2/D3/D8. A new commit on `feature/issue-329` leaves #335 merely behind, not
   broken — but do not rewrite this branch's history while #335 is open.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-22 10:36 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+
+**PR**: #330 at `1f76ef1d` (round 2)
+**Sources**: 3 — Copilot R2 @ `1f76ef1d` (current), Copilot R1 @ `dfad2368`
+(stale), and the prior `## Integrated Review` @ `dfad2368`.
+**Cross-source confirmations**: 0
+**CI**: all pass (`build` success, `copilot-pull-request-reviewer` success)
+
+Round 1's single finding is **addressed** by commit `1f76ef1`: the workspace
+ADR-0012 reference is now a full link and the citation convention defines a
+third-repo form. Copilot R1 is stale against `dfad2368` and its concern no
+longer applies to the current head.
+
+Both new findings are Copilot R2's, and both are against the round-1
+`progress.md` entry this skill itself wrote — not against the ADR.
+
+### Findings
+- [ ] (valid, Copilot R2) The round-1 `### Findings` checkbox is still
+      unticked although `1f76ef1` fixed it in this same PR, so the timeline
+      reads as having an open action item that is done. The checkbox exists
+      precisely to be ticked (review-code: "so findings can be checked off as
+      addressed"); the fix was applied by hand without the
+      `address-findings` step that would normally tick it —
+      `.agent/work-plans/issue-329/progress.md:21-30`
+- [ ] (valid, Copilot R2) A developer-local absolute path
+      (`/home/roland/project11/docs/decisions/0012-...`) is committed into a
+      repo-tracked file. No other agent or human can resolve it, and it encodes
+      one machine's layout. AGENTS.md already forbids the same shape for
+      agent-memory filenames ("other agents and humans can't resolve those
+      references"); a cross-repo link is the resolvable form. A workspace-wide
+      `git grep` confirms this is the only such path in either branch's
+      tracked markdown — `.agent/work-plans/issue-329/progress.md:35`
+
+### False positives
+- (Copilot R1 @ `dfad2368`) "likely incorrect" — carried over from round 1 and
+  still a false positive: workspace ADR-0012 genuinely is "Permit
+  Cross-Reference Addendums in Accepted ADRs", the policy the sentence invokes.
+  Now moot as well as wrong, since the reference is an explicit link.
+
+### Notes (not findings)
+- Copilot R2 read a `progress.md` entry as project documentation to be kept
+  current. That is the right instinct for the path bug, and arguably right for
+  the checkbox — but worth recording that `progress.md` is an **append-only
+  timeline** (ADR-0013): historical entries are not rewritten to match later
+  state, only their checkboxes are ticked and factual errors corrected. A future
+  bot comment asking to reword a past entry's narrative should be declined on
+  that basis.
+- The ADR itself drew **no** comments in round 2. The only substantive open
+  question on this PR remains the human content review, plus the D3
+  manifest-staleness gap raised in conversation (see
+  [uma#334](https://github.com/rolker/unh_marine_autonomy/issues/334) items 2-3),
+  which is a normative change and is the operator's call.
