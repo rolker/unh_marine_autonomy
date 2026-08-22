@@ -267,8 +267,12 @@ ros2 run marine_bathymetry_store build_depth_overviews /path/to/store/reference 
   with no operational consequence.
 - **Wholesale + crash-safe.** Each run rebuilds the whole sidecar (derived,
   regenerable — safe to re-run after every ingest) into a staging `overviews.tmp/`
-  and swaps it in only once complete (rename-aside via `overviews.old/`), so an
-  interrupted or failing run never displaces a complete sidecar with a partial one.
+  and swaps it in only once complete, so an interrupted or failing run never
+  displaces a complete sidecar with a partial one. The swap prefers
+  `renameat2(RENAME_EXCHANGE)` so `overviews/` is never momentarily absent for a
+  concurrent reader (CAMP treats a missing `overviews/` as "no overviews"), and
+  falls back to rename-aside via `overviews.old/` where the filesystem cannot
+  exchange directory entries.
   A malformed/unreconstructable tile name is skipped loudly and **refuses the
   swap** (exit 4) — at **any** level, since under discovery that name's coverage
   would be missing from every level built beneath it. `overviews.tmp/` doubles as

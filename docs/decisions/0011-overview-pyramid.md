@@ -47,15 +47,22 @@ pairing).
    (idempotent; safe after every ingest), it is never merged into the fine
    layer, and it never enters anti-entropy/possession sets. Native coarse
    data can never be confused with derived overviews. Regeneration is
-   **crash-safe** — not atomic, since POSIX offers no atomic directory swap: a
-   builder writes into a sibling `overviews.tmp/` and swaps it in only after
-   every level succeeds, so an interrupted or failed run leaves the previous
-   sidecar intact rather than a truncated one a consumer would read as
-   complete. The swap is **rename-aside**: `overviews/` → `overviews.old/`,
-   staging → `overviews/`, then `overviews.old/` is deleted. The previous
-   sidecar therefore exists at every instant; a crash between the two renames
-   leaves it as `overviews.old/`, recoverable by hand, and a failing second
-   rename is rolled back. A builder also refuses to replace `overviews/` unless
+   **crash-safe, and atomic where the filesystem allows it**: a builder writes
+   into a sibling `overviews.tmp/` and swaps it in only after every level
+   succeeds, so an interrupted or failed run leaves the previous sidecar intact
+   rather than a truncated one a consumer would read as complete. The swap
+   prefers **`renameat2(RENAME_EXCHANGE)`**, which exchanges the two directory
+   entries atomically, so `overviews/` resolves to a complete sidecar at every
+   instant and a concurrent reader never observes a missing directory. Where
+   that is unavailable (pre-3.15 kernels, NFS, some overlay/FUSE mounts) the
+   swap falls back to **rename-aside**: `overviews/` → `overviews.old/`,
+   staging → `overviews/`, then `overviews.old/` is deleted. On the fallback
+   path the previous sidecar's *contents* are never destroyed before the new one
+   is in place, but the *path* `overviews/` is briefly absent between the two
+   renames — **a consumer must treat a missing `overviews/` as "re-scan", not as
+   a cached "this layer has none"**. A crash between the two renames leaves the
+   previous sidecar as `overviews.old/`, recoverable by hand, and a failing
+   second rename is rolled back. A builder also refuses to replace `overviews/` unless
    the layer holds fine tiles at the declared level (an empty or mis-pointed
    layer never destroys a good sidecar), and refuses when any fine tile was
    skipped (a partial pyramid must not displace a complete one).

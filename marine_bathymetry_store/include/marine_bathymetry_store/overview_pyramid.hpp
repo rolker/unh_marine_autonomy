@@ -173,22 +173,34 @@ struct DepthOverviewBuildResult
 /// available level for a region, so native-wins costs nothing operationally —
 /// it is a display-and-storage decision only.
 ///
-/// **Crash-safe** (not atomic — POSIX has no atomic directory swap): the pyramid
-/// is built into a sibling `overviews.tmp/` and swapped in only on success, so an
+/// **Crash-safe, and atomic where the filesystem allows it.** The pyramid is
+/// built into a sibling `overviews.tmp/` and swapped in only on success, so an
 /// interrupted or failing run never leaves a truncated sidecar that reads as
-/// complete. The swap is rename-aside — `overviews/` → `overviews.old/`, staging
-/// → `overviews/`, then `overviews.old/` is dropped — so the previous sidecar
-/// exists at every instant; a crash mid-swap leaves it as `overviews.old/`,
-/// recoverable by hand. `overviews.tmp/` also acts as the per-layer run lock: it
-/// is claimed with a failing `create_directory`, so a second concurrent build
-/// over the same layer refuses rather than trampling the first.
+/// complete. The swap prefers `renameat2(RENAME_EXCHANGE)`, which exchanges the
+/// two directory entries atomically: `overviews/` resolves to a complete sidecar
+/// at every instant, so a concurrent reader sees the old pyramid or the new one
+/// and never a missing directory. That matters because consumers treat an absent
+/// `overviews/` as "no overviews" rather than retrying — CAMP's `GggsTileLayer`
+/// skips the directory outright when it does not exist.
+///
+/// On a filesystem without `RENAME_EXCHANGE` (it needs Linux ≥ 3.15 and
+/// per-filesystem support; NFS and some overlay/FUSE mounts do not have it) the
+/// swap falls back to rename-aside — `overviews/` → `overviews.old/`, staging →
+/// `overviews/`, then `overviews.old/` is dropped. The previous sidecar's
+/// CONTENTS are never destroyed before the new one is in place, but the PATH
+/// `overviews/` is briefly absent between the two renames; a reader that opens
+/// the layer in that window must re-scan rather than cache "no overviews". A
+/// crash mid-swap leaves the previous sidecar as `overviews.old/`, recoverable by
+/// hand. `overviews.tmp/` also acts as the per-layer run lock: it is claimed with
+/// a failing `create_directory`, so a second concurrent build over the same layer
+/// refuses rather than trampling the first.
 ///
 /// @param progress Optional stream for per-level progress lines (nullptr = quiet).
 /// @return Counts, the discovered native levels, per-level derived counts, the
 ///   native-suppression count, and @c sidecar_replaced telling whether the swap
 ///   happened. The build is **refused** (previous sidecar left in place, staging
-///   cleaned up) when @c tiles_skipped > 0; the caller should surface that loudly
-///   and exit non-zero.
+///   never created) when @c tiles_skipped > 0; the caller should surface that
+///   loudly and exit non-zero.
 /// @throws std::invalid_argument if @c min_level is outside 0..20, or is not
 ///   strictly below the layer's finest DISCOVERED native level (the no-upsample
 ///   guard).

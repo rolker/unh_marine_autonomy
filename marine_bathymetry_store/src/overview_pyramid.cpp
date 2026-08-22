@@ -68,7 +68,12 @@
 
 #include "marine_bathymetry_store/overview_pyramid.hpp"
 
+#include <fcntl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
 #include <cassert>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -197,6 +202,34 @@ namespace
 {
 
 namespace fs = std::filesystem;
+
+/// Atomically exchange two directory entries.
+///
+/// Wraps renameat2(RENAME_EXCHANGE) through syscall() rather than the glibc
+/// wrapper: the wrapper only appeared in glibc 2.28, and RENAME_EXCHANGE lives in
+/// <linux/fs.h> on some toolchains and <stdio.h> (under _GNU_SOURCE) on others.
+/// Going through SYS_renameat2 directly keeps this working across both without a
+/// feature-test dance.
+///
+/// @return 0 on success, -1 with errno set otherwise. errno is ENOSYS on a kernel
+///   or platform without the call, and EINVAL/EOPNOTSUPP on a filesystem that
+///   cannot do it — the caller treats all three as "fall back", not "fail".
+int exchangeDirEntries(const char * a, const char * b)
+{
+#if defined(__linux__) && defined(SYS_renameat2)
+#ifndef RENAME_EXCHANGE
+#define RENAME_EXCHANGE (1 << 1)
+#endif
+  return static_cast<int>(
+    ::syscall(SYS_renameat2, AT_FDCWD, a, AT_FDCWD, b, RENAME_EXCHANGE));
+#else
+  (void)a;
+  (void)b;
+  errno = ENOSYS;
+  return -1;
+#endif
+}
+
 using marine_tiled_raster_store::TiledRasterTile;
 using Cell = marine_tiled_raster_store::CellValues<double>;
 
@@ -461,8 +494,8 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
   // This is decided from the guard scan alone, so it is settled BEFORE the run
   // lock is claimed and before a single tile is folded. Doing it after the fold
   // (as this originally did) burned a full staging copy and hours of I/O on a
-  // layer that was already known unbuildable, and held the per-layer lock for
-  // the whole futile run.
+  // layer that was already known unbuildable, and held the per-layer lock for the
+  // whole futile run.
   if (result.tiles_skipped > 0) {
     return result;
   }
@@ -523,12 +556,12 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
       result.tiles_suppressed_by_native += counts.suppressed_by_native;
       // Invariant: a level can never end up with no coverage at all. `children`
       // is non-empty at every iteration (the first reads the finest native level,
-      // which the native.empty() guard proved non-empty; each later one is
-      // reached only because the previous level derived a tile or holds a native
-      // one), and gggs::parent stays valid down to level 0, so by_parent is
-      // non-empty. Each parent group is then either written (counts.out++) or
-      // suppressed, and suppression requires a native tile AT THIS level
-      // (native_here >= 1). Hence counts.out == 0 implies native_here >= 1.
+      // which the native.empty() guard proved non-empty; each later one reads a
+      // level that itself just produced a derived tile or holds a native one), and
+      // gggs::parent stays valid down to level 0, so by_parent is non-empty. Each
+      // parent group is then either written (counts.out++) or suppressed, and
+      // suppression requires a native tile AT THIS level (native_here >= 1).
+      // Hence counts.out == 0 implies native_here >= 1.
       //
       // This used to be a runtime refusal with its own result flag and CLI exit
       // code. It cannot fire — see uma#331's review — so shipping it as a live
@@ -545,8 +578,8 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
 
     // The derived manifest is written INTO STAGING, before the swap, so it rides
     // the rename-aside and is crash-consistent with the sidecar it describes
-    // (uma-ADR-0011 §2). Reaching here means the build was not refused — the
-    // only refusal, tiles_skipped, returned before staging was ever created.
+    // (uma-ADR-0011 §2). Reaching here means the build was not refused — the only
+    // refusal, tiles_skipped, returned before staging was ever created.
     marine_tiled_raster_store::saveCoverageManifest(
       derived,
       (staging / marine_tiled_raster_store::coverageManifestFilename()).string(),
@@ -559,38 +592,94 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
     throw;
   }
 
-  // Swap staging over the live sidecar, rename-aside rather than
-  // remove-then-rename so the previous sidecar exists at every instant:
-  // overviews/ -> overviews.old/, staging -> overviews/, then drop overviews.old/.
-  // If the second rename fails, the first is undone and the run leaves the
-  // previous sidecar exactly where it was. A crash in the (two same-directory
-  // renames) window leaves the previous sidecar as overviews.old/ — recoverable by
-  // hand; it is never destroyed before the new one is in place. This is
-  // crash-SAFE, not atomic: POSIX offers no atomic directory swap on a plain
-  // filesystem.
+  // Swap staging over the live sidecar.
+  //
+  // PREFERRED PATH — renameat2(RENAME_EXCHANGE): atomically exchanges the two
+  // directory entries, so <layer>/overviews/ resolves to a complete sidecar at
+  // EVERY instant, and a concurrent reader either sees the old pyramid or the new
+  // one, never a missing directory. This matters because consumers treat an
+  // absent overviews/ as "this layer has no overviews" rather than retrying:
+  // CAMP's GggsTileLayer skips the directory outright when it does not exist, so
+  // a layer opened during a non-atomic swap would render with no overview tiles
+  // at all until the operator reloaded it.
+  //
+  // FALLBACK — rename-aside, for filesystems without RENAME_EXCHANGE (it needs
+  // Linux >= 3.15 and per-filesystem support; NFS and some overlay/FUSE mounts
+  // return EINVAL/ENOSYS/EOPNOTSUPP). overviews/ -> overviews.old/, staging ->
+  // overviews/, then drop overviews.old/. That path is crash-SAFE but NOT atomic:
+  // the previous sidecar's contents are never destroyed before the new one is in
+  // place, but the PATH overviews/ is briefly absent between the two renames.
   const bool had_previous = fs::exists(overviews);
   bool retired_moved = false;
-  try {
-    // Retire the previous sidecar (overviews/ -> overviews.old/) and swap the new
-    // one in under one guard: a throw from the retire step must clear the staging
-    // lock too, or overviews.tmp/ blocks the next run.
-    if (had_previous) {
-      fs::remove_all(retired);
-      fs::rename(overviews, retired);
-      retired_moved = true;
+  bool exchanged = false;
+  if (had_previous) {
+    // Both entries must exist for an exchange; staging always does here.
+    if (exchangeDirEntries(staging.c_str(), overviews.c_str()) == 0) {
+      // staging now holds the PREVIOUS sidecar; retire it under the usual name so
+      // the cleanup below drops it.
+      exchanged = true;
+      std::error_code ec;
+      fs::remove_all(retired, ec);
+      fs::rename(staging, retired, ec);
+      if (ec) {
+        // The swap itself succeeded — the live sidecar is correct. Only the
+        // leftover previous sidecar could not be moved aside; say where it is.
+        std::cerr << "warning: swap succeeded but could not retire the previous "
+          "sidecar from " << staging.string() << ": " << ec.message() <<
+          "; remove it by hand before the next run" << std::endl;
+      }
+    } else {
+      const int saved = errno;
+      // Distinguish "this filesystem cannot exchange directory entries" (fall
+      // back to rename-aside) from a real failure such as EACCES or EIO, which
+      // the fallback would only hit again.
+      const bool unsupported = saved == EINVAL || saved == ENOSYS ||
+        saved == EOPNOTSUPP || saved == EPERM;
+      if (!unsupported) {
+        std::error_code ec;
+        fs::remove_all(staging, ec);   // clear the run lock before reporting
+        throw fs::filesystem_error(
+          "atomic sidecar swap failed", staging, overviews,
+          std::error_code(saved, std::generic_category()));
+      }
     }
-    fs::rename(staging, overviews);
-  } catch (...) {
-    // Clear the staging debris (best-effort, non-throwing — a throwing cleanup
-    // would mask the original failure and skip the restore below), then restore.
-    // Restore only if the retire rename actually completed — otherwise overviews/
-    // was never moved and is still in place.
-    std::error_code ec;
-    fs::remove_all(staging, ec);
-    if (retired_moved) {
-      fs::rename(retired, overviews);   // restore the previous sidecar
+  }
+
+  if (!exchanged) {
+    try {
+      // Retire the previous sidecar (overviews/ -> overviews.old/) and swap the
+      // new one in under one guard: a throw from the retire step must clear the
+      // staging lock too, or overviews.tmp/ blocks the next run.
+      if (had_previous) {
+        fs::remove_all(retired);
+        fs::rename(overviews, retired);
+        retired_moved = true;
+      }
+      fs::rename(staging, overviews);
+    } catch (...) {
+      // Clear the staging debris (best-effort, non-throwing — a throwing cleanup
+      // would mask the original failure and skip the restore below), then
+      // restore. Restore only if the retire rename actually completed —
+      // otherwise overviews/ was never moved and is still in place.
+      std::error_code ec;
+      fs::remove_all(staging, ec);
+      if (retired_moved) {
+        // Non-throwing, unlike the rest of this block: a throw here would replace
+        // the original swap diagnostic with a restore error, and the operator
+        // would never learn WHY the swap failed. If the restore does fail, the
+        // previous sidecar is sitting at overviews.old/ and nothing else would
+        // say so.
+        std::error_code restore_ec;
+        fs::rename(retired, overviews, restore_ec);
+        if (restore_ec) {
+          std::cerr << "warning: could not restore the previous sidecar: " <<
+            restore_ec.message() << "; it is intact at " << retired.string() <<
+            " — rename it back to " << overviews.string() << " by hand" <<
+            std::endl;
+        }
+      }
+      throw;
     }
-    throw;
   }
   // Best-effort: the swap already succeeded — a throwing cleanup here would report
   // the build as failed with the new sidecar live, prompting a needless re-run.
