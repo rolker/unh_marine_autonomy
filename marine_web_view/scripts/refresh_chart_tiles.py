@@ -226,7 +226,7 @@ def candidate_services(layer_kind):
     return sorted(cands, key=key, reverse=True)
 
 
-def pick_service(layer_kind, bbox, timeout):
+def pick_service(layer_kind, bbox, timeout, blank_bytes):
     """Newest service that actually RETURNS DATA over the target area.
 
     Learned the hard way: WGOM_LI_SNE_BTY_4m_20231005_IS is the newest-dated
@@ -234,6 +234,9 @@ def pick_service(layer_kind, bbox, timeout):
     completely empty. Selecting on the name alone would produce a full pyramid
     of blank tiles -- an hour of requests against CCOM's server for nothing.
     So probe before committing.
+
+    A probe tile counts as data by the same rule the render loop uses to keep
+    one (``blank_bytes``), so the two decisions cannot disagree.
     """
     w, s_, e, n = bbox
     clat, clon = (s_ + n) / 2.0, (w + e) / 2.0
@@ -243,7 +246,7 @@ def pick_service(layer_kind, bbox, timeout):
         try:
             hits = 0
             for z, x, y in probes:
-                if len(fetch_tile(ep, z, x, y, timeout)) > 1000:
+                if len(fetch_tile(ep, z, x, y, timeout)) > blank_bytes:
                     hits += 1
             if hits:
                 print(f'  {svc}: {hits}/{len(probes)} probe tiles have data -- using it')
@@ -336,7 +339,8 @@ def main():
         return 0
 
     print('\nselecting a service that actually has data over the target area:')
-    service, endpoint = pick_service(a.layer, tuple(a.bbox), a.timeout)
+    service, endpoint = pick_service(a.layer, tuple(a.bbox), a.timeout,
+                                     a.blank_bytes)
     print(f'service: {service}\nendpoint: {endpoint}')
 
     man = load_manifest(a.profile)
