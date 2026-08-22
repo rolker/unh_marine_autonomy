@@ -28,6 +28,13 @@ repo-qualified in the `camp-ADR-00NN` / `uma-ADR-00NN` form.** A bare "ADR-0013"
 is ambiguous by construction. Within a single repo's documents, relative links
 to sibling ADRs remain unqualified.
 
+The workspace repo (`ros2_agent_workspace`) is a third ADR namespace and
+collides with this one too — its `ADR-0012` is the cross-reference-addendum
+policy while `uma-ADR-0012` is curvature-preserving speed regulation. It has no
+short prefix here; **cite a workspace ADR by full link**, as
+[ADR-0002](0002-bathymetric-data-store.md) already does. Naming it in prose
+("the workspace's ADR-0012") is not sufficient qualification under this rule.
+
 ## Context
 
 The displays must navigate datasets far larger than memory: a 3.6 GB sidescan
@@ -297,7 +304,8 @@ guarantee and must never back a safety query.
   `SonarLiveCacheLayer`'s budget and eviction; `SonarLiveCacheLayer` gains
   level selection. `camp-ADR-0013` and `camp-ADR-0010` become implementations
   of D1–D5 and need cross-reference addendums (permitted under the workspace's
-  ADR-0012 without superseding), not rewrites.
+  [ADR-0012](https://github.com/rolker/ros2_agent_workspace/blob/main/docs/decisions/0012-permit-cross-reference-addendums-in-adrs.md)
+  without superseding), not rewrites.
 - **camp's flat tile vector becomes a level-bucketed spatial index.** The
   per-frame cost stops scaling with store size and starts scaling with what is
   visible. `camp#195` is re-scoped from "bound multi-level residency" to D4 in
