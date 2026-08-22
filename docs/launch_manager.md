@@ -168,7 +168,7 @@ Exactly one of `launch` or `exec` is required.
 | `exec` | string[] | — | A bare command vector, for things with no launch file. |
 | `arguments` | map | `{}` | Launch arguments. **Declared**, typed, and value-constrained — see [Declared arguments](#declared-arguments). |
 | `requires` | string[] | `[]` | Groups that must be `READY` before this one starts. Must be acyclic. |
-| `ready` | map | `{}` | Readiness predicate — see [Readiness predicates](#readiness-predicates). Empty means ready when all processes have started. |
+| `ready` | map | `{}` | Readiness predicates plus a `ready`-level `timeout` — see [Readiness predicates](#readiness-predicates). Empty means ready when all processes have started. |
 | `lifecycle` | map | — | Lifecycle target — see [Lifecycle handling](#lifecycle-handling). |
 | `restart` | enum | `on-failure` | `never` \| `on-failure` \| `always`. systemd's vocabulary, deliberately. |
 | `start_attempts` | int | inherited | Override. |
@@ -471,8 +471,9 @@ output tabs (`ros2launch_gui/qt/process_output_widget.py`,
 
 ## Readiness predicates
 
-`ready` names one or more predicates, all of which must hold. Predicate types are a
-registry, not a fixed enum — a downstream user adds one without patching the manager.
+`ready` names one or more predicates, all of which must hold, plus the reserved key
+`timeout`. Predicate types are a registry, not a fixed enum — a downstream user adds one
+without patching the manager.
 
 | Predicate | Config | Satisfied when |
 |---|---|---|
@@ -483,8 +484,11 @@ registry, not a fixed enum — a downstream user adds one without patching the m
 | `tcp_port` | `{tcp_port: <port>}` | A TCP connect to the port succeeds. |
 | `output` | `{output: {pattern: <re>, stream: stderr}}` | Process output matches. |
 
-Every predicate takes `timeout` (float, seconds); exceeding it moves the group toward the
-`start_attempts` budget rather than sitting in `STARTING` forever. `topics` with
+`timeout` (float, seconds) is a `ready`-level key, not a per-predicate one: it is a single
+budget bounding the **conjunction** of every predicate in the map. `ready: {nodes: [/a],
+topics: [{name: /t, min_rate: 1.0}], timeout: 30.0}` gives both predicates 30 s to hold
+together, not 30 s each. Exceeding it moves the group toward the `start_attempts` budget
+rather than sitting in `STARTING` forever. `topics` with
 `min_rate` is the strongest of these and should be preferred where a rate is meaningful —
 node presence proves a process ran, not that it works.
 
