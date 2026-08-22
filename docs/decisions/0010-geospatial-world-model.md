@@ -319,11 +319,46 @@ Export rules (`s57_to_geotiff`, new tool in `s57_tools`, feeding the existing
 - **Scale → GGGS level**: each ENC cell exports at the level matching its
   compilation scale (≈0.5 mm-at-scale resolvable ground distance, mapped to
   the nearest GGGS level). The store is already multi-level (ADR-0002 D2/#151).
-- **Largest scale governs**: each chart's raster footprint is clipped by all
+- ~~**Largest scale governs**: each chart's raster footprint is clipped by all
   finer-scale charts' footprints, so coarse cells are never generated where
   finer coverage exists — standard chart practice, and it prevents the
   shallowest-reliable walk from letting a coarse band's midpoint shadow a
-  confident harbor-chart depth.
+  confident harbor-chart depth.~~
+
+  **Amended 2026-08-22
+  ([#337](https://github.com/rolker/unh_marine_autonomy/issues/337),
+  [s57_tools#49](https://github.com/rolker/s57_tools/issues/49)):
+  footprint-clipping is withdrawn. Every chart is exported entire, at its own
+  level.** Clipping by a finer cell's *declared* `M_COVR` deleted the coarser
+  levels the rest of this family of documents runs on:
+  [ADR-0013](0013-bounded-lod-navigation.md) D5 makes *"every level always has a
+  renderable answer, by upsampling from a resident ancestor"* an invariant, and
+  D3's corollary fills coverage gaps from coarser levels and marks them (S-52
+  3.1.7 overscale). Both need the coarse material to still exist.
+
+  It also falsified **D9 below, in this same ADR**. D9 exempts `chart` from
+  pyramid generation because "the scale ladder is a cartographer-curated
+  pyramid" — true of the ENC corpus, and false of what we stored, because
+  footprint-clipping turns a nested ladder into a region-disjoint patchwork with
+  no ancestors. This clause was what broke that premise; removing it makes D9
+  correct as written.
+
+  Measured over the Isles of Shoals survey box: charted coverage **34.6% →
+  99.2%** (level 6 alone, 19.2% → 99.1%), recovering 64.6% of the survey area
+  from charts already on disk. The corpus also exports 13 of 13 cells instead of
+  12 — one approach cell was being clipped to nothing, which had looked like a
+  conversion failure.
+
+  **The safety rationale is preserved, not discarded** — it is a *precedence*
+  concern, and precedence does not require deletion. The display draws finer
+  over coarser (`camp#194` composites every level at or below the selection and
+  discards no-data pixels, so finer covers coarser where it exists and coarse
+  shows through the gaps). `shallowestReliable` takes the shallowest reliable
+  value across all layers and levels, so a coarse band's midpoint can only win
+  where it is **shallower** — conservative — and its large CATZOC σ routes it to
+  go-slow rather than keepout under the #276 cost model. Scale precedence now
+  lives in the consumers, where a coarse value can be *ranked* without being
+  *destroyed*.
 
 **Chart ingestion is gated on the cost-model rework** — a precondition, not a
 parallel track, and satisfied by
