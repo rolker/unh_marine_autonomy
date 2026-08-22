@@ -78,7 +78,9 @@ UA = 'unh-ccom-p11-tilecache/0.1 (+ROS2 agent workspace; contact CCOM/JHC)'
 # ---------------------------------------------------------------------------
 # Colour ramp. MUST STAY IN SYNC WITH `RAMP` / `MAX_DEPTH` / `STEP` IN THE WEB
 # PAGE'S index.html -- pre-rendered tiles and the live-render fallback have to
-# look identical or the swap is visible.
+# look identical or the swap is visible. The two copies are compared by
+# test/test_ramp_sync.py, so a drift fails the package tests rather than only
+# this comment.
 #
 # Lifted from CCOM's own BTY_4m_HighRes_BlueGreen_DRA (the service Paul
 # Johnson's compilation viewer uses) so this matches what people already see

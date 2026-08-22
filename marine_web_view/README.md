@@ -127,4 +127,5 @@ rate-limits, and refuses to publish a partial pyramid. See
 [#342](https://github.com/rolker/unh_marine_autonomy/issues/342).
 
 Its `RAMP` / `MAX_DEPTH` / `STEP` must stay in sync with `web/index.html`; the
-rule is hashed into `tiles/manifest.json` so a change forces a re-render.
+rule is hashed into `tiles/manifest.json` so a change forces a re-render, and
+`test/test_ramp_sync.py` fails if the Python and JS copies ever diverge.

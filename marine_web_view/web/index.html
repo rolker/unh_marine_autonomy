@@ -180,6 +180,9 @@ L.tileLayer(
 // Deliberately NOT DRA. CCOM's service auto-adjusts to the depths in view, so
 // the same depth changes colour as you pan -- fine for exploring, useless for
 // a public page where people compare. Here the scale is PINNED to 0-40 m.
+//
+// RAMP / MAX_DEPTH / STEP are mirrored in scripts/refresh_chart_tiles.py;
+// test/test_ramp_sync.py fails if the two copies drift.
 const RAMP = [
   [  0,  38, 115],  // deepest
   [  1,  40, 116],
