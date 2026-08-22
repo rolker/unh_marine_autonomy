@@ -313,8 +313,8 @@ Key takeaways:
 - Boot-only options (`robot_upstart`, systemd units, supervisord, snaps) give autostart
   and nothing else — no ROS-visible per-subsystem state, no relaunch-this-part command.
   `rqt_launch` (start/stop nodes from a launch file) is ROS 1 with no ROS 2 port.
-- **No ROS 2 project provides the union** of process supervision + lifecycle management
-  + a remote command/status surface + rqt and CLI front ends.
+- **No ROS 2 project provides the union** of process supervision + lifecycle
+  management + a remote command/status surface + rqt and CLI front ends.
 
 **Relevance**: BizzyBoat and the operator station are brought up today by
 `start_tmux_*.bash` scripts (`send-keys` into tmux windows; ordering enforced by
