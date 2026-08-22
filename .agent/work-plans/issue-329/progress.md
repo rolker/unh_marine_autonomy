@@ -18,7 +18,7 @@ against.
 **CI**: all pass (`build` success, `copilot-pull-request-reviewer` success)
 
 ### Findings
-- [ ] (valid-in-part, Copilot) "the workspace's ADR-0012" at line 300 is
+- [x] (valid-in-part, Copilot) "the workspace's ADR-0012" at line 300 is
       **ambiguous by this ADR's own normative convention**, which defines only
       the `camp-ADR-00NN` / `uma-ADR-00NN` forms and has no form for a third
       repo. It is also the document's single reference to a workspace ADR, and
@@ -28,11 +28,12 @@ against.
       `docs/decisions/0002-bathymetric-data-store.md:658` — and by extending
       the citation-convention paragraph to cover third-repo ADRs, since the rule
       as written does not — `docs/decisions/0013-bounded-lod-navigation.md:299-300`
+      **Fixed by `1f76ef1`.**
 
 ### False positives
 - (Copilot) "likely incorrect" — the **substance is right**. Workspace ADR-0012
   is "Permit Cross-Reference Addendums in Accepted ADRs"
-  (`/home/roland/project11/docs/decisions/0012-permit-cross-reference-addendums-in-adrs.md`),
+  ([workspace ADR-0012](https://github.com/rolker/ros2_agent_workspace/blob/main/docs/decisions/0012-permit-cross-reference-addendums-in-adrs.md)),
   which is exactly the policy the sentence invokes, and it does permit addendums
   without superseding. Copilot inferred incorrectness from the local
   `uma-ADR-0012` collision without checking the workspace repo. Only the
@@ -78,7 +79,7 @@ Both new findings are Copilot R2's, and both are against the round-1
       `address-findings` step that would normally tick it —
       `.agent/work-plans/issue-329/progress.md:21-30`
 - [ ] (valid, Copilot R2) A developer-local absolute path
-      (`/home/roland/project11/docs/decisions/0012-...`) is committed into a
+      (a `/home/<user>/project11/docs/decisions/...` form) is committed into a
       repo-tracked file. No other agent or human can resolve it, and it encodes
       one machine's layout. AGENTS.md already forbids the same shape for
       agent-memory filenames ("other agents and humans can't resolve those
