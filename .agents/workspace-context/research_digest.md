@@ -286,7 +286,7 @@ the RADIO-port telemetry-pair path remains a ROS-free fallback.
 **Added**: 2026-08-21 | **Sources**: [ros2/launch#32](https://github.com/ros2/launch/issues/32), [ros2/launch#724](https://github.com/ros2/launch/issues/724), [rosmon](https://github.com/xqms/rosmon), [rqt_rosmon](https://index.ros.org/p/rqt_rosmon/), [better_launch](https://github.com/dfki-ric/better_launch) ([docs](https://dfki-ric.github.io/better_launch/), [JOSS](https://joss.theoj.org/papers/10.21105/joss.08958.pdf)), [system_modes](https://github.com/micro-ROS/system_modes) ([paper](https://rose-workshops.github.io/files/rose2021/papers/rose2021_4.pdf)), [ROS 1 capabilities](http://docs.ros.org/en/hydro/api/capabilities/html/index.html), [rqt_launch](https://github.com/ros-visualization/rqt_launch), [ROS 2 launch design](https://design.ros2.org/articles/roslaunch.html), [multi-machine launching design PR](https://github.com/ros2/design/pull/255/files)
 
 Surveyed for a manager that starts at boot, autostarts a comms-only subset, and brings
-up the rest of the stack on command (see `unh_marine_autonomy#327`).
+up the rest of the stack on command (see [unh_marine_autonomy#327](https://github.com/rolker/unh_marine_autonomy/issues/327)).
 
 Key takeaways:
 - **Upstream gap is real and open.** ros2/launch#32 asked for a perpetually running
@@ -333,7 +333,7 @@ shape regardless.
 [launch_ros#430](https://github.com/ros2/launch_ros/pull/430),
 [launch_ros#449](https://github.com/ros2/launch_ros/pull/449),
 [launch_ros#445](https://github.com/ros2/launch_ros/issues/445),
-[Lyrical Luth release notes](https://docs.ros.org/en/kilted/Releases/Release-Lyrical-Luth.html)
+[Lyrical Luth release notes](https://docs.ros.org/en/lyrical/Releases/Release-Lyrical-Luth.html)
 
 - `LifecycleNode(autostart=True)` landed in `launch_ros` (PR #430, merged to rolling
   2025-02-19, **backported to Jazzy the same day**, Humble 2025-08-08; PR #449 fixed the
