@@ -247,3 +247,72 @@ is correct: the policy keeps the shoalest contributor per cell.
 - Decisions recorded during implementation are in the `## Plan Authored` and
   `## Plan Review` entries above; `plan.md` was amended in place afterwards
   (commit 811d2c7) to match what was actually built.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-22 10:05 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+
+**Review round 1 fixes.** Works the 9 must-fix and 14 suggestions from the
+`## Local Review (Pre-Push)` entry above. Operator decisions on the three that
+were not mechanical: delete the dead guard (keep an assert), close the swap
+window now with `renameat2(RENAME_EXCHANGE)`, and re-run the real Shoals
+validation for record.
+
+### Must-fix — all 9 resolved
+
+- [x] Unreachable `level_uncovered` guard — **deleted** along with its result
+      field, `uncovered_level`, CLI exit code 3, and the header prose; the
+      induction it failed is now stated as an `assert`. Commit 8440b73.
+- [x] `decode()` run-width bound off by one grid row — bounds the run's
+      **position** (`col_max < columnCount(row)`) and caps whole-document
+      expansion at 5M grids. Two new tests pin the boundary the old check let
+      through and the off-the-end case. Commit 397ec97.
+- [x] Unchecked narrowing (`"level": 256` -> apex coverage) — range-checked
+      before narrowing, for the level and all three run indices. Two new tests.
+      Commit 397ec97.
+- [x] Swap window / false "exists at every instant" — atomic
+      `renameat2(RENAME_EXCHANGE)` where supported, rename-aside fallback
+      otherwise, and all three doc sites now state plainly which path gives
+      which guarantee and that a consumer must re-scan on the fallback path.
+      Commit 1c0c344.
+- [x] False motivating rationale in the header — removed with the guard it
+      justified; the commit message records why the claimed pre-#331 refusal
+      could not have happened. Commit 8440b73.
+- [x] Futile build claimed the run lock and folded everything first — the
+      `tiles_skipped` refusal moved up beside the other pre-flight guards,
+      before `create_directory(staging)`. Commit 39c79b0.
+- [x] ADR-0010 row in an "all merged" table citing an open issue — moved to an
+      explicit **In flight** list below the table. Commit 0ffd176.
+- [x] camp-ADR-0014's now-false `"as imported"` quote — cross-repo follow-up
+      filed as [camp#202](https://github.com/rolker/camp/issues/202).
+- [x] Missing `## Implementation` entry / unrecorded step-12 validation — the
+      real run was executed and recorded in the previous `## Implementation`
+      entry; `plan.md`'s stale claims amended in place. Commit 0ffd176.
+
+### Suggestions — 6 taken, 8 deferred to [uma#334](https://github.com/rolker/unh_marine_autonomy/issues/334)
+
+Taken: sidescan skip-semantics regression (a parsed-but-not-GGGS level is now
+filtered rather than counted, restoring pre-hoist behaviour for
+`build_sidescan_overviews`, with a test); `levels -1..N` success message;
+throwing restore rename made non-throwing with a recovery instruction; negative
+`geometric_error_m` rejected; README display-vs-query contradiction; the level
+ceiling derived from `gggs::levels.size() - 1` in the hoisted helper. Plus the
+two living-doc consequences Governance flagged (`docs/sonar_ecosystem.md`,
+`.agents/README.md`) — commit 85ae64f.
+
+Deferred to [uma#334](https://github.com/rolker/unh_marine_autonomy/issues/334)
+(durability + ergonomics, out of scope for the mixed-level generalisation):
+fsync/power-loss durability, manifest provenance, partial-decode signalling,
+SIGINT lock debris + `--force` + dry-run lock check, staging disk pre-flight,
+`add(nullopt)` erasing a recorded error, the uncommitted golden generator, and
+the remaining hardcoded level ceilings.
+
+### Verification
+
+- `marine_tiled_raster_store` and `marine_bathymetry_store`: **0** cpplint,
+  uncrustify, cppcheck, or gtest failures. 15 manifest tests (was 9), 27 depth
+  tests. Suite total 651 (was 645).
+- The 9 remaining workspace failures are all pre-existing
+  [uma#323](https://github.com/rolker/unh_marine_autonomy/issues/323) lint
+  regressions in `marine_sidescan_mosaic` files this branch does not touch.
