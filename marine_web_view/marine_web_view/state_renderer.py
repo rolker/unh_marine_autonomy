@@ -391,6 +391,12 @@ class StateRenderer(Node):
                 'points': len(track),
                 'raw_points': len(self._history),
                 'span_seconds': round(stamp - track[0][0], 1),
+                # Where this track ends, so a viewer can bridge the gap between
+                # the last published point and the vessel's current position
+                # with the fixes it has seen since. Without it the trail lags
+                # by up to track_interval.
+                'start_stamp': track[0][0],
+                'end_stamp': track[-1][0],
                 'generated': time.strftime('%Y-%m-%dT%H:%M:%SZ',
                                            time.gmtime()),
             },

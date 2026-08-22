@@ -82,9 +82,11 @@ monthly allowance and would dominate every other cost at any real update rate.
 ## Running
 
 ```bash
-# Local, no AWS: writes beside the page so a local http.server can serve both
-ros2 launch marine_web_view state_renderer_launch.py \
-    dry_run:=true local_path:=/path/to/web/position.geojson
+# Local, no AWS. Write into web/live/ -- the same prefix the bucket uses, so
+# the page's relative URLs work identically here and when deployed.
+ros2 launch marine_web_view state_renderer_launch.py dry_run:=true \
+    local_path:=/path/to/web/live/position.geojson \
+    track_local_path:=/path/to/web/live/track.geojson
 
 # Against S3
 ros2 launch marine_web_view state_renderer_launch.py platform_name:=ben

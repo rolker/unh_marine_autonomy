@@ -29,8 +29,15 @@
          background:var(--unh-navy); border:1px solid var(--deep);
          border-radius:6px; padding:13px 15px;
          box-shadow:0 4px 18px rgba(0,0,0,.5); }
+  .hdr { display:flex; align-items:baseline; gap:8px; }
   #hud h1 { margin:0 0 3px; font-family:var(--sans); font-size:14px;
-            font-weight:bold; letter-spacing:.02em; color:var(--fg); }
+            font-weight:bold; letter-spacing:.02em; color:var(--fg); flex:1; }
+  #toggle { flex:none; width:26px; height:26px; padding:0; cursor:pointer;
+            background:transparent; color:var(--seafoam); font-size:17px;
+            line-height:1; border:1px solid var(--line); border-radius:5px; }
+  #toggle:hover { color:var(--fg); border-color:var(--ocean); }
+  /* Only shown where it earns its place: on a phone the panel must collapse. */
+  @media (min-width:641px) { #toggle { display:none; } }
   #hud .sub { margin:0 0 10px; font-size:11px; color:var(--seafoam);
               font-family:var(--sans); }
 
@@ -71,12 +78,34 @@
   .relief { mix-blend-mode:multiply; }
 
   .leaflet-control-attribution { font-family:var(--sans); font-size:10px; }
+
+  /* Phones: the desktop panel is a fixed 236 px with a 104 px vertical
+     gradient, which swallows a phone screen. Shrink it, lay the legend out
+     horizontally so it costs ~40 px of height instead of ~150, and start
+     collapsed so the map is the page. */
+  @media (max-width:640px) {
+    #hud { width:auto; max-width:calc(100vw - 24px); top:8px; left:8px;
+           right:8px; padding:9px 11px; }
+    #hud h1 { font-size:13px; }
+    #hud .sub { margin-bottom:7px; }
+    dl { grid-template-columns:auto 1fr auto 1fr; font-size:12px; gap:2px 8px; }
+    #credit { font-size:10px; line-height:1.35; }
+    .lgwrap { flex-direction:column; height:auto; gap:3px; }
+    .lgbar { width:100%; height:14px;
+             background-image:linear-gradient(to right, var(--lg-stops)) !important; }
+    .lgticks { flex-direction:row; justify-content:space-between; width:100%; }
+    #hud.collapsed #details, #hud.collapsed .sub { display:none; }
+  }
 </style>
 </head>
 <body>
 <div id="map"></div>
 <div id="hud">
-  <h1>BizzyBoat Live Position</h1>
+  <div class="hdr">
+    <h1>BizzyBoat Live Position</h1>
+    <button id="toggle" type="button" aria-expanded="true"
+            aria-controls="details" title="Show or hide details">&minus;</button>
+  </div>
   <p class="sub">Autonomous surface vessel &middot; CCOM/JHC</p>
   <dl>
     <dt>Latitude</dt><dd id="lat">—</dd>
@@ -85,6 +114,7 @@
     <dt>Fix age</dt><dd id="age">—</dd>
   </dl>
   <div id="status"><span id="dot"></span><span id="msg">connecting…</span></div>
+  <div id="details">
   <label><input type="checkbox" id="follow" checked> follow boat</label>
   <div id="legend"><h2>Depth</h2></div>
   <div id="credit">
@@ -93,14 +123,20 @@
     between UNH and NOAA.
     <a href="https://ccom.unh.edu" target="_blank" rel="noopener">ccom.unh.edu</a>
   </div>
+  </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 // Relative URL on purpose: same-origin whether served by CloudFront or a local
 // http.server, so no bucket CORS config is ever needed.
-const SRC       = 'position.geojson';
-const TRACK_SRC = 'track.geojson';
+// Paths are relative and MUST match the deployed bucket layout, which uses a
+// live/ prefix -- that prefix is what the renderer's IAM policy is scoped to
+// (s3:PutObject on live/* and nothing else). Serve the local preview with the
+// same live/ subdirectory so the two layouts are identical and a relative URL
+// that works in one works in the other.
+const SRC       = 'live/position.geojson';
+const TRACK_SRC = 'live/track.geojson';
 const POLL_MS   = 1000;
 // The track is a separate, larger object on a slower cadence: old track does
 // not change, so re-fetching it at the position rate would be waste.
@@ -277,9 +313,13 @@ new Bathy('', {
 // Legend: continuous bar built from the same RAMP, so it cannot drift from
 // what is rendered. Top = surface, bottom = MAX_DEPTH.
 (function () {
+  // The same stops drive a vertical bar on desktop and a horizontal one on
+  // phones; the horizontal case reads them from this custom property so the
+  // two orientations cannot drift apart.
   const stops = RAMP.slice().reverse()
     .map((c, i) => 'rgb(' + c.join(',') + ') ' + (i / (RAMP.length - 1) * 100).toFixed(1) + '%');
   const ticks = [0, 10, 20, 30, 40];
+  document.documentElement.style.setProperty('--lg-stops', stops.join(','));
   document.getElementById('legend').innerHTML +=
     '<div class="lgwrap"><div class="lgbar" style="background:linear-gradient(to bottom,'
     + stops.join(',') + ')"></div><div class="lgticks">'
@@ -304,11 +344,24 @@ const FOLLOW_DURATION = 1.2;   // seconds; comfortably longer than the 1 Hz tick
 const TRIANGLE_M   = 15;   // triangle reach in PIXELS (CAMP: 15 * pixel_size)
 const HULL_PX_MIN  = 10;   // CAMP: triangle while pixel_size > max_size/10
 
-// Drawn from the server-side track, NOT accumulated from our own polls.
-// A client-accumulated trail shows where our polling happened to succeed
-// rather than where the vessel went -- background tabs get throttled, requests
-// drop, and a viewer arriving late would see no history at all.
+// Trail = server track (authoritative history) + the fixes we have seen since
+// that track was generated.
+//
+// The server track is what makes history correct for everyone: it is captured
+// at the full message rate, so it does not depend on our polling luck, and a
+// viewer arriving late gets the whole path. But it is published on a slower
+// timer than position, so on its own the trail lags the vessel by up to
+// track_interval. The locally-observed tail bridges exactly that gap and is
+// discarded as soon as a newer track supersedes it.
 const trail = L.polyline([], { color:'#C2B280', weight:2, opacity:.9 }).addTo(map);
+let serverTrack = [];     // [[lat, lon], ...] from the published track
+let trackEnd = 0;         // stamp of its last point
+let bridge = [];          // {stamp, lat, lon} seen locally since trackEnd
+
+function redrawTrail() {
+  const tail = bridge.filter(p => p.stamp > trackEnd).map(p => [p.lat, p.lon]);
+  trail.setLatLngs(serverTrack.concat(tail));
+}
 const hull  = L.polygon([], { color:'#001D52', weight:1.5,
                               fillColor:'#C2B280', fillOpacity:.95 }).addTo(map);
 
@@ -407,6 +460,12 @@ function render(f) {
   const [lon, lat] = f.geometry.coordinates;
   last = f;
   drawBoat();
+  const st = (f.properties || {}).stamp;
+  if (st != null && (bridge.length === 0 || st > bridge[bridge.length - 1].stamp)) {
+    bridge.push({ stamp: st, lat: lat, lon: lon });
+    if (bridge.length > 600) bridge.shift();   // bounded; the server owns history
+    redrawTrail();
+  }
   if (!haveFix) { map.setView([lat, lon], 16); haveFix = true; }
   else if ($('follow').checked) { followBoat(lat, lon); }
   const pr = f.properties || {};
@@ -433,7 +492,10 @@ async function pollTrack() {
     if (!r.ok) return;                        // no track yet is not an error
     const t = await r.json();
     // GeoJSON is [lon, lat]; Leaflet wants [lat, lon].
-    trail.setLatLngs(t.geometry.coordinates.map(c => [c[1], c[0]]));
+    serverTrack = t.geometry.coordinates.map(c => [c[1], c[0]]);
+    trackEnd = (t.properties || {}).end_stamp || 0;
+    bridge = bridge.filter(p => p.stamp > trackEnd);   // now covered by the track
+    redrawTrail();
   } catch (e) { /* leave the previous track up */ }
 }
 
@@ -450,6 +512,17 @@ pollTrack();
 setInterval(poll, POLL_MS);
 setInterval(pollTrack, TRACK_MS);
 setInterval(updateAge, 1000);
+
+// Start collapsed on a phone: the map is the point, the readout is secondary.
+const hud = document.getElementById('hud');
+const toggle = document.getElementById('toggle');
+function setCollapsed(on) {
+  hud.classList.toggle('collapsed', on);
+  toggle.textContent = on ? '+' : '\u2212';
+  toggle.setAttribute('aria-expanded', String(!on));
+}
+setCollapsed(window.matchMedia('(max-width:640px)').matches);
+toggle.addEventListener('click', () => setCollapsed(!hud.classList.contains('collapsed')));
 
 // Browsers throttle timers in hidden tabs -- Chrome to roughly once a minute
 // after a few minutes -- so a tab returned to can be well behind. Refresh
