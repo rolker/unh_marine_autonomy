@@ -83,8 +83,12 @@ install(TARGETS ${PROJECT_NAME}
 
 # The `import_geotiff` CLI: import a GeoTIFF into a store layer's fused surface.
 add_executable(import_geotiff src/import_geotiff_main.cpp)
+# GDAL directly: the CLI reads the source raster's geotransform to window the
+# staged-tile adoption (#339), so it needs the headers itself rather than only
+# through ${PROJECT_NAME}.
 target_link_libraries(import_geotiff ${PROJECT_NAME}
-  marine_vertical_datum::marine_vertical_datum)
+  marine_vertical_datum::marine_vertical_datum ${GDAL_LIBRARIES})
+target_include_directories(import_geotiff PRIVATE ${GDAL_INCLUDE_DIRS})
 
 # The `build_depth_overviews` CLI (ADR-0010 D9 / ADR-0011): offline batch builder
 # of the shallowest-preserving depth overview pyramid for a draft/processed layer.
