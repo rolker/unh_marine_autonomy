@@ -327,8 +327,12 @@ When a `READY` group drifts, the manager escalates cheapest-first:
    `ros2 launch` — it sees per-process start and exit events and can count and report them.
 3. **Group restart.** Triggered when the respawn budget is exhausted, an essential process
    exits, or the launch description terminates. Full stop-then-start of the group,
-   respecting `shutdown` discipline.
-4. **`FAILED`.** Budget exhausted. Sticky until `CLEAR_FAILURE`.
+   respecting `shutdown` discipline. The respawn budget is `retry_limit` respawns within
+   `retry_window` — a group that was `READY` and then died is on the retry budget, and each
+   respawn is counted in `respawns_in_window`.
+4. **`FAILED`.** The applicable budget is exhausted — `retry_limit`/`retry_window` for a
+   group that had reached `READY`, `start_attempts` for one that never did. Sticky until
+   `CLEAR_FAILURE`.
 
 Dependents of a group leaving `READY` are **not** torn down automatically. They are
 reported as `DEGRADED` with the cause named. Cascading teardown of a running autonomy stack
