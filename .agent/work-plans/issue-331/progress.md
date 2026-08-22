@@ -169,3 +169,81 @@ a nicety.
 - [ ] (suggestion) Golden pin is credible in provenance but not re-derivable: the pre-change generator is not committed and --fine-level is gone, and the file's own header describes a different column layout than its lines use — `marine_bathymetry_store/test/data/depth_overview_single_level_golden.txt`
 - [ ] (suggestion) docs/sonar_ecosystem.md and .agents/README.md not updated for the D9 generalisation and the new public coverage-manifest API — `docs/sonar_ecosystem.md:96`, `.agents/README.md:19`
 - [ ] (suggestion) Plan Consequences row and two planned tests (idempotency re-reads the manifest; no-WARNING loader test) are stale or half-implemented after the Q2 amendment — `.agent/work-plans/issue-331/plan.md:255`
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-22 09:57 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+
+**Branch**: feature/issue-331 (stacked on feature/issue-329)
+
+Plan step 12's real-data validation, run against the staged Shoals layer
+`~/data/world/s102_shoals/reference/` (93 native tiles: 14 at level 6, 79 at
+level 8; no pre-existing `overviews/`). Numbers are the tool's own output, not
+recalled.
+
+### Fold (run 1 — fresh build)
+
+| Fold | in | derived out | left to native | native already there |
+|---|---|---|---|---|
+| 8 -> 7 | 79 | **25** | 0 | 0 |
+| 7 -> 6 | 25 | **0** | **10** | 14 |
+| 6 -> 5 | 14 | 6 | 0 | 0 |
+| 5 -> 4 | 6 | 4 | 0 | 0 |
+| 4 -> 3 | 4 | 2 | 0 | 0 |
+| 3 -> 2 | 2 | 1 | 0 | 0 |
+| 2 -> 1 | 1 | 1 | 0 | 0 |
+| 1 -> 0 | 1 | 1 | 0 | 0 |
+
+`overview pyramid complete: 40 tile(s) written across levels 0..7; 10 parent(s)
+left to native tiles` — 39 s wall.
+
+The three numbers the plan asserted are confirmed exactly: **25 derived at
+level 7, 0 derived at level 6, 10 parents suppressed by native tiles**. The
+7->6 row is the mixed-level case this issue exists for: every parent is already
+native, so the fold writes nothing there and continues to level 5 rather than
+treating "wrote nothing" as a broken chain.
+
+### Idempotency (run 2 — swaps against the run-1 sidecar)
+
+- Identical fold output; `md5sum` over all 40 sorted tiles identical
+  (`60fd7c584d364fe2030bf3fed5ff0f52`), `coverage.json` byte-identical.
+- No `overviews.tmp/` or `overviews.old/` debris left behind.
+- Run 2 exercised the **atomic `renameat2(RENAME_EXCHANGE)`** swap path added
+  for this PR's review finding, since an `overviews/` existed to exchange
+  against. Support confirmed on the target filesystem (ext4 on nvme0n1p2):
+  a direct `SYS_renameat2` probe returns 0.
+
+### Derived manifest
+
+`overviews/coverage.json` (`coverage-manifest/1`, kind `derived`) records
+levels 0,1,2,3,4,5,7 — **level 6 is absent**, correctly, because nothing was
+derived there. Geometric error doubles per level as the level GSD does
+(7.247 m at L7 -> 28.989 m at L5), and L5 falls back to level GSD because its
+children are native L6 tiles that carry no recorded epsilon — the documented
+`max(level GSD, max child epsilon)` saturation.
+
+### Cross-edge value check (plan step 12's remaining item)
+
+Depths are negative-down, so the shallowest value is the maximum. Verified with
+GDAL over every tile in each set:
+
+| Set | tiles | cells | shallowest | deepest |
+|---|---|---|---|---|
+| native L8 | 79 | 30,669,661 | 5.2585 | -107.0901 |
+| derived L7 | 25 | 7,679,330 | **5.2585** | -106.9801 |
+| native L6 | 14 | 4,184,422 | 15.7540 | -132.8028 |
+| derived L5 | 6 | 1,048,890 | **15.7540** | -132.8028 |
+
+**Shallowest-preserving holds exactly across both edges** — the L8->L7 fold and
+the native-L6 -> derived-L5 fold, which are over different ground and so are
+checked against their own parent sets. The deepest value is not preserved, which
+is correct: the policy keeps the shoalest contributor per cell.
+
+### Notes
+
+- The layer had no `overviews/` before run 1, so run 1 exercised the
+  first-build path and run 2 the swap path; both are covered.
+- Decisions recorded during implementation are in the `## Plan Authored` and
+  `## Plan Review` entries above; `plan.md` was amended in place afterwards
+  (commit 811d2c7) to match what was actually built.
