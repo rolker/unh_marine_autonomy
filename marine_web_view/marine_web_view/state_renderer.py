@@ -218,9 +218,9 @@ class StateRenderer(Node):
         self._history = []
         self._track_stamp = None
 
-        fix_type = (GeoPointStamped if self.msg_type == 'geopoint'
-                    else NavSatFix)
-        self.create_subscription(fix_type, self.topic, self._on_fix, 10)
+        self.fix_type = (GeoPointStamped if self.msg_type == 'geopoint'
+                         else NavSatFix)
+        self.create_subscription(self.fix_type, self.topic, self._on_fix, 10)
         if self.ori_topic:
             self.create_subscription(Imu, self.ori_topic, self._on_imu, 10)
         self.create_subscription(
@@ -291,7 +291,10 @@ class StateRenderer(Node):
         source is followed rather than only the highest priority one: CAMP uses
         whichever has the newest message, and so does this node.
         """
-        wanted = (('position_topic', NavSatFix, self._on_fix),
+        # Discovered position topics carry the same message type the node was
+        # configured for (msg_type) -- subscribing them as NavSatFix regardless
+        # would hand _on_fix a GeoPointStamped it cannot read.
+        wanted = (('position_topic', self.fix_type, self._on_fix),
                   ('orientation_topic', Imu, self._on_imu))
         for source in getattr(platform, 'nav_sources', []):
             for attribute, msg_type, callback in wanted:
