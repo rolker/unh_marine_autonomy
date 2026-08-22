@@ -380,6 +380,17 @@ int main(int argc, char * argv[])
       /*chart_staging_writable=*/true);
     std::cout << "store default level: " << static_cast<int>(store.level().level()) << "\n";
 
+    // [#339] Adopt whatever is already staged so this cell MERGES into it.
+    // Without this the store starts empty and importTiles replaces whole tiles,
+    // so a cell sharing a GGGS tile with a previously staged neighbour discarded
+    // that neighbour's cells — silently, and depending on staging order. Loaded
+    // tiles are clean, so `save` below still writes only the tiles this import
+    // actually touched.
+    const std::size_t adopted = marine_bathymetry_store::load(store, stage_dir);
+    if (adopted > 0) {
+      std::cout << "adopted " << adopted << " already-staged tile(s) to merge into\n";
+    }
+
     marine_bathymetry_store::GeoTiffImportOptions options;
     options.depth_scale = depth_scale;
     options.depth_offset = depth_offset;
@@ -390,9 +401,21 @@ int main(int argc, char * argv[])
       options.uncertainty_band = 0;
       options.default_uncertainty = constant_uncertainty;
     }
-    const std::size_t imported = marine_bathymetry_store::importGeoTiff(
-      store, layer, geotiff, options).cells_imported;
-    std::cout << "imported " << imported << " cell(s) into chart\n";
+    options.merge_into_resident = true;
+    const auto staged = marine_bathymetry_store::importGeoTiff(
+      store, layer, geotiff, options);
+    std::cout << "imported " << staged.cells_imported << " cell(s) into chart\n";
+    if (staged.resident_contentions > 0) {
+      // Expected zero: ENC cells partition their usage band, so no two of them
+      // should claim the same cell. A non-zero count means two sources disagree
+      // about the same ground (a rescheme overlap, or genuinely overlapping
+      // products such as S-102 — see #316, where the arbitration rule is still
+      // an open decision). The lowest-uncertainty rule resolved them; say so.
+      std::cout << "warning: " << staged.resident_contentions
+                << " contention(s) with already-staged data — two sources "
+        "disagree about the same cell; kept the lower-uncertainty "
+        "value\n";
+    }
 
     // Provenance flags are rejected above, so the staged store never carries a
     // registry.json (it would be dropped by the chart-only --commit anyway).

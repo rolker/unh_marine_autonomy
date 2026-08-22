@@ -37,6 +37,7 @@
 #include <sys/wait.h>
 
 #include <cstdlib>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -53,7 +54,9 @@ namespace
 
 /// Write a small north-up WGS84 GeoTIFF at the NW corner of the level-@p level
 /// grid containing (43.0, -70.5): band 1 = depth, band 2 = uncertainty.
-void writeFixtureTiff(const fs::path & path, uint8_t level, int width, int height)
+void writeFixtureTiff(
+  const fs::path & path, uint8_t level, int width, int height,
+  int cell_offset_x = 0, int cell_offset_y = 0)
 {
   const gggs::Level lvl(level);
   const gggs::GridIndex grid = lvl.gridIndex(43.0, -70.5);
@@ -77,7 +80,12 @@ void writeFixtureTiff(const fs::path & path, uint8_t level, int width, int heigh
   if (ds == nullptr) {
     throw std::runtime_error("writeFixtureTiff: could not create " + path.string());
   }
-  double gt[6] = {grid.westLongitude(), cell_x, 0.0, grid.northLatitude(), 0.0, -cell_y};
+  // Offsetting by whole cells keeps the patch inside the SAME grid tile while
+  // landing on different cells — which is what two adjacent sources sharing a
+  // GGGS tile at their seam look like (#339).
+  double gt[6] = {
+    grid.westLongitude() + cell_offset_x * cell_x, cell_x, 0.0,
+    grid.northLatitude() - cell_offset_y * cell_y, 0.0, -cell_y};
   ds->SetGeoTransform(gt);
   OGRSpatialReference srs;
   srs.SetWellKnownGeogCS("WGS84");
@@ -134,6 +142,44 @@ protected:
     return WEXITSTATUS(rc);
   }
 
+  /// The single .tif under @p layer_dir (the tests that use it assert count 1).
+  fs::path soleTile(const fs::path & layer_dir)
+  {
+    for (const auto & entry : fs::directory_iterator(layer_dir)) {
+      if (entry.path().extension() == ".tif") {
+        return entry.path();
+      }
+    }
+    throw std::runtime_error("soleTile: no .tif under " + layer_dir.string());
+  }
+
+  /// Cells carrying a finite depth in band 1 of @p tile.
+  std::size_t countFiniteCells(const fs::path & tile)
+  {
+    GDALAllRegister();
+    GDALDataset * ds = static_cast<GDALDataset *>(
+      GDALOpen(tile.string().c_str(), GA_ReadOnly));
+    if (ds == nullptr) {
+      throw std::runtime_error("countFiniteCells: could not open " + tile.string());
+    }
+    const int w = ds->GetRasterXSize();
+    const int h = ds->GetRasterYSize();
+    std::vector<double> band(static_cast<std::size_t>(w) * h);
+    const CPLErr err = ds->GetRasterBand(1)->RasterIO(
+      GF_Read, 0, 0, w, h, band.data(), w, h, GDT_Float64, 0, 0);
+    GDALClose(ds);
+    if (err != CE_None) {
+      throw std::runtime_error("countFiniteCells: read failed for " + tile.string());
+    }
+    std::size_t n = 0;
+    for (const double v : band) {
+      if (std::isfinite(v)) {
+        ++n;
+      }
+    }
+    return n;
+  }
+
   std::size_t countTiles(const fs::path & layer_dir)
   {
     std::size_t n = 0;
@@ -166,6 +212,36 @@ TEST_F(ImportGeotiffCliTest, StageThenCommitChartLandsTiles)
   EXPECT_EQ(
     run("--commit \"" + staged.string() + "\" \"" + store.string() + "\""), 0);
   EXPECT_EQ(countTiles(store / "chart"), 1u);
+}
+
+/// [#339] Two sources sharing one GGGS tile must both survive.
+///
+/// `importTiles` inserts whole tiles, so before this the second `--stage` call
+/// REPLACED the tile the first had written, silently discarding its cells — and
+/// which source survived depended on staging order. A chart layer is assembled
+/// from many ENC cells, and neighbours share a tile at every seam, so this fired
+/// across the whole corpus.
+TEST_F(ImportGeotiffCliTest, StagingASecondSourceMergesIntoTheSharedTile)
+{
+  const fs::path staged = dir_ / "staged";
+  const fs::path second = dir_ / "second.tif";
+  // Same grid tile, disjoint cells: offset well clear of the first patch.
+  writeFixtureTiff(second, 11, 2, 2, /*cell_offset_x=*/20, /*cell_offset_y=*/20);
+
+  ASSERT_EQ(
+    run("--stage \"" + staged.string() + "\" chart \"" + tif_.string() + "\" --level 11"), 0);
+  ASSERT_EQ(countTiles(staged / "chart"), 1u);
+  const std::size_t after_first = countFiniteCells(soleTile(staged / "chart"));
+  ASSERT_GT(after_first, 0u);
+
+  ASSERT_EQ(
+    run("--stage \"" + staged.string() + "\" chart \"" + second.string() + "\" --level 11"), 0);
+  // Still one tile — both sources land in it.
+  ASSERT_EQ(countTiles(staged / "chart"), 1u);
+
+  const std::size_t after_second = countFiniteCells(soleTile(staged / "chart"));
+  EXPECT_GT(after_second, after_first)
+    << "the second source replaced the first instead of merging into its tile";
 }
 
 TEST_F(ImportGeotiffCliTest, StageRejectsNonChartLayer)

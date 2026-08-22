@@ -118,6 +118,7 @@ ProcessedImportResult importGeoTiff(
 
   std::map<gggs::GridIndex, BathymetryTile> tiles;
   std::size_t imported = 0;
+  std::size_t resident_contentions = 0;
 
   std::vector<double> depth_row(width);
   std::vector<double> uncertainty_row(width);
@@ -184,6 +185,19 @@ ProcessedImportResult importGeoTiff(
         level.gridIndex(box_max.latitude, box_max.longitude));
       for (; grid_it.valid(); grid_it.next()) {
         auto tile_it = tiles.find(*grid_it);
+        // [#339] The tile this grid may already hold in the LAYER (not in this
+        // import's working set). importTiles inserts whole tiles, so without
+        // seeding from it a second source touching this grid would discard the
+        // first source's cells — which is what two adjacent ENC cells sharing a
+        // GGGS tile at their seam do on every chart regeneration.
+        const BathymetryTile * resident = nullptr;
+        if (options.merge_into_resident) {
+          const auto & resident_map = store.tiles(layer);
+          const auto found = resident_map.find(*grid_it);
+          if (found != resident_map.end()) {
+            resident = &found->second;
+          }
+        }
         for (gggs::CellAreaIterator cell_it(*grid_it, box_min, box_max);
           cell_it.valid(); cell_it.next())
         {
@@ -192,7 +206,20 @@ ProcessedImportResult importGeoTiff(
             continue;   // outside GGGS's usable envelope
           }
           if (tile_it == tiles.end()) {
-            tile_it = tiles.emplace(cell.grid(), BathymetryTile(cell.grid())).first;
+            tile_it = tiles.emplace(
+              cell.grid(),
+              resident != nullptr ? *resident : BathymetryTile(cell.grid())).first;
+          }
+          if (resident != nullptr) {
+            // Alarm, not accounting: a source pixel landing where the layer
+            // already holds a DIFFERENT value means two sources disagree about
+            // the same ground. Zero for sources that do not overlap.
+            const BathyCell res = resident->get(cell.row(), cell.column());
+            const bool same_sigma = res.uncertainty == uncertainty ||
+              (std::isnan(res.uncertainty) && std::isnan(uncertainty));
+            if (res.hasData() && !(res.depth == depth && same_sigma)) {
+              ++resident_contentions;
+            }
           }
           // Several input pixels can land in one cell when the input is finer
           // than the store level: keep the lowest-uncertainty value (a finite
@@ -223,6 +250,7 @@ ProcessedImportResult importGeoTiff(
 
   ProcessedImportResult result;
   result.cells_imported = imported;
+  result.resident_contentions = resident_contentions;
 
   // Anti-clobber (ADR-0010 D8): a Processed import supersedes overlapped live
   // Draft cells. Delegate to the store's public `clearOverlappedDraft` (the store

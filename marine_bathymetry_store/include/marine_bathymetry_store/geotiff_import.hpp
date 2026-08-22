@@ -94,6 +94,21 @@ struct GeoTiffImportOptions
   /// store's default level (`store.level()`), preserving the single-level
   /// caller's behaviour; pass a level to match the source resolution.
   std::optional<uint8_t> level = std::nullopt;
+  /// Merge into the layer's resident tiles instead of replacing them per tile.
+  ///
+  /// `importTiles` inserts whole tiles, so by default a second source touching a
+  /// tile another source already wrote **discards that source's cells**. That is
+  /// intended for a re-import that supersedes (a shrinking survey must drop the
+  /// cells it no longer covers), and wrong for a layer assembled from many
+  /// disjoint sources — a chart layer built cell-by-cell from ENC cells, where
+  /// two neighbouring cells legitimately share a GGGS tile at their seam
+  /// (#339).
+  ///
+  /// With this set, each touched tile is seeded from the resident tile first, so
+  /// the import fills gaps and the existing lowest-uncertainty contention rule
+  /// arbitrates any cell both sources claim. Contentions against resident data
+  /// are counted in `ProcessedImportResult::resident_contentions`.
+  bool merge_into_resident = false;
 };
 
 /// @brief Result of a GeoTIFF import, including the anti-clobber side effect.
@@ -118,6 +133,23 @@ struct ProcessedImportResult
   /// `Draft` tiles with ≥1 cleared cell (each appears once). Cache-invalidation
   /// seam for camp#171/#172; these tiles are touched (dirtied), not removed.
   std::vector<gggs::GridIndex> draft_tiles_touched;
+  /// Contention **events** against data already resident in the layer, when
+  /// `GeoTiffImportOptions::merge_into_resident` is set (always 0 otherwise).
+  ///
+  /// An event is a source pixel landing on a cell the resident tile already
+  /// holds a *different* value for. It counts events, not distinct cells: when
+  /// the source is finer than the store level, several pixels fall in one cell
+  /// and each is counted. That is deliberate — this is an alarm, not an
+  /// accounting.
+  ///
+  /// **Expected to be zero for sources that do not overlap.** ENC cells
+  /// partition their usage band, so a chart regeneration reporting a non-zero
+  /// count means two sources disagree about the same ground: either NOAA has
+  /// rescheme-overlapped, or the tool has been pointed at genuinely overlapping
+  /// products (S-102 — see
+  /// [#316](https://github.com/rolker/unh_marine_autonomy/issues/316), where the
+  /// arbitration rule is still an open decision).
+  std::size_t resident_contentions = 0;
 };
 
 /// @brief Import @p path into @p layer's single fused surface.
