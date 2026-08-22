@@ -66,3 +66,19 @@ Issue #345 adds the web viewer coverage consumer — the second of three layers 
 - [ ] Include documentation update in scope: package README or API docs for topics consumed (`coverage_catalog`, `coverage_requests`, `coverage_tiles`) and the new S3 output paths
 - [ ] Resolve output form decision (per-tile PNGs vs composite) early in planning — it drives the S3 layout, cache-control strategy, and CloudFront invalidation cost
 - [ ] Confirm band-selection and colour treatment align with `marine_colormap` (ADR-0001) and #342's fixed-range approach
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-08-22 00:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-345/plan.md` at `cebd8d6`
+**Branch**: feature/issue-345 at `cebd8d6`
+**Phases**: single
+
+### Open questions
+- [ ] Render at a single zoom level (z=17) or a small pyramid (z=15-17)? Pyramid triples S3 PUTs per dirty tile.
+- [ ] Fixed depth colormap range: confirm depth_min=0 m and depth_max=50 m agrees with #342's scale.
+- [ ] Pillow and numpy are pip deps not ROS packages: are they guaranteed in the deployment environment?
+- [ ] Orphaned S3 tiles if zoom level is reconfigured between deployments: document or add cleanup.
+- [ ] Cache-Control after survey ends: consider shutdown hook to re-upload surviving tiles with a long TTL.
