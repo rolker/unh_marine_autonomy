@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BizzyBoat Live Position | CCOM/JHC</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  /* UNH institutional palette and CCOM/JHC ocean accents.
+     UNH Blue #003594 - primary; UNH Dark Navy #001D52 - dark surfaces;
+     Ocean Blue #4A90D9 - interactive; Coastal Teal #2E8B8B; Deep Sea #1B4F72;
+     Seafoam #A8D8D8 - light-on-dark labels. Status colours stay semantic:
+     a stale-data warning should not be constrained by a brand palette. */
+  :root {
+    --unh-blue:#003594; --unh-navy:#001D52; --ocean:#4A90D9;
+    --teal:#2E8B8B; --deep:#1B4F72; --seafoam:#A8D8D8; --sand:#C2B280;
+    --fg:#FFFFFF; --line:#1B4F72;
+    --ok:#4ac97e; --warn:#e0b341; --bad:#e0574a;
+    --sans:Arial, Helvetica, sans-serif;
+    --serif:Georgia, "Times New Roman", serif;
+    --mono:"Courier New", Courier, monospace;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--unh-navy); color:var(--fg);
+              font:15px/1.5 var(--serif); }
+  #map { position:absolute; inset:0; background:var(--unh-navy); }
+
+  #hud { position:absolute; top:12px; left:12px; z-index:1000; width:236px;
+         background:var(--unh-navy); border:1px solid var(--deep);
+         border-radius:6px; padding:13px 15px;
+         box-shadow:0 4px 18px rgba(0,0,0,.5); }
+  #hud h1 { margin:0 0 3px; font-family:var(--sans); font-size:14px;
+            font-weight:bold; letter-spacing:.02em; color:var(--fg); }
+  #hud .sub { margin:0 0 10px; font-size:11px; color:var(--seafoam);
+              font-family:var(--sans); }
+
+  dl { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; margin:0;
+       font-size:13px; }
+  dt { color:var(--seafoam); font-family:var(--sans); font-size:12px; }
+  dd { margin:0; font-family:var(--mono); font-variant-numeric:tabular-nums; }
+
+  #status { margin-top:11px; padding-top:10px; border-top:1px solid var(--line);
+            display:flex; align-items:center; gap:7px; font-family:var(--sans);
+            font-size:12px; }
+  #dot { width:9px; height:9px; border-radius:50%; background:var(--seafoam); flex:none; }
+  .ok #dot{background:var(--ok)} .warn #dot{background:var(--warn)} .bad #dot{background:var(--bad)}
+  .ok #msg{color:var(--ok)} .warn #msg{color:var(--warn)} .bad #msg{color:var(--bad)}
+
+  label { margin-top:10px; display:flex; gap:7px; align-items:center;
+          color:var(--seafoam); font-family:var(--sans); font-size:12px;
+          cursor:pointer; }
+  #legend { margin-top:11px; padding-top:10px; border-top:1px solid var(--line); }
+  #legend h2 { margin:0 0 6px; font-family:var(--sans); font-size:11px;
+               font-weight:bold; color:var(--seafoam);
+               text-transform:uppercase; letter-spacing:.07em; }
+  .lgwrap { display:flex; gap:8px; height:104px; }
+  .lgbar { width:16px; flex:none; border:1px solid var(--line); border-radius:2px; }
+  .lgticks { display:flex; flex-direction:column; justify-content:space-between;
+             font-family:var(--mono); font-size:11px; color:var(--seafoam);
+             font-variant-numeric:tabular-nums; }
+  .lgunit { font-family:var(--sans); font-size:11px; color:var(--seafoam);
+            margin-top:5px; }
+
+  #credit { margin-top:11px; padding-top:10px; border-top:1px solid var(--line);
+            font-size:11px; line-height:1.45; color:var(--seafoam); }
+  #credit a { color:var(--ocean); text-decoration:none; }
+  #credit a:hover { text-decoration:underline; }
+
+  /* Hillshade composited over the depth colours. Relief structure is not
+     recoverable from colour alone. */
+  .relief { mix-blend-mode:multiply; }
+
+  .leaflet-control-attribution { font-family:var(--sans); font-size:10px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="hud">
+  <h1>BizzyBoat Live Position</h1>
+  <p class="sub">Autonomous surface vessel &middot; CCOM/JHC</p>
+  <dl>
+    <dt>Latitude</dt><dd id="lat">—</dd>
+    <dt>Longitude</dt><dd id="lon">—</dd>
+    <dt>Heading</dt><dd id="hdg">—</dd>
+    <dt>Fix age</dt><dd id="age">—</dd>
+  </dl>
+  <div id="status"><span id="dot"></span><span id="msg">connecting…</span></div>
+  <label><input type="checkbox" id="follow" checked> follow boat</label>
+  <div id="legend"><h2>Depth</h2></div>
+  <div id="credit">
+    Operated by the Center for Coastal and Ocean Mapping / Joint Hydrographic
+    Center (CCOM/JHC) at the University of New Hampshire (UNH) -- a partnership
+    between UNH and NOAA.
+    <a href="https://ccom.unh.edu" target="_blank" rel="noopener">ccom.unh.edu</a>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// Relative URL on purpose: same-origin whether served by CloudFront or a local
+// http.server, so no bucket CORS config is ever needed.
+const SRC     = 'position.geojson';
+const POLL_MS = 1000;   // renderer writes at 1 Hz
+const STALE_S = 20;   // amber past this
+const DEAD_S  = 60;   // red past this
+
+// maxZoom 22 with maxNativeZoom 19 on the tile layers: the imagery upscales
+// past its native level so the map can zoom in far enough for the hull
+// outline to be worth drawing (see HULL_PX_THRESHOLD below).
+const map = L.map('map', { zoomControl: true, maxZoom: 22 }).setView([43.08, -70.71], 13);
+
+// Basemap: Esri World Imagery -- genuinely cached. NOTE {z}/{y}/{x} (ArcGIS
+// order), reversed from the usual XYZ, and the tiles are JPEG.
+L.tileLayer(
+  'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom: 22, maxNativeZoom: 19,
+    // Attribution string required by the service's own accessInformation.
+    // Licensed under the Esri Master License Agreement; the item states this
+    // layer is NOT intended for exporting tiles offline, so it must stay
+    // proxied live and must never be baked into our own tile cache.
+    attribution: 'Imagery: Esri, Vantor, Earthstar Geographics, and the GIS User Community' }
+).addTo(map);
+
+// ---- Bathymetry ----------------------------------------------------------
+//
+// Colour ramp lifted from CCOM's own BTY_4m_HighRes_BlueGreen_DRA service --
+// the one Paul Johnson's compilation viewer uses -- so this page matches what
+// people already see there. It is not published via REST, so it was extracted
+// empirically: export the same area as raw float elevations AND as the styled
+// PNG (layer 1 only, excluding the hillshade), pair the pixels, and median the
+// colour in each normalised-depth bin across three sample areas (~170k pixels).
+//
+// Deliberately NOT DRA. CCOM's service auto-adjusts to the depths in view, so
+// the same depth changes colour as you pan -- fine for exploring, useless for
+// a public page where people compare. Here the scale is PINNED to 0-40 m.
+const RAMP = [
+  [  0,  38, 115],  // deepest
+  [  1,  40, 116],
+  [  6,  57, 125],
+  [ 11,  68, 130],
+  [ 16,  81, 137],
+  [ 20,  92, 142],
+  [ 21,  94, 143],
+  [ 31, 116, 153],
+  [ 41, 136, 162],
+  [ 51, 155, 171],
+  [ 62, 175, 180],
+  [ 74, 189, 183],
+  [ 88, 196, 178],
+  [104, 204, 175],
+  [107, 205, 175],
+  [118, 211, 176],
+  [127, 215, 176],
+  [138, 219, 175],
+  [150, 224, 177],
+  [162, 229, 181],
+  [174, 234, 186],
+  [168, 232, 184],
+  [182, 237, 190],
+  [197, 243, 199],  // shallowest
+];
+
+const MAX_DEPTH = 40;    // metres; deeper than this clamps to the deepest colour
+const STEP      = 0.5;   // metre classes -- fine enough to read as continuous
+
+function rampColor(p) {           // p: 0 = deepest, 1 = surface
+  const i = Math.max(0, Math.min(1, p)) * (RAMP.length - 1);
+  const lo = Math.floor(i), hi = Math.min(Math.ceil(i), RAMP.length - 1), f = i - lo;
+  return RAMP[lo].map((v, k) => Math.round(v * (1 - f) + RAMP[hi][k] * f));
+}
+
+// Discrete classes at 0.5 m -- ArcGIS Remap needs explicit ranges, and at this
+// step size the banding is not visible.
+function depthClasses() {
+  const out = [];
+  for (let d = 0; d < MAX_DEPTH; d += STEP) {
+    out.push({ from: -d, to: -(d + STEP),
+               c: rampColor(1 - (d + STEP / 2) / MAX_DEPTH) });
+  }
+  out.push({ from: -MAX_DEPTH, to: -400, c: rampColor(0) });
+  return out;
+}
+
+// The CCOM service is a DYNAMIC ArcGIS ImageServer -- no {z}/{x}/{y} cache --
+// so build a per-tile export from each tile's own Web Mercator bounds rather
+// than pulling in esri-leaflet. Pre-render to our own bucket before this is
+// public (uma#342). Two things must carry into that pre-render:
+//   1. This EXPLICIT fixed rule. The pre-styled *_DRA services stretch to each
+//      request's extent, so every tile gets its own contrast curve -- a visible
+//      patchwork (seam delta 23.1 vs 1.2 fixed), permanent once cached.
+//   2. interpolation=RSP_NearestNeighbor, so the server does not blend class
+//      colours while resampling.
+const IMG = 'https://gis.ccom.unh.edu/server/rest/services/WGOM-LI-SNE'
+          + '/WGOM_LI_SNE_BTY_4m_20230922_WMAS_IS/ImageServer/exportImage';
+
+// Remap bins elevations into class indices; Colormap paints them.
+// AllowUnmatched:false leaves land (elevation > 0) as NoData -> transparent,
+// so imagery shows through above the waterline.
+function chartRule() {
+  const cls = depthClasses(), ranges = [], outs = [];
+  cls.forEach((b, i) => { ranges.push(b.to, b.from); outs.push(i + 1); });
+  return JSON.stringify({
+    rasterFunction: 'Colormap',
+    rasterFunctionArguments: {
+      Colormap: cls.map((b, i) => [i + 1].concat(b.c)),
+      Raster: {
+        rasterFunction: 'Remap',
+        rasterFunctionArguments: {
+          InputRanges: ranges, OutputValues: outs,
+          AllowUnmatched: false, Raster: '$$'
+        }
+      }
+    }
+  });
+}
+
+const Bathy = L.TileLayer.extend({
+  getTileUrl: function (c) {
+    const S = 20037508.342789244;
+    const res = (2 * S) / (256 * Math.pow(2, c.z));
+    const minx = -S + c.x * 256 * res,  maxx = -S + (c.x + 1) * 256 * res;
+    const maxy =  S - c.y * 256 * res,  miny =  S - (c.y + 1) * 256 * res;
+    return IMG
+      + '?bbox=' + [minx, miny, maxx, maxy].join(',')
+      + '&bboxSR=3857&imageSR=3857&size=256,256'
+      + '&format=png32&transparent=true&f=image'
+      + '&interpolation=RSP_NearestNeighbor'
+      + '&renderingRule=' + encodeURIComponent(chartRule());
+  }
+});
+
+// Hillshade of the SAME 4 m grid, multiplied over the depth colours.
+//
+// ZFactor is not 1: in Web Mercator at this latitude the horizontal scale is
+// stretched by 1/cos(lat) (~1.37 at 43 deg N), which flattens slopes, and
+// bathymetric relief is subtle enough to want exaggeration on top of that
+// correction. Measured spread across the sample area: ZFactor 1 gives sd 3.3
+// (nearly flat), 3 gives 9.8, 10 gives 29.5 (clips at both ends).
+const RELIEF_ZFACTOR = 4;
+const RELIEF_OPACITY = 0.5;
+
+const Relief = L.TileLayer.extend({
+  getTileUrl: function (c) {
+    const S = 20037508.342789244;
+    const res = (2 * S) / (256 * Math.pow(2, c.z));
+    const minx = -S + c.x * 256 * res,  maxx = -S + (c.x + 1) * 256 * res;
+    const maxy =  S - c.y * 256 * res,  miny =  S - (c.y + 1) * 256 * res;
+    const rr = JSON.stringify({
+      rasterFunction: 'Hillshade',
+      rasterFunctionArguments: {
+        Azimuth: 315, Altitude: 45,          // conventional NW illumination
+        ZFactor: RELIEF_ZFACTOR, HillshadeType: 0
+      }
+    });
+    return IMG
+      + '?bbox=' + [minx, miny, maxx, maxy].join(',')
+      + '&bboxSR=3857&imageSR=3857&size=256,256'
+      + '&format=png32&transparent=true&f=image'
+      + '&renderingRule=' + encodeURIComponent(rr);
+  }
+});
+
+// Fully opaque. At partial opacity the satellite surface -- wakes, glint,
+// cloud shadow -- composites into the depth colours and reads as seafloor
+// structure.
+new Bathy('', {
+  opacity: 1.0, maxZoom: 22, maxNativeZoom: 19,
+  attribution: 'Bathymetry: Center for Coastal and Ocean Mapping / Joint '
+             + 'Hydrographic Center (CCOM/JHC), University of New Hampshire '
+             + '-- WGOM/LI/SNE compilation'
+}).addTo(map);
+
+// Legend: continuous bar built from the same RAMP, so it cannot drift from
+// what is rendered. Top = surface, bottom = MAX_DEPTH.
+(function () {
+  const stops = RAMP.slice().reverse()
+    .map((c, i) => 'rgb(' + c.join(',') + ') ' + (i / (RAMP.length - 1) * 100).toFixed(1) + '%');
+  const ticks = [0, 10, 20, 30, 40];
+  document.getElementById('legend').innerHTML +=
+    '<div class="lgwrap"><div class="lgbar" style="background:linear-gradient(to bottom,'
+    + stops.join(',') + ')"></div><div class="lgticks">'
+    + ticks.map(t => '<span>' + (t === MAX_DEPTH ? '≥' + t : t) + '</span>').join('')
+    + '</div></div><div class="lgunit">metres</div>';
+})();
+
+// ---- Boat ----------------------------------------------------------------
+//
+// Follows CAMP's Platform::shape() (camp/platform_manager/platform.cpp:60-84):
+// draw the real hull outline when the vessel is big enough on screen to be
+// worth it, otherwise a fixed-size triangle; a circle when heading is unknown.
+// Same threshold and the same geometry, so the two views agree.
+// Follow-boat uses a DEADZONE rather than recentring on every fix. At 1 Hz a
+// pan-per-update is visibly jumpy and fights the eye. The boat is left alone
+// while it stays within this fraction of the way from the centre to the edge;
+// crossing it triggers one smooth pan back to centre. Raise it to pan less
+// often, lower it to keep the boat nearer the middle.
+const FOLLOW_DEADZONE = 0.25;
+const FOLLOW_DURATION = 1.2;   // seconds; comfortably longer than the 1 Hz tick
+
+const TRIANGLE_M   = 15;   // triangle reach in PIXELS (CAMP: 15 * pixel_size)
+const HULL_PX_MIN  = 10;   // CAMP: triangle while pixel_size > max_size/10
+
+const trail = L.polyline([], { color:'#C2B280', weight:2, opacity:.9 }).addTo(map);
+const hull  = L.polygon([], { color:'#001D52', weight:1.5,
+                              fillColor:'#C2B280', fillOpacity:.95 }).addTo(map);
+
+// Metres per pixel at this latitude and zoom -- the same quantity CAMP calls
+// pixel_size, and what decides which shape to draw.
+function metresPerPixel(lat, zoom) {
+  return 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+}
+
+// Destination point given distance and true bearing (spherical earth).
+function dest(lat, lon, m, brg) {
+  const R = 6378137, d = m / R, b = brg * Math.PI / 180;
+  const p1 = lat * Math.PI / 180, l1 = lon * Math.PI / 180;
+  const p2 = Math.asin(Math.sin(p1) * Math.cos(d) +
+                       Math.cos(p1) * Math.sin(d) * Math.cos(b));
+  const l2 = l1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(p1),
+                             Math.cos(d) - Math.sin(p1) * Math.sin(p2));
+  return [p2 * 180 / Math.PI, ((l2 * 180 / Math.PI) + 540) % 360 - 180];
+}
+
+function circleAt(lat, lon, r) {
+  const pts = [];
+  for (let a = 0; a < 360; a += 15) pts.push(dest(lat, lon, r, a));
+  return pts;
+}
+
+function hullShape(lat, lon, hdg, v) {
+  const mpp = metresPerPixel(lat, map.getZoom());
+  const maxSize = Math.max(v.length || 0, v.width || 0);
+
+  if (hdg == null || isNaN(hdg))                       // unknown heading
+    return circleAt(lat, lon, Math.max(maxSize / 2, TRIANGLE_M * mpp));
+
+  if (!maxSize || mpp > maxSize / HULL_PX_MIN) {       // too small: triangle
+    const r = TRIANGLE_M * mpp;
+    return [dest(lat, lon, r, hdg),
+            dest(lat, lon, r, hdg - 150),
+            dest(lat, lon, r, hdg + 150)];
+  }
+
+  // Hull outline. Dimensions are measured from the vessel's reference point,
+  // not its centre -- reference_x/y offset it, which is why bow and stern are
+  // asymmetric.
+  const toBow   = v.length / 2 - v.reference_x;
+  const toPort  = v.width  / 2 - v.reference_y;
+  const toStbd  = v.width  / 2 + v.reference_y;
+  const toStern = v.length / 2 + v.reference_x;
+  const L_ = toBow + toStern, W_ = toPort + toStbd;
+
+  let ll = dest(lat, lon, toPort, 270 + hdg);
+  ll = dest(ll[0], ll[1], toStern, 180 + hdg);
+  const lr = dest(ll[0], ll[1], W_, 90 + hdg);
+  const ur = dest(lr[0], lr[1], L_, hdg);
+  const ul = dest(ur[0], ur[1], W_, 270 + hdg);
+  const rk = dest(lr[0], lr[1], L_ * 0.8, hdg);     // where the bow starts
+  const lk = dest(ll[0], ll[1], L_ * 0.8, hdg);
+  const bow = dest(ul[0], ul[1], W_ / 2, 90 + hdg);
+  return [ll, lr, rk, bow, lk];
+}
+
+// Pan only when the boat leaves the deadzone, and never while the user is
+// dragging or an earlier pan is still animating -- both produce the stutter
+// that recentring every tick causes.
+let userDragging = false;
+map.on('dragstart', () => { userDragging = true; });
+map.on('dragend',   () => { userDragging = false; });
+
+function followBoat(lat, lon) {
+  if (userDragging) return;
+  const pt = map.latLngToContainerPoint([lat, lon]);
+  const sz = map.getSize();
+  const dx = Math.abs(pt.x - sz.x / 2) / (sz.x / 2);   // 0 = centre, 1 = edge
+  const dy = Math.abs(pt.y - sz.y / 2) / (sz.y / 2);
+  if (Math.max(dx, dy) < FOLLOW_DEADZONE) return;      // still comfortable
+  map.panTo([lat, lon], {
+    animate: true, duration: FOLLOW_DURATION, easeLinearity: 0.25, noMoveStart: true
+  });
+}
+
+let last = null;                                     // newest feature
+function drawBoat() {
+  if (!last) return;
+  const [lon, lat] = last.geometry.coordinates;
+  const p = last.properties || {};
+  hull.setLatLngs(hullShape(lat, lon, p.heading, p.vessel || {}));
+}
+map.on('zoomend', drawBoat);                         // shape is zoom-dependent
+
+const $ = id => document.getElementById(id);
+let haveFix = false, lastStamp = null;
+
+function setStatus(cls, text) { $('status').className = cls; $('msg').textContent = text; }
+
+function render(f) {
+  // GeoJSON is [lon, lat]; Leaflet wants [lat, lon]. Reversed on purpose.
+  const [lon, lat] = f.geometry.coordinates;
+  last = f;
+  drawBoat();
+  trail.addLatLng([lat, lon]);
+  if (!haveFix) { map.setView([lat, lon], 16); haveFix = true; }
+  else if ($('follow').checked) { followBoat(lat, lon); }
+  const pr = f.properties || {};
+  $('lat').textContent = lat.toFixed(6) + '°';
+  $('lon').textContent = lon.toFixed(6) + '°';
+  $('hdg').textContent = (pr.heading == null) ? '—' : pr.heading.toFixed(1) + '°';
+  lastStamp = pr.stamp || null;
+}
+
+function updateAge() {
+  if (lastStamp == null) return;
+  const age = Date.now()/1000 - lastStamp;
+  $('age').textContent = age.toFixed(0) + ' s';
+  // Measured from the ROS stamp, not from the fetch -- so a dead boat link
+  // shows as stale even though S3 keeps serving the last file happily.
+  if (age > DEAD_S)       setStatus('bad',  'stale — link may be down');
+  else if (age > STALE_S) setStatus('warn', 'delayed');
+  else                    setStatus('ok',   'live');
+}
+
+async function poll() {
+  try {
+    const r = await fetch(SRC, { cache:'default' });   // no cache-buster: let
+    if (!r.ok) throw new Error('HTTP ' + r.status);    // Cache-Control do it
+    render(await r.json());
+  } catch (e) { setStatus('bad', 'no data — ' + e.message); }
+}
+
+poll();
+setInterval(poll, POLL_MS);
+setInterval(updateAge, 1000);
+</script>
+</body>
+</html>
