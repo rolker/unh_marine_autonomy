@@ -60,6 +60,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -322,6 +323,13 @@ def main():
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--force', action='store_true')
     a = ap.parse_args()
+
+    # --name becomes both a local directory under --workdir and an S3 key prefix
+    # under tiles/. Constrain it to a safe charset so a '../', an absolute path,
+    # or a slash cannot escape the workdir or rewrite an unrelated tiles/ prefix.
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', a.name):
+        ap.error('--name must start alphanumeric and contain only '
+                 '[A-Za-z0-9._-] (it is used as a path and S3 key prefix)')
 
     tiles = tile_list(tuple(a.bbox), a.zmin, a.zmax)
     per_z = {}
