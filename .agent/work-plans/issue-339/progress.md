@@ -53,3 +53,36 @@ and blocks the Boston->Shoals rebuild this work exists to enable.
   change cannot reach it; `jazzy` is green 8-for-8 and every other branch today
   passed. A re-run of the failed job passed. Worth its own issue if it recurs —
   a flaky integration test silently costs a merge cycle each time.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-22 17:06 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+
+**Branch**: feature/issue-339 at `fb5ef85` (PR #344)
+
+Works both findings from the `## Integrated Review` above.
+
+- [x] **Wholesale `load()` on every `--stage` call** — replaced with
+      `loadWindow` over the incoming source's own extent (new `sourceGeoBounds`
+      helper reads its geotransform). Each source now pays only for the tiles it
+      touches, so the pass is linear rather than O(N x total tiles).
+      **Measured on the real 13-cell corpus**: 53 tile-loads total, 44 s wall,
+      output byte-identical in tile set and coverage (L6 99.1% / L7 80.0% /
+      any-level 99.2%). GDAL wired into the `import_geotiff` CMake target, since
+      the CLI now reads a geotransform itself.
+- [x] **Adjacent string-literal concatenation in the contention warning** — now
+      explicit `<<` insertions per segment.
+
+**Regression cover**: `StagingASecondSourceMergesIntoTheSharedTile` covers the
+windowing without a new test — its two sources share a GGGS tile, so a window too
+narrow to adopt it would make the second source replace the first and fail the
+assertion. 333 tests, 0 failures (cpplint / uncrustify / cppcheck included; an
+include-order violation introduced by the new GDAL header was fixed to the house
+convention).
+
+**Deviation, recorded**: applied host-inline rather than via a dispatched
+`address-findings`. The remedy for the significant finding was chosen by the
+operator at the checkpoint (`loadWindow` over alternatives), and verifying it
+required running the real ENC corpus and comparing coverage against the previous
+run — host state a fresh-context sub-agent did not have.
