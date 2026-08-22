@@ -117,6 +117,17 @@ The projection operator is the **only** thing that differs between views:
 - **Perspective (3D):** `SSE = ε · H_px / (d · 2·tan(fov_y / 2))`
 - **Orthographic (2D top-down):** `SSE = ε / ground_metres_per_pixel`
 
+where, for the tile being tested:
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| `ε` | the tile's geometric error (D2) | metres |
+| `SSE` | screen-space error, compared against `τ` | pixels |
+| `H_px` | viewport height | pixels |
+| `d` | distance from the eye to the tile's bounding volume | metres |
+| `fov_y` | vertical field of view | radians |
+| `ground_metres_per_pixel` | ground sample distance at the tile's latitude | metres/pixel |
+
 In the orthographic case the distance term vanishes entirely. This is not a
 convenience: it is what makes one stored error and one user-facing knob serve
 both a chart view and a 3D scene. Cesium implements exactly this split, and

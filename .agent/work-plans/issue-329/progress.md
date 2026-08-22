@@ -68,7 +68,7 @@ third-repo form. Copilot R1 is stale against `dfad2368` and its concern no
 longer applies to the current head.
 
 Both new findings are Copilot R2's, and both are against the round-1
-`progress.md` entry this skill itself wrote — not against the ADR.
+`progress.md` entry the triage agent itself wrote — not against the ADR.
 
 ### Findings
 - [x] (valid, Copilot R2) The round-1 `### Findings` checkbox is still
