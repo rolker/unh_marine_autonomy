@@ -120,3 +120,82 @@ no package tests apply. Not pushed — the host performs pushes.
 ### Next step
 Re-review the fixes with a fresh-context sub-agent:
 `.agent/scripts/dispatch_subagent.sh --mode in-process --issue 327 --skill review-code`
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-22 22:29 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-327 at `adc6a0d`
+**Mode**: pre-push
+**Depth**: Deep (reason: 626 added lines in the single new doc; 200+ lines is a Deep trigger)
+**Must-fix**: 10 | **Suggestions**: 17
+**Round**: 1 | **Ship**: recommended — second review round overall (an `## Integrated Review`
+preceded it); every must-fix is a doc-internal contradiction, a false API claim, or a stated
+property the doc does not establish. All are single-location edits whose remedy is to say
+something already settled or to name an Open item. None is a new design decision, so one fix
+pass should close them — a further full review round is not warranted for a draft design doc.
+
+**Specialists**: Static Analysis (no linter profile for `.md` — content review only);
+Governance; Plan Drift (skipped, no `plan.md` for #327); Claude Adversarial ×2 (Lens A + Lens B);
+Copilot off (default); Local Adversarial skipped (Ollama at localhost:11434 unreachable, curl 52).
+**Context**: no `.agents/review-context.yaml` in this repo — review used `.agents/README.md` only.
+
+**Documentation Accuracy sweep**: every cited path, line number, and API claim was
+re-verified on this host. All correct except the matcher inventory (must-fix 3):
+`helm_manager.cpp:45`, the four launch files' respawn/`LifecycleTransition` line pairs
+(46/50, 51/56, 45/49, 56), `lifecycle_node.py:121-131`, `launch_service.py:269-272`,
+`mission_manager.py:75` `done_hover`, the `camp_interface.py` best-effort-UDP comment,
+the three tmux scripts, `ros2launch_session` (`LaunchSession`, `from_service`,
+`wait_for_*`, `shutdown`), the three `ros2launch_gui` widget files, `docs/autonomy_modes.md`,
+`core_launch.py` including udp_bridge, and all eight intra-document anchors.
+
+### Findings
+- [ ] (must-fix) Example `default_profile: awareness` contradicts the doc's three "comms-only default profile" claims; keep the settled example, reword the prose — `docs/launch_manager.md:205,17,578-579,588`
+- [ ] (must-fix) `retry_limit`/`retry_window` is bound to both ladder step 3 (group restart) and step 4 (`FAILED`); the respawn budget triggering step 3 is a third, unnamed budget (`launch`'s own `respawn_max_retries`) — regression from the round-1 fix — `docs/launch_manager.md:339-344`
+- [ ] (must-fix) `launch.events.process.process_matchers` ships three matchers, not "`matches_pid` and `matches_name` only"; `launch.events.matchers.matches_action` also exists and is a non-racy handle that narrows the spike — `docs/launch_manager.md:555-556`
+- [ ] (must-fix) `from_service()` is a `@contextlib.contextmanager` whose `finally` calls `session.shutdown()` when processes remain (`launch_session.py:277-282`) — one `with` per group tears down the whole stack; belongs in the section that already warns `shutdown()` stops everything — `docs/launch_manager.md:532-534,546-549`
+- [ ] (must-fix) `bool force` is declared on the wire and defined nowhere; safety-relevant (plausibly bypasses `FAILED` stickiness or the `RELOAD_CONFIG` running-group guard) — define or delete — `docs/launch_manager.md:453`
+- [ ] (must-fix) Single `last_request_id` ack slot vs. three mandated concurrent front ends: a `REJECTED` result and its reason are transient, and a client's "re-send until acknowledged" loop can never terminate — `docs/launch_manager.md:411-413,426-428,456-458`
+- [ ] (must-fix) Idempotency by `request_id` addresses duplication, not reordering, yet the doc claims it makes the topic safe over a link that "duplicates and reorders"; a held `STOP helm` delivered after a later `START helm` is re-executed — `docs/launch_manager.md:456-458`
+- [ ] (must-fix) Output has no channel in the control surface, while the doc promises per-process output tabs on the same topics across the link and sets tmux-scrollback parity as a regression criterion — `docs/launch_manager.md:350-358,479-483` vs `:400-454`
+- [ ] (must-fix) `zenoh` and `comms` are ordinary groups with ordinary budgets, but `FAILED` is sticky until a `CLEAR_FAILURE` that must arrive over the transport those groups provide — reintroduces "no remote control surface"; the accepted consequence covers only a manager crash — `docs/launch_manager.md:218-226,297-299,510-516`
+- [ ] (must-fix) "Convergence means the two cannot race" is not established: `autostart=True` unconditionally drives to `active` (`lifecycle_node.py:127-129`) while `target` may be `inactive`, and transient startup states are not excluded from convergence — `docs/launch_manager.md:389-392,381`
+- [ ] (suggestion) The doc's central safety claim is half-established: a lifecycle-repaired `helm_manager` is `active` with no `piloting_mode` (volatile, event-driven, created in `on_configure`) and still publishes nothing, yet reports `READY`/OK; and the open-hazard interval grades `DEGRADED`→WARN, same as `STARTING` — `docs/launch_manager.md:288-289,330-332,473-475`
+- [ ] (suggestion) Neither budget has a stated reset condition, and `CLEAR_FAILURE` leaves desired `RUNNING` so convergence restarts immediately — the acknowledgement is either ceremony or an instant re-entry to the crash loop — `docs/launch_manager.md:153-156,297-299,438-439`
+- [ ] (suggestion) A clean exit with desired `RUNNING` (and `restart: never`) has no representable state: prose says `READY`→`STOPPED` but the table defines `STOPPED` as "desired `STOPPED`" — and the ladder never references the `restart` enum — `docs/launch_manager.md:175,189-192,285`
+- [ ] (suggestion) State diagram omits `STARTING`→`FAILED` (ready-timeout exhausting `start_attempts`) and the retry/backoff self-loop — `docs/launch_manager.md:301-319`
+- [ ] (suggestion) Dependents of a group leaving `READY`: `BLOCKED` and `DEGRADED` definitions collide, and `blocked_by` is populated only when `BLOCKED`, so the named cause has nowhere to go — `docs/launch_manager.md:285-295,346-348,436`
+- [ ] (suggestion) `SUPERSEDED` appears once, in an enum comment, and is defined nowhere — `docs/launch_manager.md:427`
+- [ ] (suggestion) `lifecycle: {delegate: ...}` is not exempted from the escalation ladder; Nav2's own manager deliberately deactivates nodes, which reads as drift and would fight the delegate. `READY`'s "lifecycle at target" is also undefined when there is no `target` — `docs/launch_manager.md:377-382` vs `:288,328-348`
+- [ ] (suggestion) `START [helm]` with `core` stopped has no stated behavior (pull in dependencies / reject / block forever); the load-time `requires` rule has no runtime counterpart — `docs/launch_manager.md:198,445-451`
+- [ ] (suggestion) `SET_LIFECYCLE`/`lifecycle_target` appear only in the message sketch; unstated whether they mutate the configured target or are a one-shot the convergence loop immediately undoes — `docs/launch_manager.md:448-451`
+- [ ] (suggestion) Declared-argument keys (`type`, `pattern`, `default`) never appear in a schema table, and the rule demands "a range or set" while the example shows a regex and an unconstrained bool — `docs/launch_manager.md:258-269`
+- [ ] (suggestion) `exec:`, `environment:`, and `log_dir` are unconstrained and re-read by `RELOAD_CONFIG`; one sentence naming the config file as the trust boundary and `~/command` as unauthenticated-by-acceptance turns a silent hole into a knowing one — `docs/launch_manager.md:258-262,460-462`
+- [ ] (suggestion) `output_ring_bytes` per-group vs. two retained buffers (first + latest) — per buffer or total? Relationship to `log_dir` (memory / disk / both) unstated — `docs/launch_manager.md:146,350-354`
+- [ ] (suggestion) `ros2launch_manager_msgs` is said to depend on `std_msgs`, which nothing in either message sketch uses — `docs/launch_manager.md:415-416`
+- [ ] (suggestion) The example config's `file:` values are post-refactor names that do not exist yet; a pointer to §Assumed launch-file refactor would stop a reader treating it as runnable — `docs/launch_manager.md:216-256`
+- [ ] (suggestion) `LaunchService.run()` defaults to `shutdown_when_idle=True`; an all-`STOPPED` manager's shared service would exit — worth one line pinning it False — `docs/launch_manager.md:528-534`
+- [ ] (suggestion) Diagnostics mapping omits `STOPPED` and `STOPPING`; since `STOPPED` is "the resting state, not a failure" it should be stated OK rather than guessed — `docs/launch_manager.md:474-475`
+- [ ] (suggestion) The non-default-`restart` justification rule is demonstrated nowhere: every example group sets the default `on-failure`, four with redundant justification comments — `docs/launch_manager.md:184-188,220-250`
+
+### Governance
+Principles — Safety First: **Concern** (must-fix 8, 9, 10 and the helm-authority suggestion are
+all safety-property claims the doc does not establish). Modularity/Decoupling: **Pass** (underlay
+placement, own interfaces package, no `marine_interfaces` dependency). Hardware Agnosticism:
+**Pass** (nothing marine in the schema). Simulation-First: **N/A** (no behavior).
+ADRs — none triggered; this is a design doc, not an ADR, and the settled-design comment records
+that an ADR is still owed. Worth one line in the doc saying so, so a reader does not read
+"Proposed" as the decision record.
+Consequences — `.agents/README.md`'s `docs/` tree listing does not include this file, but it is
+already stale for four other docs (`sonar_ecosystem.md`, `sonar_reference.md`,
+`survey_index_schema.md`, `decisions/`). Pre-existing; fixing it here would make the PR
+non-atomic. Flagged as a **Watch**, not a required update.
+
+### Settled-design fidelity
+No finding proposes a different design decision. Checked against issue #327 comment 5375366186:
+the doc drops nothing settled there, and the example config is reproduced faithfully. Two
+must-fixes exist precisely *because* the doc's prose drifted from that example (must-fix 1) or
+over-committed beyond it (must-fix 2, introduced by the round-1 fix `fbe594b`) — both should be
+resolved by changing the prose, not the settled example.
