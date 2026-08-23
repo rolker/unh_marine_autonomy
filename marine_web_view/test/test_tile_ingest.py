@@ -129,6 +129,10 @@ class _Ingest:
         self.band_name = 'depth'
         self._tiles = {}
         self._applied = {}
+        self._touch = {}
+        self._touch_seq = 0
+        self._cache_bytes = 0
+        self.cache_budget_bytes = 0
         self._dirty = set()
         self._lock = threading.Lock()
         self._reconciler = TileCatalogReconciler()
@@ -139,6 +143,7 @@ class _Ingest:
         """Return the collecting logger."""
         return self._logger
 
+    _evict_if_over_budget = CoverageRenderer._evict_if_over_budget
     _tile_is_sane = CoverageRenderer._tile_is_sane
     _on_tile = CoverageRenderer._on_tile
     _mark_dirty = CoverageRenderer._mark_dirty
@@ -281,3 +286,62 @@ def test_a_window_that_does_not_fit_leaves_no_empty_tile():
         'an all-NaN entry renders as "no coverage" and blocks the '
         're-request that would fix it')
     assert node._failures == 1
+
+
+def test_the_cache_is_bounded_by_its_budget():
+    """An unbounded cache is a survey-shaped memory leak."""
+    node = _Ingest()
+    # Each 4x4 float32 tile is 64 bytes; hold two.
+    node.cache_budget_bytes = 128
+    for column in range(5):
+        node._on_tile(_Tile(col=13988 + column, seconds=100 + column))
+    assert len(node._tiles) == 2, node._tiles.keys()
+    assert node._cache_bytes <= node.cache_budget_bytes
+
+
+def test_eviction_takes_the_least_recently_updated_tile():
+    """LRU, and possession goes with it so the tile is re-requested."""
+    node = _Ingest()
+    node.cache_budget_bytes = 128
+    first, second, third = [(10, 17801, 13988 + n) for n in range(3)]
+    node._on_tile(_Tile(col=13988, seconds=100))
+    node._on_tile(_Tile(col=13989, seconds=101))
+    node._on_tile(_Tile(col=13988, seconds=102))    # refresh the first
+    node._on_tile(_Tile(col=13990, seconds=103))
+
+    assert second not in node._tiles, 'the stalest tile must go first'
+    assert first in node._tiles and third in node._tiles
+    assert not node._reconciler.has(second), (
+        'possession outlived the tile: nothing will re-request it, and a '
+        'later sub-window would rebuild it from NaN')
+    assert node._reconciler.has(first)
+
+
+def test_eviction_does_not_blank_the_published_tile():
+    """An evicted tile must not be marked dirty and re-rendered empty."""
+    node = _Ingest()
+    node.cache_budget_bytes = 128
+    node._on_tile(_Tile(col=13988, seconds=100))
+    node._on_tile(_Tile(col=13989, seconds=101))
+    node._dirty.clear()
+    node._on_tile(_Tile(col=13990, seconds=102))
+    evicted_tiles = gggs_tiles((10, 17801, 13988), node.zoom)
+    assert not (evicted_tiles & node._dirty), (
+        'the evicted tile was marked dirty, which would re-render it as '
+        'no-coverage and blank a PNG that is still correct')
+
+
+def gggs_tiles(index, zoom):
+    """Return the slippy tiles a GGGS grid covers."""
+    from marine_web_view import gggs
+    south, west, north, east = gggs.grid_bounds(*index)
+    return set(gggs.tiles_covering(zoom, south, west, north, east))
+
+
+def test_a_zero_budget_means_unbounded():
+    """The documented opt-out must actually opt out."""
+    node = _Ingest()
+    node.cache_budget_bytes = 0
+    for column in range(5):
+        node._on_tile(_Tile(col=13988 + column, seconds=100 + column))
+    assert len(node._tiles) == 5

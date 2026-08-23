@@ -179,6 +179,7 @@ the catalog's back.
 | `bucket` / `prefix` | `unh-ccom-p11-live` / `live/coverage` | |
 | `profile` | `p11-renderer` | scoped to `s3:PutObject` on `live/*` |
 | `cache_control` | `60` | `max-age` stamped on each PNG |
+| `cache_budget_bytes` | `536870912` | resident tile-cache ceiling (512 MiB); `0` disables the bound |
 | `map_frame` | `ben/map` | frame the band's z values are expressed in |
 | `chart_datum_frame` | `ben/chart_datum` | vertical reference for colour; empty disables the correction |
 | `tide_invalidate_threshold` | `0.15` | metres of tide change that force a re-render |
@@ -220,6 +221,21 @@ Until the transform is available the renderer **does not render**: colouring
 from an unreferenced height would be wrong in a way that looks right. Set
 `chart_datum_frame` to the empty string to say the band is already referenced
 and skip the correction entirely.
+
+### Cache budget
+
+A GGGS grid is 960 × 960 float32 — 3.69 MB, about 19.6 MB per square
+kilometre surveyed — so an unbounded cache grows for as long as the survey
+does. `cache_budget_bytes` (512 MiB, the figure CAMP shipped for the same
+cache) bounds it, evicting least-recently-updated tiles.
+
+Eviction drops possession with the tile. Unlike CAMP's layer this consumer
+has no disk to fall back on, so keeping possession of a tile it no longer
+holds would let a later sub-window patch rebuild it from NaN and blank the
+coverage already published for it; dropping it means the next catalog round
+re-requests the tile in full. The already-published PNG stands until then, so
+an evicted tile is not marked dirty and the display does not flicker. Being
+over budget is abnormal and is warned about.
 
 ### Publishing and un-publishing
 

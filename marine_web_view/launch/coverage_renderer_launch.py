@@ -61,6 +61,10 @@ def generate_launch_description():
         DeclareLaunchArgument('profile', default_value='p11-renderer'),
         DeclareLaunchArgument('cache_control', default_value='60'),
         DeclareLaunchArgument(
+            'cache_budget_bytes', default_value=str(512 * 1024 * 1024),
+            description='Resident GGGS tile cache ceiling; 0 disables the '
+                        'bound.'),
+        DeclareLaunchArgument(
             'map_frame', default_value='ben/map',
             description='Frame the depth band z values are expressed in.'),
         DeclareLaunchArgument(
@@ -78,7 +82,8 @@ def generate_launch_description():
 
     names = ('coverage_namespace', 'band', 'zoom', 'render_interval',
              'request_interval', 'bucket', 'prefix', 'profile',
-             'cache_control', 'dry_run', 'local_dir', 'map_frame',
+             'cache_control', 'cache_budget_bytes', 'dry_run', 'local_dir',
+             'map_frame',
              'chart_datum_frame', 'tide_invalidate_threshold')
 
     node = Node(

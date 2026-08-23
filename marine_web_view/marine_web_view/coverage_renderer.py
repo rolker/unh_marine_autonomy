@@ -193,6 +193,7 @@ class CoverageRenderer(Node):
         self.declare_parameter('dry_run', False)
         self.declare_parameter('local_dir', '/tmp/coverage')
         self.declare_parameter('cache_control', 60)
+        self.declare_parameter('cache_budget_bytes', 512 * 1024 * 1024)
         self.declare_parameter('map_frame', DEFAULT_MAP_FRAME)
         self.declare_parameter('chart_datum_frame', DEFAULT_CHART_DATUM_FRAME)
         self.declare_parameter('tide_invalidate_threshold',
@@ -206,6 +207,7 @@ class CoverageRenderer(Node):
         self.dry_run = bool(self._param('dry_run'))
         self.local_dir = self._param('local_dir')
         self.cache_control = int(self._param('cache_control'))
+        self.cache_budget_bytes = int(self._param('cache_budget_bytes'))
         self.map_frame = str(self._param('map_frame')).strip()
         self.chart_datum_frame = str(self._param('chart_datum_frame')).strip()
         self.tide_invalidate_threshold = float(
@@ -225,6 +227,9 @@ class CoverageRenderer(Node):
         self._reconciler = TileCatalogReconciler()
         self._tiles = {}          # index -> full-tile float array
         self._applied = {}        # index -> newest patch version applied
+        self._touch = {}          # index -> LRU sequence number
+        self._touch_seq = 0
+        self._cache_bytes = 0
         self._dirty = set()       # slippy tiles needing a re-render
         self._lock = threading.Lock()
         self._colours = colour_table()
@@ -296,7 +301,9 @@ class CoverageRenderer(Node):
                 self._reconciler.drop(index)
                 removed = self._tiles.pop(index, None)
                 self._applied.pop(index, None)
+                self._touch.pop(index, None)
                 if removed is not None:
+                    self._cache_bytes -= removed.nbytes
                     self._mark_dirty(index)
             self._pending_request = to_request
         if to_request or to_prune:
@@ -401,6 +408,7 @@ class CoverageRenderer(Node):
             if held is None:
                 held = tile_util.new_tile(msg.width, msg.height)
                 self._tiles[index] = held
+                self._cache_bytes += held.nbytes
             try:
                 tile_util.apply_window(
                     held, values, msg.window_row, msg.window_col)
@@ -412,12 +420,56 @@ class CoverageRenderer(Node):
                 # behind, which renders as "no coverage here" and blocks the
                 # re-request that would fix it. Drop it instead.
                 if not numpy.isfinite(self._tiles[index]).any():
-                    del self._tiles[index]
+                    self._cache_bytes -= self._tiles.pop(index).nbytes
                 return
             self._applied[index] = version
+            self._touch_seq += 1
+            self._touch[index] = self._touch_seq
             if complete:
                 self._reconciler.mark_have(index, version)
             self._mark_dirty(index)
+            self._evict_if_over_budget()
+
+    def _evict_if_over_budget(self):
+        """Drop least-recently-updated tiles until the cache fits its budget.
+
+        Call with the lock held. A GGGS grid is 960 x 960 float32 -- 3.69 MB,
+        about 19.6 MB per square kilometre surveyed -- so an unbounded cache
+        is a slow memory leak with a survey-shaped growth curve. CAMP shipped
+        a 512 MiB budget for exactly this cache.
+
+        Possession is dropped along with the tile, so the next catalog round
+        re-requests it: this consumer, unlike CAMP's, has no disk to fall back
+        on, and keeping possession of a tile we no longer hold would let a
+        later sub-window patch rebuild it from NaN and blank the coverage
+        already published for it. The already-published PNG stands until then,
+        so the display does not flicker -- an evicted tile is not marked
+        dirty. Being over budget at all is abnormal, hence the warning.
+        """
+        if self.cache_budget_bytes <= 0 or not self._tiles:
+            return
+        if self._cache_bytes <= self.cache_budget_bytes:
+            return
+        order = sorted(self._touch.items(), key=lambda item: item[1])
+        evicted = 0
+        for index, _ in order:
+            if self._cache_bytes <= self.cache_budget_bytes:
+                break
+            array = self._tiles.pop(index, None)
+            if array is not None:
+                self._cache_bytes -= array.nbytes
+            self._touch.pop(index, None)
+            self._applied.pop(index, None)
+            self._reconciler.drop(index)
+            evicted += 1
+        if evicted:
+            self.get_logger().warn(
+                'cache over its {} MiB budget: evicted {} tile(s), {} left. '
+                'They will be re-requested; raise cache_budget_bytes or '
+                'render at a coarser level if this repeats.'.format(
+                    self.cache_budget_bytes // (1024 * 1024), evicted,
+                    len(self._tiles)),
+                throttle_duration_sec=30.0)
 
     def _mark_dirty(self, index):
         """Mark every slippy tile that overlaps a GGGS tile for re-render.
