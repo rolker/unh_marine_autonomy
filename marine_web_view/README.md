@@ -185,7 +185,7 @@ the catalog's back.
 | `request_interval` | `5.0` | seconds between `TileRequest` publications |
 | `bucket` / `prefix` | `unh-ccom-p11-live` / `live/coverage` | |
 | `profile` | `p11-renderer` | scoped to `s3:PutObject` on `live/*` |
-| `cache_control` | `60` | `max-age` stamped on each PNG |
+| `cache_control` | `20` | `max-age` stamped on each object; matched to `render_interval` so a viewer does not hold a tile past its replacement |
 | `cache_budget_bytes` | `536870912` | resident tile-cache ceiling (512 MiB); `0` disables the bound |
 | `max_requests_per_message` | `256` | tiles asked for per `TileRequest`; the rest wait for the next interval |
 | `map_frame` | `ben/map` | frame the band's z values are expressed in |

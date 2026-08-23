@@ -151,6 +151,18 @@ def empty_png():
     return _EMPTY_PNG
 
 
+def _safe_prefix(prefix):
+    """Return a bucket/directory prefix with no traversal in it.
+
+    In dry-run the prefix is joined onto a local directory that is then
+    served, so `../..` in a parameter escapes it. Empty segments and `.` are
+    dropped too, so the key stays the same shape in the bucket and on disk.
+    """
+    parts = [part for part in str(prefix).split('/')
+             if part not in ('', '.', '..')]
+    return '/'.join(parts)
+
+
 def ramp_colour(fraction):
     """Return an (r, g, b) tuple; fraction 0 is deepest, 1 the surface."""
     position = max(0.0, min(1.0, fraction)) * (len(RAMP) - 1)
@@ -193,7 +205,9 @@ class CoverageRenderer(Node):
         self.declare_parameter('request_interval', 5.0)
         self.declare_parameter('dry_run', False)
         self.declare_parameter('local_dir', '/tmp/coverage')
-        self.declare_parameter('cache_control', 60)
+        # Matched to render_interval by default: a tile held longer than
+        # the interval that replaces it is stale for no reason.
+        self.declare_parameter('cache_control', 20)
         self.declare_parameter('cache_budget_bytes', 512 * 1024 * 1024)
         self.declare_parameter('max_requests_per_message', 256)
         self.declare_parameter('map_frame', DEFAULT_MAP_FRAME)
@@ -204,11 +218,26 @@ class CoverageRenderer(Node):
         self.band_name = self._param('band')
         self.zoom = int(self._param('zoom'))
         self.bucket = self._param('bucket')
-        self.prefix = str(self._param('prefix')).strip('/')
+        self.prefix = _safe_prefix(str(self._param('prefix')))
         self.profile = self._param('profile')
         self.dry_run = bool(self._param('dry_run'))
         self.local_dir = self._param('local_dir')
         self.cache_control = int(self._param('cache_control'))
+        # max-age is what makes a viewer come back for a new tile, so it has
+        # to be at most the interval at which new tiles appear: at the shipped
+        # 60 s against a 20 s render the display was up to a minute stale for
+        # no reason. Zero or negative is not a valid max-age at all.
+        render_interval = float(self._param('render_interval'))
+        if self.cache_control < 1:
+            self.get_logger().warn(
+                'cache_control {} is not a valid max-age; using {}'.format(
+                    self.cache_control, int(max(1.0, render_interval))))
+            self.cache_control = int(max(1.0, render_interval))
+        elif self.cache_control > render_interval:
+            self.get_logger().warn(
+                'cache_control {} s exceeds render_interval {:.0f} s: '
+                'viewers will hold a tile past its replacement'.format(
+                    self.cache_control, render_interval))
         self.cache_budget_bytes = int(self._param('cache_budget_bytes'))
         self.max_requests_per_message = max(
             1, int(self._param('max_requests_per_message')))
@@ -846,18 +875,46 @@ class CoverageRenderer(Node):
                 'rendered {} tile(s) at z{} ({} total, {} tiles cached)'.format(
                     published, self.zoom, self._rendered, len(self._tiles)))
 
+    def _write_local(self, payload, key):
+        """Write one object under local_dir; return True on success.
+
+        Atomic, because the preview directory is served straight off disk by
+        a plain http.server that a viewer polls: it must never read a
+        half-written PNG. mkstemp creates 0600, which the sibling artifacts
+        are not and which a static server may refuse to serve, so the mode is
+        set explicitly. A failed write removes its temp file rather than
+        leaving it in a directory that is being served.
+        """
+        path = os.path.realpath(os.path.join(self.local_dir, key))
+        root = os.path.realpath(self.local_dir)
+        if not (path == root or path.startswith(root + os.sep)):
+            # Belt and braces: the prefix is validated at startup, but a
+            # traversal here would write outside the preview directory.
+            self.get_logger().error(
+                'refusing to write {} outside {}'.format(path, root))
+            return False
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        handle, temporary = tempfile.mkstemp(dir=os.path.dirname(path))
+        try:
+            with os.fdopen(handle, 'wb') as output:
+                output.write(payload)
+            os.chmod(temporary, 0o644)
+            os.replace(temporary, path)
+        except OSError as error:
+            self._failures += 1
+            self.get_logger().error(
+                'writing {} failed: {}'.format(path, error))
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            return False
+        return True
+
     def _publish(self, payload, key, content_type='image/png'):
         """Write one object locally or to S3; return True on success."""
         if self.dry_run:
-            path = os.path.join(self.local_dir, key)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            # Atomic: a viewer polling the directory must never read a
-            # half-written PNG.
-            handle, temporary = tempfile.mkstemp(dir=os.path.dirname(path))
-            with os.fdopen(handle, 'wb') as output:
-                output.write(payload)
-            os.replace(temporary, path)
-            return True
+            return self._write_local(payload, key)
 
         command = [
             'aws', 's3', 'cp', '-', 's3://{}/{}'.format(self.bucket, key),

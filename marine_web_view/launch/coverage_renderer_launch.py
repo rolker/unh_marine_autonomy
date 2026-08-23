@@ -59,7 +59,7 @@ def generate_launch_description():
         DeclareLaunchArgument('bucket', default_value='unh-ccom-p11-live'),
         DeclareLaunchArgument('prefix', default_value='live/coverage'),
         DeclareLaunchArgument('profile', default_value='p11-renderer'),
-        DeclareLaunchArgument('cache_control', default_value='60'),
+        DeclareLaunchArgument('cache_control', default_value='20'),
         DeclareLaunchArgument(
             'max_requests_per_message', default_value='256',
             description='Tiles asked for per TileRequest; the rest are '
