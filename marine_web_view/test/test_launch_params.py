@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+
+# Copyright 2026 Roland Arsenault
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+#    * Redistributions of source code must retain the above copyright
+#      notice, this list of conditions and the following disclaimer.
+#
+#    * Redistributions in binary form must reproduce the above copyright
+#      notice, this list of conditions and the following disclaimer in the
+#      documentation and/or other materials provided with the distribution.
+#
+#    * Neither the name of the Roland Arsenault nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+"""Guard that every node parameter is reachable from its launch file.
+
+A node can declare a parameter and its launch file can quietly not forward
+it: nothing errors, the parameter silently keeps its default, and the feature
+appears broken. That is exactly what happened in #341 -- the launch file
+declared 8 of state_renderer's 20 parameters while the README documented
+passing one of the missing ones, so the documented preview never rendered a
+trail and nothing said why.
+
+Checking once is not enough, because the drift reappears the moment a
+parameter is added. This pins it.
+"""
+
+import os
+import re
+
+PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# node module -> launch file that is expected to expose it
+PAIRS = (
+    ('state_renderer.py', 'state_renderer_launch.py'),
+    ('coverage_renderer.py', 'coverage_renderer_launch.py'),
+)
+
+
+def _read(*parts):
+    """Return the text of a file under the package root."""
+    with open(os.path.join(PACKAGE_ROOT, *parts)) as handle:
+        return handle.read()
+
+
+def _node_parameters(module):
+    """Return the parameter names a node declares."""
+    return set(re.findall(r"declare_parameter\(\s*'([a-z_0-9]+)'",
+                          _read('marine_web_view', module)))
+
+
+def _launch_arguments(launch_file):
+    """Return the launch arguments a launch file declares."""
+    return set(re.findall(r"DeclareLaunchArgument\(\s*'([a-z_0-9]+)'",
+                          _read('launch', launch_file)))
+
+
+def test_launch_files_expose_every_node_parameter():
+    """Each launch file must declare an argument per node parameter."""
+    for module, launch_file in PAIRS:
+        declared = _node_parameters(module)
+        exposed = _launch_arguments(launch_file)
+        missing = declared - exposed
+        assert not missing, (
+            '{} declares {} but {} does not expose it -- passing it on the '
+            'command line would be silently ignored'
+            .format(module, sorted(missing), launch_file))
+
+
+def test_launch_files_do_not_invent_parameters():
+    """A launch argument with no matching node parameter is dead config."""
+    for module, launch_file in PAIRS:
+        declared = _node_parameters(module)
+        exposed = _launch_arguments(launch_file)
+        extra = exposed - declared
+        assert not extra, (
+            '{} exposes {} which {} does not declare'
+            .format(launch_file, sorted(extra), module))
+
+
+def test_nodes_declare_parameters_at_all():
+    """Guard the guard: a regex that matches nothing would pass vacuously."""
+    for module, _ in PAIRS:
+        assert len(_node_parameters(module)) >= 5, module
