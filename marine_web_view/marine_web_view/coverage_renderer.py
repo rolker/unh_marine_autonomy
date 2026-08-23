@@ -172,6 +172,7 @@ class CoverageRenderer(Node):
 
         self._reconciler = TileCatalogReconciler()
         self._tiles = {}          # index -> full-tile float array
+        self._applied = {}        # index -> newest patch version applied
         self._dirty = set()       # slippy tiles needing a re-render
         self._lock = threading.Lock()
         self._colours = colour_table()
@@ -224,6 +225,7 @@ class CoverageRenderer(Node):
             for index in to_prune:
                 self._reconciler.drop(index)
                 removed = self._tiles.pop(index, None)
+                self._applied.pop(index, None)
                 if removed is not None:
                     self._mark_dirty(index)
             self._pending_request = to_request
@@ -287,7 +289,31 @@ class CoverageRenderer(Node):
             return
 
         version = tile_util.time_to_nanoseconds(msg.header.stamp)
+        # Possession is what the catalog reconciles against, and it means "I
+        # hold this tile at this version" -- which a dirty sub-window does not
+        # establish. Recording it for a partial patch is what silently defeats
+        # the healing this protocol is built on: lose one best-effort window,
+        # receive the next, and the cache now claims the catalog's newest
+        # version while holding a hole that nothing will ever re-request. Only
+        # a whole-tile message advances possession; a partial one updates the
+        # pixels and leaves the catalog free to re-serve the tile in full.
+        # (The producer serves requests as whole tiles -- quantize_tile.cpp:98
+        # sets the window to the full grid -- so this costs nothing today and
+        # keeps the guarantee if sub-window pushes ever arrive.)
+        complete = (msg.window_row == 0 and msg.window_col == 0
+                    and msg.window_width == msg.width
+                    and msg.window_height == msg.height)
         with self._lock:
+            # Newest-wins, BEFORE the patch lands. Checking only the
+            # reconciler after the fact let a reordered stale window overwrite
+            # fresh cells while the advertised version stayed newer, so the
+            # damage was invisible to the catalog and never healed.
+            applied = self._applied.get(index)
+            if applied is not None and version < applied:
+                self.get_logger().debug(
+                    'dropping stale patch for {} ({} < {})'.format(
+                        index, version, applied))
+                return
             held = self._tiles.get(index)
             if held is None:
                 held = tile_util.new_tile(msg.width, msg.height)
@@ -299,8 +325,15 @@ class CoverageRenderer(Node):
                 self._failures += 1
                 self.get_logger().warn(
                     'window does not fit {}: {}'.format(index, error))
+                # A first patch that did not fit leaves an all-NaN entry
+                # behind, which renders as "no coverage here" and blocks the
+                # re-request that would fix it. Drop it instead.
+                if not numpy.isfinite(self._tiles[index]).any():
+                    del self._tiles[index]
                 return
-            self._reconciler.mark_have(index, version)
+            self._applied[index] = version
+            if complete:
+                self._reconciler.mark_have(index, version)
             self._mark_dirty(index)
 
     def _mark_dirty(self, index):
