@@ -17,10 +17,14 @@
   <depend>marine_interfaces</depend>
   <depend>sensor_msgs</depend>
   <depend>geographic_msgs</depend>
+  <!-- coverage_renderer reads the chart-datum offset (the tide) from TF. -->
+  <depend>tf2_ros</depend>
   <!-- Runtime deps of coverage_renderer: numpy for band decode and
        sampling, Pillow for PNG encoding. rosdep keys, not pip. -->
   <depend>python3-numpy</depend>
   <depend>python3-pil</depend>
+  <!-- Both renderers shell out to the AWS CLI to write objects. -->
+  <exec_depend>awscli</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

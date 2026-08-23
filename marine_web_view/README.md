@@ -156,6 +156,17 @@ an explicit branch, so `test_reconciler.py` pins it.
 Live push is **best-effort**. A lost or malformed patch is dropped and healed
 by the next catalog round, which re-requests the tile in full.
 
+That healing only works if *possession* means what it says. A dirty sub-window
+updates the pixels but does **not** record possession of the tile: recording it
+would let a single lost window become permanent, because the cache would then
+claim the catalog's newest version while holding a hole nothing re-requests.
+Only a whole-tile message advances the held version. The producer serves every
+`TileRequest` as a whole tile (`quantize_tile.cpp` sets the window to the full
+grid), so this costs nothing today and keeps the guarantee if sub-window pushes
+ever arrive. Ordering is enforced *before* the patch lands, not after: a
+reordered stale window is dropped rather than overwriting fresh cells behind
+the catalog's back.
+
 ### Parameters
 
 | Parameter | Default | Notes |
@@ -168,6 +179,9 @@ by the next catalog round, which re-requests the tile in full.
 | `bucket` / `prefix` | `unh-ccom-p11-live` / `live/coverage` | |
 | `profile` | `p11-renderer` | scoped to `s3:PutObject` on `live/*` |
 | `cache_control` | `60` | `max-age` stamped on each PNG |
+| `map_frame` | `ben/map` | frame the band's z values are expressed in |
+| `chart_datum_frame` | `ben/chart_datum` | vertical reference for colour; empty disables the correction |
+| `tide_invalidate_threshold` | `0.15` | metres of tide change that force a re-render |
 | `dry_run` / `local_dir` | `false` / `/tmp/coverage` | write PNGs locally instead of S3 |
 
 Every parameter is exposed by the launch file, and `test_launch_params.py`
@@ -185,6 +199,27 @@ hardcoding int16 would mis-decode three of the four into plausible garbage.
 `nodata` is a **raw sentinel compared before dequantization**. -32768 raw at
 scale 0.01 dequantizes to -327.68, a perfectly plausible depth: comparing
 afterwards would render "no data" as very deep water.
+
+### Vertical reference
+
+The `depth` band does **not** carry depth below chart datum. It carries z in
+the **map frame**, which is ellipsoidal. Over the Piscataqua that reads about
+-36 to -57 m: every value saturates a 0-40 m ramp, and essentially all
+coverage paints the deepest colour — which reads as a plausible-looking deep
+channel rather than as a bug. Referenced to chart datum the same water is 8 to
+29 m, on scale and agreeing with the basemap.
+
+The offset is the **tide**, so it moves through a survey and cannot be a
+constant. It is read from `map_frame` → `chart_datum_frame` in TF, the same
+way `s57_layer.cpp` reads its own tide offset, and re-read on every render
+pass; a change larger than `tide_invalidate_threshold` re-renders the whole
+mosaic so the colours track the tide, while smaller TF jitter does not
+re-upload it. Depth below datum is `datum_z - value`.
+
+Until the transform is available the renderer **does not render**: colouring
+from an unreferenced height would be wrong in a way that looks right. Set
+`chart_datum_frame` to the empty string to say the band is already referenced
+and skip the correction entirely.
 
 ### Rendering
 

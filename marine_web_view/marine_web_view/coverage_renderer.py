@@ -53,6 +53,9 @@ Colour follows #342's basemap ramp over a fixed 0-40 m scale, so coverage and
 bathymetry read on one scale, with a small deliberate offset so the layers stay
 distinguishable where they overlap. See the plan's ADR-0001 note: this is an
 interim deviation until marine_colormap gains a Python binding (#137).
+
+The band's values are z in the MAP frame, not depth below chart datum, so they
+are referenced through TF before they are coloured -- see _update_datum_offset.
 """
 
 import io
@@ -80,6 +83,9 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy
 from rclpy.qos import QoSProfile
 from rclpy.qos import QoSReliabilityPolicy
+from rclpy.time import Time
+
+import tf2_ros
 
 # Depth ramp shared with the basemap (#342), extracted from CCOM's published
 # BTY_4m_HighRes_BlueGreen_DRA service. Deep first, surface last.
@@ -92,6 +98,18 @@ RAMP = (
     (174, 234, 186), (168, 232, 184), (182, 237, 190), (197, 243, 199),
 )
 MAX_DEPTH = 40.0
+
+# Default vertical-reference frames. The band carries z in the MAP frame --
+# ellipsoidal, and nothing like a depth below chart datum -- so it has to be
+# referenced before it can be coloured. See _update_datum_offset.
+DEFAULT_MAP_FRAME = 'ben/map'
+DEFAULT_CHART_DATUM_FRAME = 'ben/chart_datum'
+
+# Metres of tide change that force a re-render. Same lever, same reasoning as
+# s57_layer's tide_invalidate_threshold: small enough that the colours track
+# the tide, large enough that a centimetre of TF jitter does not re-render and
+# re-upload the whole mosaic. One 8-bit step of the 0-40 m ramp is 0.16 m.
+DEFAULT_TIDE_INVALIDATE_THRESHOLD = 0.15
 
 # Coverage is composited over the basemap, so an identical palette would make
 # it invisible. A small offset keeps the two comparable but distinguishable.
@@ -160,6 +178,10 @@ class CoverageRenderer(Node):
         self.declare_parameter('dry_run', False)
         self.declare_parameter('local_dir', '/tmp/coverage')
         self.declare_parameter('cache_control', 60)
+        self.declare_parameter('map_frame', DEFAULT_MAP_FRAME)
+        self.declare_parameter('chart_datum_frame', DEFAULT_CHART_DATUM_FRAME)
+        self.declare_parameter('tide_invalidate_threshold',
+                               DEFAULT_TIDE_INVALIDATE_THRESHOLD)
 
         self.band_name = self._param('band')
         self.zoom = int(self._param('zoom'))
@@ -169,6 +191,21 @@ class CoverageRenderer(Node):
         self.dry_run = bool(self._param('dry_run'))
         self.local_dir = self._param('local_dir')
         self.cache_control = int(self._param('cache_control'))
+        self.map_frame = str(self._param('map_frame')).strip()
+        self.chart_datum_frame = str(self._param('chart_datum_frame')).strip()
+        self.tide_invalidate_threshold = float(
+            self._param('tide_invalidate_threshold'))
+        # A ROS parameter is external input. Negative or non-finite would make
+        # every TF jitter exceed the threshold and re-render the whole mosaic
+        # on every pass -- the same validation s57_layer applies to its own
+        # copy of this lever.
+        if not (self.tide_invalidate_threshold >= 0.0
+                and self.tide_invalidate_threshold < float('inf')):
+            self.get_logger().warn(
+                'invalid tide_invalidate_threshold {}; using {} m'.format(
+                    self.tide_invalidate_threshold,
+                    DEFAULT_TIDE_INVALIDATE_THRESHOLD))
+            self.tide_invalidate_threshold = DEFAULT_TIDE_INVALIDATE_THRESHOLD
 
         self._reconciler = TileCatalogReconciler()
         self._tiles = {}          # index -> full-tile float array
@@ -179,6 +216,23 @@ class CoverageRenderer(Node):
         self._pending_request = []
         self._rendered = 0
         self._failures = 0
+        self._datum_offset = None
+
+        # Only stand up TF when the correction is actually configured: an
+        # empty chart_datum_frame is the documented way to say "the band is
+        # already referenced", and it must not then warn about a TF nobody
+        # publishes.
+        self._tf_buffer = None
+        self._tf_listener = None
+        if self.chart_datum_frame and self.map_frame:
+            self._tf_buffer = tf2_ros.Buffer()
+            self._tf_listener = tf2_ros.TransformListener(
+                self._tf_buffer, self, spin_thread=False)
+        else:
+            self._datum_offset = 0.0
+            self.get_logger().warn(
+                'chart-datum correction disabled: the depth band will be '
+                'coloured as if it were already referenced to chart datum')
 
         namespace = str(self._param('coverage_namespace')).rstrip('/')
         latched = QoSProfile(depth=1)
@@ -404,17 +458,65 @@ class CoverageRenderer(Node):
                 out[row_index, inside] = array[cell_row, cell_cols]
         return out
 
-    def _colourise(self, values):
-        """Return RGBA bytes for a sampled tile; NaN becomes transparent."""
+    def _update_datum_offset(self):
+        """Refresh the chart-datum offset from TF; invalidate on a real move.
+
+        The `depth` band does NOT carry depth below chart datum. It carries z
+        in the MAP frame, which is ellipsoidal: over the Piscataqua that reads
+        -36 to -57 m, which saturates a 0-40 m ramp and paints essentially all
+        coverage the deepest colour. Referenced to chart datum the same water
+        is 8 to 29 m, on scale and agreeing with the basemap. The offset is the
+        tide, so it MOVES -- it cannot be a constant, and it is read from
+        `map_frame -> chart_datum_frame` exactly as `s57_layer.cpp` reads its
+        own tide offset, with the same invalidate-past-a-threshold treatment so
+        a moving tide re-renders and TF jitter does not.
+
+        Returns True when a usable offset is held.
+        """
+        if self._tf_buffer is None:
+            return True                      # correction disabled by config
+        try:
+            transform = self._tf_buffer.lookup_transform(
+                self.map_frame, self.chart_datum_frame, Time())
+        except tf2_ros.TransformException as error:
+            self.get_logger().warn(
+                'no chart-datum offset ({} in {}): {}'.format(
+                    self.chart_datum_frame, self.map_frame, error),
+                throttle_duration_sec=10.0)
+            return self._datum_offset is not None
+        # Height of chart datum expressed in the map frame, so a sounding's
+        # depth below datum is (datum_z - z).
+        offset = float(transform.transform.translation.z)
+        if self._datum_offset is None:
+            self._datum_offset = offset
+            self.get_logger().info(
+                'chart datum is {:.2f} m in {}; colouring depth below '
+                'datum'.format(offset, self.map_frame))
+            return True
+        if abs(offset - self._datum_offset) > self.tide_invalidate_threshold:
+            self.get_logger().info(
+                'chart-datum offset moved {:.2f} -> {:.2f} m; re-rendering '
+                'the mosaic'.format(self._datum_offset, offset))
+            self._datum_offset = offset
+            with self._lock:
+                for index in list(self._tiles):
+                    self._mark_dirty(index)
+        return True
+
+    def _colourise(self, values, datum_z):
+        """Return RGBA bytes for a sampled tile; NaN becomes transparent.
+
+        `datum_z` is the height of chart datum in the frame the values are
+        expressed in, so depth below datum is `datum_z - value`.
+        """
         rgba = numpy.zeros((256, 256, 4), dtype=numpy.uint8)
         present = numpy.isfinite(values)
         if not present.any():
             return rgba
-        # Depth is negative-down in the store; the ramp runs 0..MAX_DEPTH.
         # Only cast the covered cells: casting NaN to uint8 is undefined and
         # numpy warns. The result happens to be hidden by alpha today, but it
         # would surface as garbage the moment the alpha rule changed.
-        depth = numpy.clip(numpy.abs(values[present]), 0.0, MAX_DEPTH)
+        depth = numpy.clip(datum_z - values[present], 0.0, MAX_DEPTH)
         scaled = numpy.zeros(values.shape, dtype=numpy.uint8)
         scaled[present] = (depth / MAX_DEPTH * 255.0).astype(numpy.uint8)
         rgba[..., :3] = self._colours[scaled]
@@ -423,6 +525,12 @@ class CoverageRenderer(Node):
 
     def _render_dirty(self):
         """Render and publish every slippy tile marked dirty."""
+        if not self._update_datum_offset():
+            # Without the offset every depth would be coloured from an
+            # unreferenced ellipsoidal height -- wrong, and wrong in a way
+            # that looks plausible. Leave the tiles dirty and try next pass.
+            return
+        datum_z = self._datum_offset or 0.0
         with self._lock:
             pending = sorted(self._dirty)
             self._dirty.clear()
@@ -434,7 +542,8 @@ class CoverageRenderer(Node):
             values = self._sample_tile(x, y)
             if not numpy.isfinite(values).any():
                 continue
-            image = Image.fromarray(self._colourise(values), mode='RGBA')
+            image = Image.fromarray(
+                self._colourise(values, datum_z), mode='RGBA')
             buffer = io.BytesIO()
             image.save(buffer, format='PNG', optimize=True)
             key = '{}/{}/{}/{}.png'.format(self.prefix, self.zoom, x, y)

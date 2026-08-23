@@ -61,6 +61,16 @@ def generate_launch_description():
         DeclareLaunchArgument('profile', default_value='p11-renderer'),
         DeclareLaunchArgument('cache_control', default_value='60'),
         DeclareLaunchArgument(
+            'map_frame', default_value='ben/map',
+            description='Frame the depth band z values are expressed in.'),
+        DeclareLaunchArgument(
+            'chart_datum_frame', default_value='ben/chart_datum',
+            description='Vertical reference to colour depths against. Empty '
+                        'disables the correction.'),
+        DeclareLaunchArgument(
+            'tide_invalidate_threshold', default_value='0.15',
+            description='Metres of tide change that force a re-render.'),
+        DeclareLaunchArgument(
             'dry_run', default_value='false',
             description='Write PNGs under local_dir instead of S3.'),
         DeclareLaunchArgument('local_dir', default_value='/tmp/coverage'),
@@ -68,7 +78,8 @@ def generate_launch_description():
 
     names = ('coverage_namespace', 'band', 'zoom', 'render_interval',
              'request_interval', 'bucket', 'prefix', 'profile',
-             'cache_control', 'dry_run', 'local_dir')
+             'cache_control', 'dry_run', 'local_dir', 'map_frame',
+             'chart_datum_frame', 'tide_invalidate_threshold')
 
     node = Node(
         package='marine_web_view',

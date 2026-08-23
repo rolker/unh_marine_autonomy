@@ -59,6 +59,7 @@ class _Logger:
         self.lines.append(message)
 
     info = warn
+    debug = warn
     error = warn
 
 
@@ -127,6 +128,7 @@ class _Ingest:
         self.zoom = zoom
         self.band_name = 'depth'
         self._tiles = {}
+        self._applied = {}
         self._dirty = set()
         self._lock = threading.Lock()
         self._reconciler = TileCatalogReconciler()
@@ -212,4 +214,70 @@ def test_a_malformed_band_is_dropped_not_cached():
     tile = _Tile()
     tile.bands[0].data = tile.bands[0].data[:-2]
     node._on_tile(tile)
+    assert node._failures == 1
+
+
+def _values(constant, cells):
+    """Return a raw INT16 buffer of one repeated value."""
+    return [constant] * cells
+
+
+def test_a_stale_patch_does_not_overwrite_fresh_cells():
+    """Newest-wins must be enforced before the window is applied."""
+    node = _Ingest()
+    node._on_tile(_Tile(seconds=200, values=_values(2000, 16)))
+    node._on_tile(_Tile(seconds=100, values=_values(500, 16)))
+    tile = node._tiles[(10, 17801, 13988)]
+    assert round(float(tile[0, 0]), 3) == 20.0, (
+        'the older patch overwrote the newer one: newest-wins is not '
+        'enforced before apply_window')
+
+
+def test_a_newer_patch_does_overwrite():
+    """Guard the guard: ordering must not block legitimate updates."""
+    node = _Ingest()
+    node._on_tile(_Tile(seconds=100, values=_values(500, 16)))
+    node._on_tile(_Tile(seconds=200, values=_values(2000, 16)))
+    assert round(float(node._tiles[(10, 17801, 13988)][0, 0]), 3) == 20.0
+
+
+def test_a_partial_window_does_not_claim_possession():
+    """A sub-window patch must leave the tile re-requestable.
+
+    This is the whole self-healing story: a lost best-effort window has to be
+    healed by the next catalog round. Claiming the catalog's version off a
+    partial patch means the reconciler sees nothing to request and the hole
+    is permanent.
+    """
+    index = (10, 17801, 13988)
+    node = _Ingest()
+    node._on_tile(_Tile(seconds=100, window_row=1, window_col=1,
+                        window_width=2, window_height=2,
+                        values=_values(500, 4)))
+    assert index in node._tiles, 'the pixels must still be applied'
+    assert not node._reconciler.has(index), (
+        'a partial window claimed possession -- the catalog will never '
+        're-request this tile and any lost window is permanent')
+    to_request, _ = node._reconciler.reconcile([(index, 100 * 10 ** 9)], 0)
+    assert to_request == [index]
+
+
+def test_a_whole_tile_does_claim_possession():
+    """A full-tile message is possession, and stops the re-request."""
+    index = (10, 17801, 13988)
+    node = _Ingest()
+    node._on_tile(_Tile(seconds=100))
+    assert node._reconciler.version_of(index) == 100 * 10 ** 9
+    to_request, _ = node._reconciler.reconcile([(index, 100 * 10 ** 9)], 0)
+    assert to_request == []
+
+
+def test_a_window_that_does_not_fit_leaves_no_empty_tile():
+    """A first patch that overruns must not poison the cache with NaN."""
+    node = _Ingest()
+    node._on_tile(_Tile(window_row=3, window_col=3, window_width=4,
+                        window_height=4, values=_values(500, 16)))
+    assert not node._tiles, (
+        'an all-NaN entry renders as "no coverage" and blocks the '
+        're-request that would fix it')
     assert node._failures == 1
