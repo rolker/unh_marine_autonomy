@@ -318,10 +318,15 @@ const Relief = L.TileLayer.extend({
         ZFactor: RELIEF_ZFACTOR, HillshadeType: 0
       }
     });
+    // Bilinear, EXPLICITLY: the relief is a continuous surface, so smoothing
+    // across the resample is wanted -- the opposite of the Bathy layer, which
+    // pins RSP_NearestNeighbor to keep its class colours crisp. State it here
+    // rather than lean on the server default, which could change under us.
     return IMG
       + '?bbox=' + [minx, miny, maxx, maxy].join(',')
       + '&bboxSR=3857&imageSR=3857&size=256,256'
       + '&format=png32&transparent=true&f=image'
+      + '&interpolation=RSP_BilinearInterpolation'
       + '&renderingRule=' + encodeURIComponent(rr);
   }
 });
