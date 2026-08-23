@@ -57,6 +57,7 @@ class _Sampler:
         import threading
         self._lock = threading.Lock()
 
+    _candidates = CoverageRenderer._candidates
     _sample_tile = CoverageRenderer._sample_tile
 
 
@@ -114,3 +115,48 @@ def test_sampling_is_monotonic_down_the_image():
     decreasing = sum(1 for a, b in zip(means, means[1:]) if a >= b)
     assert decreasing >= len(means) - 2, (
         'values do not fall consistently from north to south')
+
+
+def _uniform_tile(level, row, col, value, cells=960):
+    """Return a grid array filled with one value."""
+    return numpy.full((cells, cells), value, dtype=numpy.float32)
+
+
+def test_the_finer_level_wins_where_two_cover_the_same_ground():
+    """Overlapping levels must resolve by resolution, not dict order."""
+    coarse = (9, 8895, 6994)
+    fine = (10, 17790, 13988)
+    south, west, north, east = gggs.grid_bounds(*fine)
+    zoom = 17
+    x, y = gggs.lonlat_to_tile(zoom, (west + east) / 2.0,
+                               (south + north) / 2.0)
+
+    tiles = {coarse: _uniform_tile(*coarse, value=-10.0),
+             fine: _uniform_tile(*fine, value=-20.0)}
+    out = _Sampler(tiles, zoom)._sample_tile(x, y)
+    covered = numpy.isfinite(out)
+    assert covered.any()
+    assert numpy.allclose(out[covered], -20.0), (
+        'the coarser level painted over the finer one')
+
+    # Insertion order must not change the answer.
+    reversed_tiles = {fine: tiles[fine], coarse: tiles[coarse]}
+    out2 = _Sampler(reversed_tiles, zoom)._sample_tile(x, y)
+    assert numpy.allclose(out2[numpy.isfinite(out2)], -20.0)
+
+
+def test_a_gap_in_the_finer_tile_does_not_erase_the_coarser_one():
+    """A finer tile's NaN is 'no data here', not 'erase what is under it'."""
+    coarse = (9, 8895, 6994)
+    fine = (10, 17790, 13988)
+    south, west, north, east = gggs.grid_bounds(*fine)
+    zoom = 17
+    x, y = gggs.lonlat_to_tile(zoom, (west + east) / 2.0,
+                               (south + north) / 2.0)
+
+    empty_fine = numpy.full((960, 960), numpy.nan, dtype=numpy.float32)
+    tiles = {coarse: _uniform_tile(*coarse, value=-10.0), fine: empty_fine}
+    out = _Sampler(tiles, zoom)._sample_tile(x, y)
+    covered = numpy.isfinite(out)
+    assert covered.any(), 'the coarse coverage was erased by an empty finer tile'
+    assert numpy.allclose(out[covered], -10.0)

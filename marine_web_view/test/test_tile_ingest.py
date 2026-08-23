@@ -345,3 +345,23 @@ def test_a_zero_budget_means_unbounded():
     for column in range(5):
         node._on_tile(_Tile(col=13988 + column, seconds=100 + column))
     assert len(node._tiles) == 5
+
+
+def test_a_patch_replaces_the_array_rather_than_mutating_it():
+    """The renderer samples these arrays outside the lock.
+
+    Patching in place lets it read a half-written tile -- and the lock only
+    ever guarded the dict, so it never protected against that. A snapshot
+    taken before a patch must therefore still read as it did.
+    """
+    index = (10, 17801, 13988)
+    node = _Ingest()
+    node._on_tile(_Tile(seconds=100, values=[500] * 16))
+    snapshot = node._tiles[index]
+    before = snapshot.copy()
+
+    node._on_tile(_Tile(seconds=200, values=[2000] * 16))
+    assert node._tiles[index] is not snapshot, (
+        'the tile was patched in place, so a renderer holding it would read '
+        'a half-written array')
+    assert (snapshot == before).all()

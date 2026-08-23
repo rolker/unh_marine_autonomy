@@ -407,8 +407,15 @@ class CoverageRenderer(Node):
             held = self._tiles.get(index)
             if held is None:
                 held = tile_util.new_tile(msg.width, msg.height)
-                self._tiles[index] = held
                 self._cache_bytes += held.nbytes
+            else:
+                # Copy-on-write. The renderer samples these arrays outside the
+                # lock, so patching in place would let it read a half-written
+                # tile -- and the lock, which only ever guarded the dict, was
+                # decoration against that. Replacing the array wholesale makes
+                # every array the renderer holds immutable.
+                held = held.copy()
+            self._tiles[index] = held
             try:
                 tile_util.apply_window(
                     held, values, msg.window_row, msg.window_col)
@@ -494,12 +501,45 @@ class CoverageRenderer(Node):
 
     # -- rendering ---------------------------------------------------------
 
+    def _candidates(self, south, west, north, east):
+        """Return the cached tiles overlapping a box, coarsest level first.
+
+        Snapshotting under the lock is not enough on its own: the arrays go on
+        being written by the transport thread. They are treated as immutable
+        here and replaced wholesale on patch (see _on_tile), so what this
+        returns is a stable view rather than a live one.
+
+        Coarsest first so that where two levels cover the same ground the
+        finer one lands last and wins. Resolving that by dict iteration order
+        -- which is what happened before -- makes the display depend on
+        arrival order.
+        """
+        with self._lock:
+            held = list(self._tiles.items())
+        candidates = []
+        for index, array in held:
+            bounds = gggs.grid_bounds(*index)
+            g_south, g_west, g_north, g_east = bounds
+            if g_north <= south or g_south >= north:
+                continue
+            if g_east <= west or g_west >= east:
+                continue
+            candidates.append((index[0], index, array, bounds))
+        candidates.sort(key=lambda item: item[0])
+        return candidates
+
     def _sample_tile(self, x, y):
         """Return a 256x256 float array of the band over one slippy tile.
 
         Nearest-neighbour from the GGGS cache. Cells with no coverage stay NaN
         and render transparent, which is what makes this a *coverage* layer --
         the shape of the surveyed area is the information.
+
+        Vectorized over the whole 256x256 grid, and only over the tiles that
+        actually overlap it. The row-by-row form this replaces was
+        O(dirty x 256 x |cache|) in interpreted Python -- a whole-cache scan
+        per image row -- which is what made a render pass long enough to
+        matter.
         """
         south, west, north, east = gggs.tile_bounds(self.zoom, x, y)
         # Pixel centres, north-to-south to match image row order.
@@ -507,36 +547,33 @@ class CoverageRenderer(Node):
         lats = north - (numpy.arange(256) + 0.5) * (north - south) / 256.0
         out = numpy.full((256, 256), numpy.nan, dtype=numpy.float32)
 
-        with self._lock:
-            held = dict(self._tiles)
-        if not held:
-            return out
-
-        for row_index, latitude in enumerate(lats):
-            for index, array in held.items():
-                level, grid_row, grid_col = index
-                g_south, g_west, g_north, g_east = gggs.grid_bounds(
-                    level, grid_row, grid_col)
-                if not (g_south <= latitude < g_north):
-                    continue
-                inside = (lons >= g_west) & (lons < g_east)
-                if not inside.any():
-                    continue
-                rows, cols = array.shape
-                # GGGS cell rows are numbered FROM THE SOUTH
-                # (gggs/cell_index.h:41,75,162 "positive integer row starting
-                # the bottom of the grid"; confirmed by CAMP's explicit flip in
-                # sonar_live_tile.cpp), while image rows run north to south.
-                # Getting this backwards mirrors every tile vertically inside
-                # its own ~870 m box at level 10 -- which does not look like a
-                # flip, it looks like coverage drifting off the vessel's track.
-                cell_row = int((latitude - g_south) / (g_north - g_south)
-                               * rows)
-                cell_row = max(0, min(rows - 1, cell_row))
-                cell_cols = ((lons[inside] - g_west) / (g_east - g_west)
-                             * cols).astype(int)
-                cell_cols = numpy.clip(cell_cols, 0, cols - 1)
-                out[row_index, inside] = array[cell_row, cell_cols]
+        for _, _, array, bounds in self._candidates(south, west, north, east):
+            g_south, g_west, g_north, g_east = bounds
+            rows_in = (lats >= g_south) & (lats < g_north)
+            cols_in = (lons >= g_west) & (lons < g_east)
+            if not rows_in.any() or not cols_in.any():
+                continue
+            rows, cols = array.shape
+            # GGGS cell rows are numbered FROM THE SOUTH
+            # (gggs/cell_index.h:41,75,162 "positive integer row starting
+            # the bottom of the grid"; confirmed by CAMP's explicit flip in
+            # sonar_live_tile.cpp), while image rows run north to south.
+            # Getting this backwards mirrors every tile vertically inside
+            # its own ~870 m box at level 10 -- which does not look like a
+            # flip, it looks like coverage drifting off the vessel's track.
+            cell_rows = ((lats[rows_in] - g_south) / (g_north - g_south)
+                         * rows).astype(int)
+            cell_rows = numpy.clip(cell_rows, 0, rows - 1)
+            cell_cols = ((lons[cols_in] - g_west) / (g_east - g_west)
+                         * cols).astype(int)
+            cell_cols = numpy.clip(cell_cols, 0, cols - 1)
+            patch = array[numpy.ix_(cell_rows, cell_cols)]
+            # Write only the covered cells: a finer tile's NaN must not erase
+            # a coarser tile's data underneath it.
+            target = out[numpy.ix_(rows_in, cols_in)]
+            covered = numpy.isfinite(patch)
+            target[covered] = patch[covered]
+            out[numpy.ix_(rows_in, cols_in)] = target
         return out
 
     def _update_datum_offset(self):
