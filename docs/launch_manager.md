@@ -558,23 +558,38 @@ group.
 
 The available mechanism is per-process shutdown events:
 `launch.events.process.ShutdownProcess`, which `ExecuteProcess` handles with its own
-SIGINT → SIGTERM → SIGKILL escalation (`sigterm_timeout` / `sigkill_timeout`). The
-matchers shipped in `launch.events.process.process_matchers` are `matches_pid` and
-`matches_name` only — there is no notion of a group — so **the manager must maintain the
-group-to-process attribution itself**, from the `process_started` events observed while
-that group's description is being injected.
+SIGINT → SIGTERM → SIGKILL escalation (`sigterm_timeout` / `sigkill_timeout`). Every such
+event carries a `process_matcher` predicate over `ExecuteProcess` actions
+(`launch/events/process/process_targeted_event.py:31-51`); none of the shipped matchers
+knows about groups, so **the manager must maintain the group-to-process attribution
+itself**.
+
+`launch.events.process.process_matchers` ships three — `matches_pid`, `matches_name`, and
+`matches_executable` — and all three read `action.process_details`, which is `None` until
+the process has started. A fourth, `launch.events.matchers.matches_action`, matches an
+action object by identity (`launch/events/matchers.py:22-24`) and is the useful one here:
+the manager builds the launch description it injects, so it already holds every
+`ExecuteProcess` object in a group. Attribution is then by construction rather than
+recovered after the fact from a pid or a name — and the attribution is not racy, because it
+does not wait for `process_details` to be populated. `process_started` events remain the
+way to observe *when* an attributed process is up.
 
 This is the one place where the design meets an API that was not built for it, and it is
 called out here rather than discovered later. Two candidate resolutions, to be settled by a
 spike before implementation commits:
 
-1. The manager tracks attribution locally and emits `ShutdownProcess` per process.
+1. The manager tracks attribution locally and emits one `ShutdownProcess` per process,
+   matched with `matches_action` against the actions it injected.
 2. `ros2launch_session` grows a scoped-shutdown API (a session that shuts down only its own
    injected description) and the manager uses it. This is the better home for the logic,
    and `ros2launch_session` is ours to extend.
 
 Option 2 is preferred; option 1 is the fallback if scoped shutdown proves to need more from
-`launch` than is available.
+`launch` than is available. `matches_action` narrows what the spike has to establish: the
+open question is not *how to name a process to shut down* but whether a per-process
+shutdown sweep tears a group down as cleanly as a description-scoped one — ordering,
+`OnProcessExit` handlers, and whatever `launch` does with a description whose processes
+have all exited.
 
 ## Deployment
 
