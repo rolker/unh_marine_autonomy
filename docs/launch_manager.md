@@ -516,6 +516,16 @@ link. `ros2launch_gui` already provides qt, tk, and tui user interfaces with per
 output tabs (`ros2launch_gui/qt/process_output_widget.py`,
 `ros2launch_gui/tk/process_manager.py`, `ros2launch_gui/tui/output_view.py`) to build on.
 
+**Output has no channel yet.** The control surface above is a status topic and a command
+topic; `ManagerStatus` carries no output, and the retained ring buffers of
+[Output retention](#output-retention) have no stated route to a front end. That is a real
+gap, not an oversight of wording: the same-client-on-the-same-topics claim and the
+tmux-scrollback parity criterion are both about output, and as specified they hold only for
+a front end on the manager's own host. The transport is deliberately left open — a
+per-group output topic, a local-only fetch service (like the other services), or a paged
+request/response over the link are all plausible, and they differ in exactly the way that
+matters over a best-effort UDP link. See [Open items](#open-items).
+
 ## Readiness predicates
 
 `ready` names one or more predicates, all of which must hold, plus the reserved key
@@ -672,6 +682,11 @@ on its own terms, and it makes the manager's job smaller.
   mission hovers at current position (`mission_manager.py:75` in the `mission_manager` package constructs `done_hover` fresh
   with no pose), so the flag applied to nothing. But a profile change that stops autonomy under way is still worth a confirmation
   dialog, and the UI is where that belongs.
+- **No output channel.** Retained per-group output has no defined transport to a remote
+  front end (see [Front ends](#front-ends)). Until one exists, the promise of per-process
+  output tabs over the link, and parity with tmux scrollback, are met on the manager's host
+  only. Whatever is chosen has to work over best-effort UDP, which rules out simply
+  publishing every line.
 - **Stale commands after reordering.** `request_id` idempotency covers duplication only
   (see [`~/command`](#command-subscribed)). Nothing yet rejects a delayed command that the
   operator has already superseded.
