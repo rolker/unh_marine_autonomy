@@ -195,6 +195,7 @@ class CoverageRenderer(Node):
         self.declare_parameter('local_dir', '/tmp/coverage')
         self.declare_parameter('cache_control', 60)
         self.declare_parameter('cache_budget_bytes', 512 * 1024 * 1024)
+        self.declare_parameter('max_requests_per_message', 256)
         self.declare_parameter('map_frame', DEFAULT_MAP_FRAME)
         self.declare_parameter('chart_datum_frame', DEFAULT_CHART_DATUM_FRAME)
         self.declare_parameter('tide_invalidate_threshold',
@@ -209,6 +210,8 @@ class CoverageRenderer(Node):
         self.local_dir = self._param('local_dir')
         self.cache_control = int(self._param('cache_control'))
         self.cache_budget_bytes = int(self._param('cache_budget_bytes'))
+        self.max_requests_per_message = max(
+            1, int(self._param('max_requests_per_message')))
         self.map_frame = str(self._param('map_frame')).strip()
         self.chart_datum_frame = str(self._param('chart_datum_frame')).strip()
         self.tide_invalidate_threshold = float(
@@ -260,7 +263,12 @@ class CoverageRenderer(Node):
         latched = QoSProfile(depth=1)
         latched.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
         latched.reliability = QoSReliabilityPolicy.RELIABLE
-        best_effort = QoSProfile(depth=50)
+        # Depth 10, matching the producer (cube_bathymetry_node.cpp:513) and
+        # CAMP's consumer. A deeper queue on a BEST_EFFORT topic does not make
+        # the transport less lossy, it just buys a longer backlog of tiles
+        # that are already superseded -- ~92 MB of them at depth 50 -- to work
+        # through before the render sees current data.
+        best_effort = QoSProfile(depth=10)
         best_effort.reliability = QoSReliabilityPolicy.BEST_EFFORT
 
         self.create_subscription(
@@ -318,6 +326,11 @@ class CoverageRenderer(Node):
                 if removed is not None:
                     self._cache_bytes -= removed.nbytes
                     self._mark_dirty(index)
+            # A fresh catalog supersedes the queue outright: anything still
+            # wanted reappears in to_request, and anything served since is
+            # correctly gone. The batching in _publish_requests works through
+            # this list in order, and each round's reconcile drops what has
+            # arrived, so the tail is reached rather than starved.
             self._pending_request = to_request
         if to_request or to_prune:
             self.get_logger().info(
@@ -338,14 +351,28 @@ class CoverageRenderer(Node):
                 throttle_duration_sec=10.0)
 
     def _publish_requests(self):
-        """Publish one TileRequest for the pending set."""
+        """Publish one TileRequest for the pending set.
+
+        Batched. A cold start against a large store asks for the whole
+        catalog at once, and `coverage_requests` is a shared fanout: the
+        source serves every resident index in the message in one callback,
+        so an unbounded request is an unbounded burst on the producer and on
+        every other consumer's tile topic. The remainder is carried to the
+        next interval, which is the throttle.
+        """
         with self._lock:
-            wanted = self._pending_request
-            self._pending_request = []
+            wanted = self._pending_request[:self.max_requests_per_message]
+            self._pending_request = (
+                self._pending_request[self.max_requests_per_message:])
+            remaining = len(self._pending_request)
         if not wanted:
             return
         msg = TileRequest()
         msg.header.stamp = self.get_clock().now().to_msg()
+        # The producer's own consumer stamps this; matching it keeps the
+        # index frame explicit rather than empty (CAMP: sonar_live_cache_layer
+        # .cpp:274).
+        msg.header.frame_id = 'gggs'
         for level, row, col in wanted:
             index = TileIndex()
             index.level = level
@@ -353,6 +380,11 @@ class CoverageRenderer(Node):
             index.col = col
             msg.tiles.append(index)
         self._requests.publish(msg)
+        if remaining:
+            self.get_logger().info(
+                'requested {} tile(s), {} still queued'.format(
+                    len(wanted), remaining),
+                throttle_duration_sec=10.0)
 
     def _tile_is_sane(self, index, msg):
         """Return True if a tile message can be trusted to allocate from."""

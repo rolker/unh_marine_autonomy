@@ -153,6 +153,13 @@ simulated time starting at zero -- better to keep a tile the source may still
 hold than delete on no evidence -- but it is emergent from the comparison, not
 an explicit branch, so `test_reconciler.py` pins it.
 
+Requests are **batched**. A cold start against a large store wants the whole
+catalog, and `coverage_requests` is a shared fanout — the source serves every
+resident index in one callback, so an unbounded request is an unbounded burst
+on the producer and on every other consumer's tile topic. The remainder is
+carried to the next `request_interval`, and each catalog round drops whatever
+has arrived, so the tail is reached rather than starved.
+
 Live push is **best-effort**. A lost or malformed patch is dropped and healed
 by the next catalog round, which re-requests the tile in full.
 
@@ -180,6 +187,7 @@ the catalog's back.
 | `profile` | `p11-renderer` | scoped to `s3:PutObject` on `live/*` |
 | `cache_control` | `60` | `max-age` stamped on each PNG |
 | `cache_budget_bytes` | `536870912` | resident tile-cache ceiling (512 MiB); `0` disables the bound |
+| `max_requests_per_message` | `256` | tiles asked for per `TileRequest`; the rest wait for the next interval |
 | `map_frame` | `ben/map` | frame the band's z values are expressed in |
 | `chart_datum_frame` | `ben/chart_datum` | vertical reference for colour; empty disables the correction |
 | `tide_invalidate_threshold` | `0.15` | metres of tide change that force a re-render |

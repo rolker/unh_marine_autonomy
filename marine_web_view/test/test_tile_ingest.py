@@ -365,3 +365,64 @@ def test_a_patch_replaces_the_array_rather_than_mutating_it():
         'the tile was patched in place, so a renderer holding it would read '
         'a half-written array')
     assert (snapshot == before).all()
+
+
+class _Publisher:
+    """Collect published TileRequest messages."""
+
+    def __init__(self):
+        self.messages = []
+
+    def publish(self, msg):
+        """Record a message."""
+        self.messages.append(msg)
+
+
+class _Requester(_Ingest):
+    """A stand-in that also exposes the request path."""
+
+    def __init__(self, batch=4):
+        super().__init__()
+        self.max_requests_per_message = batch
+        self._pending_request = []
+        self._requests = _Publisher()
+
+    def get_clock(self):
+        """Return a stand-in clock."""
+        return type('C', (), {'now': staticmethod(
+            lambda: type('T', (), {'to_msg': staticmethod(
+                lambda: _Stamp(0))})())})()
+
+    _publish_requests = CoverageRenderer._publish_requests
+    _send_requests = CoverageRenderer._send_requests
+
+
+def test_requests_are_batched_rather_than_flooding_the_source():
+    """coverage_requests is a shared fanout; the source serves it in one go."""
+    node = _Requester(batch=4)
+    node._pending_request = [(10, 17801, 13988 + n) for n in range(10)]
+    node._send_requests()
+    assert len(node._requests.messages) == 1
+    assert len(node._requests.messages[0].tiles) == 4
+    assert len(node._pending_request) == 6, 'the remainder must be carried'
+
+    node._send_requests()
+    node._send_requests()
+    assert len(node._requests.messages) == 3
+    assert sum(len(m.tiles) for m in node._requests.messages) == 10
+    assert not node._pending_request, 'the tail must be reached'
+
+
+def test_requests_carry_the_index_frame():
+    """An empty frame_id leaves the index frame implicit."""
+    node = _Requester()
+    node._pending_request = [(10, 17801, 13988)]
+    node._send_requests()
+    assert node._requests.messages[0].header.frame_id == 'gggs'
+
+
+def test_nothing_pending_publishes_nothing():
+    """An idle consumer must not publish empty requests every interval."""
+    node = _Requester()
+    node._send_requests()
+    assert not node._requests.messages
