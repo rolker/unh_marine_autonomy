@@ -539,7 +539,10 @@ URLs.
   matching (`wait_for_output`), startup/shutdown waits (`wait_for_startup`,
   `wait_for_shutdown`), and — critically — `from_service()`, which **injects a launch
   description into an already-running `LaunchService`** via `emit_event()`. That injection
-  is what makes "start a group at 11:40, having started at boot" possible at all.
+  is what makes "start a group at 11:40, having started at boot" possible at all. Its
+  shape matters, and is picked up below: `from_service()` is a
+  `@contextlib.contextmanager` (`launch_session.py:252-253`), and leaving its `with` block
+  shuts the *shared* service down.
 - **`ros2launch_gui`** (`layers/main/underlay_ws/src/ros2launch_gui`) provides the qt / tk
   / tui front ends, per-process output widgets, and the `QueryUserInterface` round-trip for
   pushing UI actions into a running launch system.
@@ -555,6 +558,15 @@ The consequence is specific and must be handled in implementation: **`LaunchSess
 shutdown()` calls `LaunchService.shutdown()`, which stops everything** — every group
 sharing the service, not just the caller's. It cannot be the mechanism for stopping one
 group.
+
+This reaches further than an explicit `shutdown()` call, because `from_service()` is a
+context manager: its `finally` calls `session.shutdown()` whenever any process is still
+running at context exit (`ros2launch_session/launch_session.py:279-282`). The natural
+reading — one `with LaunchSession.from_service(...)` per group — therefore tears down the
+whole stack the moment the first group's block exits. The manager either holds each
+injected session's context open for as long as that group runs and unwinds them only at
+manager shutdown, or the scoped-shutdown API of option 2 below owns group teardown
+instead. A per-group `with` block is not an available shape.
 
 The available mechanism is per-process shutdown events:
 `launch.events.process.ShutdownProcess`, which `ExecuteProcess` handles with its own
