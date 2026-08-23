@@ -13,8 +13,9 @@ here for review convenience, not because it belongs to the marine stack.
 
 ## Purpose
 
-A persistent launch and lifecycle manager: a node that starts at boot, autostarts a
-comms-only subset of the stack, and brings the rest up (and down) on command, driving
+A persistent launch and lifecycle manager: a node that starts at boot, autostarts the
+subset of the stack named by its configured `default_profile`, and brings the rest up (and
+down) on command, driving
 lifecycle transitions and reporting state over ROS so that rqt, TUI, and CLI front ends
 all work from the operator station across the radio link.
 
@@ -575,9 +576,12 @@ the operator station. There is no cross-host orchestration and no manager-of-man
 two are peers that happen to be connected. UIs **discover managers by scanning for status
 topics**, so an operator station UI shows both without being configured with either.
 
-Both run under systemd with `Restart=always`. The boat's `default_profile` is a
-comms-only subset, so a boat that boots is reachable and reports its state; nothing else
-starts until someone asks for it.
+Both run under systemd with `Restart=always`. Each host's `default_profile` is chosen for
+that host; what it must always include is the link — `zenoh` and `comms` — so a host that
+boots is reachable and reports its state. The example config picks `awareness` for the
+boat (link plus `core` and `perception`); the `link` profile is there for a boot that
+should bring up nothing but the link. Whatever the default profile does not name stays
+`STOPPED` until someone asks for it.
 
 ## Assumed launch-file refactor
 
@@ -585,8 +589,8 @@ This design assumes `bizzyboat_project11`'s launch files are split so that group
 operational units. **This is a dependency, and it is not yet filed as an issue.**
 
 - **`comms`** — udp_bridge, currently inside `core_launch.py`, becomes its own launch file.
-  Without this the link cannot be a group of its own, and the comms-only default profile is
-  not expressible.
+  Without this the link cannot be a group of its own, and no profile — `link` least of all —
+  can select the operator link without dragging the rest of `core` up with it.
 - **`logging`** — its own group, so the boat can be up without accumulating bags. Needs the
   SIGINT-and-wait stop discipline described above so `rosbag2` closes cleanly.
 - **`nav_launch.py`** splits into `helm` / `autonomy` / `charts`.
