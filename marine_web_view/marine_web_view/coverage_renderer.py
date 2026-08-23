@@ -68,6 +68,7 @@ from marine_interfaces.msg import TileRequest
 
 from marine_web_view import gggs
 from marine_web_view import tiles as tile_util
+from marine_web_view.reconciler import is_valid_index
 from marine_web_view.reconciler import TileCatalogReconciler
 
 import numpy
@@ -95,6 +96,25 @@ MAX_DEPTH = 40.0
 # Coverage is composited over the basemap, so an identical palette would make
 # it invisible. A small offset keeps the two comparable but distinguishable.
 COVERAGE_TINT = (1.06, 0.97, 0.88)
+
+# Wire messages are external input and both dimension fields are uint16, so a
+# corrupt or hostile tile can ask for 65535 x 65535 float32 cells -- about
+# 17 GB -- in a single allocation on the executor thread, which is a node
+# death rather than a dropped message. Validate BEFORE allocating anything,
+# with the same shape of guard CAMP added after the 2026-07-23 operator-station
+# crash (sonar_live_cache_layer.cpp:436, kMaxImageEdge = 4096). The producer
+# emits 960 x 960 grids (gggs cell_rows_per_grid), so 4096 leaves generous room
+# without admitting anything absurd; raising producer tile size means raising
+# this.
+MAX_TILE_EDGE = 4096
+MAX_TILE_BYTES = 256 * 1024 * 1024
+
+# A GGGS grid at a coarse level covers an enormous area: level 0 is 8 deg on a
+# side, which at zoom 15 is ~1.6e7 slippy tiles. Enumerating that into the
+# dirty set from one message hangs the node and would then try to upload it.
+# A level-10 grid is ~50 tiles at zoom 15, so this bounds the sane case by
+# orders of magnitude while making the insane one a logged rejection.
+MAX_DIRTY_TILES_PER_GRID = 4096
 
 
 def ramp_colour(fraction):
@@ -229,9 +249,29 @@ class CoverageRenderer(Node):
             msg.tiles.append(index)
         self._requests.publish(msg)
 
+    def _tile_is_sane(self, index, msg):
+        """Return True if a tile message can be trusted to allocate from."""
+        if not is_valid_index(index):
+            self.get_logger().warn(
+                'ignoring tile with invalid grid index {}'.format(index),
+                throttle_duration_sec=10.0)
+            return False
+        cells = int(msg.width) * int(msg.height)
+        if (msg.width == 0 or msg.height == 0
+                or msg.width > MAX_TILE_EDGE or msg.height > MAX_TILE_EDGE
+                or cells * 4 > MAX_TILE_BYTES):
+            self.get_logger().warn(
+                'ignoring tile {} with implausible dimensions {}x{}'.format(
+                    index, msg.width, msg.height),
+                throttle_duration_sec=10.0)
+            return False
+        return True
+
     def _on_tile(self, msg):
         """Patch a dirty sub-window into its tile."""
         index = (msg.index.level, msg.index.row, msg.index.col)
+        if not self._tile_is_sane(index, msg):
+            return
         band = next((b for b in msg.bands if b.name == self.band_name), None)
         if band is None:
             return
@@ -264,11 +304,25 @@ class CoverageRenderer(Node):
             self._mark_dirty(index)
 
     def _mark_dirty(self, index):
-        """Mark every slippy tile that overlaps a GGGS tile for re-render."""
+        """Mark every slippy tile that overlaps a GGGS tile for re-render.
+
+        Bounded: a grid coarse enough to span a continent would otherwise
+        enumerate millions of slippy tiles here, on the executor thread, from
+        a single message.
+        """
         level, row, col = index
         south, west, north, east = gggs.grid_bounds(level, row, col)
+        marked = []
         for xy in gggs.tiles_covering(self.zoom, south, west, north, east):
-            self._dirty.add(xy)
+            marked.append(xy)
+            if len(marked) > MAX_DIRTY_TILES_PER_GRID:
+                self.get_logger().warn(
+                    'grid {} spans more than {} tiles at z{} -- ignoring it; '
+                    'the zoom parameter and the source level disagree'.format(
+                        index, MAX_DIRTY_TILES_PER_GRID, self.zoom),
+                    throttle_duration_sec=30.0)
+                return
+        self._dirty.update(marked)
 
     # -- rendering ---------------------------------------------------------
 
