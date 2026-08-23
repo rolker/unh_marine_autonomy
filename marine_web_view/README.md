@@ -237,6 +237,37 @@ re-requests the tile in full. The already-published PNG stands until then, so
 an evicted tile is not marked dirty and the display does not flicker. Being
 over budget is abnormal and is warned about.
 
+### Threading
+
+Rendering runs on its own thread; the `render_interval` timer only wakes it.
+A pass samples, PNG-encodes and uploads — with a 30 s timeout per object — so
+running it in a timer callback blocks the single-threaded executor for the
+whole pass, and every `BEST_EFFORT` tile the source pushes meanwhile is
+dropped. Cached tile arrays are replaced rather than patched in place, so the
+render thread always samples an immutable array.
+
+Shutdown flushes whatever is still dirty. Without that, up to one render
+interval of the end of a survey line is silently lost — the part an operator
+is most likely to be looking for.
+
+### The manifest
+
+Each render pass writes `<prefix>/meta.json` — the zoom, the band, the tile
+counts, the chart-datum offset, and a stamp. It is both configuration and
+heartbeat:
+
+- the page **builds its coverage layer from the manifest's zoom** rather than
+  hardcoding it. The two drifted apart silently once; a layer pinned to the
+  wrong native zoom requests tiles that were never written, one 403 per tile
+  per pan.
+- a missing tile is the normal case for a coverage layer, so the page paints
+  every miss transparent (`errorTileUrl`). That also hides total failure as
+  calm water. The manifest is what lets the page say `offline` or `stale`
+  instead.
+
+It is rewritten every pass, idle or not, which is one extra PUT per
+`render_interval` (~130k/month at 20 s, well under a dollar).
+
 ### Publishing and un-publishing
 
 A rendered PNG lives in the bucket until it is overwritten, so pruned coverage

@@ -70,17 +70,55 @@ def test_every_layer_class_is_instantiated():
             'appear on the map, silently'.format(name))
 
 
+# Every way this page builds a tile layer. `new L.TileLayer(` is here because
+# it was NOT matched by the original `new [A-Z]\w*(` pattern -- the coverage
+# layer was built through it and went unguarded by the very test written to
+# catch an orphaned layer.
+_CONSTRUCTIONS = r'\bnew\s+L\.TileLayer\s*\(|\bL\.tileLayer\s*\(|\bnew\s+(?:Bathy|Relief)\s*\('
+
+
 def test_every_layer_reaches_the_map():
-    """Every instantiated layer must be added to the map."""
+    """Every tile-layer construction must be followed by addTo(map).
+
+    Counting constructions against `.addTo(map)` calls did not bind: the
+    comparison was `>=`, and the trail and hull contribute addTo calls of
+    their own, so an orphaned tile layer could hide behind them. This checks
+    each construction site individually instead.
+    """
     page = _page()
-    # Count layer constructions against addTo(map) calls. Not exact, but a
-    # layer built and never added is the same silent failure.
-    built = len(re.findall(r'\bnew\s+[A-Z]\w*\s*\(', page))
-    built += len(re.findall(r'\bL\.tileLayer\s*\(', page))
-    added = len(re.findall(r'\.addTo\(map\)', page))
-    assert added >= built, (
-        '{} layer(s) constructed but only {} addTo(map) calls'
-        .format(built, added))
+    sites = [m.start() for m in re.finditer(_CONSTRUCTIONS, page)]
+    assert len(sites) >= 4, (
+        'expected at least imagery, bathymetry, hillshade and coverage; '
+        'found {} -- has the page been restructured?'.format(len(sites)))
+    for position, start in enumerate(sites):
+        end = sites[position + 1] if position + 1 < len(sites) else len(page)
+        assert '.addTo(map)' in page[start:end], (
+            'the tile layer constructed at offset {} is never added to the '
+            'map -- it will not appear, silently'.format(start))
+
+
+def test_the_coverage_layer_is_configured_from_the_manifest():
+    """The page must not hardcode the zoom the renderer writes.
+
+    The two drifted apart once already: a layer pinned to the wrong native
+    zoom requests tiles that were never written, one 403 per tile per pan.
+    """
+    page = _page()
+    assert 'meta.json' in page, 'the coverage manifest is not fetched'
+    assert re.search(r'buildCoverage\(\s*meta\.zoom\s*\)', page), (
+        'the coverage layer is not built from the manifest zoom')
+    assert not re.search(r'COVERAGE_Z\s*=\s*\d', page), (
+        'the render zoom is hardcoded in the page again')
+
+
+def test_a_dead_renderer_is_reported_rather_than_hidden():
+    """Every missing tile is painted transparent, total failure included."""
+    page = _page()
+    assert 'errorTileUrl' in page
+    assert "'offline'" in page, (
+        'with every missing tile painted transparent, a dead renderer must '
+        'be reported from the manifest or it reads as calm water')
+    assert re.search(r'id="cov"', page), 'no coverage readout on the page'
 
 
 def test_expected_layers_are_present():

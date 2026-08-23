@@ -71,6 +71,48 @@ def _launch_arguments(launch_file):
                           _read('launch', launch_file)))
 
 
+def _forwarded_parameters(launch_file):
+    """Return the parameter names a launch file actually passes to the node.
+
+    Two spellings are in use and both are hand-maintained, so both can drift
+    from the DeclareLaunchArgument list independently:
+
+    * an explicit ``{'name': LaunchConfiguration('name'), ...}`` dict
+      (state_renderer), and
+    * a ``names = (...)`` tuple fed to a comprehension (coverage_renderer).
+
+    Checking only that an argument is *declared* misses the exact failure this
+    file exists for: #341 declared arguments the node never received.
+    """
+    text = _read('launch', launch_file)
+    forwarded = set(re.findall(
+        r"'([a-z_0-9]+)'\s*:\s*LaunchConfiguration", text))
+    if not forwarded:
+        match = re.search(r'names\s*=\s*\(([^)]*)\)', text, re.S)
+        assert match, (
+            '{} forwards parameters in neither known form -- this guard '
+            'cannot see them, so update it rather than removing it'
+            .format(launch_file))
+        forwarded = set(re.findall(r"'([a-z_0-9]+)'", match.group(1)))
+    return forwarded
+
+
+def test_launch_files_forward_every_argument_they_declare():
+    """A declared-but-unforwarded argument is silently ignored."""
+    for _, launch_file in PAIRS:
+        exposed = _launch_arguments(launch_file)
+        forwarded = _forwarded_parameters(launch_file)
+        missing = exposed - forwarded
+        assert not missing, (
+            '{} declares {} but never passes them to the node -- setting '
+            'them on the command line does nothing'
+            .format(launch_file, sorted(missing)))
+        extra = forwarded - exposed
+        assert not extra, (
+            '{} forwards {} which it does not declare'
+            .format(launch_file, sorted(extra)))
+
+
 def test_launch_files_expose_every_node_parameter():
     """Each launch file must declare an argument per node parameter."""
     for module, launch_file in PAIRS:

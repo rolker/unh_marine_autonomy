@@ -117,6 +117,7 @@
     <dt>Longitude</dt><dd id="lon">—</dd>
     <dt>Heading</dt><dd id="hdg">—</dd>
     <dt>Fix age</dt><dd id="age">—</dd>
+    <dt>Coverage</dt><dd id="cov">—</dd>
   </dl>
   <div id="status"><span id="dot"></span><span id="msg">connecting…</span></div>
   <div id="details">
@@ -368,23 +369,61 @@ new Relief('', {
 // surveyed swath is the information this layer carries. It shares the depth
 // ramp with the basemap, tinted slightly so the two remain distinguishable
 // where they overlap.
-const COVERAGE_Z = 15;
-new L.TileLayer('live/coverage/{z}/{x}/{y}.png', {
-  // minZoom, NOT just minNativeZoom. Leaflet's _clampZoom returns
-  // minNativeZoom whenever the map is below it, and then lays the whole
-  // viewport out in tiles OF THAT ZOOM: at map zoom 10 against a native 15
-  // that is 4^5 = 1024x the tile count, and by zoom 5 it is millions of DOM
-  // elements. It freezes the browser. minZoom simply hides the layer when
-  // zoomed out past the point where its single rendered level is useful.
-  minZoom: COVERAGE_Z - 2, maxZoom: 22,
-  minNativeZoom: COVERAGE_Z, maxNativeZoom: COVERAGE_Z,
-  opacity: 0.95, zIndex: 350,
-  // A tile exists only where the sonar has covered ground, so a miss is the
-  // normal case rather than an error. Serve a transparent pixel instead of
-  // letting Leaflet show a broken-image tile.
-  errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
-  attribution: 'Coverage: live MBES, CCOM/JHC'
-}).addTo(map);
+//
+// The zoom is NOT hardcoded here. The renderer writes one level only, and a
+// layer pinned to the wrong native zoom requests tiles that were never
+// written -- so the level, and whether the renderer is running at all, come
+// from the manifest it publishes beside the tiles.
+const COVERAGE_DIR  = 'live/coverage/';
+const COVERAGE_META = COVERAGE_DIR + 'meta.json';
+const COVERAGE_MS   = 20000;   // the renderer rewrites the manifest per pass
+const COVERAGE_DEAD_S = 120;   // no manifest update for this long = offline
+let coverageLayer = null, coverageZoom = null, coverageStamp = null;
+
+function buildCoverage(zoom) {
+  if (coverageZoom === zoom) return;
+  if (coverageLayer) { map.removeLayer(coverageLayer); coverageLayer = null; }
+  coverageZoom = zoom;
+  coverageLayer = new L.TileLayer(COVERAGE_DIR + '{z}/{x}/{y}.png', {
+    // minZoom, NOT just minNativeZoom. Leaflet's _clampZoom returns
+    // minNativeZoom whenever the map is below it, and then lays the whole
+    // viewport out in tiles OF THAT ZOOM: at map zoom 10 against a native 15
+    // that is 4^5 = 1024x the tile count, and by zoom 5 it is millions of DOM
+    // elements. It freezes the browser. minZoom simply hides the layer when
+    // zoomed out past the point where its single rendered level is useful.
+    minZoom: zoom - 2, maxZoom: 22,
+    minNativeZoom: zoom, maxNativeZoom: zoom,
+    opacity: 0.95, zIndex: 350,
+    // A tile exists only where the sonar has covered ground, so a miss is the
+    // normal case rather than an error. Serve a transparent pixel instead of
+    // letting Leaflet show a broken-image tile. That is exactly why the
+    // manifest exists: with every miss painted transparent, a dead renderer
+    // would otherwise be indistinguishable from calm water.
+    errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+    attribution: 'Coverage: live MBES, CCOM/JHC'
+  }).addTo(map);
+}
+
+function coverageText(meta, age) {
+  if (meta.status !== 'ok') return String(meta.status).replace(/_/g, ' ');
+  if (age > COVERAGE_DEAD_S) return 'stale \u2014 ' + age.toFixed(0) + ' s';
+  return meta.published_tiles + ' tiles \u00b7 z' + meta.zoom;
+}
+
+async function pollCoverage() {
+  try {
+    const r = await fetch(COVERAGE_META, { cache: 'default' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const meta = await r.json();
+    if (typeof meta.zoom === 'number') buildCoverage(meta.zoom);
+    coverageStamp = meta.stamp;
+    $('cov').textContent = coverageText(meta, Date.now()/1000 - meta.stamp);
+  } catch (e) {
+    // No manifest at all: either the renderer has never run against this
+    // bucket, or it is down. Say so rather than showing an empty map.
+    $('cov').textContent = coverageStamp == null ? 'offline' : 'stale';
+  }
+}
 
 // Legend: continuous bar built from the same RAMP, so it cannot drift from
 // what is rendered. Top = surface, bottom = MAX_DEPTH.
@@ -585,8 +624,10 @@ async function poll() {
 
 poll();
 pollTrack();
+pollCoverage();
 setInterval(poll, POLL_MS);
 setInterval(pollTrack, TRACK_MS);
+setInterval(pollCoverage, COVERAGE_MS);
 setInterval(updateAge, 1000);
 
 // Start collapsed on a phone: the map is the point, the readout is secondary.

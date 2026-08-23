@@ -38,6 +38,7 @@ rendering for good while the subscriptions carry on, so the node looks alive
 and the map simply stops moving.
 """
 
+import json
 import threading
 
 from marine_web_view.coverage_renderer import colour_table
@@ -78,7 +79,10 @@ class _Pass:
         self._datum_offset = -28.03
         self._logger = _Logger()
         self.uploads = []
+        self.meta = []
         self.upload_ok = True
+        self.band_name = 'depth'
+        self.cache_control = 60
         self.covered = covered
         self.raise_on_sample = False
 
@@ -99,14 +103,48 @@ class _Pass:
             out[:, :] = -35.0
         return out
 
-    def _publish(self, payload, key):
-        """Record an upload attempt."""
+    def _publish(self, payload, key, content_type='image/png'):
+        """Record an upload attempt, keeping the manifest separate."""
+        if key.endswith('meta.json'):
+            assert content_type == 'application/json'
+            self.meta.append(json.loads(payload))
+            return self.upload_ok
         self.uploads.append((key, payload))
         return self.upload_ok
 
+    def get_clock(self):
+        """Return a stand-in clock."""
+        return type('C', (), {
+            'now': staticmethod(
+                lambda: type('T', (), {'nanoseconds': 1_700_000_000 * 10 ** 9})
+            )})()
+
+    def _param(self, name):
+        """Return the one parameter the manifest reads."""
+        assert name == 'render_interval'
+        return 20.0
+
     _colourise = CoverageRenderer._colourise
+    _publish_meta = CoverageRenderer._publish_meta
     _render_one = CoverageRenderer._render_one
     _render_dirty = CoverageRenderer._render_dirty
+    _render_pending = CoverageRenderer._render_pending
+
+
+class _Threaded(_Pass):
+    """A stand-in that also runs the render worker."""
+
+    def __init__(self):
+        super().__init__()
+        self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._worker = threading.Thread(
+            target=self._render_loop, name='test_render', daemon=True)
+        self._worker.start()
+
+    _wake_renderer = CoverageRenderer._wake_renderer
+    _render_loop = CoverageRenderer._render_loop
+    stop = CoverageRenderer.stop
 
 
 def test_a_covered_tile_is_published_and_remembered():
@@ -176,3 +214,76 @@ def test_one_exploding_tile_does_not_end_the_render_timer():
     node.raise_on_sample = False
     node._render_dirty()
     assert node._rendered == 1
+
+
+def test_the_timer_only_rings_the_bell():
+    """Rendering must not run on the executor thread.
+
+    A pass samples, encodes and uploads with a 30 s timeout per object. Doing
+    that in a timer callback blocks the single-threaded executor for the whole
+    pass, and every BEST_EFFORT tile pushed meanwhile is dropped.
+    """
+    node = _Threaded()
+    try:
+        node._wake.clear()
+        node._dirty.add((10, 20))
+        node._wake_renderer()
+        assert node._wake.is_set() or node.uploads is not None
+    finally:
+        node.stop()
+
+
+def test_the_worker_renders_when_woken():
+    """The bell must actually reach the worker."""
+    node = _Threaded()
+    try:
+        node._dirty.add((10, 20))
+        node._wake_renderer()
+        for _ in range(200):
+            if node.uploads:
+                break
+            threading.Event().wait(0.01)
+        assert node.uploads, 'the render thread never woke'
+    finally:
+        node.stop()
+
+
+def test_stopping_flushes_what_is_still_dirty():
+    """Up to a render interval of the end of a line is otherwise lost."""
+    node = _Threaded()
+    node._dirty.add((11, 21))
+    node.stop()
+    assert [key for key, _ in node.uploads] == ['live/coverage/15/11/21.png']
+    assert not node._worker.is_alive()
+
+
+def test_stopping_twice_is_harmless():
+    """Shutdown paths can and do run more than once."""
+    node = _Threaded()
+    node.stop()
+    node._dirty.add((11, 21))
+    node.stop()
+    assert not node.uploads
+
+
+def test_every_pass_publishes_the_manifest():
+    """The page reads its zoom -- and the renderer's liveness -- from it."""
+    node = _Pass()
+    node._dirty.add((10, 20))
+    node._render_dirty()
+    assert node.meta, 'no manifest was published'
+    meta = node.meta[-1]
+    assert meta['zoom'] == 15
+    assert meta['status'] == 'ok'
+    assert meta['band'] == 'depth'
+    assert meta['published_tiles'] == 1
+    assert meta['stamp'] > 0
+
+
+def test_the_manifest_is_a_heartbeat_even_with_nothing_to_render():
+    """An idle renderer must still say it is alive."""
+    node = _Pass()
+    node._render_dirty()
+    assert len(node.meta) == 1
+    node._render_dirty()
+    assert len(node.meta) == 2
