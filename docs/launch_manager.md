@@ -749,6 +749,24 @@ on its own terms, and it makes the manager's job smaller.
   mission hovers at current position (`mission_manager.py:75` in the `mission_manager` package constructs `done_hover` fresh
   with no pose), so the flag applied to nothing. But a profile change that stops autonomy under way is still worth a confirmation
   dialog, and the UI is where that belongs.
+- **Semantics still to pin down before implementation.** Each is a small decision the doc
+  does not currently make: whether and when the `start_attempts` and
+  `retry_limit`/`retry_window` counters reset — as written, `CLEAR_FAILURE` leaves desired
+  state at `RUNNING`, so convergence restarts the group immediately and can walk straight
+  back into the crash loop it just acknowledged; what state a group is in after a *clean*
+  exit while desired is still `RUNNING` (the table defines `STOPPED` as desired
+  `STOPPED`, so the prose's `READY` → `STOPPED` has nowhere to land), and where
+  `restart: never` sits in the escalation ladder, which never mentions the enum; whether a
+  `lifecycle: {delegate: ...}` group is exempt from lifecycle repair — Nav2's manager
+  deactivates nodes deliberately, which this ladder would read as drift and fight — and
+  what `READY`'s "lifecycle at target" means when there is no `target`; what `START` on a
+  group whose `requires` are `STOPPED` does, given that the `requires` rule quoted above is
+  a *load-time* check with no runtime counterpart; whether `SET_LIFECYCLE` changes the
+  configured target or is a one-shot the convergence loop immediately undoes; how the
+  `DEGRADED` reported for dependents of a group that left `READY` is told apart from
+  `BLOCKED`, and where their cause is carried, since `blocked_by` is populated only when
+  `BLOCKED`; and what `SUPERSEDED` means, since it appears once, in a comment on the result
+  enum, and is defined nowhere.
 - **`autostart` versus a non-`active` target.** `autostart=True` always drives to
   `active`, so a group configured with `target: inactive` or `unconfigured` and an
   autostarting launch file has two writers pulling opposite ways (see
