@@ -59,9 +59,10 @@ Three problems, in increasing order of severity.
    depth-1 subscription created in `on_configure` (`helm_manager.cpp:60`) — default
    durability, so not latched — and the mode is published when an operator selects one.
    A `helm_manager` that has just been repaired therefore comes back with an empty
-   `piloting_mode_` (asserted as the default in
-   `helm_manager/test/test_helm_manager.cpp:795`) and publishes nothing until a mode is
-   selected again. What convergence changes is that this interval is **bounded and
+   `piloting_mode_` — asserted for a freshly configured-and-activated node by
+   `HelmManagerHeartbeatTest.HeartbeatWithEmptyModeBeforeAnySwitch`
+   (`helm_manager/test/test_helm_manager.cpp:791-806`) — and publishes nothing until a mode
+   is selected again. What convergence changes is that this interval is **bounded and
    reported** — `DEGRADED` with a named cause — instead of silent and indefinite. Closing
    it completely means the mode being re-asserted after a repair, which is the helm's
    business rather than the manager's and is out of scope here.
