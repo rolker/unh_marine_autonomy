@@ -125,43 +125,107 @@ Issue #345 adds the web viewer coverage consumer — the second of three layers 
 ### Findings
 - [x] (must-fix) Every tile renders vertically mirrored: GGGS cell rows are south-up, `_sample_tile` indexes north-up — `marine_web_view/marine_web_view/coverage_renderer.py:304`
 - [x] (must-fix) RAMP diverges from the basemap ramp in 14 of 24 stops, contradicting three docs; `test_ramp_sync.py` does not cover this third copy — `marine_web_view/marine_web_view/coverage_renderer.py:85`
-- [ ] (must-fix, operator-found) Depth is coloured WITHOUT the chart-datum transform. The `depth` band carries z in the MAP frame (ellipsoidal), not depth below chart datum: live values read -35.98..-57.23 m, which saturate MAX_DEPTH=40 and paint 97% of coverage the deepest colour. Applying `ben/map -> ben/chart_datum` (-28.03 m at the time of measurement) gives 7.95..29.20 m -- inside the scale and consistent with the basemap. The offset is TIME-VARYING with the tide, so look it up via TF and invalidate on change past a threshold, as `s57_layer.cpp` does for the chart layer; do not bake in a constant. Was misread as "the scale is too shallow" until the operator asked whether it was a datum issue — `marine_web_view/marine_web_view/coverage_renderer.py`
-- [ ] (must-fix) Pruned coverage is never un-published: all-NaN slippy tiles are skipped, so stale PNGs persist in S3 across runs — `marine_web_view/marine_web_view/coverage_renderer.py:341`
-- [ ] (must-fix) `mark_have` recorded for a partial sub-window permanently defeats the documented catalog self-healing — `marine_web_view/marine_web_view/coverage_renderer.py:263`
-- [ ] (must-fix) No newest-wins gate before `apply_window`: a stale patch overwrites cells while the advertised version stays newer — `marine_web_view/marine_web_view/coverage_renderer.py:253`
-- [ ] (must-fix) `_mark_dirty` runs on an unvalidated tile index; a coarse level enumerates ~1.6e7 slippy tiles into the dirty set — `marine_web_view/marine_web_view/coverage_renderer.py:266`
-- [ ] (must-fix) No dimension guard before `new_tile`: two unbounded uint16 fields allow a ~17 GB allocation and node death — `marine_web_view/marine_web_view/coverage_renderer.py:251`
-- [ ] (must-fix) No exception containment off the S3 path; any per-tile failure propagates out of the timer and ends the node — `marine_web_view/marine_web_view/coverage_renderer.py:330`
-- [ ] (must-fix) Dirty set cleared before rendering, so a failed upload is never retried — permanent hole in the mosaic — `marine_web_view/marine_web_view/coverage_renderer.py:333`
-- [ ] (must-fix) Tile cache unbounded with no eviction budget (3.69 MB/tile, ~19.6 MB/km2); CAMP shipped a 512 MiB budget for this — `marine_web_view/marine_web_view/coverage_renderer.py:154`
-- [ ] (must-fix) Render pass is O(dirty x 256 x |cache|) pure Python on the single-threaded executor with a serial 30 s upload timeout, discarding BEST_EFFORT tiles during the blackout — `marine_web_view/marine_web_view/coverage_renderer.py:275`
-- [ ] (must-fix) The lock is uncontended decoration and insufficient once needed: arrays are mutated in place while read outside it — `marine_web_view/marine_web_view/coverage_renderer.py:289`
-- [ ] (must-fix) Page hardcodes `COVERAGE_Z`/`live/coverage/` against node parameters and `errorTileUrl` masks total failure as "no coverage yet" — `marine_web_view/web/index.html:364`
-- [ ] (suggestion) README layer-stack sentence prepended without removing the sentence it duplicates — `marine_web_view/README.md:104`
-- [ ] (suggestion) Failed first patch leaves a poisoned all-NaN cache entry; validate width/height > 0 — `marine_web_view/marine_web_view/coverage_renderer.py:251`
-- [ ] (suggestion) Sampler ignores `level`; two levels for the same ground resolve by dict order — `marine_web_view/marine_web_view/coverage_renderer.py:289`
-- [ ] (suggestion) `latitude_scale_factor` docstring misstates the C++ boundaries as fractional; they are `uint32_t` and integral at every level — `marine_web_view/marine_web_view/gggs.py:80`
-- [ ] (suggestion) `grid_index_for` omits `normalizeLongitude` and the latitude clamp that `Level::gridIndex` performs — `marine_web_view/marine_web_view/gggs.py:124`
-- [ ] (suggestion) `tiles_covering` treats east/north edges as inclusive against a half-open extent, adding a spurious row/column per grid — `marine_web_view/marine_web_view/gggs.py:162`
-- [ ] (suggestion) `test_every_layer_reaches_the_map` regexes do not match `new L.TileLayer(`, so the new layer is unguarded; `added >= built` is non-binding — `marine_web_view/test/test_page_layers.py:66`
-- [ ] (suggestion) Launch-param guard ignores the hand-maintained `names` forwarding tuple, the exact #341 failure mode — `marine_web_view/test/test_launch_params.py:74`
-- [ ] (suggestion) Two `test_gggs.py` round-trips are near-tautological; no case pins the +/-72 / +/-80 scale-factor boundaries — `marine_web_view/test/test_gggs.py:60`
-- [ ] (suggestion) No test exercises `_sample_tile`, `_colourise`, `_mark_dirty`, `ramp_colour` or `colour_table` — where both rendering must-fixes live — `marine_web_view/test/`
-- [ ] (suggestion) `best_effort` depth 50 (~92 MB of queue) vs producer and CAMP at depth 10, unexplained — `marine_web_view/marine_web_view/coverage_renderer.py:166`
-- [ ] (suggestion) Requests unbatched/unthrottled on a shared-fanout channel; `header.frame_id` never set (CAMP sets "gggs") — `marine_web_view/marine_web_view/coverage_renderer.py:215`
-- [ ] (suggestion) Dry-run path: `prefix` not normalized (`..` escapes `local_dir`), mkstemp yields 0600 vs sibling's 0644, failed writes orphan temp files in a served directory — `marine_web_view/marine_web_view/coverage_renderer.py:356`
-- [ ] (suggestion) `cache_control` unvalidated (negative/zero); default 60 vs `render_interval` 20 — `marine_web_view/marine_web_view/coverage_renderer.py:142`
-- [ ] (suggestion) No final flush of the dirty set at shutdown; a constructor raise after `rclpy.init()` skips the `finally` — `marine_web_view/marine_web_view/coverage_renderer.py:390`
-- [ ] (suggestion) `aws` CLI shelled out to but not declared as a dependency — `marine_web_view/package.xml`
-- [ ] (suggestion) `is_valid_index` hardcodes `level > 20`; the C++ `LevelSpecs` is the authority — `marine_web_view/marine_web_view/reconciler.py`
-- [ ] (suggestion) State explicitly that this renderer is memory-only (no ADR-0008 D5 warm-load) so it does not read as an oversight — `marine_web_view/README.md`
-- [ ] (suggestion) `.agents/README.md` has no `marine_web_view` row at all (pre-existing) — file a separate docs ticket
-- [ ] (suggestion) plan.md stale vs branch: zoom 15, prefix live/coverage, renamed params, dropped depth_min/depth_max, tiles.py, README, unimplemented S3 delete — `.agent/work-plans/issue-345/plan.md`
-- [ ] (suggestion) Two Open Questions resolved by silence: orphaned S3 tiles on zoom reconfigure, and post-survey Cache-Control — `.agent/work-plans/issue-345/plan.md`
-- [ ] (suggestion) Drive-by orphaned-hillshade fix (ed78e06) is out of declared scope — call it out in the PR body — `marine_web_view/web/index.html`
+- [x] (must-fix, operator-found) Depth is coloured WITHOUT the chart-datum transform. The `depth` band carries z in the MAP frame (ellipsoidal), not depth below chart datum: live values read -35.98..-57.23 m, which saturate MAX_DEPTH=40 and paint 97% of coverage the deepest colour. Applying `ben/map -> ben/chart_datum` (-28.03 m at the time of measurement) gives 7.95..29.20 m -- inside the scale and consistent with the basemap. The offset is TIME-VARYING with the tide, so look it up via TF and invalidate on change past a threshold, as `s57_layer.cpp` does for the chart layer; do not bake in a constant. Was misread as "the scale is too shallow" until the operator asked whether it was a datum issue — `marine_web_view/marine_web_view/coverage_renderer.py`
+- [x] (must-fix) Pruned coverage is never un-published: all-NaN slippy tiles are skipped, so stale PNGs persist in S3 across runs — `marine_web_view/marine_web_view/coverage_renderer.py:341`
+- [x] (must-fix) `mark_have` recorded for a partial sub-window permanently defeats the documented catalog self-healing — `marine_web_view/marine_web_view/coverage_renderer.py:263`
+- [x] (must-fix) No newest-wins gate before `apply_window`: a stale patch overwrites cells while the advertised version stays newer — `marine_web_view/marine_web_view/coverage_renderer.py:253`
+- [x] (must-fix) `_mark_dirty` runs on an unvalidated tile index; a coarse level enumerates ~1.6e7 slippy tiles into the dirty set — `marine_web_view/marine_web_view/coverage_renderer.py:266`
+- [x] (must-fix) No dimension guard before `new_tile`: two unbounded uint16 fields allow a ~17 GB allocation and node death — `marine_web_view/marine_web_view/coverage_renderer.py:251`
+- [x] (must-fix) No exception containment off the S3 path; any per-tile failure propagates out of the timer and ends the node — `marine_web_view/marine_web_view/coverage_renderer.py:330`
+- [x] (must-fix) Dirty set cleared before rendering, so a failed upload is never retried — permanent hole in the mosaic — `marine_web_view/marine_web_view/coverage_renderer.py:333`
+- [x] (must-fix) Tile cache unbounded with no eviction budget (3.69 MB/tile, ~19.6 MB/km2); CAMP shipped a 512 MiB budget for this — `marine_web_view/marine_web_view/coverage_renderer.py:154`
+- [x] (must-fix) Render pass is O(dirty x 256 x |cache|) pure Python on the single-threaded executor with a serial 30 s upload timeout, discarding BEST_EFFORT tiles during the blackout — `marine_web_view/marine_web_view/coverage_renderer.py:275`
+- [x] (must-fix) The lock is uncontended decoration and insufficient once needed: arrays are mutated in place while read outside it — `marine_web_view/marine_web_view/coverage_renderer.py:289`
+- [x] (must-fix) Page hardcodes `COVERAGE_Z`/`live/coverage/` against node parameters and `errorTileUrl` masks total failure as "no coverage yet" — `marine_web_view/web/index.html:364`
+- [x] (suggestion) README layer-stack sentence prepended without removing the sentence it duplicates — `marine_web_view/README.md:104`
+- [x] (suggestion) Failed first patch leaves a poisoned all-NaN cache entry; validate width/height > 0 — `marine_web_view/marine_web_view/coverage_renderer.py:251`
+- [x] (suggestion) Sampler ignores `level`; two levels for the same ground resolve by dict order — `marine_web_view/marine_web_view/coverage_renderer.py:289`
+- [x] (suggestion) `latitude_scale_factor` docstring misstates the C++ boundaries as fractional; they are `uint32_t` and integral at every level — `marine_web_view/marine_web_view/gggs.py:80`
+- [x] (suggestion) `grid_index_for` omits `normalizeLongitude` and the latitude clamp that `Level::gridIndex` performs — `marine_web_view/marine_web_view/gggs.py:124`
+- [x] (suggestion) `tiles_covering` treats east/north edges as inclusive against a half-open extent, adding a spurious row/column per grid — `marine_web_view/marine_web_view/gggs.py:162`
+- [x] (suggestion) `test_every_layer_reaches_the_map` regexes do not match `new L.TileLayer(`, so the new layer is unguarded; `added >= built` is non-binding — `marine_web_view/test/test_page_layers.py:66`
+- [x] (suggestion) Launch-param guard ignores the hand-maintained `names` forwarding tuple, the exact #341 failure mode — `marine_web_view/test/test_launch_params.py:74`
+- [x] (suggestion) Two `test_gggs.py` round-trips are near-tautological; no case pins the +/-72 / +/-80 scale-factor boundaries — `marine_web_view/test/test_gggs.py:60`
+- [x] (suggestion) No test exercises `_sample_tile`, `_colourise`, `_mark_dirty`, `ramp_colour` or `colour_table` — where both rendering must-fixes live — `marine_web_view/test/`
+- [x] (suggestion) `best_effort` depth 50 (~92 MB of queue) vs producer and CAMP at depth 10, unexplained — `marine_web_view/marine_web_view/coverage_renderer.py:166`
+- [x] (suggestion) Requests unbatched/unthrottled on a shared-fanout channel; `header.frame_id` never set (CAMP sets "gggs") — `marine_web_view/marine_web_view/coverage_renderer.py:215`
+- [x] (suggestion) Dry-run path: `prefix` not normalized (`..` escapes `local_dir`), mkstemp yields 0600 vs sibling's 0644, failed writes orphan temp files in a served directory — `marine_web_view/marine_web_view/coverage_renderer.py:356`
+- [x] (suggestion) `cache_control` unvalidated (negative/zero); default 60 vs `render_interval` 20 — `marine_web_view/marine_web_view/coverage_renderer.py:142`
+- [x] (suggestion) No final flush of the dirty set at shutdown; a constructor raise after `rclpy.init()` skips the `finally` — `marine_web_view/marine_web_view/coverage_renderer.py:390`
+- [x] (suggestion) `aws` CLI shelled out to but not declared as a dependency — `marine_web_view/package.xml`
+- [x] (suggestion) `is_valid_index` hardcodes `level > 20`; the C++ `LevelSpecs` is the authority — `marine_web_view/marine_web_view/reconciler.py`
+- [x] (suggestion) State explicitly that this renderer is memory-only (no ADR-0008 D5 warm-load) so it does not read as an oversight — `marine_web_view/README.md`
+- [x] (suggestion) `.agents/README.md` has no `marine_web_view` row at all (pre-existing) — file a separate docs ticket
+- [x] (suggestion) plan.md stale vs branch: zoom 15, prefix live/coverage, renamed params, dropped depth_min/depth_max, tiles.py, README, unimplemented S3 delete — `.agent/work-plans/issue-345/plan.md`
+- [x] (suggestion) Two Open Questions resolved by silence: orphaned S3 tiles on zoom reconfigure, and post-survey Cache-Control — `.agent/work-plans/issue-345/plan.md`
+- [x] (suggestion) Drive-by orphaned-hillshade fix (ed78e06) is out of declared scope — call it out in the PR body — `marine_web_view/web/index.html`
 
 ### Notes
 - Cross-source confirmations: the row flip (Lens A empirically + lead against `tiled_raster_tile.hpp:40`, `cell_index.h`, `SonarVisualizationTile.msg:31`, and CAMP's explicit flip at `sonar_live_tile.cpp:112`); the ramp divergence (Governance + Lens A + Plan Drift + lead numeric diff, 4-way); prune-never-un-publishes (Plan Drift + Lens A + Lens B, 3-way); executor blocking (Lens A + Lens B).
 - Static analysis clean: ament flake8 with the full plugin set, ament_pep257 (with the package's own `--add-ignore D213`), ament_copyright, xmllint on package.xml. Full pytest suite: 39 passed, 0 failed.
 - Local Adversarial unavailable: the Ollama `llama-server` was OOM-killed on this diff at default and 40k context; three attempts, no findings produced. Not a code signal either way.
 - Housekeeping: an adversarial sub-agent edited the worktree despite instructions. Its `coverage_renderer.py` change (the row-flip fix) was reverted so the review reflects the committed diff; an untracked `marine_web_view/test/test_sampling_orientation.py` remains in the worktree (a regression test for the flip). It is worth adopting alongside the fix; a copy is also in the session scratchpad. Delete it if not wanted — it is not part of any commit.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-23 01:25 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-345 at `7f6e9e8`
+**Addressed**: `## Local Review (Pre-Push)` (2026-08-23 00:38 -04:00, branch at `d94a2c4`) — all 34 open findings; the two already checked (row flip, ramp divergence) were fixed before this pass
+**Commits**: `acdf46d` `debcedf` `e98df11` `ea560b6` `ebdeed1` `4c3a600` `2543054` `62c91ee` `85222cc` `ca49cfa` `980bcca` `8e8269f` `d2800eb` `f6455ed` `7f6e9e8`
+
+### Verification
+
+- `./core_ws/build.sh marine_web_view` + `./core_ws/test.sh marine_web_view`: **99 tests, 0 failures** (42 at the start of this pass; 57 added).
+- ament flake8 (full plugin set), ament_pep257, ament_copyright: clean — run through the package's own test suite, and flake8 again standalone against the ament config.
+- Node smoke test under `rclpy`: constructs, spins, renders a cached L10 grid to PNGs + `meta.json` in dry-run, and stops cleanly. Also exercised the no-TF path: nothing is rendered, the tiles stay dirty, and the manifest reports `waiting_for_chart_datum`.
+
+### Actions
+
+- [x] (must-fix, operator-found) Depth coloured without the chart-datum transform — `coverage_renderer.py` `_update_datum_offset` / `_colourise`. The offset is read from `map_frame -> chart_datum_frame` via `tf2_ros`, re-read every render pass, with `s57_layer.cpp`'s invalidate-past-a-threshold treatment (`tide_invalidate_threshold`, default 0.15 m); depth below datum is `datum_z - value`. Nothing renders until the transform is available — an unreferenced height is wrong in a way that looks right. `chart_datum_frame:=''` opts out. Pinned by `test_colour.py` (sign of the correction, TF not a constant, tide invalidation, jitter rejection, missing-transform refusal, last-known-offset on a transient gap).
+- [x] (must-fix) Pruned coverage never un-published — `coverage_renderer.py` `_render_one`. A published slippy tile that loses its coverage is overwritten with a transparent PNG; one never published still costs no PUT. Cross-run leftovers (different `zoom`/`prefix`) are out of reach without `s3:ListBucket` and are documented in the README instead.
+- [x] (must-fix) `mark_have` on a partial sub-window — `coverage_renderer.py` `_on_tile`. Only a whole-tile message advances possession now; a partial one updates pixels and leaves the tile re-requestable, which is what makes the documented healing real. Costs nothing today: `quantize_tile.cpp:98` serves whole tiles.
+- [x] (must-fix) No newest-wins gate before `apply_window` — `coverage_renderer.py` `_on_tile`. Gate moved ahead of the patch, against a per-tile applied-version map.
+- [x] (must-fix) `_mark_dirty` on an unvalidated index — `coverage_renderer.py` `_tile_is_sane` / `_mark_dirty`. The index is validated against the GGGS spec and the enumeration is bounded (`MAX_DIRTY_TILES_PER_GRID`).
+- [x] (must-fix) No dimension guard before `new_tile` — `coverage_renderer.py` `_tile_is_sane`. Zero, oversized (`MAX_TILE_EDGE` 4096, CAMP's figure) and byte-ceiling violations are refused before any allocation.
+- [x] (must-fix) No exception containment off the S3 path — `coverage_renderer.py` `_render_pending` / `_send_requests` / `_render_loop`. Contained per tile, per timer, and at the thread level.
+- [x] (must-fix) Dirty set cleared before rendering — `coverage_renderer.py` `_render_pending`. Failures go back into the dirty set and are retried.
+- [x] (must-fix) Tile cache unbounded — `coverage_renderer.py` `_evict_if_over_budget`. `cache_budget_bytes` (512 MiB, CAMP's figure), LRU. Possession is dropped with the tile (no disk to fall back on); an evicted tile is deliberately not marked dirty, so its published PNG stands.
+- [x] (must-fix) Render pass O(dirty x 256 x |cache|) on the executor — `coverage_renderer.py` `_candidates` / `_sample_tile` / `_render_loop`. Sampling is vectorized over the whole 256x256 grid against only the overlapping tiles, and the pass runs on its own thread; the timer only wakes it.
+- [x] (must-fix) The lock was decoration — `coverage_renderer.py` `_on_tile`. Copy-on-write: a patch replaces the array, so every array the renderer holds is immutable.
+- [x] (must-fix) Page hardcodes `COVERAGE_Z` / `live/coverage/`, `errorTileUrl` masks total failure — `web/index.html` + `coverage_renderer.py` `_publish_meta`. Each pass writes `<prefix>/meta.json`; the page builds its layer from that zoom and reports `offline`/`stale` from its stamp in a new Coverage readout.
+- [x] (suggestion) README layer-stack sentence duplicated — `README.md`.
+- [x] (suggestion) Poisoned all-NaN cache entry on a failed first patch — `coverage_renderer.py` `_on_tile` (dropped), plus the zero-dimension guard above.
+- [x] (suggestion) Sampler ignored `level` — `coverage_renderer.py` `_candidates`. Coarsest first, finer wins, and a finer NaN no longer erases coarser data.
+- [x] (suggestion) `latitude_scale_factor` docstring misstated the C++ boundaries — `gggs.py`. They are `uint32_t`; `int()` applied to match.
+- [x] (suggestion) `grid_index_for` omitted `normalizeLongitude` and the latitude clamp — `gggs.py`. Both ported, plus the latitude-indexed scale factor `Level::gridIndex` actually uses.
+- [x] (suggestion) `tiles_covering` treated the extent as closed — `gggs.py`. Half-open, computed in tile space (the projection round-trip is not exact), so each grid stops dirtying a spurious row and column.
+- [x] (suggestion) `test_every_layer_reaches_the_map` did not match `new L.TileLayer(` — `test/test_page_layers.py`. Each construction site is now checked individually instead of a non-binding `added >= built`.
+- [x] (suggestion) Launch-param guard ignored the forwarding tuple — `test/test_launch_params.py`. Both forwarding spellings are parsed and compared against the declared arguments.
+- [x] (suggestion) `test_gggs.py` round-trips near-tautological, no boundary cases — `test/test_gggs.py`. The +/-72 and +/-80 edges are pinned from both spellings, plus the longitude wrap, the latitude throw, and the half-open covering set.
+- [x] (suggestion) No test for `_sample_tile` / `_colourise` / `_mark_dirty` / `ramp_colour` / `colour_table` — `test/test_colour.py`, `test/test_tile_ingest.py`, `test/test_sampling_orientation.py`, `test/test_render_pass.py`.
+- [x] (suggestion) `best_effort` depth 50 — `coverage_renderer.py`. Depth 10, matching the producer and CAMP.
+- [x] (suggestion) Requests unbatched, `frame_id` unset — `coverage_renderer.py` `_publish_requests`. `max_requests_per_message` (256) with the remainder carried; `frame_id` is `gggs`.
+- [x] (suggestion) Dry-run path: prefix traversal, 0600 temp files, orphaned temps — `coverage_renderer.py` `_safe_prefix` / `_write_local`, pinned by `test/test_local_output.py`.
+- [x] (suggestion) `cache_control` unvalidated, default 60 vs `render_interval` 20 — `coverage_renderer.py`. Validated, and the default is now 20 so a viewer does not hold a tile past its replacement.
+- [x] (suggestion) No shutdown flush; a constructor raise skipped the `finally` — `coverage_renderer.py` `stop()` / `main()`.
+- [x] (suggestion) `aws` CLI undeclared — `package.xml`. `awscli` exec_depend (and `tf2_ros` for the datum lookup).
+- [x] (suggestion) `is_valid_index` hardcoded `level > 20` — `reconciler.py` / `gggs.py`. `gggs.MAX_LEVEL`, cited to the 21-entry `LevelSpecs` array.
+- [x] (suggestion) Memory-only not stated — `README.md`. ADR-0008 D5's warm load is absent by decision; the bucket is the durable output.
+- [x] (suggestion) `.agents/README.md` has no `marine_web_view` row — filed as [unh_marine_autonomy#348](https://github.com/rolker/unh_marine_autonomy/issues/348), which covers all six undocumented packages and asks for a guard so the gap cannot silently reopen. Not fixed here: it is pre-existing and repo-wide.
+- [x] (suggestion) plan.md stale vs branch — `plan.md`, new "As built" section covering the parameter renames, the dropped `depth_min`/`depth_max`, `tiles.py`, README/page, the unimplemented S3 delete (transparent overwrite instead, so the IAM policy stays `s3:PutObject`-only), and the chart-datum reference the plan never anticipated.
+- [x] (suggestion) Two Open Questions resolved by silence — `plan.md`. Orphaned tiles on a zoom/prefix change: documented, not automated (a cross-run sweep needs `s3:ListBucket`). Post-survey Cache-Control: left short, deliberately — a long-TTL re-upload is a full-mosaic PUT burst during boat recovery; the real cost was the 60 s default, now 20.
+- [x] (suggestion) Drive-by orphaned-hillshade fix out of scope — `plan.md`, "Out of declared scope — for the PR body".
+
+### Notes
+
+- The reviewer's housekeeping note is resolved: `test_sampling_orientation.py` was adopted in `9bb1ead` alongside the row-flip fix and is tracked.
+- Two findings pulled in changes beyond their own file because the fix had a consequence: the datum work added `tf2_ros` + `awscli` to `package.xml` and three launch arguments, and the manifest work touched both the node and the page. Both are noted in their commit messages.
+- `cache_control`'s default moved 60 → 20 and `zoom` stayed 15; both are in the README parameter table and the launch file, and `test_launch_params.py` now fails if a parameter is declared but not forwarded.
+
+### Next step
+
+Lifecycle: **Implementation** → **review-code** (re-review the fixes)
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 345 --skill review-code
