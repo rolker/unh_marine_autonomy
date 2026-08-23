@@ -101,7 +101,7 @@ ros2 launch marine_simulation sim_robot_launch.py \
 
 ## `web/index.html`
 
-Single-page Leaflet view. Esri World Imagery basemap with CCOM/JHC bathymetry
+Single-page Leaflet view. Layers, bottom to top: Esri imagery, CCOM/JHC bathymetry, hillshade, live sonar coverage, then the vessel track and hull. Esri World Imagery basemap with CCOM/JHC bathymetry
 rendered as fixed-scale depth colours plus hillshade, and the vessel drawn with
 CAMP's geometry — triangle while metres-per-pixel exceeds
 `max(length, width) / 10`, hull outline below that, circle when heading is
@@ -117,6 +117,112 @@ Notes that are easy to get wrong and are commented at the point of use:
 - Esri World Imagery is licensed under the Esri Master License Agreement and
   its item states it is not intended for exporting tiles offline: it must stay
   proxied live and must never be cached into our bucket.
+
+## Node: `coverage_renderer`
+
+Renders live sonar coverage to slippy-map PNGs, consuming the ADR-0008 display
+transport. Read-only against that transport: it never writes back to the
+durable stores, which the display projection is always rebuildable from.
+
+Part of [#345](https://github.com/rolker/unh_marine_autonomy/issues/345).
+
+### The protocol, and why each part matters
+
+| topic | type | QoS | role |
+|---|---|---|---|
+| `<ns>/coverage_catalog` | `marine_interfaces/TileCatalog` | RELIABLE, **TRANSIENT_LOCAL** | complete snapshot of what the source holds |
+| `<ns>/coverage_requests` | `marine_interfaces/TileRequest` | RELIABLE, VOLATILE | what we are missing or stale on |
+| `<ns>/coverage_tiles` | `marine_interfaces/SonarVisualizationTile` | **BEST_EFFORT**, VOLATILE | dirty sub-windows |
+
+The catalog is a **complete** snapshot, and that completeness is a
+precondition: prune-on-absence against a partial or paged catalog would read
+as "the source dropped everything I cannot see".
+
+Two rules keep reconciliation safe, and both fail *silently* when broken --
+the display just goes quietly wrong:
+
+- **Newest-wins** (D3): a reordered older arrival must not lower the held
+  version, or a stale tile overwrites a fresh one.
+- **Timestamp-gated prune** (D4b): a held tile absent from the catalog is
+  pruned only if its version predates the catalog's generation time, so a late
+  catalog cannot delete a tile pushed after it was generated.
+
+A consequence worth knowing: at generation time zero the gate disables pruning
+entirely, because `version < generation` is never true. That is right under
+simulated time starting at zero -- better to keep a tile the source may still
+hold than delete on no evidence -- but it is emergent from the comparison, not
+an explicit branch, so `test_reconciler.py` pins it.
+
+Live push is **best-effort**. A lost or malformed patch is dropped and healed
+by the next catalog round, which re-requests the tile in full.
+
+### Parameters
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `coverage_namespace` | `/ben/sensors/mbes/cube_bathymetry` | where the coverage triple lives |
+| `band` | `depth` | which `VisualizationBand` to render |
+| `zoom` | `15` | slippy zoom; higher means more tiles and more PUTs per dirty GGGS tile |
+| `render_interval` | `20.0` | seconds between render passes |
+| `request_interval` | `5.0` | seconds between `TileRequest` publications |
+| `bucket` / `prefix` | `unh-ccom-p11-live` / `live/coverage` | |
+| `profile` | `p11-renderer` | scoped to `s3:PutObject` on `live/*` |
+| `cache_control` | `60` | `max-age` stamped on each PNG |
+| `dry_run` / `local_dir` | `false` / `/tmp/coverage` | write PNGs locally instead of S3 |
+
+Every parameter is exposed by the launch file, and `test_launch_params.py`
+enforces that -- a node parameter its launch file does not forward is silently
+ignored, which is how `state_renderer` shipped with a documented-but-dead
+`track_local_path`.
+
+### Band decoding
+
+Bands are quantized and self-describing: `value = raw * scale + offset`, with
+the element type taken from `dtype`. Depth is INT16 but uncertainty,
+backscatter and intensity are UINT8, and UINT16 is reserved for sidescan --
+hardcoding int16 would mis-decode three of the four into plausible garbage.
+
+`nodata` is a **raw sentinel compared before dequantization**. -32768 raw at
+scale 0.01 dequantizes to -327.68, a perfectly plausible depth: comparing
+afterwards would render "no data" as very deep water.
+
+### Rendering
+
+Uncovered cells stay NaN and render transparent. That is the point -- the
+shape of the surveyed swath is what a coverage layer carries, so it must not
+fill.
+
+Colour reuses the basemap ramp over a fixed 0-40 m scale
+([#342](https://github.com/rolker/unh_marine_autonomy/issues/342)) so coverage
+and bathymetry read on one scale, with a small tint offset so the layers stay
+distinguishable where they overlap. Per the plan this is a recorded **ADR-0001
+interim deviation**: `marine_colormap` is the mandated single source of truth
+but is C++-only today, so it cannot be called from this node. Expiry: adopt it
+once a Python binding exists ([#137](https://github.com/rolker/marine_colormap/issues/137)).
+
+### Running
+
+```bash
+# Against the simulator, writing PNGs locally
+ros2 launch marine_web_view coverage_renderer_launch.py \
+    dry_run:=true local_dir:=/path/to/web/live/coverage prefix:=""
+
+# Against S3
+ros2 launch marine_web_view coverage_renderer_launch.py
+```
+
+The simulator is a complete source -- launch it, and `cube_bathymetry`
+publishes a live catalog as the vessel surveys:
+
+```bash
+ros2 launch marine_simulation sim_robot_launch.py \
+    namespace:=ben platform:=bizzy enable_bridge:=false tide_speed_factor:=1
+```
+
+`tide_speed_factor` defaults to **10**, compressing a 12.4-hour cycle into
+about 74 minutes. A vessel that enters on a high tide can strand minutes
+later on charted ground that was navigable when it arrived -- realistic
+behaviour at an unrealistic rate. Use `1` for sustained work.
 
 ## `scripts/refresh_chart_tiles.py`
 
