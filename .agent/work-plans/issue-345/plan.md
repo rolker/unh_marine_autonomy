@@ -72,7 +72,7 @@ messages, anti-entropy reconciliation via `TileCatalog` / `TileRequest`, with CA
 | `zoom` | `17` | Web Mercator zoom level to render |
 | `band` | `depth` | which `VisualizationBand` to render |
 | `depth_min` | `0.0` | colormap low end (m), fixes #342's scale agreement |
-| `depth_max` | `50.0` | colormap high end (m) |
+| `depth_max` | `40.0` | colormap high end (m); matches #342's basemap scale |
 | `profile` | `p11-renderer` | AWS credentials profile |
 | `interval` | `5.0` | upload-check timer (seconds) |
 | `cache_control` | `60` | `max-age` for S3 objects while active (seconds) |
@@ -120,10 +120,17 @@ messages, anti-entropy reconciliation via `TileCatalog` / `TileRequest`, with CA
   fully transparent.
 - Encode RGBA array as PNG with `PIL.Image.fromarray(..., 'RGBA').save(buf, 'PNG')`
 
-**Colormap:** depth band uses a fixed-range linear interpolation from deep blue (0.0 m →
-`depth_max`) to shallow green. Implementation: 256-entry LUT in Python, looked up by
-`int((depth / depth_max) * 255)` after clamping. This is deliberately the same fixed-range
-approach as #342 so overlaid depth matches the basemap's depth scale.
+**Colormap:** the depth band reuses the ramp #342 extracted from CCOM's published
+`BTY_4m_HighRes_BlueGreen_DRA` service -- 24 control points over a fixed 0-40 m
+range, interpolated per pixel -- **not** a hand-rolled LUT. Control points come
+from `marine_web_view/web/index.html` (`RAMP`, `MAX_DEPTH`, `STEP`) so the
+coverage layer and the basemap cannot drift, and `test_ramp_sync.py` already
+guards that duplication.
+
+A small, deliberate offset is applied (hue/saturation or lightness) so coverage
+stays visually distinguishable from the basemap it is composited over: sharing a
+scale keeps the two comparable, while an identical palette would make coverage
+invisible. Exact offset settled during implementation and shown to the operator.
 
 ## Principles Self-Check
 
@@ -145,6 +152,7 @@ approach as #342 so overlaid depth matches the basemap's depth scale.
 | ADR-0008 D3 newest-wins | Yes | Reject patch if `stamp_ns ≤ held_version` |
 | ADR-0008 "read-only" | Yes | Node never writes back to the durable stores; S3 output is display-grade |
 | Workspace ADR-0008 (ROS 2 conventions) | Yes | `ament_python` package, BSD-3 header, `package.xml` format 2 |
+| ADR-0001 (project, shared colormap) | Yes -- **interim deviation** | `marine_colormap` is the mandated single source of truth but is C++-only today (no Python binding, tracked by #137), so it cannot be called from this node. Interim: reuse #342's ramp, cited to CCOM's published service rather than hand-rolled, shared with the basemap via `test_ramp_sync.py`. **Expiry**: adopt `marine_colormap` once a Python binding exists. |
 
 ## Consequences
 
@@ -168,8 +176,9 @@ approach as #342 so overlaid depth matches the basemap's depth scale.
 - [ ] Should the node render at a single zoom level (z=17, covering ~1.2 m/pixel at mid-lat)
   or build a small pyramid (z=15–17) so the viewer can zoom out without blank tiles? A pyramid
   triples the S3 PUTs per dirty GGGS tile. Decision affects `prefix` layout and upload cost.
-- [ ] Color scale agreement with #342: confirm that `depth_min=0`, `depth_max=50 m` (or
-  whatever range #342 chose) is the right fixed range for coastal bathymetry surveys.
+- [x] ~~Color scale agreement with #342~~ **RESOLVED** (operator, 2026-08-22): fixed
+  0-40 m, reusing #342's extracted CCOM ramp with a small offset so the layers stay
+  distinguishable. See "Operator decisions" below.
 - [ ] `Pillow` and `numpy` are pip deps, not ROS packages — are they guaranteed in the
   deployment environment (the fieldside laptop)? If not, add a `rosdep` key or document the
   install step.
