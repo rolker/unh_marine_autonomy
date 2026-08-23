@@ -101,11 +101,11 @@ ros2 launch marine_simulation sim_robot_launch.py \
 
 ## `web/index.html`
 
-Single-page Leaflet view. Layers, bottom to top: Esri imagery, CCOM/JHC bathymetry, hillshade, live sonar coverage, then the vessel track and hull. Esri World Imagery basemap with CCOM/JHC bathymetry
-rendered as fixed-scale depth colours plus hillshade, and the vessel drawn with
-CAMP's geometry — triangle while metres-per-pixel exceeds
-`max(length, width) / 10`, hull outline below that, circle when heading is
-unknown.
+Single-page Leaflet view. Layers, bottom to top: Esri World Imagery, CCOM/JHC
+bathymetry rendered as fixed-scale depth colours, hillshade, live sonar
+coverage, then the vessel track and hull. The vessel is drawn with CAMP's
+geometry — triangle while metres-per-pixel exceeds `max(length, width) / 10`,
+hull outline below that, circle when heading is unknown.
 
 Notes that are easy to get wrong and are commented at the point of use:
 
@@ -257,6 +257,18 @@ render thread always samples an immutable array.
 Shutdown flushes whatever is still dirty. Without that, up to one render
 interval of the end of a survey line is silently lost — the part an operator
 is most likely to be looking for.
+
+### Memory-only, by design
+
+There is no warm load and no disk cache. ADR-0008 D5 provides for one — CAMP
+uses it, because a GUI has to redraw the whole survey the moment it opens —
+but this renderer's durable output *is* the bucket: a restart re-requests what
+the source still holds through the ordinary catalog round, and every tile it
+had already published is still standing in S3 meanwhile. Adding a disk cache
+would buy a faster first pass and a second copy of state to keep consistent.
+
+The one thing this costs is noted under Publishing: PNGs from a *previous*
+run at a different zoom or prefix are not tracked, so they are not cleaned up.
 
 ### The manifest
 
