@@ -158,7 +158,7 @@ One YAML file per manager instance. All durations are seconds (float); all sizes
 | `log_dir` | path | *required* | Root for per-group output capture. |
 | `environment` | map<string,string> | `{}` | Environment applied to every group; group-level `environment` overrides per key. |
 | `status_period` | float | `1.0` | Periodic `~/status` publish interval. On-change publishes are additional, not a replacement. |
-| `output_ring_bytes` | int | `1048576` | Per-group output ring buffer size. See [Output retention](#output-retention). |
+| `output_ring_bytes` | int | `1048576` | Size of **one** retained output buffer. A group retains two (first failure, most recent), so its worst-case cost is twice this. See [Output retention](#output-retention). |
 | `restart_defaults` | map | see below | Defaults for every group's restart policy. |
 
 ### `manager.restart_defaults` (and per-group overrides)
@@ -169,8 +169,9 @@ One YAML file per manager instance. All durations are seconds (float); all sizes
 | `retry_limit` | int | `5` | Restarts allowed for a group that **was ready and then died**, within `retry_window`. |
 | `retry_window` | float | `300.0` | Sliding window for `retry_limit`. |
 | `backoff` | float[] | `[1, 2, 5, 10, 30]` | Delay before each successive attempt; the last value repeats. |
+| `respawn_max_retries` | int | `3` | Respawns allowed for a **single process** inside a group before the group escalates. Passed through to each `ExecuteProcess` action; `launch`'s own default is `-1` (unbounded), which the manager must not inherit. |
 
-The two budgets are separate because the failure cases differ. Never-became-ready is
+The three budgets are separate because the failure cases differ. Never-became-ready is
 usually a configuration error — a missing device, a bad path — and burning ten attempts on
 it wastes the window in which an operator could still fix it. Was-ready-then-died is more
 likely transient, and deserves a larger budget.
@@ -192,6 +193,7 @@ Exactly one of `launch` or `exec` is required.
 | `retry_limit` | int | inherited | Override. |
 | `retry_window` | float | inherited | Override. |
 | `backoff` | float[] | inherited | Override. |
+| `respawn_max_retries` | int | inherited | Override. |
 | `shutdown` | map | `{signal: SIGINT, timeout: 10.0}` | Stop discipline — see [Stopping a group](#stopping-a-group). |
 | `environment` | map<string,string> | `{}` | Merged over `manager.environment`. |
 | `description` | string | `""` | One line, shown in the UIs. |
@@ -361,11 +363,12 @@ When a `READY` group drifts, the manager escalates cheapest-first:
    manager observes the restart and re-drives lifecycle. Respawn is **not** a blind spot,
    because the manager holds the `LaunchService` itself rather than shelling out to
    `ros2 launch` — it sees per-process start and exit events and can count and report them
-   (`respawns_in_window`). This step has a budget of its own, and it is **not** one of the
-   two in `restart_defaults`: it is `launch`'s per-process `respawn_max_retries` on the
-   `ExecuteProcess` action (`launch/actions/execute_local.py:100`, enforced at
-   `:606-608`), which defaults to `-1` — unbounded. A process that respawns forever never
-   escalates, so the manager must set it rather than inherit the default.
+   (`respawns_in_window`). This step has a budget of its own, at a different level from the
+   other two: `respawn_max_retries`, which the manager passes through to `launch`'s
+   per-process `respawn_max_retries` on the `ExecuteProcess` action
+   (`launch/actions/execute_local.py:100`, enforced at `:606-608`). `launch`'s own default
+   is `-1` — unbounded — and a process that respawns forever never escalates, so the
+   manager always sets this rather than inheriting it.
 3. **Group restart.** Triggered when a process exhausts its respawn allowance, an essential
    process exits, or the launch description terminates. Full stop-then-start of the group,
    respecting `shutdown` discipline.
@@ -390,6 +393,14 @@ and keeping only the tenth is how a crash loop erases its own explanation.
 The output ring buffer **must survive the process that produced it**, and **must not be
 wiped by a restart**. That is precisely what tmux scrollback provides today, and losing it
 would make the manager a regression on the axis operators actually use.
+
+Concretely: a group retains **two** buffers of `output_ring_bytes` each — first failure and
+most recent — so the manager's worst-case output cost is `2 × output_ring_bytes × groups`.
+Both are held **in memory** for serving, and both are also written under `log_dir` so they
+survive a manager restart, which in-memory retention alone would not. Buffers are byte
+rings, not line rings: an oversized buffer drops from the front, and the retained window is
+therefore the *tail* of the first failure, not its head. Whether that is the right end to
+keep for a first failure is an [open item](#open-items).
 
 ### Stopping a group
 
@@ -751,7 +762,9 @@ on its own terms, and it makes the manager's job smaller.
   with no pose), so the flag applied to nothing. But a profile change that stops autonomy under way is still worth a confirmation
   dialog, and the UI is where that belongs.
 - **Semantics still to pin down before implementation.** Each is a small decision the doc
-  does not currently make: whether and when the `start_attempts` and
+  does not currently make: which end of an oversized first-failure buffer to keep — a byte
+  ring drops from the front, so the retained window is the failure's *tail*, while the root
+  cause is often in its head; whether and when the `start_attempts` and
   `retry_limit`/`retry_window` counters reset — as written, `CLEAR_FAILURE` leaves desired
   state at `RUNNING`, so convergence restarts the group immediately and can walk straight
   back into the crash loop it just acknowledged; what state a group is in after a *clean*
