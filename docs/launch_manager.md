@@ -458,8 +458,15 @@ string   profile               # SET_PROFILE
 string[] groups                # START | STOP | RESTART | SET_LIFECYCLE | CLEAR_FAILURE
 string   lifecycle_target      # SET_LIFECYCLE
 diagnostic_msgs/KeyValue[] arguments   # declared arguments only
-bool     force
+bool     force                 # UNDEFINED - see Open items
 ```
+
+`force` is part of the settled command set but **nothing defines what it overrides**, and
+it is a field a front end could plausibly set by default. Both readings that suggest
+themselves — bypassing `FAILED` stickiness, and overriding the `RELOAD_CONFIG`
+running-group guard below — remove a safety property that was put there deliberately. It is
+therefore listed as an [open item](#open-items): define it or delete the field before
+implementation, and until then a manager must ignore it rather than guess.
 
 Idempotency by `request_id` is what makes a topic safe as a command channel over a link
 that duplicates and reorders: a client re-sends until it sees its `request_id` acknowledged
@@ -646,6 +653,10 @@ on its own terms, and it makes the manager's job smaller.
   mission hovers at current position (`mission_manager.py:75` in the `mission_manager` package constructs `done_hover` fresh
   with no pose), so the flag applied to nothing. But a profile change that stops autonomy under way is still worth a confirmation
   dialog, and the UI is where that belongs.
+- **`force` is undefined.** The command message carries `bool force`, settled as part of
+  the command set, with no stated semantics. Define exactly what it overrides — and
+  confirm that whatever that is may be overridden by a single bool arriving over the radio
+  link — or delete the field.
 - **Repo layout**: three sibling repos (`ros2launch_session`, `ros2launch_gui`,
   `ros2launch_manager`, matching what exists) versus one `ros2launch_tools` repo with three
   packages (easier to release and discover). **Start separate, revisit at release time.**
