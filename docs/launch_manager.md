@@ -297,7 +297,9 @@ triage under way — that is the difference between one diagnosis and three.
 
 `FAILED` is **sticky**: it persists until an explicit `CLEAR_FAILURE`, even if the
 underlying cause resolves. This is what makes `CLEAR_FAILURE` a real command rather than
-ceremony — an operator's acknowledgement that they have looked.
+ceremony — an operator's acknowledgement that they have looked. Stickiness assumes the
+operator can reach the manager to acknowledge, which is not true of the groups that carry
+the link itself — see [Process ownership](#process-ownership).
 
 ```
                  desired=RUNNING, deps unmet
@@ -562,6 +564,21 @@ cannot be reliably torn down is a worse problem on a boat than a link that blink
 Mitigation is twofold: keep the manager small enough that crashing is a bug rather than a
 scenario, and run it under systemd with `Restart=always`.
 
+**A second hazard, which that accepted consequence does not cover.** In the example config
+`zenoh` and `comms` are ordinary groups with ordinary budgets, and `FAILED` is sticky. A
+link group that crash-loops past its budget therefore lands in `FAILED` and stays there
+until a `CLEAR_FAILURE` — a command that can only arrive over the transport those very
+groups provide. The manager is alive, the boat is unreachable, and nothing will retry: "no
+remote control surface", the third problem this design exists to fix, reappearing at the
+moment it matters most. It is not the manager-crash case above, which systemd resolves in
+seconds without operator action.
+
+This is **deliberately left open**, because every way out of it changes the escalation
+ladder for link-carrying groups — exempting them from stickiness, self-clearing `FAILED`
+after a timer, giving them an unbounded budget, or marking a group as link-carrying and
+treating it differently — and that is a design decision, not a wording fix. See
+[Open items](#open-items).
+
 ## Implementation substrate
 
 The workspace already owns the two hardest pieces, which is why this is a thin manager
@@ -682,6 +699,10 @@ on its own terms, and it makes the manager's job smaller.
   mission hovers at current position (`mission_manager.py:75` in the `mission_manager` package constructs `done_hover` fresh
   with no pose), so the flag applied to nothing. But a profile change that stops autonomy under way is still worth a confirmation
   dialog, and the UI is where that belongs.
+- **Sticky `FAILED` on the groups that carry the link.** A `zenoh` or `comms` group that
+  exhausts its budget cannot be revived, because `CLEAR_FAILURE` has to travel over the
+  link it just lost (see [Process ownership](#process-ownership)). Needs a decision about
+  how link-carrying groups escalate; recorded here rather than solved.
 - **No output channel.** Retained per-group output has no defined transport to a remote
   front end (see [Front ends](#front-ends)). Until one exists, the promise of per-process
   output tabs over the link, and parity with tmux scrollback, are met on the manager's host
