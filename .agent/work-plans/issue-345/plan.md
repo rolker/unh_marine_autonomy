@@ -54,11 +54,14 @@ messages, anti-entropy reconciliation via `TileCatalog` / `TileRequest`, with CA
 |------|--------|
 | `marine_web_view/marine_web_view/gggs.py` | New: GGGS bounds math + slippy-tile helpers |
 | `marine_web_view/marine_web_view/reconciler.py` | New: Python `TileCatalogReconciler` |
+| `marine_web_view/marine_web_view/tiles.py` | New (as built): generic `VisualizationBand` decode + window assembly, split out of the node so it is testable without ROS |
 | `marine_web_view/marine_web_view/coverage_renderer.py` | New: `CoverageRenderer` ROS 2 node |
-| `marine_web_view/test/test_coverage_renderer.py` | New: unit tests (reconciler + GGGS math) |
+| `marine_web_view/test/` | New: unit tests. As built these are `test_gggs.py`, `test_reconciler.py`, `test_tiles.py`, `test_tile_ingest.py`, `test_colour.py`, `test_render_pass.py`, `test_sampling_orientation.py`, `test_local_output.py` rather than one `test_coverage_renderer.py` |
 | `marine_web_view/launch/coverage_renderer_launch.py` | New: launch file |
 | `marine_web_view/setup.py` | Add `coverage_renderer` entry point |
-| `marine_web_view/package.xml` | Add `std_msgs` exec_depend |
+| `marine_web_view/package.xml` | Deps: `python3-numpy`, `python3-pil`, `tf2_ros`, `awscli` (as built; `std_msgs` was not needed — `Header` arrives inside the marine_interfaces messages) |
+| `marine_web_view/README.md` | Add the `coverage_renderer` section (named in Documentation Impact below; it belongs in this table too) |
+| `marine_web_view/web/index.html` | Add the coverage layer and its manifest-driven configuration |
 
 ## Node design — `CoverageRenderer`
 
@@ -173,20 +176,86 @@ invisible. Exact offset settled during implementation and shown to the operator.
 
 ## Open Questions
 
-- [ ] Should the node render at a single zoom level (z=17, covering ~1.2 m/pixel at mid-lat)
-  or build a small pyramid (z=15–17) so the viewer can zoom out without blank tiles? A pyramid
-  triples the S3 PUTs per dirty GGGS tile. Decision affects `prefix` layout and upload cost.
+- [x] ~~Single zoom level or a small pyramid?~~ **RESOLVED (as built): single level, z=15.**
+  A pyramid triples the PUTs per dirty GGGS tile for a view the browser can
+  approximate by rescaling. `minNativeZoom`/`maxNativeZoom` pin the layer to the one
+  written level and `minZoom` hides it rather than letting Leaflet lay out the viewport
+  in native-zoom tiles when zoomed out (which freezes the browser). z=15 rather than the
+  planned z=17: at L10 the source cell is ~0.9 m and z=15 is ~3.5 m/pixel at this
+  latitude, which is the scale the coverage shape reads at without a 16x tile count.
 - [x] ~~Color scale agreement with #342~~ **RESOLVED** (operator, 2026-08-22): fixed
   0-40 m, reusing #342's extracted CCOM ramp with a small offset so the layers stay
   distinguishable. See "Operator decisions" below.
-- [ ] `Pillow` and `numpy` are pip deps, not ROS packages — are they guaranteed in the
-  deployment environment (the fieldside laptop)? If not, add a `rosdep` key or document the
-  install step.
-- [ ] Orphaned S3 tiles: if the zoom level is reconfigured between deployments, old-z tiles
-  remain in S3. Acceptable for now (display-grade, deletable), but should be documented.
-- [ ] Cache-Control after survey ends: the current plan uses a fixed `cache_control` TTL while
-  running. After the node exits (end of survey), S3 objects retain that short TTL indefinitely.
-  Consider a shutdown hook that re-uploads surviving tiles with a long TTL (e.g., 86400s).
+- [x] ~~`Pillow`/`numpy` availability~~ **RESOLVED (as built)**: declared as the rosdep
+  keys `python3-numpy` and `python3-pil` in `package.xml`, not pip. `awscli` and
+  `tf2_ros` are declared for the same reason — both were being used undeclared.
+- [x] ~~Orphaned S3 tiles on a zoom/prefix change~~ **RESOLVED (as built): documented,
+  not automated.** Within a run the node tracks what it has published and overwrites a
+  tile that loses its coverage with a transparent PNG, so pruning is reflected on the
+  display. Across runs it cannot: objects written by an earlier run at a different `zoom`
+  or `prefix` are untracked. The README says so and gives the two answers that work —
+  give a survey its own prefix, or expire the old one with a bucket lifecycle rule.
+  Automating a cross-run sweep would mean listing the bucket at startup, which is a
+  `s3:ListBucket` grant the renderer's IAM policy deliberately does not have.
+- [x] ~~Cache-Control after the survey ends~~ **RESOLVED (as built): left short,
+  deliberately.** A shutdown hook re-uploading every surviving tile with a long TTL is a
+  full-mosaic PUT burst at exactly the moment the boat is being recovered, to save a
+  viewer one conditional request per tile per `cache_control` window on a page nobody is
+  watching. `cache_control` now defaults to `render_interval` (20 s) instead of 60, so a
+  viewer no longer holds a tile past its replacement — which was the real cost. The
+  shutdown hook that *was* added flushes the dirty set, so the end of the last line is
+  not lost.
+
+## As built — where the implementation departs from this plan
+
+Recorded so the plan stays usable as reference rather than drifting into
+fiction. Every departure below is on the branch.
+
+**Parameters.** The plan's table was written before the node existed and the
+names moved:
+
+| Planned | As built | Why |
+|---|---|---|
+| `namespace` | `coverage_namespace` | `namespace` collides with the ROS concept in launch |
+| `prefix` = `coverage` | `prefix` = `live/coverage` | the renderer's IAM policy is scoped to `live/*`, and the page's relative URLs must be identical locally and deployed |
+| `zoom` = `17` | `zoom` = `15` | see the resolved Open Question |
+| `interval` | `render_interval` + `request_interval` | rendering and asking are separate cadences; one timer could not serve both |
+| `local_path` | `local_dir` | it is a directory, not a file |
+| `depth_min` / `depth_max` | *(dropped)* | superseded by the operator decision: the scale is fixed 0–40 m and shared with #342, so making it a parameter would be a way to break that agreement |
+| — | `map_frame`, `chart_datum_frame`, `tide_invalidate_threshold` | the depth band is z in the map frame, not depth below datum (see below) |
+| — | `cache_budget_bytes`, `max_requests_per_message` | bounds the resident cache and the request burst |
+
+**Vertical reference — not in the plan at all.** The plan assumed the `depth`
+band could be coloured directly. It cannot: it carries z in the **map frame**,
+which is ellipsoidal, so over the Piscataqua every value saturated the 0–40 m
+ramp. The offset is the tide, so it moves through a survey; it is read from
+`map_frame → chart_datum_frame` in TF with `s57_layer.cpp`'s
+invalidate-past-a-threshold treatment. Found by the operator on the water.
+
+**S3 delete on prune — not implemented as planned.** The plan says "delete the
+affected S3 slippy tiles". A `DeleteObject` grant is a grant the renderer does
+not need: un-publishing is done by overwriting the tile with a transparent PNG,
+which reaches the display the same way and keeps the IAM policy to
+`s3:PutObject` on `live/*`.
+
+**A manifest was added.** `<prefix>/meta.json`, written every render pass. The
+page builds its coverage layer from the manifest's zoom rather than hardcoding
+it, and reports `offline`/`stale` from its timestamp — necessary because a
+missing tile is the *normal* case for a coverage layer, so the transparent
+`errorTileUrl` would otherwise hide total failure as calm water.
+
+**`tiles.py` was split out** of the node so band decode and window assembly are
+testable without ROS, and because the raw-before-dequantize `nodata` rule and
+the `dtype`-driven element size are exactly the details worth pinning.
+
+## Out of declared scope — for the PR body
+
+Commit `ed78e06` also fixes an **orphaned hillshade layer** in
+`web/index.html`: the `Relief` class was defined and never instantiated, so the
+hillshade had never actually appeared on the page. It is a #341 defect, not a
+#345 one, and it is called out here so the PR body can say so rather than
+leaving a reviewer to find an unexplained change to a layer this issue does not
+own. `test_page_layers.py` now guards against the class of bug.
 
 ## Estimated Scope
 
