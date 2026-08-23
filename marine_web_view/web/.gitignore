@@ -1,0 +1,4 @@
+# Runtime artifacts written by state_renderer when previewing locally
+# (dry_run). The live/ prefix mirrors the deployed bucket layout so the page's
+# relative URLs are identical in both places.
+live/

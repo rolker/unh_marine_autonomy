@@ -1,0 +1,64 @@
+# Copyright 2016-2020 Roland Arsenault
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+#    * Redistributions of source code must retain the above copyright
+#      notice, this list of conditions and the following disclaimer.
+#
+#    * Redistributions in binary form must reproduce the above copyright
+#      notice, this list of conditions and the following disclaimer in the
+#      documentation and/or other materials provided with the distribution.
+#
+#    * Neither the name of the Roland Arsenault nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+
+from glob import glob
+import os
+
+from setuptools import find_packages, setup
+
+package_name = 'marine_web_view'
+
+setup(
+    name=package_name,
+    version='0.0.0',
+    packages=find_packages(exclude=['test']),
+    install_requires=['setuptools'],
+    tests_require=['pytest'],
+    zip_safe=True,
+    maintainer='Roland Arsenault',
+    data_files=[
+        ('share/ament_index/resource_index/packages',
+            ['resource/' + package_name]),
+        ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'),
+         glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
+        # Files only: running the local preview creates web/live/ (gitignored),
+        # and setuptools cannot copy a directory into data_files -- an unfiltered
+        # glob turns the documented preview workflow into a build failure.
+        (os.path.join('share', package_name, 'web'),
+         [f for f in glob(os.path.join('web', '*')) if os.path.isfile(f)]),
+        (os.path.join('share', package_name, 'scripts'),
+         glob(os.path.join('scripts', '*.py'))),
+    ],
+    entry_points={
+        'console_scripts': [
+            'state_renderer = marine_web_view.state_renderer:main',
+        ],
+    },
+)

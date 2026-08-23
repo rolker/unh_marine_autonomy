@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>marine_web_view</name>
+  <version>0.0.0</version>
+  <description>
+    Public web view of vessel state: a ROS 2 node that renders live boat
+    position and heading to static GeoJSON in an S3 bucket, and the static
+    page that displays it. Deliberately one-way -- no ROS surface is exposed
+    to the internet.
+  </description>
+
+  <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
+
+  <license>BSD-3-Clause</license>
+
+  <depend>rclpy</depend>
+  <depend>marine_interfaces</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geographic_msgs</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
