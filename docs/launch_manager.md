@@ -53,6 +53,18 @@ Three problems, in increasing order of severity.
    created. A respawned-but-unconfigured `helm_manager` is a live process with a live node
    name, zero control authority — manual *or* autonomous — and no indication of it.
 
+   Driving it back to `active` is necessary but not sufficient, which is worth being
+   precise about, because it bounds what this manager can claim. `piloting_mode` is a plain
+   depth-1 subscription created in `on_configure` (`helm_manager.cpp:60`) — default
+   durability, so not latched — and the mode is published when an operator selects one.
+   A `helm_manager` that has just been repaired therefore comes back with an empty
+   `piloting_mode_` (asserted as the default in
+   `helm_manager/test/test_helm_manager.cpp:795`) and publishes nothing until a mode is
+   selected again. What convergence changes is that this interval is **bounded and
+   reported** — `DEGRADED` with a named cause — instead of silent and indefinite. Closing
+   it completely means the mode being re-asserted after a repair, which is the helm's
+   business rather than the manager's and is out of scope here.
+
    `LifecycleNode(autostart=True)` does **not** fix this. It is one-shot by construction:
    `launch_ros/actions/lifecycle_node.py` emits a single `LifecycleTransition`
    (configure, then activate) at `execute()` time (lines 121-131) and never re-applies it.
