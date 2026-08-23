@@ -271,10 +271,22 @@ class CoverageRenderer(Node):
         self._requests = self.create_publisher(
             TileRequest, namespace + '/coverage_requests', 10)
 
+        # Rendering runs on its own thread, not on the executor. A pass
+        # samples, encodes and uploads -- with a 30 s timeout per object --
+        # and doing that in a timer callback blocks the single-threaded
+        # executor for the whole pass, during which every BEST_EFFORT tile
+        # pushed by the source is dropped on the floor. The timer only rings
+        # the bell.
+        self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._worker = threading.Thread(
+            target=self._render_loop, name='coverage_render', daemon=True)
+        self._worker.start()
+
         self.create_timer(float(self._param('request_interval')),
                           self._send_requests)
         self.create_timer(float(self._param('render_interval')),
-                          self._render_dirty)
+                          self._wake_renderer)
 
         target = (self.local_dir if self.dry_run
                   else 's3://{}/{}'.format(self.bucket, self.prefix))
@@ -641,6 +653,54 @@ class CoverageRenderer(Node):
         rgba[..., 3] = numpy.where(present, 255, 0)
         return rgba
 
+    def _wake_renderer(self):
+        """Ask the render thread for a pass (timer callback)."""
+        self._wake.set()
+
+    def _render_loop(self):
+        """Run render passes on demand until stopped."""
+        while not self._stop.is_set():
+            self._wake.wait()
+            self._wake.clear()
+            if self._stop.is_set():
+                return
+            try:
+                self._render_dirty()
+            except Exception as error:
+                # The per-tile containment is inside _render_dirty; this is
+                # the backstop that keeps the thread itself alive.
+                self._failures += 1
+                self.get_logger().error(
+                    'render pass failed: {}'.format(error),
+                    throttle_duration_sec=10.0)
+
+    def stop(self):
+        """Stop the render thread, flushing whatever is still dirty.
+
+        Without a final pass the tiles rendered since the last one are simply
+        lost, which at the default cadence is up to 20 s of the end of a
+        survey line -- the part an operator is most likely to be looking for.
+        """
+        if self._stop.is_set():
+            return
+        self._stop.set()
+        self._wake.set()
+        # Generously longer than one upload timeout: the worker may be inside
+        # an `aws s3 cp` when the stop arrives.
+        self._worker.join(timeout=45.0)
+        if self._worker.is_alive():
+            self.get_logger().warn('render thread did not stop in time')
+            return
+        if self._dirty:
+            self.get_logger().info(
+                'flushing {} dirty tile(s) before exit'.format(
+                    len(self._dirty)))
+            try:
+                self._render_dirty()
+            except Exception as error:
+                self.get_logger().error(
+                    'final flush failed: {}'.format(error))
+
     def _render_one(self, x, y, datum_z):
         """Render and publish one slippy tile.
 
@@ -757,16 +817,22 @@ class CoverageRenderer(Node):
 def main(args=None):
     """Spin the coverage renderer until interrupted."""
     rclpy.init(args=args)
-    node = CoverageRenderer()
+    node = None
     try:
+        # Construction inside the try: a parameter or TF failure in the
+        # constructor would otherwise skip the finally entirely and leave
+        # rclpy initialised.
+        node = CoverageRenderer()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        node.get_logger().info(
-            'stopping: {} tiles rendered, {} cached, {} failures'.format(
-                node._rendered, len(node._tiles), node._failures))
-        node.destroy_node()
+        if node is not None:
+            node.stop()
+            node.get_logger().info(
+                'stopping: {} tiles rendered, {} cached, {} failures'.format(
+                    node._rendered, len(node._tiles), node._failures))
+            node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 
