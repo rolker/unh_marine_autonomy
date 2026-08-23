@@ -334,15 +334,22 @@ When a `READY` group drifts, the manager escalates cheapest-first:
 2. **Node respawn.** `launch`'s own `respawn` brings the process back inside the group; the
    manager observes the restart and re-drives lifecycle. Respawn is **not** a blind spot,
    because the manager holds the `LaunchService` itself rather than shelling out to
-   `ros2 launch` — it sees per-process start and exit events and can count and report them.
-3. **Group restart.** Triggered when the respawn budget is exhausted, an essential process
-   exits, or the launch description terminates. Full stop-then-start of the group,
-   respecting `shutdown` discipline. The respawn budget is `retry_limit` respawns within
-   `retry_window` — a group that was `READY` and then died is on the retry budget, and each
-   respawn is counted in `respawns_in_window`.
-4. **`FAILED`.** The applicable budget is exhausted — `retry_limit`/`retry_window` for a
-   group that had reached `READY`, `start_attempts` for one that never did. Sticky until
-   `CLEAR_FAILURE`.
+   `ros2 launch` — it sees per-process start and exit events and can count and report them
+   (`respawns_in_window`). This step has a budget of its own, and it is **not** one of the
+   two in `restart_defaults`: it is `launch`'s per-process `respawn_max_retries` on the
+   `ExecuteProcess` action (`launch/actions/execute_local.py:100`, enforced at
+   `:606-608`), which defaults to `-1` — unbounded. A process that respawns forever never
+   escalates, so the manager must set it rather than inherit the default.
+3. **Group restart.** Triggered when a process exhausts its respawn allowance, an essential
+   process exits, or the launch description terminates. Full stop-then-start of the group,
+   respecting `shutdown` discipline.
+4. **`FAILED`.** The budget on *step 3* is exhausted — `retry_limit` group restarts within
+   `retry_window` for a group that had reached `READY`, `start_attempts` for one that never
+   did. Sticky until `CLEAR_FAILURE`.
+
+So three budgets, at three levels: `respawn_max_retries` bounds respawns of one process,
+`retry_limit`/`retry_window` bounds restarts of a group that had been `READY`, and
+`start_attempts` bounds attempts at a group that never got there.
 
 Dependents of a group leaving `READY` are **not** torn down automatically. They are
 reported as `DEGRADED` with the cause named. Cascading teardown of a running autonomy stack
