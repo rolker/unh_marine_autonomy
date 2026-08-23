@@ -154,7 +154,12 @@ const DEAD_S  = 60;   // red past this
 // maxZoom 22 with maxNativeZoom 19 on the tile layers: the imagery upscales
 // past its native level so the map can zoom in far enough for the hull
 // outline to be worth drawing (see HULL_PX_THRESHOLD below).
-const map = L.map('map', { zoomControl: true, maxZoom: 22 }).setView([43.08, -70.71], 13);
+// minZoom 8: below that the CCOM dynamic layers are requesting
+// continent-scale renders that contain no data, and there is nothing
+// useful to see. It also bounds how far the coverage layer can be
+// zoomed away from its single rendered level.
+const map = L.map('map', { zoomControl: true, minZoom: 8, maxZoom: 22 })
+  .setView([43.08, -70.71], 13);
 
 // Basemap: Esri World Imagery -- genuinely cached. NOTE {z}/{y}/{x} (ArcGIS
 // order), reversed from the usual XYZ, and the tiles are JPEG.
@@ -365,8 +370,15 @@ new Relief('', {
 // where they overlap.
 const COVERAGE_Z = 15;
 new L.TileLayer('live/coverage/{z}/{x}/{y}.png', {
+  // minZoom, NOT just minNativeZoom. Leaflet's _clampZoom returns
+  // minNativeZoom whenever the map is below it, and then lays the whole
+  // viewport out in tiles OF THAT ZOOM: at map zoom 10 against a native 15
+  // that is 4^5 = 1024x the tile count, and by zoom 5 it is millions of DOM
+  // elements. It freezes the browser. minZoom simply hides the layer when
+  // zoomed out past the point where its single rendered level is useful.
+  minZoom: COVERAGE_Z - 2, maxZoom: 22,
   minNativeZoom: COVERAGE_Z, maxNativeZoom: COVERAGE_Z,
-  maxZoom: 22, opacity: 0.95, zIndex: 350,
+  opacity: 0.95, zIndex: 350,
   // A tile exists only where the sonar has covered ground, so a miss is the
   // normal case rather than an error. Serve a transparent pixel instead of
   // letting Leaflet show a broken-image tile.
