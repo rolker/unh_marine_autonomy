@@ -48,6 +48,7 @@ from the stamp it last saw rather than from upload cadence.
 See rolker/unh_marine_autonomy#341 and #333.
 """
 
+from collections import deque
 import json
 import math
 import os
@@ -219,7 +220,11 @@ class StateRenderer(Node):
         self._skipped = 0
         self._last_sent_stamp = None
         self._dyn_subs = {}
-        self._history = []
+        # deque, not list: the window is trimmed from the left on every fix
+        # (below), which is O(1) with popleft() but an O(n) rebuild with a list
+        # comprehension -- and at 5 Hz nav over a 4 h window that is ~72k tuples
+        # rebuilt several times a second inside the subscriber callback.
+        self._history = deque()
         self._track_stamp = None
 
         self.fix_type = (GeoPointStamped if self.msg_type == 'geopoint'
@@ -262,8 +267,8 @@ class StateRenderer(Node):
         self._fix = msg
         self._history.append((stamp, latitude, longitude))
         cutoff = stamp - self.track_seconds
-        if self._history[0][0] < cutoff:
-            self._history = [p for p in self._history if p[0] >= cutoff]
+        while self._history and self._history[0][0] < cutoff:
+            self._history.popleft()
 
     def _on_imu(self, msg):
         """Record the newest orientation."""
