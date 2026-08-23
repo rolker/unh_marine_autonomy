@@ -73,6 +73,103 @@ def test_observed_catalog_tile_brackets_the_vessel():
     assert round(west, 5) == -70.71875
 
 
+def test_scale_factor_boundaries_are_exact():
+    """Pin the +/-72 and +/-80 deg band edges, from both spellings.
+
+    A round-trip through grid_index_for cannot pin these: it samples whatever
+    band the latitude happens to land in, so an edge moved by a whole grid
+    still round-trips. These assert the edge itself, against the two C++
+    functions being ported -- the row-indexed `LevelSpecs::latitudeScaleFactor`
+    and the latitude-indexed free function in core.h, which disagree by design
+    within one grid of an edge.
+    """
+    # `core.h:96` compares abs(latitude) with STRICT less-than, so a latitude
+    # exactly on an edge takes the poleward band.
+    for latitude, expected in ((-80.001, 9), (-80.0, 9), (-79.999, 3),
+                               (-72.0, 3), (-71.999, 1), (0.0, 1),
+                               (71.999, 1), (72.0, 3), (79.999, 3),
+                               (80.0, 9)):
+        assert gggs.scale_factor_for_latitude(latitude) == expected, latitude
+
+    # Row-indexed: the C++ compares `row >= row_minus_72 && row < row_plus_72`,
+    # so the row starting at an edge is inside the band at the southern edges
+    # and outside it at the northern ones. Both the edge row and the row below
+    # it are pinned -- an edge off by one grid moves only one of them.
+    for level in (0, 5, 10):
+        span = gggs.grid_angular_span(level)
+        for edge, at_edge, below_edge in ((-80.0, 3, 9), (-72.0, 1, 3),
+                                          (72.0, 3, 1), (80.0, 9, 3)):
+            edge_row = int((edge - gggs.LATITUDE_ORIGIN) / span)
+            assert gggs.latitude_scale_factor(level, edge_row) == at_edge, (
+                level, edge)
+            assert gggs.latitude_scale_factor(
+                level, edge_row - 1) == below_edge, (level, edge)
+
+
+def test_column_count_divides_the_row_evenly():
+    """Columns must tile a full 360 deg at every scale factor."""
+    for level in (0, 3, 10):
+        for row in (0, 1, gggs.row_count(level) // 2,
+                    gggs.row_count(level) - 1):
+            span = gggs.grid_longitudinal_span(level, row)
+            assert gggs.column_count(level, row) * span == 360.0, (level, row)
+
+
+def test_longitude_is_wrapped_not_run_off_the_end():
+    """A longitude past +/-180 must wrap rather than index past the row."""
+    assert gggs.normalize_longitude(185.0) == -175.0
+    assert gggs.normalize_longitude(-185.0) == 175.0
+    assert gggs.normalize_longitude(180.0) == -180.0
+    row, column = gggs.grid_index_for(10, 43.075, -70.699 + 360.0)
+    assert (row, column) == gggs.grid_index_for(10, 43.075, -70.699)
+    assert column < gggs.column_count(10, row)
+
+
+def test_latitude_overshoot_clamps_but_nonsense_raises():
+    """Mirror the C++ epsilon clamp and its out_of_range throw."""
+    row, _ = gggs.grid_index_for(10, 90.0 + 1e-9, 0.0)
+    assert row < gggs.row_count(10)
+    for bad in (91.0, -91.0):
+        try:
+            gggs.grid_index_for(10, bad, 0.0)
+        except ValueError:
+            continue
+        raise AssertionError('latitude {} should be rejected'.format(bad))
+
+
+def test_tiles_covering_treats_the_extent_as_half_open():
+    """The north and east edges belong to the next grid, not this one."""
+    zoom = 14
+    # A box whose edges land exactly on slippy-tile boundaries: the covering
+    # set must be the interior tiles only.
+    x, y = 4900, 6000
+    south, west, north, east = gggs.tile_bounds(zoom, x, y)
+    tiles = set(gggs.tiles_covering(zoom, south, west, north, east))
+    assert tiles == {(x, y)}, (
+        'an extent that is exactly one tile must cover exactly that tile, '
+        'not a spurious row and column beyond it: got {}'.format(sorted(tiles)))
+
+    # Two tiles wide and one tall.
+    _, _, _, east2 = gggs.tile_bounds(zoom, x + 1, y)
+    assert set(gggs.tiles_covering(zoom, south, west, north, east2)) == {
+        (x, y), (x + 1, y)}
+
+    # Degenerate boxes yield nothing rather than one arbitrary tile.
+    assert list(gggs.tiles_covering(zoom, south, west, south, east)) == []
+    assert list(gggs.tiles_covering(zoom, south, west, north, west)) == []
+
+
+def test_grid_extent_covers_only_its_own_tiles():
+    """A real L10 grid must not mark the tiles beyond its open edges dirty."""
+    south, west, north, east = gggs.grid_bounds(10, 17801, 13988)
+    zoom = 15
+    tiles = set(gggs.tiles_covering(zoom, south, west, north, east))
+    for x, y in tiles:
+        t_south, t_west, t_north, t_east = gggs.tile_bounds(zoom, x, y)
+        assert t_south < north and t_north > south, (x, y)
+        assert t_west < east and t_east > west, (x, y)
+
+
 def test_position_round_trips_through_index():
     """A position must fall inside the bounds of the grid it indexes to.
 

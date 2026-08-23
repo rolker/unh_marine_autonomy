@@ -65,7 +65,7 @@ def is_valid_index(index):
         level, row, column = index
     except (TypeError, ValueError):
         return False
-    if level < 0 or level > 20 or row < 0 or column < 0:
+    if level < 0 or level > gggs.MAX_LEVEL or row < 0 or column < 0:
         return False
     if row >= gggs.row_count(level):
         return False
