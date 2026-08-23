@@ -478,9 +478,18 @@ running-group guard below — remove a safety property that was put there delibe
 therefore listed as an [open item](#open-items): define it or delete the field before
 implementation, and until then a manager must ignore it rather than guess.
 
-Idempotency by `request_id` is what makes a topic safe as a command channel over a link
-that duplicates and reorders: a client re-sends until it sees its `request_id` acknowledged
-in `~/status`, and re-sends cost nothing.
+Idempotency by `request_id` is what makes a topic safe against **duplication**: a client
+re-sends until it sees its `request_id` acknowledged in `~/status`, re-sends cost nothing,
+and a copy arriving after the original was applied is a no-op.
+
+It does nothing about **reordering**, and the link reorders as well as duplicates. A
+`STOP helm` held up and delivered after a later `START helm` carries a `request_id` the
+manager has never seen, so it is executed on arrival and stops a group the operator has
+just started. Desired state bounds the damage — the outcome is a wrong desired state
+rather than a corrupted one, visible in the next snapshot and corrected by the next command
+— but the manager as specified will act on a stale command. A defence (a per-client
+monotonic sequence number, a send timestamp with a staleness horizon, or refusing a command
+older than the last one applied from that client) is an [open item](#open-items).
 
 `RELOAD_CONFIG` re-reads the file and applies it to groups that are `STOPPED`. Changes
 affecting a running group are reported, not applied — restarting a running survey because
@@ -663,6 +672,9 @@ on its own terms, and it makes the manager's job smaller.
   mission hovers at current position (`mission_manager.py:75` in the `mission_manager` package constructs `done_hover` fresh
   with no pose), so the flag applied to nothing. But a profile change that stops autonomy under way is still worth a confirmation
   dialog, and the UI is where that belongs.
+- **Stale commands after reordering.** `request_id` idempotency covers duplication only
+  (see [`~/command`](#command-subscribed)). Nothing yet rejects a delayed command that the
+  operator has already superseded.
 - **Acknowledging concurrent clients.** `last_request_id` is a single slot shared by every
   front end (see [`~/status`](#status-published)). Until it is widened, a rejection can be
   lost before the client that caused it observes it, and "re-send until acknowledged" is
