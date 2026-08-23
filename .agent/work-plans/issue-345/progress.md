@@ -229,3 +229,65 @@ Issue #345 adds the web viewer coverage consumer — the second of three layers 
 Lifecycle: **Implementation** → **review-code** (re-review the fixes)
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 345 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-23 17:26 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-345 at `2df3823`
+**Mode**: pre-push
+**Depth**: Deep (reason: 4535 lines / 23 files; cross-language port of a correctness-critical spec)
+**Must-fix**: 8 | **Suggestions**: 29
+**Round**: 2 | **Ship**: continue -- three test guards verified NON-BINDING by mutation (96/96 still green with an orphaned coverage layer AND an inverted colour table), plus a cross-pass-confirmed silent permanent-hole defect
+
+**Specialists**: Static Analysis (run, clean) | Governance | Plan Drift | Claude Adversarial x2 (Lens A + Lens B, Deep) | Copilot off (default) | Local Adversarial skipped (Ollama llama-server OOM-killed again; also exceeds num_ctx at full diff -- same failure as round 1, not a code signal)
+
+### Findings
+- [ ] (must-fix) `test_every_layer_reaches_the_map` still does not bind for the LAST construction site -- the coverage layer, the one it was rewritten for. Its window runs to end-of-page and picks up the trail/hull `.addTo(map)`. VERIFIED: deleting `.addTo(map)` from `buildCoverage()` leaves the suite green -- `marine_web_view/test/test_page_layers.py:88`
+- [ ] (must-fix) `test_the_colour_table_is_indexed_deepest_last` does not bind to the direction it names: `abs(table[255][2]-table[0][2]) > 40` holds under inversion. Every other colour test derives its expectation from `colour_table()` itself, so all are self-consistent under inversion. VERIFIED: inverting `colour_table()` leaves the suite green; shallow water would paint deepest-blue against the page legend -- `marine_web_view/test/test_colour.py:146`
+- [ ] (must-fix) `assert node._wake.is_set() or node.uploads is not None` is unfailable -- `uploads` is a list built in `_Pass.__init__`. `test_the_timer_only_rings_the_bell` guards nothing; assert the thread identity inside `_render_one` instead -- `marine_web_view/test/test_render_pass.py:231`
+- [ ] (must-fix, cross-pass confirmed Lens A + Lens B) A later message for a cached index with different `msg.width/height` is patched into the stale-geometry array: larger wedges the index permanently (`apply_window` raises, the all-NaN guard does not fire, `_applied`/possession never advance, so it is re-requested and re-fails forever); smaller mis-georeferences silently -- `marine_web_view/marine_web_view/coverage_renderer.py:481`
+- [ ] (must-fix) The all-NaN drop path pops only `_tiles`, leaving `_applied`, `_touch` and reconciler possession behind -- the catalog then never re-requests a tile the node no longer holds, defeating the healing the possession comment exists to protect -- `marine_web_view/marine_web_view/coverage_renderer.py:503`
+- [ ] (must-fix) `meta.json` `stamp` is ROS time but the page compares it to `Date.now()/1000`. Under `use_sim_time` -- the documented simulator workflow -- the page reports `stale` forever, defeating the heartbeat the manifest exists to be. Use wall clock for liveness -- `marine_web_view/marine_web_view/coverage_renderer.py:814`
+- [ ] (must-fix) `zoom` unvalidated: negative raises `ValueError: negative shift count` in `_mark_dirty`, which is un-contained in `_on_tile`/`_on_catalog`, so it escapes the subscription callback and kills the node on the first tile. Too-large silently renders nothing (every grid trips `MAX_DIRTY_TILES_PER_GRID`) -- `marine_web_view/marine_web_view/coverage_renderer.py:219`
+- [ ] (must-fix) Fabricated GitHub URL: `marine_colormap/issues/137` does not exist (`gh` cannot resolve it); the real issue is `unh_marine_autonomy#137`. It is the one link a future agent follows to retire the ADR-0001 deviation, and AGENTS.md forbids constructing GitHub URLs -- `marine_web_view/README.md:321`
+- [ ] (suggestion, cross-confirmed) `_safe_prefix` can return `''` (pinned by a test), giving keys `/15/x/y.png`; `os.path.join(local_dir, '/15/...')` discards `local_dir`, the realpath guard refuses, and every object fails and retries forever. Reject an empty prefix at startup -- `coverage_renderer.py:772`
+- [ ] (suggestion, cross-confirmed) Eviction plus a neighbouring grid sharing a slippy tile uploads a transparent PNG over still-surveyed ground; the "no flicker" claim holds only for single-grid tiles -- `coverage_renderer.py:536`
+- [ ] (suggestion) `_sample_tile` spaces pixel latitudes linearly in latitude, but slippy rows are linear in Mercator y; sub-pixel at z15, a visible vertical stretch at coarse zooms -- `coverage_renderer.py:621`
+- [ ] (suggestion) `test_a_malformed_band_is_dropped_not_cached` asserts only `_failures == 1`, never that the tile was not cached -- the thing its name claims -- `test/test_tile_ingest.py:222`
+- [ ] (suggestion) No test for `decode_band`'s unrepresentable-sentinel branch, documented as the fix for a real masking bug -- `test/test_tiles.py`
+- [ ] (suggestion) No pass-level test for `_render_dirty`'s `waiting_for_chart_datum` path (manifest published, dirty set preserved, nothing uploaded) -- `test/test_render_pass.py`
+- [ ] (suggestion) `is_valid_index` catches the unpack `TypeError` but not a `TypeError` from the comparisons on non-numeric members -- `marine_web_view/reconciler.py:78`
+- [ ] (suggestion) `_published` is memory-only: a restart against the same bucket/prefix leaves pruned coverage standing. README documents only the zoom/prefix-change case -- `coverage_renderer.py:780`
+- [ ] (suggestion) The render thread starts before `create_timer`; a non-positive `render_interval` raises after the worker exists, and `main()` then has `node is None` and never calls `stop()`. Validate the intervals; start the worker last -- `coverage_renderer.py:320`
+- [ ] (suggestion) A second Ctrl-C during `_worker.join()` raises out of `stop()` inside `main()`'s `finally`, skipping `destroy_node()` and `rclpy.shutdown()` -- `coverage_renderer.py:752`
+- [ ] (suggestion) After an offset has been read, a total TF outage still reports `status: 'ok'` -- the one degradation the manifest hides. Emit `stale_chart_datum` with an age -- `coverage_renderer.py:670`
+- [ ] (suggestion) The shutdown flush has no deadline or tile cap; bounded in practice by coverage area, but the carefully bounded 45 s join is immediately followed by an unbounded pass -- `coverage_renderer.py:739`
+- [ ] (suggestion) Tide invalidation re-renders and re-PUTs the whole mosaic per 0.15 m crossing. Lead spot-check: at z15 a tile is ~870 m at 43N, so a realistic mosaic is tens of tiles, not the six figures Lens B assumed -- cost is small, but document how it scales with area x zoom -- `coverage_renderer.py:688`
+- [ ] (suggestion) Peak RSS during a pass can reach ~2x `cache_budget_bytes`: copy-on-write duplicates stay reachable from the renderer's snapshot while `_cache_bytes` tracks only the current generation -- `coverage_renderer.py:491`
+- [ ] (suggestion) `_failures` is incremented unsynchronised from both the executor and render threads -- the one shared mutable the copy-on-write discipline does not cover -- `coverage_renderer.py:377`
+- [ ] (suggestion) `_publish_meta` reads `len(self._tiles)` outside the lock and calls `get_parameter` off the executor thread; cache `render_interval` in `__init__` -- `coverage_renderer.py:808`
+- [ ] (suggestion) Page accepts `meta.zoom` on `typeof === 'number'`, so NaN/Infinity/non-integers flow into `minZoom`/`minNativeZoom` -- the browser-freeze bound is now driven by unvalidated remote JSON. Require `Number.isInteger` and 0..22 -- `web/index.html:418`
+- [ ] (suggestion) `meta.stamp` unvalidated: a missing or non-numeric stamp makes `age` NaN, so the panel reports a healthy tile count for a dead renderer -- `web/index.html:419`
+- [ ] (suggestion) A stale/offline manifest leaves the coverage layer on the map at full opacity; with every miss painted transparent a dead renderer presents as a confident mosaic. Degrade or remove past `COVERAGE_DEAD_S` -- `web/index.html:415`
+- [ ] (suggestion) The page hardcodes `COVERAGE_DIR`, so the manifest's `prefix` field is unactionable -- you would need the manifest to find the manifest. Document that `prefix` is not page-tunable, or drop the field -- `web/index.html:378`
+- [ ] (suggestion) `bucket` and `profile` are unvalidated while `prefix` is carefully normalised; a bad bucket is a 30 s-capped subprocess per tile in a retry loop -- `coverage_renderer.py:914`
+- [ ] (suggestion) `_CONSTRUCTIONS` hardcodes `Bathy|Relief`; a new `L.TileLayer.extend` subclass would escape the addTo check. Derive the alternation from the discovered class names -- `test/test_page_layers.py:73`
+- [ ] (suggestion) Record the ADR-0001 interim deviation and the ADR-0008 D5 memory-only departure in the ADRs themselves (workspace ADR-0012 cross-reference addendum), not only in plan.md and the README -- plans get archived, ADRs are what the next agent reads
+- [ ] (suggestion) The ADR-0001 expiry ("adopt marine_colormap once a Python binding exists") has no tracking issue; an expiry with no gate never expires
+- [ ] (suggestion) The ramp "two copies" comments are now wrong -- there are three -- `web/index.html:190`, `scripts/refresh_chart_tiles.py:80`
+- [ ] (suggestion) `docs/sonar_ecosystem.md` still marks Display/web as planned though a second live ADR-0008 consumer now exists end-to-end; the repo AGENTS.md asks that this map track pipeline changes
+- [ ] (suggestion) The `state_renderer` README table documents 16 of 20 parameters -- `track_key`, `track_seconds`, `track_max_points`, `track_interval` are missing (verified) while the Running section tells you to pass track parameters. Pre-existing #341 debt in a file this PR edits -- `marine_web_view/README.md:36`
+- [ ] (suggestion) Consider a README-to-`declare_parameter` guard to close the documentation leg of the #341 drift class; the launch leg is already enforced
+- [ ] (suggestion) Plan drift: "Files to Change" omits `test_launch_params.py`, `test_page_layers.py` and the edit to `test_ramp_sync.py` (the last is what made the ADR-0001 row's claim true); the "350-450 lines" estimate is off by about an order of magnitude -- `.agent/work-plans/issue-345/plan.md`
+
+### Notes
+- Round-1 regressions all verified genuinely fixed, not papered over: sampling orientation (south-up cell rows, with a binding gradient test), RAMP byte-identical across all three copies (24/24 stops, checked programmatically), chart-datum sign and threshold invalidation, prune un-publish, `mark_have` gated on `complete`, newest-wins before `apply_window`, index validation and bounded enumeration, dimension guard, per-tile/per-thread containment, dirty-set retry, LRU eviction with possession dropped, vectorized sampling on a dedicated thread, copy-on-write arrays, manifest-driven page zoom.
+- The test-binding must-fixes are not opinion: on a scratch copy of the package the whole suite stayed **96/96 green** with `.addTo(map)` deleted from `buildCoverage()` AND `colour_table()` inverted. Two deliberate regressions -- one of them the exact #341 orphaned-layer failure this file exists for -- passed unnoticed. The guard at `test_page_layers.py:88` has now failed to bind in two consecutive rounds.
+- Build and tests on the branch as committed: `./core_ws/build.sh marine_web_view` + `./core_ws/test.sh marine_web_view` -> **99 tests, 0 failures**. Static analysis clean: ament flake8 (full plugin set) against the ament config, ament_pep257, ament_copyright, xmllint on package.xml.
+- Governance: all 16 declared parameters present with correct defaults in both the README table and the launch file, all forwarded and mechanically enforced. All three topics documented with correct types and QoS. Commit identity on all 32 commits is the agent pattern on an agent-convention branch. The `.agents/README.md` gap is already tracked as unh_marine_autonomy#348 (verified open) and is not re-raised here.
+- Two Lens B claims were spot-checked and NOT carried: the request-queue "starvation past index 256" (each `reconcile` re-derives `to_request` and drops what arrived, so the head advances) and the "hundreds of thousands of tiles" re-render scale (wrong by orders of magnitude for a realistic survey at z15).
+- Local Adversarial unavailable for the second round running: the diff exceeds the server's `num_ctx`, and the source-only delta OOM-killed `llama-server` twice. No findings either way.
+- No file in this worktree was modified by this review. The mutation test ran on a copy under the session scratchpad, which has been deleted; `git status` is clean. No sub-agent edited the worktree this round.
