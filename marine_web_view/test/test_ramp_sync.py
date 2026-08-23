@@ -80,3 +80,31 @@ def test_ramp_in_sync():
         'MAX_DEPTH differs between refresh_chart_tiles.py and index.html'
     assert float(py.STEP) == _js_number('STEP', html), \
         'STEP differs between refresh_chart_tiles.py and index.html'
+
+
+def test_coverage_node_shares_the_page_ramp():
+    """The coverage node must use the SAME ramp as the page and tile script.
+
+    A third copy was hand-transcribed into coverage_renderer.py and came out
+    shifted -- 14 of 24 stops differed -- while three documents and the plan
+    all asserted the shared-scale property that the code did not have. This
+    guard covered only two copies at the time, so nothing caught it.
+    """
+    node = open(os.path.join(_PKG_DIR, 'marine_web_view',
+                             'coverage_renderer.py')).read()
+    page = open(_INDEX).read()
+
+    page_ramp = _js_triples('RAMP', page)
+    node_ramp = [tuple(int(v) for v in row) for row in re.findall(
+        r'\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)',
+        node[node.index('RAMP = ('):node.index('MAX_DEPTH = ')])]
+
+    assert node_ramp == page_ramp, (
+        'coverage_renderer RAMP differs from the page at {} of {} stops'
+        .format(sum(1 for a, b in zip(page_ramp, node_ramp) if a != b),
+                len(page_ramp)))
+
+    node_max = float(re.search(r'MAX_DEPTH\s*=\s*([0-9.]+)',
+                               node).group(1))
+    assert node_max == _js_number('MAX_DEPTH', page), (
+        'MAX_DEPTH differs between the coverage node and the page')

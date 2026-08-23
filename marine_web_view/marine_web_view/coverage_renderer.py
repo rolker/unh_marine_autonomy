@@ -85,10 +85,10 @@ from rclpy.qos import QoSReliabilityPolicy
 RAMP = (
     (0, 38, 115), (1, 40, 116), (6, 57, 125), (11, 68, 130),
     (16, 81, 137), (20, 92, 142), (21, 94, 143), (31, 116, 153),
-    (41, 136, 162), (45, 144, 166), (51, 155, 171), (57, 165, 176),
-    (63, 176, 181), (72, 187, 185), (83, 194, 181), (89, 198, 179),
-    (96, 200, 177), (110, 207, 174), (126, 214, 174), (140, 220, 176),
-    (154, 226, 178), (168, 232, 184), (183, 238, 192), (199, 244, 201),
+    (41, 136, 162), (51, 155, 171), (62, 175, 180), (74, 189, 183),
+    (88, 196, 178), (104, 204, 175), (107, 205, 175), (118, 211, 176),
+    (127, 215, 176), (138, 219, 175), (150, 224, 177), (162, 229, 181),
+    (174, 234, 186), (168, 232, 184), (182, 237, 190), (197, 243, 199),
 )
 MAX_DEPTH = 40.0
 
@@ -301,7 +301,14 @@ class CoverageRenderer(Node):
                 if not inside.any():
                     continue
                 rows, cols = array.shape
-                cell_row = int((g_north - latitude) / (g_north - g_south)
+                # GGGS cell rows are numbered FROM THE SOUTH
+                # (gggs/cell_index.h:41,75,162 "positive integer row starting
+                # the bottom of the grid"; confirmed by CAMP's explicit flip in
+                # sonar_live_tile.cpp), while image rows run north to south.
+                # Getting this backwards mirrors every tile vertically inside
+                # its own ~870 m box at level 10 -- which does not look like a
+                # flip, it looks like coverage drifting off the vessel's track.
+                cell_row = int((latitude - g_south) / (g_north - g_south)
                                * rows)
                 cell_row = max(0, min(rows - 1, cell_row))
                 cell_cols = ((lons[inside] - g_west) / (g_east - g_west)
