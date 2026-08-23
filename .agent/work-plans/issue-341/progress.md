@@ -89,3 +89,44 @@ Sanity pass (not a full re-review): `python3 -m py_compile` clean; ament flake8 
 Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 341 --skill review-code
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-22 22:23 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+
+**PR**: #346 at `849b149`
+**Sources**: 3 (Copilot @ `849b149`, Local Review (Pre-Push) @ `84ac53f` and `7ced83e`, CI rollup)
+**Cross-source confirmations**: 0
+**CI**: all-pass (build: success, copilot-pull-request-reviewer: success)
+
+Copilot reviewed the current head, so none of its findings are stale. The two
+prior Local Reviews sit at earlier SHAs with all 20 findings already checked
+off, and they touch different code, so nothing is cross-confirmed this round --
+Copilot reached parts of the diff the local rounds did not.
+
+### Findings
+- [ ] (valid, Copilot) `_history` is a plain list trimmed by full-list
+  comprehension on every callback once the window is full. At the default
+  `track_seconds` of 14400 s and the simulator's 5 Hz nav that is ~72k tuples
+  rebuilt 5x/second inside the subscriber callback. Use `collections.deque`
+  with `popleft()` (O(1)); it is a drop-in here because `decimate_track`
+  only iterates and indexes `[0]`/`[-1]`. Degrades with runtime and message
+  rate, so short test runs never surface it --
+  `marine_web_view/marine_web_view/state_renderer.py:266`
+- [ ] (valid, Copilot) Relief (hillshade) tile requests set no explicit
+  `interpolation`, relying on the ArcGIS server default, while the code
+  comments state bilinear is deliberate for hillshade and nearest-neighbour for
+  the banded colours. Only the Bathy layer sets it (line 293). Make it explicit
+  so a server-default change cannot silently switch it --
+  `marine_web_view/web/index.html:325`
+- [ ] (valid, Copilot) The trailing comment `// renderer writes at 1 Hz` sits
+  on `TRACK_MS = 30000`, not on `POLL_MS = 1000` where it belongs -- it
+  migrated when the constant block was reformatted to add the track poll. Reads
+  as though the track is fetched at 1 Hz, which is exactly the cadence/cost
+  figure someone would tune from --
+  `marine_web_view/web/index.html:150`
+
+### False positives
+- None. All three Copilot findings were verified against the current code and
+  hold.
