@@ -235,7 +235,7 @@ class CoverageRenderer(Node):
             self.cache_control = int(max(1.0, render_interval))
         elif self.cache_control > render_interval:
             self.get_logger().warn(
-                'cache_control {} s exceeds render_interval {:.0f} s: '
+                'cache_control {} s exceeds render_interval {:g} s: '
                 'viewers will hold a tile past its replacement'.format(
                     self.cache_control, render_interval))
         self.cache_budget_bytes = int(self._param('cache_budget_bytes'))
