@@ -420,6 +420,16 @@ non-negotiable:
   confirms its command landed by seeing it reflected in the next snapshot. This matches the
   existing mission heartbeat-as-ack pattern rather than inventing a second one.
 
+  **One ack slot is not enough for three front ends.** The design mandates an rqt plugin, a
+  TUI, and a CLI, all live at once, against a single `last_request_id` that the next
+  command overwrites. Between two `status_period` ticks that is easy to do — and the loser
+  is the client whose command was `REJECTED`, since the rejection *and* its reason are what
+  get overwritten, while an `ACCEPTED` command at least leaves its effect visible in the
+  group states. A client that re-sends until acknowledged then never terminates. Recorded
+  as an [open item](#open-items); the fix is small (a short ring of recent request results
+  in the snapshot, or an ack slot per client) but choosing one is a decision this document
+  does not make.
+
 Sketch (in `ros2launch_manager_msgs`, which depends only on `builtin_interfaces`,
 `std_msgs`, and `diagnostic_msgs`):
 
@@ -653,6 +663,10 @@ on its own terms, and it makes the manager's job smaller.
   mission hovers at current position (`mission_manager.py:75` in the `mission_manager` package constructs `done_hover` fresh
   with no pose), so the flag applied to nothing. But a profile change that stops autonomy under way is still worth a confirmation
   dialog, and the UI is where that belongs.
+- **Acknowledging concurrent clients.** `last_request_id` is a single slot shared by every
+  front end (see [`~/status`](#status-published)). Until it is widened, a rejection can be
+  lost before the client that caused it observes it, and "re-send until acknowledged" is
+  not a terminating loop.
 - **`force` is undefined.** The command message carries `bool force`, settled as part of
   the command set, with no stated semantics. Define exactly what it overrides — and
   confirm that whatever that is may be overridden by a single bool arriving over the radio
