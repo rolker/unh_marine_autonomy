@@ -1,6 +1,7 @@
 # ros2launch_manager — Design
 
-**Status**: Proposed (2026-08-22). Tracked by
+**Status**: Proposed (2026-08-22) — a draft design, not a decision record. An ADR is still
+owed and this document does not substitute for one. Tracked by
 [rolker/unh_marine_autonomy#327](https://github.com/rolker/unh_marine_autonomy/issues/327).
 Prior-art survey in `.agents/workspace-context/research_digest.md`
 ([PR #328](https://github.com/rolker/unh_marine_autonomy/pull/328)).
@@ -268,6 +269,11 @@ profiles:
   survey:    [zenoh, comms, core, perception, logging, helm, autonomy]
 ```
 
+This is an illustration, not a runnable file: `comms_launch.py`, `logging_launch.py`,
+`helm_launch.py`, and `autonomy_launch.py` are the post-split names from
+[Assumed launch-file refactor](#assumed-launch-file-refactor) and do not exist yet. Only
+`core_launch.py` and `perception_launch.py` are present in `bizzyboat_project11` today.
+
 ### Declared arguments
 
 Launch arguments reachable from a command must be **declared in configuration with a type
@@ -332,6 +338,11 @@ the link itself — see [Process ownership](#process-ownership).
       │ desired=STOPPED                              │ all processes exited
    any state ────────────────► STOPPING ─────────────┘
 ```
+
+Two transitions are left out of the drawing to keep it readable: `STARTING` → `FAILED`,
+when the readiness timeout exhausts `start_attempts` without the group ever becoming
+`READY`; and the retry/backoff self-loop on `DEGRADED`, which is where the ladder below
+spends most of its time.
 
 ## Convergence and the escalation ladder
 
@@ -455,8 +466,8 @@ non-negotiable:
   in the snapshot, or an ack slot per client) but choosing one is a decision this document
   does not make.
 
-Sketch (in `ros2launch_manager_msgs`, which depends only on `builtin_interfaces`,
-`std_msgs`, and `diagnostic_msgs`):
+Sketch (in `ros2launch_manager_msgs`, which depends only on `builtin_interfaces` and
+`diagnostic_msgs`):
 
 ```
 # ManagerStatus.msg
@@ -520,6 +531,15 @@ older than the last one applied from that client) is an [open item](#open-items)
 affecting a running group are reported, not applied — restarting a running survey because
 someone fixed a typo is not a decision the manager gets to make.
 
+**The config file is the trust boundary.** `exec:`, `environment:`, and `log_dir` are
+unconstrained by design — that is what makes the manager generic — so anyone who can write
+the config can run anything as the manager's user, and `RELOAD_CONFIG` makes that reachable
+without a restart. What the declared-argument rules protect is the *link*: nothing arriving
+over the radio can introduce a command or a path, only select among values the file already
+allows. Write access to the config, and to whatever mechanism edits it, is therefore
+equivalent to write access to the boat, and is accepted as such rather than mitigated
+here.
+
 ### Services
 
 The same verbs as services, **local only** — not bridged across the link. This is what
@@ -530,8 +550,10 @@ round-trip is both available and convenient.
 ### Diagnostics
 
 One `diagnostic_updater` task per group, so existing operator dashboards pick the manager
-up for free with no work on their side. `READY` → OK; `STARTING`/`DEGRADED`/`BLOCKED` →
-WARN; `FAILED` → ERROR; clean exit of a `RUNNING` group → WARN.
+up for free with no work on their side. `READY` → OK; `STOPPED` → OK (it is the resting
+state, not a failure); `STOPPING` → OK (an operator asked for it);
+`STARTING`/`DEGRADED`/`BLOCKED` → WARN; `FAILED` → ERROR; clean exit of a `RUNNING` group
+→ WARN.
 
 ### Front ends
 
@@ -629,6 +651,11 @@ URLs.
 (`launch/launch_service.py`, lines 269-272). One process therefore hosts exactly one
 running `LaunchService`. Per-group `LaunchService`s on background threads are not an
 available design.
+
+That shared service must be started with `shutdown_when_idle=False`; the parameter defaults
+to `True` on both `run()` and `run_async()` (`launch/launch_service.py:259,364`). A manager
+whose groups are all `STOPPED` — the boat sitting at the dock on a `link` profile — is
+precisely the idle case, and the default would have the service exit out from under it.
 
 The consequence is specific and must be handled in implementation: **`LaunchSession.
 shutdown()` calls `LaunchService.shutdown()`, which stops everything** — every group
