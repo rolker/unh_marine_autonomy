@@ -398,8 +398,19 @@ Two rules make this safe:
   without fighting anything else.
 - **Keep `LifecycleNode(autostart=True)` in the launch files.** It preserves standalone
   `ros2 launch` usability on the bench — an important property, since most development
-  happens without the manager — and convergence means the two cannot race: `autostart`
-  reaches the target, the manager observes the target, nothing further happens.
+  happens without the manager. Where the two agree on the destination they also do not
+  fight: `autostart` emits configure-then-activate once at `execute()` time, the manager
+  observes `active`, finds the group on target, and emits nothing.
+
+  That is narrower than "they cannot race", and the difference is worth stating. The
+  autostart transition is unconditional — `launch_ros/actions/lifecycle_node.py:122-130`
+  appends a `LifecycleTransition` of CONFIGURE then ACTIVATE with no reference to any
+  target — while a group's `target` may be `inactive` or `unconfigured`. With those
+  targets the two genuinely do fight: autostart activates, the manager deactivates. And
+  even with `target: active`, convergence has to treat the states *between* the endpoints
+  (`configuring`, `activating`) as neither on-target nor drift, or it will emit a
+  transition into a transition already in flight. Neither rule is settled here: see
+  [Open items](#open-items).
 
 `autostart=True` has a second benefit: because the action resolves its own fully-qualified
 node name, it removes the `PythonExpression` namespace concatenation currently needed to
@@ -699,6 +710,13 @@ on its own terms, and it makes the manager's job smaller.
   mission hovers at current position (`mission_manager.py:75` in the `mission_manager` package constructs `done_hover` fresh
   with no pose), so the flag applied to nothing. But a profile change that stops autonomy under way is still worth a confirmation
   dialog, and the UI is where that belongs.
+- **`autostart` versus a non-`active` target.** `autostart=True` always drives to
+  `active`, so a group configured with `target: inactive` or `unconfigured` and an
+  autostarting launch file has two writers pulling opposite ways (see
+  [Lifecycle handling](#lifecycle-handling)). Whether that is rejected at config load,
+  handled by dropping `autostart` in those launch files, or left as a documented
+  convention is unsettled — as is how convergence treats the transient
+  `configuring` / `activating` states.
 - **Sticky `FAILED` on the groups that carry the link.** A `zenoh` or `comms` group that
   exhausts its budget cannot be revived, because `CLEAR_FAILURE` has to travel over the
   link it just lost (see [Process ownership](#process-ownership)). Needs a decision about
