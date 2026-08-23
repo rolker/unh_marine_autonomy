@@ -106,7 +106,7 @@ off, and they touch different code, so nothing is cross-confirmed this round --
 Copilot reached parts of the diff the local rounds did not.
 
 ### Findings
-- [ ] (valid, Copilot) `_history` is a plain list trimmed by full-list
+- [x] (valid, Copilot) `_history` is a plain list trimmed by full-list
   comprehension on every callback once the window is full. At the default
   `track_seconds` of 14400 s and the simulator's 5 Hz nav that is ~72k tuples
   rebuilt 5x/second inside the subscriber callback. Use `collections.deque`
@@ -114,13 +114,13 @@ Copilot reached parts of the diff the local rounds did not.
   only iterates and indexes `[0]`/`[-1]`. Degrades with runtime and message
   rate, so short test runs never surface it --
   `marine_web_view/marine_web_view/state_renderer.py:266`
-- [ ] (valid, Copilot) Relief (hillshade) tile requests set no explicit
+- [x] (valid, Copilot) Relief (hillshade) tile requests set no explicit
   `interpolation`, relying on the ArcGIS server default, while the code
   comments state bilinear is deliberate for hillshade and nearest-neighbour for
   the banded colours. Only the Bathy layer sets it (line 293). Make it explicit
   so a server-default change cannot silently switch it --
   `marine_web_view/web/index.html:325`
-- [ ] (valid, Copilot) The trailing comment `// renderer writes at 1 Hz` sits
+- [x] (valid, Copilot) The trailing comment `// renderer writes at 1 Hz` sits
   on `TRACK_MS = 30000`, not on `POLL_MS = 1000` where it belongs -- it
   migrated when the constant block was reformatted to add the track poll. Reads
   as though the track is fetched at 1 Hz, which is exactly the cadence/cost
@@ -130,3 +130,38 @@ Copilot reached parts of the diff the local rounds did not.
 ### False positives
 - None. All three Copilot findings were verified against the current code and
   hold.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-23 02:30 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**PR**: #346 at `90454bc`
+**Addressed**: Integrated Review of 2026-08-22 22:23 -04:00 at `849b149` (3 open findings, all valid Copilot, no cross-source confirmations)
+**Commits**: `40ee52f`, `e7ad0e8`, `90454bc`
+
+All three findings actioned — none deferred. Each was verified against the
+current source before the fix. Post-fix checks: `marine_web_view` package tests
+pass (`ament_flake8`, `ament_pep257`, `ament_copyright`, `test_ramp_sync` — 4
+passed); `state_renderer.py` byte-compiles and lints clean at ament's 99-col
+config; the deque operations `decimate_track` and the trim rely on (`list()`,
+iteration, `[0]`/`[-1]`, `len`, `append`, `popleft`) were exercised standalone.
+Not a full `review-code` — the next re-review is the quality gate.
+
+### Actions
+- [x] `_history` is now a `collections.deque`, trimmed from the left with a
+  `popleft()` loop instead of an O(n) full-list comprehension rebuilt inside the
+  subscriber callback; `decimate_track` and every other reader are unchanged
+  (they only iterate/index `[0]`/`[-1]` and take `len`) — `marine_web_view/marine_web_view/state_renderer.py:222,265` (`40ee52f`)
+- [x] Relief (hillshade) tiles now request `interpolation=RSP_BilinearInterpolation`
+  explicitly, so the smooth-relief resample no longer depends on the ArcGIS
+  server default; a comment contrasts it with the Bathy layer's deliberate
+  nearest-neighbour — `marine_web_view/web/index.html:325` (`e7ad0e8`)
+- [x] Moved the `renderer writes at 1 Hz` cadence note off `TRACK_MS` (30 s) and
+  onto `POLL_MS` (1000 ms), where the 1 Hz point cadence belongs; `TRACK_MS`
+  now carries its own accurate "every 30 s" note — `marine_web_view/web/index.html:147,150` (`90454bc`)
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 341 --skill review-code
