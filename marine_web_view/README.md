@@ -221,6 +221,24 @@ from an unreferenced height would be wrong in a way that looks right. Set
 `chart_datum_frame` to the empty string to say the band is already referenced
 and skip the correction entirely.
 
+### Publishing and un-publishing
+
+A rendered PNG lives in the bucket until it is overwritten, so pruned coverage
+has to be *un-published*: when a slippy tile the node has published stops
+having any coverage under it, a fully transparent tile is uploaded over it.
+Skipping the upload instead leaves the display — and CloudFront — showing
+coverage the source no longer holds.
+
+That bookkeeping is in memory, so it covers this run. Objects left by an
+earlier run at a different `zoom` or `prefix` are not tracked and are not
+cleaned up; give a survey its own prefix, or expire the old one with a bucket
+lifecycle rule.
+
+A failed upload leaves its tile dirty and is retried on the next pass rather
+than becoming a permanent hole, and a per-tile failure is contained: an
+exception escaping the render timer would stop rendering for good while the
+subscriptions carried on, which looks like a healthy node.
+
 ### Rendering
 
 Uncovered cells stay NaN and render transparent. That is the point -- the

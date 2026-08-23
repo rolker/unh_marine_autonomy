@@ -134,6 +134,21 @@ MAX_TILE_BYTES = 256 * 1024 * 1024
 # orders of magnitude while making the insane one a logged rejection.
 MAX_DIRTY_TILES_PER_GRID = 4096
 
+# One fully transparent 256x256 PNG, used to un-publish a slippy tile whose
+# coverage has been pruned. Built once: it is a couple of hundred bytes.
+_EMPTY_PNG = None
+
+
+def empty_png():
+    """Return the bytes of a fully transparent 256x256 PNG."""
+    global _EMPTY_PNG
+    if _EMPTY_PNG is None:
+        buffer = io.BytesIO()
+        Image.new('RGBA', (256, 256), (0, 0, 0, 0)).save(
+            buffer, format='PNG', optimize=True)
+        _EMPTY_PNG = buffer.getvalue()
+    return _EMPTY_PNG
+
 
 def ramp_colour(fraction):
     """Return an (r, g, b) tuple; fraction 0 is deepest, 1 the surface."""
@@ -214,6 +229,7 @@ class CoverageRenderer(Node):
         self._lock = threading.Lock()
         self._colours = colour_table()
         self._pending_request = []
+        self._published = set()   # slippy tiles currently holding coverage
         self._rendered = 0
         self._failures = 0
         self._datum_offset = None
@@ -290,6 +306,19 @@ class CoverageRenderer(Node):
 
     def _send_requests(self):
         """Ask the source for the tiles we are missing or stale on."""
+        try:
+            self._publish_requests()
+        except Exception as error:
+            # Same reasoning as the render timer: an escape here kills the
+            # timer, and the node then never asks for another tile while
+            # looking perfectly healthy.
+            self._failures += 1
+            self.get_logger().error(
+                'request publication failed: {}'.format(error),
+                throttle_duration_sec=10.0)
+
+    def _publish_requests(self):
+        """Publish one TileRequest for the pending set."""
         with self._lock:
             wanted = self._pending_request
             self._pending_request = []
@@ -523,6 +552,35 @@ class CoverageRenderer(Node):
         rgba[..., 3] = numpy.where(present, 255, 0)
         return rgba
 
+    def _render_one(self, x, y, datum_z):
+        """Render and publish one slippy tile.
+
+        Returns 'published', 'skipped' (nothing to do) or 'failed' (the tile
+        stays dirty and is retried).
+        """
+        key = '{}/{}/{}/{}.png'.format(self.prefix, self.zoom, x, y)
+        values = self._sample_tile(x, y)
+        if not numpy.isfinite(values).any():
+            # Coverage here was pruned or evicted. Skipping the upload leaves
+            # the last PNG standing in the bucket, so the display keeps
+            # showing coverage the source no longer holds -- and CloudFront
+            # will keep serving it. Replace it with a transparent tile.
+            if (x, y) not in self._published:
+                return 'skipped'
+            if not self._publish(empty_png(), key):
+                return 'failed'
+            self._published.discard((x, y))
+            return 'published'
+
+        image = Image.fromarray(
+            self._colourise(values, datum_z), mode='RGBA')
+        buffer = io.BytesIO()
+        image.save(buffer, format='PNG', optimize=True)
+        if not self._publish(buffer.getvalue(), key):
+            return 'failed'
+        self._published.add((x, y))
+        return 'published'
+
     def _render_dirty(self):
         """Render and publish every slippy tile marked dirty."""
         if not self._update_datum_offset():
@@ -538,17 +596,34 @@ class CoverageRenderer(Node):
             return
 
         published = 0
+        retry = set()
         for x, y in pending:
-            values = self._sample_tile(x, y)
-            if not numpy.isfinite(values).any():
-                continue
-            image = Image.fromarray(
-                self._colourise(values, datum_z), mode='RGBA')
-            buffer = io.BytesIO()
-            image.save(buffer, format='PNG', optimize=True)
-            key = '{}/{}/{}/{}.png'.format(self.prefix, self.zoom, x, y)
-            if self._publish(buffer.getvalue(), key):
+            try:
+                outcome = self._render_one(x, y, datum_z)
+            except Exception as error:
+                # This runs on a timer. An exception here does not skip a
+                # tile, it ends the timer and the node keeps spinning with
+                # nothing rendering -- silently, because the subscriptions go
+                # on working. Contain it per tile.
+                self._failures += 1
+                self.get_logger().error(
+                    'rendering {},{} failed: {}'.format(x, y, error),
+                    throttle_duration_sec=10.0)
+                outcome = 'failed'
+            if outcome == 'published':
                 published += 1
+            elif outcome == 'failed':
+                retry.add((x, y))
+
+        if retry:
+            # The dirty set was cleared before rendering, so a failed upload
+            # used to be a permanent hole in the mosaic: nothing would mark
+            # that tile again until its GGGS grid changed. Put it back.
+            with self._lock:
+                self._dirty.update(retry)
+            self.get_logger().warn(
+                '{} tile(s) will be retried next pass'.format(len(retry)),
+                throttle_duration_sec=30.0)
 
         self._rendered += published
         if published:
