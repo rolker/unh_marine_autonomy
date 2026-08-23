@@ -1,0 +1,408 @@
+#!/usr/bin/env python3
+
+# Copyright 2026 Roland Arsenault
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+#    * Redistributions of source code must retain the above copyright
+#      notice, this list of conditions and the following disclaimer.
+#
+#    * Redistributions in binary form must reproduce the above copyright
+#      notice, this list of conditions and the following disclaimer in the
+#      documentation and/or other materials provided with the distribution.
+#
+#    * Neither the name of the Roland Arsenault nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+"""Render live sonar coverage to static web-map tiles.
+
+Consumes the ADR-0008 display transport -- catalog, request, tile -- keeps a
+GGGS tile cache reconciled against the source, and renders the covered area as
+slippy-map PNGs written beside the position artifacts.
+
+Read-only against the display transport: this node never writes back to the
+durable stores. The transport is a lossy display projection that is always
+rebuildable from them (ADR-0008), so nothing here is a system of record.
+
+The protocol, and why each part matters:
+
+* The source publishes a **complete** catalog snapshot. We reconcile our cache
+  against it, request what we are missing or stale on, and prune what it no
+  longer holds. Completeness is a precondition -- prune-on-absence against a
+  partial catalog would read as "the source dropped everything I cannot see".
+* Tiles arrive as **dirty sub-windows**, not whole tiles, patched in at their
+  offset.
+* Live push is **best-effort**; a lost patch is healed by the next catalog
+  round, which re-requests the tile in full.
+
+Colour follows #342's basemap ramp over a fixed 0-40 m scale, so coverage and
+bathymetry read on one scale, with a small deliberate offset so the layers stay
+distinguishable where they overlap. See the plan's ADR-0001 note: this is an
+interim deviation until marine_colormap gains a Python binding (#137).
+"""
+
+import io
+import os
+import subprocess
+import tempfile
+import threading
+
+from marine_interfaces.msg import SonarVisualizationTile
+from marine_interfaces.msg import TileCatalog
+from marine_interfaces.msg import TileIndex
+from marine_interfaces.msg import TileRequest
+
+from marine_web_view import gggs
+from marine_web_view import tiles as tile_util
+from marine_web_view.reconciler import TileCatalogReconciler
+
+import numpy
+
+from PIL import Image
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSDurabilityPolicy
+from rclpy.qos import QoSProfile
+from rclpy.qos import QoSReliabilityPolicy
+
+# Depth ramp shared with the basemap (#342), extracted from CCOM's published
+# BTY_4m_HighRes_BlueGreen_DRA service. Deep first, surface last.
+RAMP = (
+    (0, 38, 115), (1, 40, 116), (6, 57, 125), (11, 68, 130),
+    (16, 81, 137), (20, 92, 142), (21, 94, 143), (31, 116, 153),
+    (41, 136, 162), (45, 144, 166), (51, 155, 171), (57, 165, 176),
+    (63, 176, 181), (72, 187, 185), (83, 194, 181), (89, 198, 179),
+    (96, 200, 177), (110, 207, 174), (126, 214, 174), (140, 220, 176),
+    (154, 226, 178), (168, 232, 184), (183, 238, 192), (199, 244, 201),
+)
+MAX_DEPTH = 40.0
+
+# Coverage is composited over the basemap, so an identical palette would make
+# it invisible. A small offset keeps the two comparable but distinguishable.
+COVERAGE_TINT = (1.06, 0.97, 0.88)
+
+
+def ramp_colour(fraction):
+    """Return an (r, g, b) tuple; fraction 0 is deepest, 1 the surface."""
+    position = max(0.0, min(1.0, fraction)) * (len(RAMP) - 1)
+    low = int(position)
+    high = min(low + 1, len(RAMP) - 1)
+    blend = position - low
+    return tuple(
+        int(round(RAMP[low][i] * (1.0 - blend) + RAMP[high][i] * blend))
+        for i in range(3))
+
+
+def colour_table():
+    """Return a 256-entry RGB lookup for depths 0..MAX_DEPTH, tinted."""
+    table = numpy.zeros((256, 3), dtype=numpy.uint8)
+    for i in range(256):
+        red, green, blue = ramp_colour(1.0 - i / 255.0)
+        table[i] = [
+            min(255, int(round(red * COVERAGE_TINT[0]))),
+            min(255, int(round(green * COVERAGE_TINT[1]))),
+            min(255, int(round(blue * COVERAGE_TINT[2]))),
+        ]
+    return table
+
+
+class CoverageRenderer(Node):
+    """Reconcile a coverage tile cache and render it to web-map PNGs."""
+
+    def __init__(self):
+        """Declare parameters, subscribe to the transport, start the timers."""
+        super().__init__('coverage_renderer')
+
+        self.declare_parameter('coverage_namespace',
+                               '/ben/sensors/mbes/cube_bathymetry')
+        self.declare_parameter('band', 'depth')
+        self.declare_parameter('zoom', 15)
+        self.declare_parameter('bucket', 'unh-ccom-p11-live')
+        self.declare_parameter('prefix', 'live/coverage')
+        self.declare_parameter('profile', 'p11-renderer')
+        self.declare_parameter('render_interval', 20.0)
+        self.declare_parameter('request_interval', 5.0)
+        self.declare_parameter('dry_run', False)
+        self.declare_parameter('local_dir', '/tmp/coverage')
+        self.declare_parameter('cache_control', 60)
+
+        self.band_name = self._param('band')
+        self.zoom = int(self._param('zoom'))
+        self.bucket = self._param('bucket')
+        self.prefix = str(self._param('prefix')).strip('/')
+        self.profile = self._param('profile')
+        self.dry_run = bool(self._param('dry_run'))
+        self.local_dir = self._param('local_dir')
+        self.cache_control = int(self._param('cache_control'))
+
+        self._reconciler = TileCatalogReconciler()
+        self._tiles = {}          # index -> full-tile float array
+        self._dirty = set()       # slippy tiles needing a re-render
+        self._lock = threading.Lock()
+        self._colours = colour_table()
+        self._pending_request = []
+        self._rendered = 0
+        self._failures = 0
+
+        namespace = str(self._param('coverage_namespace')).rstrip('/')
+        latched = QoSProfile(depth=1)
+        latched.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
+        latched.reliability = QoSReliabilityPolicy.RELIABLE
+        best_effort = QoSProfile(depth=50)
+        best_effort.reliability = QoSReliabilityPolicy.BEST_EFFORT
+
+        self.create_subscription(
+            TileCatalog, namespace + '/coverage_catalog',
+            self._on_catalog, latched)
+        self.create_subscription(
+            SonarVisualizationTile, namespace + '/coverage_tiles',
+            self._on_tile, best_effort)
+        self._requests = self.create_publisher(
+            TileRequest, namespace + '/coverage_requests', 10)
+
+        self.create_timer(float(self._param('request_interval')),
+                          self._send_requests)
+        self.create_timer(float(self._param('render_interval')),
+                          self._render_dirty)
+
+        target = (self.local_dir if self.dry_run
+                  else 's3://{}/{}'.format(self.bucket, self.prefix))
+        self.get_logger().info(
+            "coverage '{}' from {} -> {} at z{}".format(
+                self.band_name, namespace, target, self.zoom))
+
+    def _param(self, name):
+        """Return a declared parameter's value."""
+        return self.get_parameter(name).value
+
+    # -- transport ---------------------------------------------------------
+
+    def _on_catalog(self, msg):
+        """Reconcile the cache against a complete catalog snapshot."""
+        generation = tile_util.time_to_nanoseconds(msg.header.stamp)
+        entries = [((e.index.level, e.index.row, e.index.col),
+                    tile_util.time_to_nanoseconds(e.version))
+                   for e in msg.entries]
+        with self._lock:
+            to_request, to_prune = self._reconciler.reconcile(
+                entries, generation)
+            for index in to_prune:
+                self._reconciler.drop(index)
+                removed = self._tiles.pop(index, None)
+                if removed is not None:
+                    self._mark_dirty(index)
+            self._pending_request = to_request
+        if to_request or to_prune:
+            self.get_logger().info(
+                'catalog: {} entries -> request {}, prune {}'.format(
+                    len(entries), len(to_request), len(to_prune)))
+
+    def _send_requests(self):
+        """Ask the source for the tiles we are missing or stale on."""
+        with self._lock:
+            wanted = self._pending_request
+            self._pending_request = []
+        if not wanted:
+            return
+        msg = TileRequest()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        for level, row, col in wanted:
+            index = TileIndex()
+            index.level = level
+            index.row = row
+            index.col = col
+            msg.tiles.append(index)
+        self._requests.publish(msg)
+
+    def _on_tile(self, msg):
+        """Patch a dirty sub-window into its tile."""
+        index = (msg.index.level, msg.index.row, msg.index.col)
+        band = next((b for b in msg.bands if b.name == self.band_name), None)
+        if band is None:
+            return
+        try:
+            values = tile_util.decode_band(
+                band.dtype, band.data, msg.window_width, msg.window_height,
+                band.scale, band.offset, band.nodata)
+        except ValueError as error:
+            # A malformed patch is the source's problem, not ours: drop it and
+            # let the next catalog round re-request the tile in full.
+            self._failures += 1
+            self.get_logger().warn('bad tile {}: {}'.format(index, error))
+            return
+
+        version = tile_util.time_to_nanoseconds(msg.header.stamp)
+        with self._lock:
+            held = self._tiles.get(index)
+            if held is None:
+                held = tile_util.new_tile(msg.width, msg.height)
+                self._tiles[index] = held
+            try:
+                tile_util.apply_window(
+                    held, values, msg.window_row, msg.window_col)
+            except ValueError as error:
+                self._failures += 1
+                self.get_logger().warn(
+                    'window does not fit {}: {}'.format(index, error))
+                return
+            self._reconciler.mark_have(index, version)
+            self._mark_dirty(index)
+
+    def _mark_dirty(self, index):
+        """Mark every slippy tile that overlaps a GGGS tile for re-render."""
+        level, row, col = index
+        south, west, north, east = gggs.grid_bounds(level, row, col)
+        for xy in gggs.tiles_covering(self.zoom, south, west, north, east):
+            self._dirty.add(xy)
+
+    # -- rendering ---------------------------------------------------------
+
+    def _sample_tile(self, x, y):
+        """Return a 256x256 float array of the band over one slippy tile.
+
+        Nearest-neighbour from the GGGS cache. Cells with no coverage stay NaN
+        and render transparent, which is what makes this a *coverage* layer --
+        the shape of the surveyed area is the information.
+        """
+        south, west, north, east = gggs.tile_bounds(self.zoom, x, y)
+        # Pixel centres, north-to-south to match image row order.
+        lons = west + (numpy.arange(256) + 0.5) * (east - west) / 256.0
+        lats = north - (numpy.arange(256) + 0.5) * (north - south) / 256.0
+        out = numpy.full((256, 256), numpy.nan, dtype=numpy.float32)
+
+        with self._lock:
+            held = dict(self._tiles)
+        if not held:
+            return out
+
+        for row_index, latitude in enumerate(lats):
+            for index, array in held.items():
+                level, grid_row, grid_col = index
+                g_south, g_west, g_north, g_east = gggs.grid_bounds(
+                    level, grid_row, grid_col)
+                if not (g_south <= latitude < g_north):
+                    continue
+                inside = (lons >= g_west) & (lons < g_east)
+                if not inside.any():
+                    continue
+                rows, cols = array.shape
+                cell_row = int((g_north - latitude) / (g_north - g_south)
+                               * rows)
+                cell_row = max(0, min(rows - 1, cell_row))
+                cell_cols = ((lons[inside] - g_west) / (g_east - g_west)
+                             * cols).astype(int)
+                cell_cols = numpy.clip(cell_cols, 0, cols - 1)
+                out[row_index, inside] = array[cell_row, cell_cols]
+        return out
+
+    def _colourise(self, values):
+        """Return RGBA bytes for a sampled tile; NaN becomes transparent."""
+        rgba = numpy.zeros((256, 256, 4), dtype=numpy.uint8)
+        present = numpy.isfinite(values)
+        if not present.any():
+            return rgba
+        # Depth is negative-down in the store; the ramp runs 0..MAX_DEPTH.
+        # Only cast the covered cells: casting NaN to uint8 is undefined and
+        # numpy warns. The result happens to be hidden by alpha today, but it
+        # would surface as garbage the moment the alpha rule changed.
+        depth = numpy.clip(numpy.abs(values[present]), 0.0, MAX_DEPTH)
+        scaled = numpy.zeros(values.shape, dtype=numpy.uint8)
+        scaled[present] = (depth / MAX_DEPTH * 255.0).astype(numpy.uint8)
+        rgba[..., :3] = self._colours[scaled]
+        rgba[..., 3] = numpy.where(present, 255, 0)
+        return rgba
+
+    def _render_dirty(self):
+        """Render and publish every slippy tile marked dirty."""
+        with self._lock:
+            pending = sorted(self._dirty)
+            self._dirty.clear()
+        if not pending:
+            return
+
+        published = 0
+        for x, y in pending:
+            values = self._sample_tile(x, y)
+            if not numpy.isfinite(values).any():
+                continue
+            image = Image.fromarray(self._colourise(values), mode='RGBA')
+            buffer = io.BytesIO()
+            image.save(buffer, format='PNG', optimize=True)
+            key = '{}/{}/{}/{}.png'.format(self.prefix, self.zoom, x, y)
+            if self._publish(buffer.getvalue(), key):
+                published += 1
+
+        self._rendered += published
+        if published:
+            self.get_logger().info(
+                'rendered {} tile(s) at z{} ({} total, {} tiles cached)'.format(
+                    published, self.zoom, self._rendered, len(self._tiles)))
+
+    def _publish(self, payload, key):
+        """Write one PNG locally or to S3; return True on success."""
+        if self.dry_run:
+            path = os.path.join(self.local_dir, key)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            # Atomic: a viewer polling the directory must never read a
+            # half-written PNG.
+            handle, temporary = tempfile.mkstemp(dir=os.path.dirname(path))
+            with os.fdopen(handle, 'wb') as output:
+                output.write(payload)
+            os.replace(temporary, path)
+            return True
+
+        command = [
+            'aws', 's3', 'cp', '-', 's3://{}/{}'.format(self.bucket, key),
+            '--content-type', 'image/png',
+            '--cache-control', 'max-age={}'.format(self.cache_control),
+            '--profile', self.profile,
+        ]
+        try:
+            result = subprocess.run(command, input=payload,
+                                    capture_output=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            self._failures += 1
+            self.get_logger().error('upload of {} timed out'.format(key))
+            return False
+        if result.returncode != 0:
+            self._failures += 1
+            self.get_logger().error('upload of {} failed: {}'.format(
+                key, result.stderr.decode().strip()[:200]))
+            return False
+        return True
+
+
+def main(args=None):
+    """Spin the coverage renderer until interrupted."""
+    rclpy.init(args=args)
+    node = CoverageRenderer()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.get_logger().info(
+            'stopping: {} tiles rendered, {} cached, {} failures'.format(
+                node._rendered, len(node._tiles), node._failures))
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

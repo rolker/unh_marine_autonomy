@@ -59,6 +59,7 @@ setup(
     entry_points={
         'console_scripts': [
             'state_renderer = marine_web_view.state_renderer:main',
+            'coverage_renderer = marine_web_view.coverage_renderer:main',
         ],
     },
 )

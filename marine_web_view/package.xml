@@ -17,6 +17,10 @@
   <depend>marine_interfaces</depend>
   <depend>sensor_msgs</depend>
   <depend>geographic_msgs</depend>
+  <!-- Runtime deps of coverage_renderer: numpy for band decode and
+       sampling, Pillow for PNG encoding. rosdep keys, not pip. -->
+  <depend>python3-numpy</depend>
+  <depend>python3-pil</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
