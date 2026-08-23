@@ -59,6 +59,7 @@ are referenced through TF before they are coloured -- see _update_datum_offset.
 """
 
 import io
+import json
 import os
 import subprocess
 import tempfile
@@ -730,13 +731,46 @@ class CoverageRenderer(Node):
         self._published.add((x, y))
         return 'published'
 
+    def _publish_meta(self, status):
+        """Publish the manifest the page configures its layer from.
+
+        The page cannot be allowed to hardcode the zoom this node renders at:
+        the two drifted apart silently, and a layer pinned to the wrong native
+        zoom requests tiles that were never written. It also cannot tell "no
+        coverage yet" from "this node died" -- a missing tile is the normal
+        case, so the transparent errorTileUrl hides total failure as an empty
+        map. This object is both the configuration and the heartbeat.
+        """
+        payload = json.dumps({
+            'band': self.band_name,
+            'cache_control': self.cache_control,
+            'cached_tiles': len(self._tiles),
+            'chart_datum_offset': self._datum_offset,
+            'max_depth': MAX_DEPTH,
+            'prefix': self.prefix,
+            'published_tiles': len(self._published),
+            'render_interval': float(self._param('render_interval')),
+            'stamp': self.get_clock().now().nanoseconds / 1e9,
+            'status': status,
+            'zoom': self.zoom,
+        }, sort_keys=True).encode()
+        self._publish(payload, '{}/meta.json'.format(self.prefix),
+                      content_type='application/json')
+
     def _render_dirty(self):
-        """Render and publish every slippy tile marked dirty."""
+        """Run one render pass and publish the manifest for it."""
         if not self._update_datum_offset():
             # Without the offset every depth would be coloured from an
             # unreferenced ellipsoidal height -- wrong, and wrong in a way
             # that looks plausible. Leave the tiles dirty and try next pass.
+            self._publish_meta('waiting_for_chart_datum')
             return
+        self._render_pending()
+        # After the pass, so the counts the page shows are this pass's.
+        self._publish_meta('ok')
+
+    def _render_pending(self):
+        """Render and publish every slippy tile marked dirty."""
         datum_z = self._datum_offset or 0.0
         with self._lock:
             pending = sorted(self._dirty)
@@ -780,8 +814,8 @@ class CoverageRenderer(Node):
                 'rendered {} tile(s) at z{} ({} total, {} tiles cached)'.format(
                     published, self.zoom, self._rendered, len(self._tiles)))
 
-    def _publish(self, payload, key):
-        """Write one PNG locally or to S3; return True on success."""
+    def _publish(self, payload, key, content_type='image/png'):
+        """Write one object locally or to S3; return True on success."""
         if self.dry_run:
             path = os.path.join(self.local_dir, key)
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -795,7 +829,7 @@ class CoverageRenderer(Node):
 
         command = [
             'aws', 's3', 'cp', '-', 's3://{}/{}'.format(self.bucket, key),
-            '--content-type', 'image/png',
+            '--content-type', content_type,
             '--cache-control', 'max-age={}'.format(self.cache_control),
             '--profile', self.profile,
         ]
