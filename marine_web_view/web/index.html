@@ -144,10 +144,10 @@
 // that works in one works in the other.
 const SRC       = 'live/position.geojson';
 const TRACK_SRC = 'live/track.geojson';
-const POLL_MS   = 1000;
+const POLL_MS   = 1000;    // renderer writes the point at 1 Hz
 // The track is a separate, larger object on a slower cadence: old track does
 // not change, so re-fetching it at the position rate would be waste.
-const TRACK_MS  = 30000;   // renderer writes at 1 Hz
+const TRACK_MS  = 30000;   // renderer writes the track every 30 s
 const STALE_S = 20;   // amber past this
 const DEAD_S  = 60;   // red past this
 
