@@ -1,7 +1,12 @@
 # ros2launch_manager — Design
 
-**Status**: Proposed (2026-08-22) — a draft design, not a decision record. An ADR is still
-owed and this document does not substitute for one. Tracked by
+**Status**: Proposed (2026-08-22) — a draft design, not a decision record, and accepted as
+a draft without a line-by-line read. **No ADR accompanies it, deliberately.** An ADR here
+would restate this document's rationale while governing a tool that has no marine
+dependency and will not live in this repository. The decision that does warrant one — that
+boat and operator-station bringup moves off the `start_tmux_*.bash` scripts onto a managed
+lifecycle, and the platform launch files are refactored to match — belongs with the
+platform code and is not made until implementation starts. Tracked by
 [rolker/unh_marine_autonomy#327](https://github.com/rolker/unh_marine_autonomy/issues/327).
 Prior-art survey in `.agents/workspace-context/research_digest.md`
 ([PR #328](https://github.com/rolker/unh_marine_autonomy/pull/328)).
