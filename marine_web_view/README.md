@@ -203,9 +203,14 @@ once a Python binding exists ([#137](https://github.com/rolker/marine_colormap/i
 ### Running
 
 ```bash
-# Against the simulator, writing PNGs locally
+# Against the simulator, writing PNGs locally.
+# local_dir is the WEB ROOT, not the coverage directory: the node writes
+# <local_dir>/<prefix>/<z>/<x>/<y>.png, so pointing it at the web root with
+# the default prefix lands tiles exactly where the page requests them.
+# (An empty prefix cannot be passed on the command line -- rcl rejects
+#  `-p prefix:=` as an unparseable override.)
 ros2 launch marine_web_view coverage_renderer_launch.py \
-    dry_run:=true local_dir:=/path/to/web/live/coverage prefix:=""
+    dry_run:=true local_dir:=/path/to/web
 
 # Against S3
 ros2 launch marine_web_view coverage_renderer_launch.py
