@@ -450,7 +450,13 @@ function buildCoverage(zoom) {
 }
 
 function coverageText(meta, age) {
-  if (meta.status !== 'ok') return String(meta.status).replace(/_/g, ' ');
+  if (meta.status !== 'ok') {
+    // `stale_chart_datum` carries how long the tide offset has been frozen;
+    // the status word alone does not say whether that is one pass or an hour.
+    const datumAge = Number.isFinite(meta.chart_datum_age)
+      ? ' \u2014 ' + meta.chart_datum_age.toFixed(0) + ' s' : '';
+    return String(meta.status).replace(/_/g, ' ') + datumAge;
+  }
   if (age > COVERAGE_DEAD_S) return 'stale \u2014 ' + age.toFixed(0) + ' s';
   return meta.published_tiles + ' tiles \u00b7 z' + meta.zoom;
 }

@@ -42,6 +42,7 @@ import json
 import threading
 import time
 
+from marine_web_view import coverage_renderer
 from marine_web_view.coverage_renderer import colour_table
 from marine_web_view.coverage_renderer import CoverageRenderer
 from marine_web_view.coverage_renderer import empty_png
@@ -88,6 +89,10 @@ class _Pass:
         self.raise_on_sample = False
         self.sim_clock_seconds = 1_700_000_000.0
         self.datum_available = True
+        # The correction is enabled (a real Buffer would sit here) and was
+        # refreshed just now, so `_datum_age` reads as fresh by default.
+        self._tf_buffer = object()
+        self._datum_stamp = time.monotonic()
 
     def get_logger(self):
         """Return the collecting logger."""
@@ -129,6 +134,7 @@ class _Pass:
         return 20.0
 
     _colourise = CoverageRenderer._colourise
+    _datum_age = CoverageRenderer._datum_age
     _publish_meta = CoverageRenderer._publish_meta
     _render_one = CoverageRenderer._render_one
     _render_dirty = CoverageRenderer._render_dirty
@@ -400,3 +406,44 @@ def test_a_second_interrupt_during_shutdown_does_not_skip_cleanup():
     assert any('interrupted while stopping' in line
                for line in node._logger.lines), (
         'the interrupt was swallowed without a word')
+
+
+def test_a_frozen_chart_datum_is_reported_rather_than_rendered_as_normal():
+    """The offset is the tide. A stale one colours against an old water level.
+
+    After the first successful lookup a total TF outage is invisible: the node
+    goes on rendering from the last value it saw and the manifest used to say
+    `ok`. Frozen tide reads on the page as ordinary bathymetry.
+    """
+    node = _Pass()
+    node._dirty.add((10, 20))
+    node._render_dirty()
+    assert node.meta[-1]['status'] == 'ok'
+    assert node.meta[-1]['chart_datum_age'] < 1.0
+
+    node._datum_stamp = time.monotonic() - (
+        coverage_renderer.DATUM_STALE_SECONDS + 5.0)
+    node._dirty.add((10, 21))
+    node._render_dirty()
+    assert node.meta[-1]['status'] == 'stale_chart_datum', (
+        'a frozen chart-datum offset was reported as a healthy render')
+    assert node.meta[-1]['chart_datum_age'] > (
+        coverage_renderer.DATUM_STALE_SECONDS)
+    # Coverage still renders: stale is a degradation, not a stop.
+    assert ('live/coverage/15/10/21.png'
+            in [key for key, _ in node.uploads])
+
+
+def test_a_disabled_chart_datum_correction_is_not_stale():
+    """An empty chart_datum_frame is the documented "already referenced" case.
+
+    There is no TF to go stale, so the manifest must not start crying wolf
+    about an offset nobody publishes.
+    """
+    node = _Pass()
+    node._tf_buffer = None
+    node._datum_stamp = None
+    node._dirty.add((10, 20))
+    node._render_dirty()
+    assert node.meta[-1]['status'] == 'ok'
+    assert node.meta[-1]['chart_datum_age'] is None

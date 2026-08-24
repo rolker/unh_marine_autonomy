@@ -333,6 +333,15 @@ heartbeat:
   hours ago). A manifest failing either check is treated exactly like no
   manifest at all.
 
+- `status` says what the pass actually did. `ok` is a normal render;
+  `waiting_for_chart_datum` means no offset has been read yet and nothing was
+  coloured; `stale_chart_datum` means the offset has not been refreshed for
+  `DATUM_STALE_SECONDS` (60 s) and `chart_datum_age` says how long. That last
+  one is the degradation the manifest used to hide: the offset is the *tide*,
+  so once TF goes away the node keeps rendering happily against a frozen water
+  level, and frozen tide reads on the page as ordinary bathymetry. Coverage
+  still renders — stale is a degradation, not a stop.
+
 It is rewritten every pass, idle or not, which is one extra PUT per
 `render_interval` (~130k/month at 20 s, well under a dollar).
 

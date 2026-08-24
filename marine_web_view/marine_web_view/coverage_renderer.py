@@ -155,6 +155,15 @@ MAX_SLIPPY_ZOOM = 22
 # at all.
 SHUTDOWN_FLUSH_SECONDS = 30.0
 
+# How long the chart-datum offset may go un-refreshed before the manifest says
+# so. The offset is the tide: it moves, and a stale one colours live coverage
+# against an old water level -- wrong, and wrong in a way that looks entirely
+# plausible on the page. A total TF outage after the first successful lookup
+# is the one degradation the manifest used to hide behind `status: 'ok'`,
+# because the node keeps rendering happily from the last value it saw. Three
+# render intervals at the shipped 20 s cadence.
+DATUM_STALE_SECONDS = 60.0
+
 
 # Timer periods come from parameters too, and rclpy's create_timer rejects a
 # non-positive period with a ValueError. That is the right answer -- but it
@@ -352,6 +361,7 @@ class CoverageRenderer(Node):
         self._rendered = 0
         self._failures = 0
         self._datum_offset = None
+        self._datum_stamp = None    # monotonic time of the last good lookup
 
         # Only stand up TF when the correction is actually configured: an
         # empty chart_datum_frame is the documented way to say "the band is
@@ -804,6 +814,7 @@ class CoverageRenderer(Node):
         # Height of chart datum expressed in the map frame, so a sounding's
         # depth below datum is (datum_z - z).
         offset = float(transform.transform.translation.z)
+        self._datum_stamp = time.monotonic()
         if self._datum_offset is None:
             self._datum_offset = offset
             self.get_logger().info(
@@ -819,6 +830,16 @@ class CoverageRenderer(Node):
                 for index in list(self._tiles):
                     self._mark_dirty(index)
         return True
+
+    def _datum_age(self):
+        """Return seconds since the chart-datum offset was last refreshed.
+
+        `None` when the correction is disabled by configuration, or when no
+        offset has ever been read -- neither is staleness.
+        """
+        if self._tf_buffer is None or self._datum_stamp is None:
+            return None
+        return time.monotonic() - self._datum_stamp
 
     def _colourise(self, values, datum_z):
         """Return RGBA bytes for a sampled tile; NaN becomes transparent.
@@ -937,6 +958,7 @@ class CoverageRenderer(Node):
         case, so the transparent errorTileUrl hides total failure as an empty
         map. This object is both the configuration and the heartbeat.
         """
+        age = self._datum_age()
         payload = json.dumps({
             'band': self.band_name,
             'cache_control': self.cache_control,
@@ -944,6 +966,7 @@ class CoverageRenderer(Node):
             'chart_datum_offset': self._datum_offset,
             'max_depth': MAX_DEPTH,
             'prefix': self.prefix,
+            'chart_datum_age': age,
             'published_tiles': len(self._published),
             'render_interval': float(self._param('render_interval')),
             # WALL CLOCK, deliberately, not the ROS clock. The page computes
@@ -976,7 +999,20 @@ class CoverageRenderer(Node):
             return
         self._render_pending(deadline)
         # After the pass, so the counts the page shows are this pass's.
-        self._publish_meta('ok')
+        age = self._datum_age()
+        if age is not None and age > DATUM_STALE_SECONDS:
+            # TF went away after we had an offset. Rendering continues from
+            # the last value -- there is nothing better to do with live
+            # coverage -- but the tide has moved on and the page has to be
+            # able to say so, or a frozen water level reads as ordinary
+            # bathymetry.
+            self.get_logger().warn(
+                'chart-datum offset is {:.0f} s old; colouring against a '
+                'stale tide'.format(age),
+                throttle_duration_sec=30.0)
+            self._publish_meta('stale_chart_datum')
+        else:
+            self._publish_meta('ok')
 
     def _render_pending(self, deadline=None):
         """Render and publish every slippy tile marked dirty.
