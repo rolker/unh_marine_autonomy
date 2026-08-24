@@ -213,6 +213,30 @@ def _statement(page, start):
     return page[start:]
 
 
+def _option_value(page, at):
+    """Return the value of the Leaflet option whose key starts at `at`.
+
+    Paren-aware: `minZoom: Math.max(0, zoom - 2)` has a comma inside its own
+    call, so stopping at the first comma reads the value as `Math.max(0` and
+    any assertion made on it is meaningless.
+    """
+    index = page.index(':', at) + 1
+    depth = 0
+    start = index
+    end = len(page)
+    while index < end:
+        char = page[index]
+        if char in '([{':
+            depth += 1
+        elif char in ')]}':
+            if depth == 0:
+                break
+            depth -= 1
+        elif char == ',' and depth == 0:
+            break
+        index += 1
+    return page[start:index].strip()
+
 
 def test_every_layer_reaches_the_map():
     """Every tile-layer construction must be followed by addTo(map).
@@ -499,6 +523,44 @@ def test_the_manifest_poll_bypasses_the_browser_cache():
     assert 'COVERAGE_META = ' in raw and '?' not in re.search(
         r'COVERAGE_META\s*=\s*([^;]+);', raw).group(1), (
         'COVERAGE_META carries a query string -- see above')
+
+
+def test_the_coverage_layer_minzoom_is_clamped():
+    """A negative `minZoom` disables the hide-when-zoomed-out rule entirely.
+
+    `minZoom` is the only thing that keeps Leaflet from laying the viewport
+    out at the layer's single native zoom, and the page also gates
+    `refreshCoverage()` on `map.getZoom() < options.minZoom`. The manifest
+    zoom is remote input: at zoom 0 or 1 an unclamped `zoom - 2` is negative,
+    which is below every zoom the map can reach, so the layer is never hidden
+    and that gate can never fire. (This is not the tile-explosion direction --
+    a low native zoom means fewer tiles -- but the rule has to hold at every
+    zoom a manifest may legally carry, not only the ones rendered today.)
+    """
+    page = _code(_page())
+    start, end = _function_span(page, 'buildCoverage')
+    body = page[start:end]
+    at = body.find('minZoom')
+    assert at != -1, 'buildCoverage() no longer sets a minZoom on the layer'
+    expression = _option_value(body, at).replace(' ', '')
+    clamp = re.fullmatch(r'Math\.max\(0,zoom-(\w+)\)', expression)
+    assert clamp, (
+        'the layer minZoom is {!r}: it must be clamped at 0 as '
+        'Math.max(0, zoom - <margin>), because an unclamped subtraction goes '
+        'negative on a low manifest zoom and the layer is then never hidden'
+        .format(expression))
+    margin = clamp.group(1)
+    if not margin.isdigit():
+        defined = re.search(r'(?:const|let|var)\s+' + margin +
+                            r'\s*=\s*(-?\d+)', page)
+        assert defined, (
+            'the minZoom margin {} is not a literal this test can '
+            'resolve'.format(margin))
+        margin = defined.group(1)
+    assert int(margin) >= 0, (
+        'the minZoom margin is {}: a negative margin puts minZoom ABOVE the '
+        'rendered zoom, hiding the layer where its own tiles exist'
+        .format(margin))
 
 
 def test_the_manifest_is_validated_before_it_configures_the_layer():

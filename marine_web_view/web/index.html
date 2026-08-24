@@ -387,6 +387,9 @@ const COVERAGE_META = COVERAGE_DIR + 'meta.json';
 const COVERAGE_MS   = 20000;   // the renderer rewrites the manifest per pass
 const COVERAGE_DEAD_S = 120;   // no manifest update for this long = offline
 const COVERAGE_MAX_Z  = 22;    // the layer's own maxZoom; see minZoom below
+// How far below the rendered zoom the layer stays visible before it is hidden.
+// Two levels of upscaling still reads as coverage; beyond that it is a smear.
+const COVERAGE_MIN_Z_MARGIN = 2;
 // Live opacity, and what the layer fades to once the manifest stops moving.
 // Not zero and not removal: the last coverage the renderer did publish is
 // still the best record of where the vessel has been, and an operator who
@@ -462,7 +465,14 @@ function buildCoverage(zoom) {
     // that is 4^5 = 1024x the tile count, and by zoom 5 it is millions of DOM
     // elements. It freezes the browser. minZoom simply hides the layer when
     // zoomed out past the point where its single rendered level is useful.
-    minZoom: zoom - 2, maxZoom: COVERAGE_MAX_Z,
+    // Clamped at 0: `zoom - 2` on a manifest zoom of 0 or 1 is negative, and
+    // a negative minZoom is below every zoom the map can reach, so the layer
+    // is then never hidden and the hide-when-zoomed-out rule above is dead.
+    // (This is not the tile-explosion direction -- a low native zoom means
+    // FEWER tiles -- but the rule should hold at every manifest zoom, not
+    // just the ones we happen to render at today.)
+    minZoom: Math.max(0, zoom - COVERAGE_MIN_Z_MARGIN),
+    maxZoom: COVERAGE_MAX_Z,
     minNativeZoom: zoom, maxNativeZoom: zoom,
     opacity: coverageAlive ? COVERAGE_OPACITY : COVERAGE_STALE_OPACITY,
     zIndex: 350,
