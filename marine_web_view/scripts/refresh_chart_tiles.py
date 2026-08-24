@@ -475,7 +475,7 @@ def local_files(local_dir):
 
 
 def sync_dir(client, local_dir, bucket, prefix, extra_args,
-             concurrency=DEFAULT_CONCURRENCY, log=print,
+             concurrency=DEFAULT_CONCURRENCY, log=print, force=False,
              deadline_seconds=SYNC_DEADLINE_SECONDS):
     """Upload `local_dir` to `bucket`/`prefix`; return (sent, skipped, failed).
 
@@ -492,11 +492,23 @@ def sync_dir(client, local_dir, bucket, prefix, extra_args,
     ETag, and anything that differs, is absent, or has an ETag that cannot be
     compared (see is_content_hash) is uploaded.
 
-    This is strictly better than the status quo, not just equivalent: the
-    fetch loop rewrites every local tile unconditionally, so local mtimes are
-    always 'now' and `aws s3 sync`'s size+mtime rule re-uploaded all ~5,839
-    objects every run. Content hashing is the first comparison here that
-    actually skips anything.
+    BETTER ON SKIPPING, WORSE ON METADATA than the `aws s3 sync` it replaces
+    -- not strictly better. Better on skipping: the fetch loop rewrites every
+    local tile it renders, so local mtimes are always 'now' and sync's
+    size+mtime rule re-uploaded all ~5,839 objects every run, where content
+    hashing genuinely skips the unchanged ones. Worse on metadata:
+    `list_objects_v2` returns no CacheControl or ContentType, so a comparison
+    on bytes alone cannot see that an object's cache policy is stale. Change
+    TILE_EXTRA_ARGS and the new policy reaches only tiles whose pixels also
+    changed, leaving the prefix on a permanently mixed policy.
+
+    `force` is the remedy available today: it skips the comparison entirely
+    and re-PUTs everything, which is the only way a TILE_EXTRA_ARGS change
+    reaches unchanged tiles. `--force` passes it, so a re-render after a
+    policy change does propagate. Propagating a metadata-only change WITHOUT
+    a full re-render (~an hour of requests against CCOM for pixels that did
+    not move) would need a re-upload-from-workdir mode, or a head_object per
+    key; that is a follow-up, not something this function silently does.
 
     `deadline_seconds` is an aggregate wall-clock bound on the whole fan-out,
     restoring what `subprocess.run(timeout=3600)` used to enforce on the
@@ -504,7 +516,7 @@ def sync_dir(client, local_dir, bucket, prefix, extra_args,
     run, which withholds the manifest and leaves the next run to finish the
     job -- far better than a cron run that overlaps its successor.
     """
-    remote = remote_etags(client, bucket, prefix)
+    remote = {} if force else remote_etags(client, bucket, prefix)
     pending = []
     skipped = 0
     for rel, path in local_files(local_dir):
@@ -584,7 +596,10 @@ def main():
     ap.add_argument('--workdir', default='/tmp/p11-tiles')
     ap.add_argument('--timeout', type=float, default=60)
     ap.add_argument('--dry-run', action='store_true')
-    ap.add_argument('--force', action='store_true')
+    ap.add_argument('--force', action='store_true',
+                    help='re-render regardless of age, and re-upload every '
+                         'tile rather than skipping unchanged bytes (the way '
+                         'to propagate a TILE_EXTRA_ARGS cache-policy change)')
     a = ap.parse_args()
 
     # --name becomes both a local directory under --workdir and an S3 key prefix
@@ -682,7 +697,7 @@ def main():
     print('\nuploading...')
     sent, unchanged, up_failed = sync_dir(
         client, outdir, BUCKET, f'tiles/{a.name}/', TILE_EXTRA_ARGS,
-        concurrency=a.concurrency)
+        concurrency=a.concurrency, force=a.force)
     print(f'uploaded {sent}, unchanged {unchanged}, failed {up_failed}')
     if up_failed:
         # All-or-nothing, as `aws s3 sync` was: the manifest is what tells the

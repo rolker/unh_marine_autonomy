@@ -306,6 +306,29 @@ def test_an_unreadable_manifest_reads_as_empty(tmp_path):
     assert script.load_manifest(_Broken()) == {}
 
 
+def test_force_reuploads_unchanged_tiles(tmp_path):
+    """The only way a TILE_EXTRA_ARGS cache-policy change reaches a tile.
+
+    `list_objects_v2` returns no CacheControl, so a content comparison cannot
+    see that an object's cache policy is stale. `--force` is the remedy that
+    exists today, and it is worth nothing if it only re-renders.
+    """
+    script = _load_script()
+    outdir = str(tmp_path / 'bathy4m')
+    _write(outdir, '10/1/2.png', b'unchanged-tile-bytes')
+
+    client = _FakeS3({'tiles/bathy4m/10/1/2.png':
+                      _etag(b'unchanged-tile-bytes')})
+    sent, skipped, failed = script.sync_dir(
+        client, outdir, 'unh-ccom-p11-live', 'tiles/bathy4m/',
+        _tile_args(script), log=lambda *a: None, force=True)
+
+    assert (sent, skipped, failed) == (1, 0, 0), (
+        'force skipped a byte-identical tile, so a cache-policy change has '
+        'no way to reach it')
+    assert client.puts[0]['CacheControl'] == 'public,max-age=604800'
+
+
 def test_a_sync_past_its_deadline_stops_instead_of_overrunning(tmp_path):
     """`aws s3 sync` was capped at 3600 s by subprocess.run; restore that.
 
