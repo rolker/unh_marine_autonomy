@@ -366,3 +366,28 @@ Lifecycle: **Implementation** → **review-code** (re-review the fixes)
 Lifecycle: **Implementation** -> **review-code** (re-review the fixes)
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 345 --skill review-code
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-23 22:07 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+
+**PR**: #350 at `d64ecb4`
+**Sources**: 3 (Copilot @ `f8b32ee` and @ `d64ecb4`, Local Review (Pre-Push) R2, CI rollup @ `f8b32ee`)
+**Cross-source confirmations**: 1
+**CI**: all-pass -- `build` SUCCESS (the awscli removal unblocked it)
+
+### Findings
+- [ ] (cross-confirmed, must-fix) The page trusts the manifest: `typeof meta.zoom === 'number'` admits NaN/Infinity/non-integers into `minZoom`/`minNativeZoom`, and `meta.stamp` is unvalidated so a missing or non-numeric stamp makes `age` NaN -- the panel then reports a healthy tile count for a dead renderer, defeating the heartbeat the manifest exists to be. Require `Number.isInteger` 0..22 for zoom and a finite stamp. Raised by Copilot @ `f8b32ee` and by two separate round-2 local suggestions -- `marine_web_view/web/index.html:418`
+- [ ] (suggestion, Copilot) `decode_band` copies the whole buffer via `bytes(data)` before `numpy.frombuffer` -- about 1.8 MB per 960x960 uint16 message on the ingest path. `memoryview(data)` consumes the buffer directly; `bytes()` already yields a read-only array so no downstream mutability assumption changes -- `marine_web_view/marine_web_view/tiles.py:86`
+
+### Notes
+- **All 8 must-fixes confirmed fixed by the source that raised them.** Copilot re-reviewed twice (at `f8b32ee` and `d64ecb4`), 22/22 files each time, and generated **zero new inline comments**; none of its round-1 findings recur. Independently corroborated by a host-run mutation test on the final code -- with `.addTo(map)` deleted from `buildCoverage()` and `colour_table()` inverted the suite goes 2 failed / 101 passed, and 103/103 clean -- and by green CI.
+- The `awscli` CI finding is resolved: hosted `build` passed in 8m35s at `f8b32ee`. The workaround is now gated on unh_marine_autonomy#351 (move the S3 upload path to boto3), referenced from both `package.xml` and README so it cannot expire unnoticed -- the same "an expiry with no gate never expires" defect the round-2 review raised against the ADR-0001 note.
+- Copilot's `d64ecb4` verdict of "Needs a closer look" carries **no code finding**: the stated reason is that "final human validation of behavior and operational impact is warranted even with strong test coverage" -- a deferral to human review, not a defect. Do not route it as one.
+- Finding 1 is classified **up** from Copilot's "suppressed" framing. It is the silent-failure / stale-data class AGENTS.md forbids dismissing as a nit, and it is the one item three sources independently raise.
+- The 27 remaining suggestions from the round-2 `## Local Review (Pre-Push)` entry are still open there and still untriaged; this round adds two more. None block, but they are not "no findings".
+- Still unreviewed by a human. Green CI is not review.
+
+### False positives
+- (none) Both surfaced findings were verified against the code at head: `index.html:418-420` shows the unguarded `typeof` check and the bare `Date.now()/1000 - meta.stamp`; `tiles.py:86` shows the `bytes(data)` copy.
