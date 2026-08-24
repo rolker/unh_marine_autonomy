@@ -67,6 +67,11 @@ against something that publishes no `PlatformList` at all.
 | `profile` | `p11-renderer` | AWS profile; scoped to `s3:PutObject` on `live/*` |
 | `dry_run` | `false` | Write to `local_path` instead of S3 |
 | `local_path` | `/tmp/position.geojson` | |
+| `track_key` | `live/track.geojson` | Bucket key for the served track history |
+| `track_local_path` | `/tmp/track.geojson` | Where the track is written under `dry_run`; point it into `web/live/` to preview the trail |
+| `track_seconds` | `14400.0` | How much history the track carries (4 h) |
+| `track_max_points` | `1200` | Hard cap on track vertices — a safety net after band decimation; hitting it trims the OLDEST fixes and warns |
+| `track_interval` | `30.0` | Seconds between track uploads — slower than `interval`, which is why the page bridges the gap with locally observed fixes |
 | `vessel_length` / `vessel_width` / `reference_x` / `reference_y` | BEN's hull | Fallback only |
 
 ### Output
