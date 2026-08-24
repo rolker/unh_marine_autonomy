@@ -182,13 +182,63 @@ def test_the_coverage_layer_is_configured_from_the_manifest():
 
     The two drifted apart once already: a layer pinned to the wrong native
     zoom requests tiles that were never written, one 403 per tile per pan.
+
+    The zoom now reaches `buildCoverage` through `saneZoom(meta.zoom)` rather
+    than raw, so this pins that chain end to end: the manifest field is read,
+    it is the argument the validator is given, and the validated result is
+    what builds the layer.
     """
     page = _page()
     assert 'meta.json' in page, 'the coverage manifest is not fetched'
-    assert re.search(r'buildCoverage\(\s*meta\.zoom\s*\)', page), (
-        'the coverage layer is not built from the manifest zoom')
+    assert re.search(r'saneZoom\(\s*meta\.zoom\s*\)', page), (
+        'the coverage zoom no longer comes from the manifest')
+    assert re.search(r'buildCoverage\(\s*zoom\s*\)', page), (
+        'the coverage layer is not built from the validated manifest zoom')
     assert not re.search(r'COVERAGE_Z\s*=\s*\d', page), (
         'the render zoom is hardcoded in the page again')
+
+
+def test_the_manifest_is_validated_before_it_configures_the_layer():
+    """meta.json is remote input, and both fields it drives fail badly.
+
+    `typeof x === 'number'` admits NaN and Infinity. `zoom` sets minZoom and
+    minNativeZoom -- the bound that keeps Leaflet from laying the viewport out
+    in millions of native-zoom tiles -- and `stamp` drives the liveness age,
+    where NaN makes every staleness comparison false and the panel reports a
+    healthy tile count for a dead renderer.
+    """
+    page = _code(_page())
+    assert re.search(r'Number\.isInteger\(\s*value\s*\)', page), (
+        'the manifest zoom is not checked for integrality; NaN, Infinity and '
+        '15.5 all satisfy a bare typeof check')
+    assert re.search(r'value\s*<=\s*COVERAGE_MAX_Z', page), (
+        'the manifest zoom is not bounded against the layer maxZoom')
+    assert 'Number.isFinite(value)' in page, (
+        'the manifest stamp is not checked for finiteness; a missing stamp '
+        'makes the age NaN and the renderer reads as alive forever')
+    assert re.search(r'zoom\s*===\s*null\s*\|\|\s*stamp\s*===\s*null',
+                     page), (
+        'a manifest that fails validation is still used to configure the '
+        'layer')
+
+
+def test_a_stale_manifest_degrades_the_coverage_layer():
+    """A dead renderer must not present as a confident mosaic.
+
+    Every miss is painted transparent, so whatever the renderer last managed
+    to upload keeps rendering at full opacity indefinitely once it dies. The
+    readout alone is not enough -- the map is what people look at.
+    """
+    page = _code(_page())
+    assert 'COVERAGE_STALE_OPACITY' in page, (
+        'the coverage layer has no degraded opacity for a dead renderer')
+    assert re.search(r'setCoverageAlive\(\s*age\s*<=\s*COVERAGE_DEAD_S\s*\)',
+                     page), (
+        'the layer opacity is not driven by the manifest age')
+    assert re.search(r'catch[^{]*\{[^}]*setCoverageAlive\(\s*false\s*\)',
+                     page, re.S), (
+        'an unreachable or malformed manifest leaves the layer at full '
+        'opacity')
 
 
 def test_a_dead_renderer_is_reported_rather_than_hidden():

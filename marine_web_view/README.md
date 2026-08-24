@@ -317,7 +317,21 @@ heartbeat:
 - a missing tile is the normal case for a coverage layer, so the page paints
   every miss transparent (`errorTileUrl`). That also hides total failure as
   calm water. The manifest is what lets the page say `offline` or `stale`
-  instead.
+  instead — and, past `COVERAGE_DEAD_S` (120 s), fade the layer to
+  `COVERAGE_STALE_OPACITY`. The readout alone is not enough: the map is what
+  people look at, and a dead renderer's last upload otherwise keeps rendering
+  as a confident, complete mosaic. The layer is dimmed rather than removed —
+  the coverage it does show is still the best record of where the vessel has
+  been.
+- the page **validates the manifest before it uses it**. This is remote JSON
+  over the public internet, not configuration: `zoom` must be an integer in
+  `0..22` (`typeof x === 'number'` admits `NaN` and `Infinity`, and both flow
+  straight into `minZoom`/`minNativeZoom` — the bound that stops Leaflet
+  laying the viewport out in millions of native-zoom tiles), and `stamp` must
+  be finite (a missing stamp makes the age `NaN`, every staleness comparison
+  false, and the panel reports a healthy tile count for a renderer that died
+  hours ago). A manifest failing either check is treated exactly like no
+  manifest at all.
 
 It is rewritten every pass, idle or not, which is one extra PUT per
 `render_interval` (~130k/month at 20 s, well under a dollar).

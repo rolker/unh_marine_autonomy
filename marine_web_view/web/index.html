@@ -378,7 +378,51 @@ const COVERAGE_DIR  = 'live/coverage/';
 const COVERAGE_META = COVERAGE_DIR + 'meta.json';
 const COVERAGE_MS   = 20000;   // the renderer rewrites the manifest per pass
 const COVERAGE_DEAD_S = 120;   // no manifest update for this long = offline
+const COVERAGE_MAX_Z  = 22;    // the layer's own maxZoom; see minZoom below
+// Live opacity, and what the layer fades to once the manifest stops moving.
+// Not zero and not removal: the last coverage the renderer did publish is
+// still the best record of where the vessel has been, and an operator who
+// looks away for two minutes should find it dimmed and labelled, not gone.
+const COVERAGE_OPACITY = 0.95;
+const COVERAGE_STALE_OPACITY = 0.3;
 let coverageLayer = null, coverageZoom = null, coverageStamp = null;
+let coverageAlive = true;
+
+// The manifest is remote JSON fetched over the public internet. It is INPUT,
+// not configuration, and every field below is used for something that fails
+// badly when it is wrong:
+//
+//   zoom  -> minZoom/minNativeZoom, the bound that stops Leaflet laying the
+//            viewport out in millions of native-zoom tiles. `typeof x ===
+//            'number'` admits NaN and Infinity, and `NaN - 2` is NaN, so the
+//            browser-freeze guard was itself driven by unvalidated JSON.
+//   stamp -> the liveness age. A missing or non-numeric stamp makes
+//            `Date.now()/1000 - stamp` NaN, every `age > DEAD` comparison
+//            false, and the panel then reports a healthy tile count for a
+//            renderer that has been dead for hours -- defeating the one thing
+//            the manifest exists to be.
+//
+// A manifest that fails either check is treated exactly like no manifest at
+// all: the layer is not rebuilt from it and the readout says so.
+function saneZoom(value) {
+  return (Number.isInteger(value) && value >= 0 && value <= COVERAGE_MAX_Z)
+    ? value : null;
+}
+
+function saneStamp(value) {
+  return (typeof value === 'number' && Number.isFinite(value)) ? value : null;
+}
+
+// Fade the layer when the renderer stops. With every miss painted transparent
+// a dead renderer otherwise presents as a confident, complete mosaic of
+// whatever it last managed to upload.
+function setCoverageAlive(alive) {
+  coverageAlive = alive;
+  if (coverageLayer) {
+    coverageLayer.setOpacity(alive ? COVERAGE_OPACITY
+                                   : COVERAGE_STALE_OPACITY);
+  }
+}
 
 function buildCoverage(zoom) {
   if (coverageZoom === zoom) return;
@@ -391,9 +435,10 @@ function buildCoverage(zoom) {
     // that is 4^5 = 1024x the tile count, and by zoom 5 it is millions of DOM
     // elements. It freezes the browser. minZoom simply hides the layer when
     // zoomed out past the point where its single rendered level is useful.
-    minZoom: zoom - 2, maxZoom: 22,
+    minZoom: zoom - 2, maxZoom: COVERAGE_MAX_Z,
     minNativeZoom: zoom, maxNativeZoom: zoom,
-    opacity: 0.95, zIndex: 350,
+    opacity: coverageAlive ? COVERAGE_OPACITY : COVERAGE_STALE_OPACITY,
+    zIndex: 350,
     // A tile exists only where the sonar has covered ground, so a miss is the
     // normal case rather than an error. Serve a transparent pixel instead of
     // letting Leaflet show a broken-image tile. That is exactly why the
@@ -415,12 +460,23 @@ async function pollCoverage() {
     const r = await fetch(COVERAGE_META, { cache: 'default' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const meta = await r.json();
-    if (typeof meta.zoom === 'number') buildCoverage(meta.zoom);
-    coverageStamp = meta.stamp;
-    $('cov').textContent = coverageText(meta, Date.now()/1000 - meta.stamp);
+    const zoom = saneZoom(meta.zoom);
+    const stamp = saneStamp(meta.stamp);
+    if (zoom === null || stamp === null) {
+      // A manifest we cannot trust is worse than none: it would configure the
+      // layer's zoom bounds and its liveness clock from nonsense.
+      throw new Error('malformed manifest');
+    }
+    buildCoverage(zoom);
+    coverageStamp = stamp;
+    const age = Date.now()/1000 - stamp;
+    setCoverageAlive(age <= COVERAGE_DEAD_S);
+    $('cov').textContent = coverageText(meta, age);
   } catch (e) {
-    // No manifest at all: either the renderer has never run against this
-    // bucket, or it is down. Say so rather than showing an empty map.
+    // No usable manifest: either the renderer has never run against this
+    // bucket, or it is down, or what it wrote is malformed. Say so rather
+    // than showing an empty map -- and dim whatever coverage is still on it.
+    setCoverageAlive(false);
     $('cov').textContent = coverageStamp == null ? 'offline' : 'stale';
   }
 }
