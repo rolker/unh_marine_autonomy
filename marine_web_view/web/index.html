@@ -187,8 +187,11 @@ L.tileLayer(
 // the same depth changes colour as you pan -- fine for exploring, useless for
 // a public page where people compare. Here the scale is PINNED to 0-40 m.
 //
-// RAMP / MAX_DEPTH / STEP are mirrored in scripts/refresh_chart_tiles.py;
-// test/test_ramp_sync.py fails if the two copies drift.
+// RAMP / MAX_DEPTH / STEP are mirrored in scripts/refresh_chart_tiles.py, and
+// RAMP / MAX_DEPTH again in marine_web_view/coverage_renderer.py -- THREE
+// copies. test/test_ramp_sync.py fails if any of them drifts; the third was
+// hand-transcribed and came out shifted at 14 of 24 stops while the guard
+// still covered only two.
 const RAMP = [
   [  0,  38, 115],  // deepest
   [  1,  40, 116],
