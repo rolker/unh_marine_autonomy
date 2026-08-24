@@ -56,11 +56,24 @@ def _boto3_client(profile, connect_timeout, read_timeout):
     role, or a plain ~/.aws/credentials) or the empty string (an operator
     mistake that should fail). Coalescing here would erase that distinction.
 
-    ``retries`` turns on botocore's own exponential backoff for transient
-    errors (throttling, 5xx, connection resets). This is strictly additive:
-    the AWS CLI shell-out it replaces got no automatic retry of any kind.
-    Anything that exhausts it, or is not retryable at all (AccessDenied,
-    NoSuchBucket), still falls through to the caller's failure counter.
+    ``max_attempts=1`` means ONE attempt, no SDK retry -- deliberately, and
+    it is what keeps the worst case for a single ``put`` at
+    ``connect_timeout + read_timeout``. Both callers depend on that ceiling:
+    ``state_renderer._put`` runs on ``rclpy.spin``'s single-threaded
+    executor, so a stalled PUT blocks the nav-fix callback for its whole
+    duration, and ``coverage_renderer.stop()`` joins its render worker on a
+    45 s budget that has to be able to win. botocore counts ``max_attempts``
+    as TOTAL attempts and both a connect and a read timeout are retryable, so
+    ``max_attempts=4`` would multiply that ceiling by four (verified against
+    botocore 1.34.46: ``MaxAttemptsChecker`` retries while
+    ``attempt_number < max_attempts``).
+
+    Losing SDK retry costs nothing here: BOTH nodes already retry on their
+    own schedule -- state_renderer on the next timer tick, coverage_renderer
+    by leaving the tile dirty for the next render pass -- which is the
+    behaviour the CLI shell-out this replaces had, and which each node's
+    ``_put``/``_publish`` docstring already describes. A transient failure is
+    counted, logged, and retried a tick later instead of holding a thread.
     """
     import boto3
     from botocore.config import Config
@@ -68,7 +81,7 @@ def _boto3_client(profile, connect_timeout, read_timeout):
 
     config = Config(connect_timeout=connect_timeout,
                     read_timeout=read_timeout,
-                    retries={'mode': 'standard', 'max_attempts': 4})
+                    retries={'mode': 'standard', 'max_attempts': 1})
     session = boto3.Session(profile_name=profile)
     return session.client('s3', config=config), (ClientError, BotoCoreError)
 

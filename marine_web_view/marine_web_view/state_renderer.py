@@ -235,8 +235,13 @@ class StateRenderer(Node):
         # an operator who blanks it should still fail loudly rather than
         # silently pick up whatever credentials the host happens to carry.
         # (coverage_renderer deliberately differs: see its own construction.)
-        # read_timeout leaves headroom under the 20 s ceiling the CLI
-        # shell-out used to enforce at the process level.
+        # One PUT is bounded at connect_timeout + read_timeout = 5 + 15 =
+        # 20 s, which is exactly the ceiling the CLI shell-out enforced at
+        # the process level. The bound is real only because the uploader
+        # asks botocore for a single attempt (see _boto3_client): _put runs
+        # on rclpy.spin's SINGLE-THREADED executor, so every second a PUT
+        # spends stalled is a second _on_fix does not run, and the track
+        # keeps a permanent hole for it.
         self._uploader = (None if self.dry_run else
                           S3Uploader(self.bucket, profile=self.profile,
                                      read_timeout=15))

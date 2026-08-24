@@ -444,8 +444,11 @@ class CoverageRenderer(Node):
         # configured' info line above announces. Passing '' instead would
         # fail every upload, exactly as `--profile ''` did.
         # state_renderer deliberately does NOT coalesce; see its own comment.
-        # read_timeout leaves headroom under the 30 s ceiling the CLI
-        # shell-out used to enforce at the process level.
+        # One PUT is bounded at connect_timeout + read_timeout = 5 + 25 =
+        # 30 s, exactly the ceiling the CLI shell-out enforced at the process
+        # level, and only because the uploader asks botocore for a single
+        # attempt (see _boto3_client). stop()'s 45 s join is sized against
+        # this number.
         self._uploader = (None if self.dry_run else
                           S3Uploader(self.bucket,
                                      profile=self.profile or None,
@@ -1032,8 +1035,12 @@ class CoverageRenderer(Node):
         self._stop.set()
         self._wake.set()
         try:
-            # Generously longer than one upload timeout: the worker may be
-            # inside an S3 PUT when the stop arrives.
+            # Longer than one upload timeout (30 s: see the uploader
+            # construction) so this join can actually win when the worker is
+            # inside an S3 PUT as the stop arrives. If that ceiling ever
+            # rises above 45 s -- an SDK retry count, a longer read_timeout
+            # -- the join starts timing out instead, and the early return
+            # below skips the final flush this method exists to perform.
             self._worker.join(timeout=45.0)
             if self._worker.is_alive():
                 self.get_logger().warn('render thread did not stop in time')

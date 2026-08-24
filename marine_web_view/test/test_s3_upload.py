@@ -213,6 +213,131 @@ def test_a_failed_position_upload_is_counted_not_raised():
     assert logged and 'AccessDenied' in logged[0], logged
 
 
+class _FakeConfig:
+    """Stand-in for botocore.config.Config that just records its kwargs."""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+class _FakeSession:
+    """Stand-in for boto3.Session that records the profile it was given."""
+
+    def __init__(self, profile_name=None):
+        self.profile_name = profile_name
+        self.config = None
+
+    def client(self, service, config=None):
+        """Record the service and config, return a recording stub client."""
+        assert service == 's3'
+        self.config = config
+        return _Client()
+
+
+def _install_fake_sdk(monkeypatch):
+    """Put stand-in boto3/botocore modules in sys.modules; return the log.
+
+    This is how the REAL `_boto3_client` body gets executed without the AWS
+    SDK: monkeypatch restores sys.modules afterwards, so
+    `test_importing_the_module_does_not_import_boto3` still sees a boto3-free
+    process. Without this the client Config -- the whole retry/timeout budget
+    -- is unbound: nothing else in the suite ever runs those five lines.
+    """
+    import sys
+    import types
+
+    sessions = []
+
+    def _session(profile_name=None):
+        session = _FakeSession(profile_name=profile_name)
+        sessions.append(session)
+        return session
+
+    boto3_mod = types.ModuleType('boto3')
+    boto3_mod.Session = _session
+    botocore = types.ModuleType('botocore')
+    config_mod = types.ModuleType('botocore.config')
+    config_mod.Config = _FakeConfig
+    exceptions_mod = types.ModuleType('botocore.exceptions')
+    exceptions_mod.ClientError = _ClientError
+    exceptions_mod.BotoCoreError = OSError
+    monkeypatch.setitem(sys.modules, 'boto3', boto3_mod)
+    monkeypatch.setitem(sys.modules, 'botocore', botocore)
+    monkeypatch.setitem(sys.modules, 'botocore.config', config_mod)
+    monkeypatch.setitem(sys.modules, 'botocore.exceptions', exceptions_mod)
+    return sessions
+
+
+@pytest.mark.parametrize('connect_timeout,read_timeout,ceiling', [
+    (5, 15, 20),    # state_renderer: the `aws s3 cp` shell-out's 20 s cap
+    (5, 25, 30),    # coverage_renderer: the same shell-out's 30 s cap
+])
+def test_one_put_stays_under_the_ceiling_each_node_was_built_around(
+        monkeypatch, connect_timeout, read_timeout, ceiling):
+    """The retry budget IS the per-PUT wall-clock ceiling; pin the arithmetic.
+
+    botocore counts `max_attempts` as TOTAL attempts, and both a connect and
+    a read timeout are retryable -- so anything above 1 multiplies the worst
+    case. state_renderer's `_put` runs on rclpy.spin's single-threaded
+    executor (a stalled PUT stops nav fixes being recorded for its whole
+    duration, leaving a permanent hole in the track) and coverage_renderer's
+    `stop()` joins the render worker on a 45 s budget that has to be able to
+    win, or the final flush it exists for is skipped. Both ceilings below are
+    what the `aws s3 cp` shell-out enforced at the process level.
+    """
+    sessions = _install_fake_sdk(monkeypatch)
+    client, errors = s3_upload._boto3_client(
+        None, connect_timeout, read_timeout)
+
+    assert errors == (_ClientError, OSError)
+    assert client is not None
+    kwargs = sessions[0].config.kwargs
+    worst_case = kwargs['retries']['max_attempts'] * (
+        kwargs['connect_timeout'] + kwargs['read_timeout'])
+    assert worst_case <= ceiling, (
+        'one PUT can now take up to {} s against a {} s ceiling'.format(
+            worst_case, ceiling))
+
+
+def test_the_client_config_is_the_per_put_time_budget(monkeypatch):
+    """Every field of the Config is load-bearing; pin all of them."""
+    sessions = _install_fake_sdk(monkeypatch)
+    s3_upload._boto3_client('p11-renderer', 5, 15)
+
+    assert len(sessions) == 1
+    config = sessions[0].config
+    assert config.kwargs == {
+        'connect_timeout': 5,
+        'read_timeout': 15,
+        'retries': {'mode': 'standard', 'max_attempts': 1},
+    }, config.kwargs
+
+    attempts = config.kwargs['retries']['max_attempts']
+    worst_case = attempts * (config.kwargs['connect_timeout']
+                             + config.kwargs['read_timeout'])
+    assert worst_case <= 20, (
+        'one PUT can now take {} s; state_renderer built its 20 s ceiling '
+        '(and coverage_renderer its 45 s shutdown join) on this '
+        'arithmetic'.format(worst_case))
+
+
+def test_the_profile_reaches_boto3_session_uncoalesced(monkeypatch):
+    """`profile or None` here would erase the two nodes' asymmetry.
+
+    The existing factory test stops at the monkeypatched `_boto3_client`;
+    this one runs the real body, so the one word that state_renderer's
+    fail-loudly contract rests on is actually bound.
+    """
+    sessions = _install_fake_sdk(monkeypatch)
+    for profile in (None, '', 'p11-renderer'):
+        s3_upload._boto3_client(profile, 5, 15)
+
+    assert [session.profile_name for session in sessions] == [
+        None, '', 'p11-renderer'], (
+        'the profile was rewritten between the helper and boto3.Session: '
+        '{}'.format([session.profile_name for session in sessions]))
+
+
 def test_importing_the_module_does_not_import_boto3():
     """A dry-run host and this test suite must not need the AWS SDK.
 
