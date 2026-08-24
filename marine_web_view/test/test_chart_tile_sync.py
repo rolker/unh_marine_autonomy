@@ -306,6 +306,34 @@ def test_an_unreadable_manifest_reads_as_empty(tmp_path):
     assert script.load_manifest(_Broken()) == {}
 
 
+def test_every_page_of_the_listing_is_read(tmp_path):
+    """A single-page read would re-upload ~4,800 unchanged tiles every run.
+
+    `list_objects_v2` pages at 1,000 keys and this pyramid is ~5,839 objects,
+    so stopping at the first page is a silent, expensive regression rather
+    than a visible failure -- the run still succeeds, it just uploads
+    everything. The fake pages deliberately, so more than one key is what
+    makes the paginator loop load-bearing.
+    """
+    script = _load_script()
+    outdir = str(tmp_path / 'bathy4m')
+    existing = {}
+    for index in range(4):
+        payload = b'tile-%d' % index
+        _write(outdir, '11/3/{}.png'.format(index), payload)
+        existing['tiles/bathy4m/11/3/{}.png'.format(index)] = _etag(payload)
+
+    client = _FakeS3(existing)
+    sent, skipped, failed = script.sync_dir(
+        client, outdir, 'unh-ccom-p11-live', 'tiles/bathy4m/',
+        _tile_args(script), log=lambda *a: None)
+
+    assert (sent, skipped, failed) == (0, 4, 0), (
+        'keys past the first listing page were treated as absent and '
+        're-uploaded')
+    assert client.puts == []
+
+
 def test_force_reuploads_unchanged_tiles(tmp_path):
     """The only way a TILE_EXTRA_ARGS cache-policy change reaches a tile.
 
