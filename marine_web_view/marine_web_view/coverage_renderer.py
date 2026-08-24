@@ -1165,9 +1165,16 @@ class CoverageRenderer(Node):
 
         self._rendered += published
         if published:
+            # `_tiles` belongs to the executor thread; its size is read under
+            # the lock like every other access to it, log line or not. An
+            # unlocked read here is atomic in CPython and would only cost a
+            # slightly-wrong number -- but it is a counterexample to an
+            # invariant the rest of this file depends on being absolute.
+            with self._lock:
+                cached = len(self._tiles)
             self.get_logger().info(
                 'rendered {} tile(s) at z{} ({} total, {} tiles cached)'.format(
-                    published, self.zoom, self._rendered, len(self._tiles)))
+                    published, self.zoom, self._rendered, cached))
 
     def _write_local(self, payload, key):
         """Write one object under local_dir; return True on success.
