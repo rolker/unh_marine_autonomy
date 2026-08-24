@@ -74,6 +74,7 @@ class _Pass:
         self.prefix = 'live/coverage'
         self._colours = colour_table()
         self._lock = threading.Lock()
+        self._stop = threading.Event()
         self._dirty = set()
         self._tiles = {}
         self._published = set()
@@ -430,24 +431,66 @@ def test_a_pass_without_the_chart_datum_publishes_nothing_but_says_so():
 
 
 def test_the_shutdown_flush_is_bounded():
-    """The carefully bounded 45 s join must not be followed by an open pass.
+    """A flush past its deadline issues no requests at all.
 
-    A flush is one 30 s-capped upload per dirty tile. Against a large mosaic
-    and a failing endpoint that is hours, with the operator's Ctrl-C already
-    spent. Past the deadline the remainder goes back in the dirty set rather
-    than being rendered.
+    A flush is one upload per dirty tile and a single upload has no exact
+    ceiling (see `_boto3_client`), so against a large mosaic and a wedged
+    endpoint an unbounded flush is hours -- with the operator's Ctrl-C
+    already spent. Past the deadline the remainder goes back in the dirty
+    set, and the manifest PUT that used to follow the loop unconditionally
+    (one more request, outside the budget) is skipped too.
     """
     node = _Pass()
     node._dirty.update((x, 0) for x in range(5))
-    node._render_dirty(deadline=time.monotonic() - 1.0)
+    node._render_dirty(lambda: True)
     assert not node.uploads, 'a pass past its deadline still uploaded'
+    assert not node.meta, 'the manifest PUT ran outside the flush budget'
     assert len(node._dirty) == 5, 'the unrendered tiles were dropped'
-    assert node.meta, 'the manifest is still published for the pass'
 
     # A deadline that has not passed does not truncate anything.
-    node._render_dirty(deadline=time.monotonic() + 60.0)
+    deadline = time.monotonic() + 60.0
+    node._render_dirty(lambda: time.monotonic() >= deadline)
     assert len(node.uploads) == 5
     assert not node._dirty
+    assert node.meta, 'a completed pass still publishes its manifest'
+
+
+def test_a_scheduled_pass_stops_on_the_stop_event():
+    """The bound every scheduled pass used to lack.
+
+    `_render_pending` honoured a deadline only when one was passed, and a
+    scheduled pass passes none -- so a pass was as long as the endpoint made
+    it, and `stop()`'s join could not win. The check is now on every path,
+    and for a scheduled pass the predicate is the stop event.
+    """
+    node = _Pass()
+    node._dirty.update((x, 0) for x in range(5))
+    node._stop.set()
+    node._render_dirty()                 # the scheduled-pass default
+    assert not node.uploads, 'a stopped pass kept uploading tiles'
+    assert not node.meta, 'a stopped pass still published a manifest'
+    assert len(node._dirty) == 5, 'the unrendered tiles were dropped'
+
+
+def test_a_stop_part_way_through_a_pass_returns_the_rest():
+    """Mid-pass: the tiles already rendered stand, the rest stay dirty."""
+    node = _Pass()
+    node._dirty.update((x, 0) for x in range(5))
+    rendered = []
+    original = node._publish
+
+    def _publish(payload, key, **kwargs):
+        rendered.append(key)
+        if len(rendered) == 2:
+            node._stop.set()             # a Ctrl-C lands here
+        return original(payload, key, **kwargs)
+
+    node._publish = _publish
+    node._render_dirty()
+    assert len(node.uploads) == 2, node.uploads
+    assert len(node._dirty) == 3, node._dirty
+    assert any('stopped with 3 tile(s) left' in line
+               for line in node._logger.lines), node._logger.lines
 
 
 def test_a_second_interrupt_during_shutdown_does_not_skip_cleanup():
