@@ -109,3 +109,16 @@ just a nice-to-have: it argues for doing this now rather than after the move.
       logging, not adding new in-call retry/backoff.
 - [ ] Preserve (or deliberately and visibly change) the profile-handling
       asymmetry between the two current call sites in the shared helper.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-08-24 13:30 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-351/plan.md` at `3361681`
+**Branch**: feature/issue-351 at `3361681`
+**Phases**: single
+
+### Open questions
+- [ ] README structure for the `dry_run`/no-AWS-access sentence once the "Runtime prerequisite: the AWS CLI" section is deleted wholesale — move it under per-node docs or drop as redundant (implementer's call, flagged not guessed).
+- [ ] `--concurrency` default of 16 for the `refresh_chart_tiles.py` sync reimplementation vs. matching the CLI's default of 10 for parity during cutover.
