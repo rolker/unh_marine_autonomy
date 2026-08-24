@@ -267,3 +267,43 @@ def test_stop_is_bounded_even_with_an_upload_wedged(live_node):
     finally:
         transport.release.set()
         node.destroy_node()
+
+
+class _Exploding(_Recorder):
+    """A transport that raises the way an unmodelled endpoint failure does."""
+
+    def put(self, payload, key, content_type, cache_control):
+        """Raise instead of returning a value, like a non-transport error."""
+        raise RuntimeError('unmodelled endpoint failure')
+
+
+@pytest.mark.parametrize('live_node', [_Exploding], indirect=True)
+def test_a_dead_upload_worker_reaches_the_operator(live_node):
+    """The map freezes; nothing else in the node changes. Someone must say so.
+
+    Every counter the node reports (`upload_counts`) and every signal the
+    page reads keeps looking healthy while a dead worker silently discards
+    each tick's position. The only thing that can report it is the node, on
+    every tick and again at shutdown.
+    """
+    node = state_renderer.StateRenderer()
+    logged = []
+    try:
+        assert isinstance(node._sender, AsyncUploader)
+        # Kill the worker the way only the loop's own bookkeeping can, so
+        # this exercises the report path rather than the per-send backstop.
+        node._sender._dead = 'MemoryError: out of memory in the worker loop'
+
+        node.get_logger().error = lambda message, **kwargs: logged.append(
+            message)
+        node._fix = _fix(1000.0)
+        node._tick()
+        assert any('dead' in line for line in logged), logged
+        assert node._sender.counts()[2] == 1, (
+            'the discarded position was not counted as a drop')
+
+        logged.clear()
+        node.stop()
+        assert any('died' in line for line in logged), logged
+    finally:
+        node.destroy_node()

@@ -185,6 +185,17 @@ class AsyncUploader:
 
     Failures are counted and logged, never raised: the node re-submits on its
     next tick, because ``confirmed`` still reports the older payload.
+
+    **A worker that dies says so.** Every exception the send path can raise is
+    contained (``put`` catches only the transport errors it was told about,
+    and a ``log_error`` callback is the caller's code), and an exception from
+    anywhere else in the loop ends the thread. An unnoticed death is the worst
+    failure this class has: ``submit`` would go on returning True, ``confirmed``
+    would never advance, and the map would freeze mid-survey while ``counts()``
+    reported nothing wrong. So the loop carries the same backstop
+    ``coverage_renderer._render_loop`` does, and a death that gets past it is
+    recorded: ``dead`` returns the reason, ``submit`` refuses (counting a drop
+    per refusal, so ``counts()`` moves), and ``stop`` reports NOT clean.
     """
 
     def __init__(self, uploader, log_error=None, max_slots=4,
@@ -197,11 +208,14 @@ class AsyncUploader:
         self._log_error = log_error
         self._max_slots = max(1, int(max_slots))
         self._lock = threading.Lock()
-        self._pending = {}          # key -> (payload, content_type, cache)
+        # key -> (payload, content_type, cache_control, tag)
+        self._pending = {}
         self._confirmed = {}        # key -> tag of the last successful PUT
         self._writes = 0
         self._failures = 0
         self._dropped = 0
+        # why the worker stopped, if it was not asked to
+        self._dead = None
         self._wake = threading.Event()
         self._stop = threading.Event()
         # daemon: a hung PUT cannot be cancelled, so the guarantee this class
@@ -218,8 +232,15 @@ class AsyncUploader:
         callers pass the fix stamp -- reported by `confirmed` once this
         payload is actually on the wire, which is how a caller tells a
         successful upload from an accepted one.
+
+        A dead worker refuses everything: accepting a payload no thread will
+        ever send is how a frozen map reads as healthy. The refusal is counted
+        as a drop, so `counts()` moves on every tick a caller keeps offering.
         """
         with self._lock:
+            if self._dead is not None:
+                self._dropped += 1
+                return False
             full = len(self._pending) >= self._max_slots
             if full and key not in self._pending:
                 self._dropped += 1
@@ -238,37 +259,90 @@ class AsyncUploader:
         with self._lock:
             return self._writes, self._failures, self._dropped
 
+    def dead(self):
+        """Return why the worker stopped unasked, or None while it is well.
+
+        The caller's handle on the one failure that is otherwise invisible:
+        the thread is gone, so nothing it could have logged will ever be
+        logged again, and only a reader of this can say so.
+        """
+        with self._lock:
+            return self._dead
+
     def stop(self, timeout=5.0):
-        """Stop the worker; return True if it ended within `timeout`.
+        """Stop the worker; return True if it ended cleanly within `timeout`.
 
         Anything still pending is abandoned. That is the right trade for
         this node's objects: they are snapshots at a 1 s and 30 s cadence,
         so the last one is worth strictly less than a shutdown that hangs.
         (coverage_renderer's tiles are NOT snapshots, which is why it flushes
         instead -- see its `stop`.)
+
+        A worker that died before the stop request returns False, not True:
+        the thread is not running, but nothing it was given since it died was
+        ever sent, and reporting that as a clean shutdown is the lie this
+        class must not tell. Callers distinguish the two with `dead`.
         """
         self._stop.set()
         self._wake.set()
         self._worker.join(timeout=timeout)
-        return not self._worker.is_alive()
+        return not self._worker.is_alive() and self.dead() is None
 
     def _run(self):
-        """Send whatever is pending, newest per key, until stopped."""
-        while not self._stop.is_set():
-            self._wake.wait()
-            self._wake.clear()
+        """Send whatever is pending, newest per key, until stopped.
+
+        Two levels of containment, both load-bearing:
+
+        * around each send, so one object's failure -- including one raised
+          from outside `put`'s `transport_errors`, or from the caller's
+          `log_error` -- costs that object rather than the worker. This is
+          the same backstop `coverage_renderer._render_loop` documents.
+        * around the loop itself, so anything the first level cannot see
+          (the bookkeeping under the lock) ends up in `_dead` instead of in
+          `threading.excepthook`, where nothing this process reports would
+          ever mention it.
+        """
+        try:
             while not self._stop.is_set():
-                with self._lock:
-                    if not self._pending:
-                        break
-                    # dict preserves insertion order and re-assigning an
-                    # existing key does not move it, so this is FIFO across
-                    # keys while staying latest-wins within one: a busy
-                    # position key cannot starve the track.
-                    key = next(iter(self._pending))
-                    payload, content_type, cache_control, tag = (
-                        self._pending.pop(key))
-                self._send(key, payload, content_type, cache_control, tag)
+                self._wake.wait()
+                self._wake.clear()
+                while not self._stop.is_set():
+                    with self._lock:
+                        if not self._pending:
+                            break
+                        # dict preserves insertion order and re-assigning an
+                        # existing key does not move it, so this is FIFO
+                        # across keys while staying latest-wins within one: a
+                        # busy position key cannot starve the track.
+                        key = next(iter(self._pending))
+                        payload, content_type, cache_control, tag = (
+                            self._pending.pop(key))
+                    try:
+                        self._send(key, payload, content_type,
+                                   cache_control, tag)
+                    except Exception as error:
+                        with self._lock:
+                            self._failures += 1
+                        self._report(key, error)
+        except BaseException as error:
+            with self._lock:
+                self._failures += 1
+                self._dead = '{}: {}'.format(
+                    type(error).__name__, error)[:300]
+
+    def _report(self, key, exc):
+        """Hand one failure to `log_error`, which is the caller's code.
+
+        A logger that raises must not be able to kill the transport: the
+        failure is already counted, and a lost log line is a smaller loss
+        than an upload thread. Swallowed deliberately.
+        """
+        if self._log_error is None:
+            return
+        try:
+            self._log_error(key, exc)
+        except Exception:
+            pass
 
     def _send(self, key, payload, content_type, cache_control, tag):
         """Put one object, recording the outcome for the caller to read."""
@@ -280,5 +354,5 @@ class AsyncUploader:
                 self._confirmed[key] = tag
             else:
                 self._failures += 1
-        if not ok and self._log_error is not None:
-            self._log_error(key, exc)
+        if not ok:
+            self._report(key, exc)

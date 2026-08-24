@@ -560,12 +560,22 @@ class StateRenderer(Node):
             payload.encode(), key, 'application/geo+json',
             'max-age={}'.format(max(1, int(max_age))), tag=stamp)
         if not accepted:
-            # Only reachable if this node ever publishes more distinct keys
-            # than the worker has slots; it publishes two. Loud rather than
-            # silent, because it would mean the bound was reasoned wrongly.
-            self.get_logger().error(
-                'upload worker refused {}: more keys in flight than slots'
-                .format(key), throttle_duration_sec=30.0)
+            # Two reasons, and they are not the same news. A dead worker is
+            # the one that has to reach the operator: nothing published from
+            # here on will ever be sent, so the map is frozen at whatever it
+            # last showed, and this is the only place that says so every tick.
+            # The other is a bound reasoned wrongly -- this node publishes two
+            # keys and the worker has four slots.
+            reason = self._sender.dead()
+            if reason is not None:
+                self.get_logger().error(
+                    'upload worker is dead ({}); {} and everything else this '
+                    'node publishes is no longer reaching S3'.format(
+                        reason, key), throttle_duration_sec=30.0)
+            else:
+                self.get_logger().error(
+                    'upload worker refused {}: more keys in flight than slots'
+                    .format(key), throttle_duration_sec=30.0)
         return accepted
 
     def upload_counts(self):
@@ -584,9 +594,18 @@ class StateRenderer(Node):
         if self._sender is None:
             return
         if not self._sender.stop(timeout=UPLOAD_STOP_SECONDS):
-            self.get_logger().warn(
-                'upload worker still inside a request after {:g} s; '
-                'abandoning it'.format(UPLOAD_STOP_SECONDS))
+            reason = self._sender.dead()
+            if reason is not None:
+                # It was not slow, it was gone -- possibly for most of the
+                # run. The counts printed just below cannot show that on
+                # their own, and this is the last chance to say it.
+                self.get_logger().error(
+                    'upload worker died before shutdown ({}); anything '
+                    'published after that never reached S3'.format(reason))
+            else:
+                self.get_logger().warn(
+                    'upload worker still inside a request after {:g} s; '
+                    'abandoning it'.format(UPLOAD_STOP_SECONDS))
 
     def _log_upload_failure(self, key, exc):
         """Report one failed PUT. CALLED ON THE UPLOAD WORKER THREAD.

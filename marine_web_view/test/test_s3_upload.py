@@ -563,3 +563,93 @@ def test_a_busy_key_does_not_starve_the_other_one():
     finally:
         transport.release.set()
         sender.stop(timeout=5.0)
+
+
+class _Raising:
+    """A transport whose put RAISES instead of returning (False, exc).
+
+    Exactly what `S3Uploader.put` does when the endpoint fails in a way
+    botocore does not model as one of the declared `transport_errors`, and
+    what any stub or future transport is free to do.
+    """
+
+    def __init__(self, error):
+        self.error = error
+        self.calls = 0
+
+    def put(self, payload, key, content_type, cache_control):
+        self.calls += 1
+        raise self.error
+
+
+def test_a_put_that_raises_costs_the_object_not_the_worker():
+    """The silent death: a frozen map that every indicator reports healthy.
+
+    Reproduced by direct execution against the unguarded worker -- the thread
+    ended on the first raise, after which `submit` returned True forever,
+    `confirmed` never advanced, `counts()` reported 0 failures and `stop()`
+    reported a clean shutdown, with nothing in the node's log.
+    """
+    logged = []
+    sender = AsyncUploader(_Raising(RuntimeError('not a transport error')),
+                           log_error=lambda key, exc: logged.append(key))
+    try:
+        assert sender.submit(b'x', 'live/position.geojson', 'a', 'b',
+                             tag='one')
+        assert _settle(lambda: sender.counts()[1] == 1), sender.counts()
+        assert logged == ['live/position.geojson'], (
+            'a failed upload has to reach the operator; the worker is the '
+            'only thing that saw it')
+        assert sender.dead() is None, 'one bad object killed the worker'
+        assert sender.confirmed('live/position.geojson') is None
+
+        # And it is still working: the next tick is served, not swallowed.
+        assert sender.submit(b'y', 'live/track.geojson', 'a', 'b', tag='two')
+        assert _settle(lambda: sender.counts()[1] == 2), sender.counts()
+    finally:
+        sender.stop(timeout=5.0)
+
+
+def test_a_log_error_that_raises_does_not_kill_the_worker():
+    """`log_error` is the caller's code, called on the worker thread."""
+    def _explode(key, exc):
+        raise ValueError('the logger itself failed')
+
+    sender = AsyncUploader(_Raising(RuntimeError('transport')),
+                           log_error=_explode)
+    try:
+        sender.submit(b'x', 'first', 'a', 'b')
+        assert _settle(lambda: sender.counts()[1] == 1)
+        assert sender.dead() is None, 'a broken logger killed the transport'
+        sender.submit(b'x', 'second', 'a', 'b')
+        assert _settle(lambda: sender.counts()[1] == 2), sender.counts()
+    finally:
+        sender.stop(timeout=5.0)
+
+
+class _HostileMap(dict):
+    """Fails where no per-send guard can see it: under the worker's lock."""
+
+    def pop(self, key):
+        raise MemoryError('out of memory in the worker loop')
+
+
+def test_a_worker_that_dies_anyway_says_so_on_every_channel():
+    """If the thread does end, nothing it publishes is ever sent again.
+
+    So the death must be visible in all four things a caller reads --
+    otherwise the map freezes mid-survey while the node reports a clean run.
+    """
+    sender = AsyncUploader(_Raising(RuntimeError('unused')))
+    sender._pending = _HostileMap()
+    sender.submit(b'x', 'live/position.geojson', 'a', 'b', tag='one')
+
+    assert _settle(lambda: sender.dead() is not None), (
+        'the worker died with nothing recording why')
+    assert 'MemoryError' in sender.dead()
+    assert sender.counts()[1] == 1, 'the death was not counted as a failure'
+    assert sender.submit(b'x', 'k', 'a', 'b') is False, (
+        'accepting a payload no thread will ever send')
+    assert sender.counts()[2] == 1, 'the refused payload was not counted'
+    assert sender.stop(timeout=5.0) is False, (
+        'a dead worker reported as a clean shutdown')
