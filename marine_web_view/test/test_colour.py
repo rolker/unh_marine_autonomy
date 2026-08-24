@@ -143,13 +143,28 @@ def test_the_ramp_runs_deep_to_shallow():
     assert shallow[1] > deep[1] and shallow[2] > deep[2]
 
 
+def _tinted(rgb):
+    """Return a ramp colour with the coverage tint applied, as the table has."""
+    return [min(255, int(round(channel * tint)))
+            for channel, tint in zip(rgb, coverage_renderer.COVERAGE_TINT)]
+
+
 def test_the_colour_table_is_indexed_deepest_last():
-    """Index 0 is the surface end of the scale, 255 the deep end."""
+    """Index 0 is the surface end of the scale, 255 the deep end.
+
+    Pinned to the exact endpoint colours, derived from `ramp_colour` rather
+    than from `colour_table` itself. The previous form compared the blue
+    channels' magnitude of difference, which is symmetric: inverting
+    `colour_table()` left the whole suite green, and shallow water would have
+    painted deepest-blue against the page legend.
+    """
     table = colour_table()
     assert table.shape == (256, 3)
+    # Entry 0 is depth 0 -- ramp fraction 1, the shallowest stop.
+    assert table[0].tolist() == _tinted(ramp_colour(1.0))
+    # Entry 255 is MAX_DEPTH -- ramp fraction 0, the deepest stop.
+    assert table[255].tolist() == _tinted(ramp_colour(0.0))
     assert table[0].tolist() != table[255].tolist()
-    # Entry 255 is MAX_DEPTH, i.e. ramp fraction 0 -- the deepest stop.
-    assert abs(int(table[255][2]) - int(table[0][2])) > 40
 
 
 def test_depth_is_measured_down_from_chart_datum():
