@@ -507,18 +507,18 @@ attempts. But 7 mutations survive the green 172-test suite, all of them at the
 call sites that supply the numbers the fix pass argues from.
 
 ### Findings
-- [ ] (must-fix) the per-PUT ceiling the whole round-2 argument rests on does not exist: urllib3's `create_connection` applies `connect_timeout` per `getaddrinfo` result and the S3 endpoint has 8 A records, so worst case is ~8x(connect)+read = ~55 s / ~65 s, not 20 s / 30 s; separately botocore builds the STS client for a role-assuming profile with a config carrying only `signature_version`, so credential resolution runs under botocore defaults outside the caller's `Config` — `marine_web_view/s3_upload.py:59-69,84`, `state_renderer.py:238-247`, `coverage_renderer.py:450-457,1040-1046`
-- [ ] (must-fix) `stop()`'s new comment asserts a safety property the code lacks: `_render_pending` checks `deadline` only when one is passed (a scheduled pass passes none) and never checks `self._stop`, so a pass issues one PUT per dirty tile plus `_publish_meta` and two stalled tiles already blow the 45 s join, taking the early return that skips the final flush — `coverage_renderer.py:1037-1046`, `1189-1211`
-- [ ] (must-fix) round 2's fixes are bound at the helper level and unbound at every call site — 7 mutations survive the full suite: both nodes' `read_timeout` (25->250, 15->150, and ->600), `join(timeout=45.0)`->1.0, `sync_dir`'s `deadline_seconds` default ->86400, `main()` dropping `force=a.force`, `main()`'s `if lock is None:`->`if False:`, and `acquire_run_lock(a.workdir, a.name)`->`'run'` — `test/test_s3_upload.py:272-322`, `refresh_chart_tiles.py:630-636,698-700`
-- [ ] (must-fix) the per-`--name` lock scope blesses a lost-update race on the shared manifest: `tiles/manifest.json` is one key, `mf = workdir/manifest.json` is one local path (not under `a.name`), and `man[a.name] = {...}` is a whole-dict read-modify-write, so two concurrent names lose the loser's entry and the next cron run re-crawls CCOM for ~5,839 tiles — `refresh_chart_tiles.py:377`, `645`, `709-719`
-- [ ] (must-fix) the new lock file lives in an unowned `/tmp` tree: `makedirs(exist_ok=True)` accepts a foreign or symlinked dir and `open(...,'w')` follows a planted symlink and truncates it (demonstrated), a squatted lock silently stops every run at exit 0, and because the same tree is `outdir` anything placed there is PUT to the public `tiles/` prefix under the admin profile — `refresh_chart_tiles.py:386-387`
-- [ ] (must-fix) doc consequence: the README documents none of round 2's operator-visible changes — `--force` now re-uploads and is per `sync_dir`'s own docstring the ONLY remedy for a `TILE_EXTRA_ARGS` change, a held lock makes a run exit 0 doing nothing, and the sync gained a 3600 s aggregate deadline — `README.md:489-508`
-- [ ] (suggestion) `test_one_s3_request_stays_under_the_cap_the_shell_out_enforced` is algebraically tautological — `attempts*(CONNECT_TIMEOUT+read_timeout)==max_seconds` holds identically for any `CONNECT_TIMEOUT`; mutating it 10->25 passes — `test/test_chart_tile_sync.py:441-462`
-- [ ] (suggestion) `s3_client`'s guard covers one of three bad inputs: `attempts=0` raises `ZeroDivisionError`, `attempts=-1` gives nonsense text, and a tiny positive budget passes silently (`s3_client('p', 31, attempts=3)` -> 0.333 s read) — `refresh_chart_tiles.py:356-360`
+- [x] (must-fix) the per-PUT ceiling the whole round-2 argument rests on does not exist: urllib3's `create_connection` applies `connect_timeout` per `getaddrinfo` result and the S3 endpoint has 8 A records, so worst case is ~8x(connect)+read = ~55 s / ~65 s, not 20 s / 30 s; separately botocore builds the STS client for a role-assuming profile with a config carrying only `signature_version`, so credential resolution runs under botocore defaults outside the caller's `Config` — `marine_web_view/s3_upload.py:59-69,84`, `state_renderer.py:238-247`, `coverage_renderer.py:450-457,1040-1046`
+- [x] (must-fix) `stop()`'s new comment asserts a safety property the code lacks: `_render_pending` checks `deadline` only when one is passed (a scheduled pass passes none) and never checks `self._stop`, so a pass issues one PUT per dirty tile plus `_publish_meta` and two stalled tiles already blow the 45 s join, taking the early return that skips the final flush — `coverage_renderer.py:1037-1046`, `1189-1211`
+- [x] (must-fix) round 2's fixes are bound at the helper level and unbound at every call site — 7 mutations survive the full suite: both nodes' `read_timeout` (25->250, 15->150, and ->600), `join(timeout=45.0)`->1.0, `sync_dir`'s `deadline_seconds` default ->86400, `main()` dropping `force=a.force`, `main()`'s `if lock is None:`->`if False:`, and `acquire_run_lock(a.workdir, a.name)`->`'run'` — `test/test_s3_upload.py:272-322`, `refresh_chart_tiles.py:630-636,698-700`
+- [x] (must-fix) the per-`--name` lock scope blesses a lost-update race on the shared manifest: `tiles/manifest.json` is one key, `mf = workdir/manifest.json` is one local path (not under `a.name`), and `man[a.name] = {...}` is a whole-dict read-modify-write, so two concurrent names lose the loser's entry and the next cron run re-crawls CCOM for ~5,839 tiles — `refresh_chart_tiles.py:377`, `645`, `709-719`
+- [x] (must-fix) the new lock file lives in an unowned `/tmp` tree: `makedirs(exist_ok=True)` accepts a foreign or symlinked dir and `open(...,'w')` follows a planted symlink and truncates it (demonstrated), a squatted lock silently stops every run at exit 0, and because the same tree is `outdir` anything placed there is PUT to the public `tiles/` prefix under the admin profile — `refresh_chart_tiles.py:386-387`
+- [x] (must-fix) doc consequence: the README documents none of round 2's operator-visible changes — `--force` now re-uploads and is per `sync_dir`'s own docstring the ONLY remedy for a `TILE_EXTRA_ARGS` change, a held lock makes a run exit 0 doing nothing, and the sync gained a 3600 s aggregate deadline — `README.md:489-508`
+- [x] (suggestion) `test_one_s3_request_stays_under_the_cap_the_shell_out_enforced` is algebraically tautological — `attempts*(CONNECT_TIMEOUT+read_timeout)==max_seconds` holds identically for any `CONNECT_TIMEOUT`; mutating it 10->25 passes — `test/test_chart_tile_sync.py:441-462`
+- [x] (suggestion) `s3_client`'s guard covers one of three bad inputs: `attempts=0` raises `ZeroDivisionError`, `attempts=-1` gives nonsense text, and a tiny positive budget passes silently (`s3_client('p', 31, attempts=3)` -> 0.333 s read) — `refresh_chart_tiles.py:356-360`
 - [ ] (suggestion) `remote_etags` is unguarded, a parity regression: on `jazzy` a sync/listing failure became `return 1` with "upload failed"; now `ListBucket` AccessDenied escapes `main()` as a traceback after the ~hour of fetching, and `load_manifest` swallows the same denial as "first run" — `refresh_chart_tiles.py:519`
-- [ ] (suggestion) the shutdown flush can overrun `SHUTDOWN_FLUSH_SECONDS` by one full PUT: `_render_dirty` calls `_publish_meta` unconditionally after the deadline-honouring loop, so ~60 s not 30 s — `coverage_renderer.py:1048-1056`, `1174-1186`
+- [x] (suggestion) the shutdown flush can overrun `SHUTDOWN_FLUSH_SECONDS` by one full PUT: `_render_dirty` calls `_publish_meta` unconditionally after the deadline-honouring loop, so ~60 s not 30 s — `coverage_renderer.py:1048-1056`, `1174-1186`
 - [ ] (suggestion) the aggregate deadline's clock starts after `remote_etags` and the ~5,839-file MD5 pass and is checked only at job start, so the real bound is listing+hashing+3600 s+one request; and "leaves the next run to finish the job" overstates it — there is no upload-only path to the workdir tiles — `refresh_chart_tiles.py:513-517`, `534`
-- [ ] (suggestion) a held lock exits 0, indistinguishable from success in exit status; the stderr message does reach cron mail, but a wedged run makes every later invocation exit 0 forever — `refresh_chart_tiles.py:630-636`
+- [x] (suggestion) a held lock exits 0, indistinguishable from success in exit status; the stderr message does reach cron mail, but a wedged run makes every later invocation exit 0 forever — `refresh_chart_tiles.py:630-636`
 - [ ] (suggestion) `max_workers` is unbounded while the client carries no `max_pool_connections` (botocore default 10); `DEFAULT_CONCURRENCY = 10` matches today but the help text invites `--concurrency 32`, which silently exceeds the pool and pays a TLS handshake per PUT — `refresh_chart_tiles.py:88-89`, `555`
 - [ ] (suggestion) a partial pyramid can still get a completeness manifest via the FETCH side: the 5 % gate permits ~290 missing tiles, `up_failed == 0`, and the manifest records `tiles`/`blank` but not `failed`, so the next run reads "unchanged and fresh" for up to 30 days — `refresh_chart_tiles.py:692-720`
 - [ ] (suggestion) `test_dry_run_needs_no_aws.py` writes `ROS_DOMAIN_ID` / `ROS_AUTOMATIC_DISCOVERY_RANGE` into `os.environ` at module import with no restore, so every later-collected module inherits domain 101 — safer, but hidden session-wide coupling — `test/test_dry_run_needs_no_aws.py:44-46`
@@ -556,3 +556,181 @@ corrections. Static analysis: `ament_flake8` / `pep257` / `copyright` are in
 the green 172; ad-hoc B902/D103/I201 hits are suppressed by the package's own
 ament profile. `.agents/README.md` does not mention `marine_web_view`, so
 there is no parameter-table consequence; no `review-context.yaml` exists.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-24 16:41 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-351 at `f0f3022`
+**PR**: #353
+**Addressed**: the `## Local Review (Pre-Push)` of 2026-08-24 15:25 -04:00 at `ce77d90` (round 2, changes-requested, 6 must-fix), under the operator decision that replaced must-fix 1's arithmetic with a structural change
+**Commits**: c034839, a81569e, 8ce7acb, efbd7c3, baf0604, f0f3022
+
+### What changed, and why it is not a third round of arithmetic
+
+Rounds 1 and 2 both tried to guarantee an exact per-upload wall-clock
+ceiling: round 1 was wrong by 4x (SDK retry), round 2 by a further ~2x
+(`connect_timeout` is applied per DNS address; the S3 endpoint has 8 A
+records here). The operator's decision was to stop depending on a ceiling.
+So **no per-PUT ceiling is claimed anywhere in the package any more** — the
+comments and the two tests that pinned the arithmetic are deleted, not
+re-derived — and both nodes were restructured so the number does not matter.
+
+**state_renderer — uploads are off the spin thread.** `AsyncUploader`
+(`marine_web_view/s3_upload.py`) runs PUTs on one background daemon thread.
+
+*Why it cannot grow unbounded*, two independent ways:
+- **One slot per key.** `submit` REPLACES a pending payload for the same key
+  rather than queueing behind it, so the pending map's size is at most the
+  number of distinct keys the node publishes (two: position and track).
+  Dropping a superseded payload is not data loss: the position object is the
+  latest fix and the track is rebuilt from the whole `_history` window, so
+  both are complete snapshots of the present. A queue would grow for as long
+  as the endpoint was slow and then publish a march of stale positions.
+- **A hard `max_slots` cap (default 4).** A submission for a NEW key when the
+  map is full is refused and counted, so the bound is a property of the class
+  and not of its caller — a future third artifact cannot turn a stall into
+  unbounded memory.
+
+*One worker for both keys, deliberately.* Per-key slots make the only
+ordering that matters (within a key) free, and FIFO across keys — dict
+insertion order, which re-assignment does not disturb — keeps the 1 s
+position from starving the 30 s track. A second thread would not buy
+liveness: a stall is a property of the endpoint, not of the object, so the
+two would stall together; it would buy a second shutdown path and a second
+pooled connection.
+
+*Shutdown.* `stop()` sets the stop event, wakes the worker, joins with a
+timeout and returns whether the thread ended. Pending payloads are abandoned
+— at a 1 s cadence the unsent last position is worth less than a clean exit.
+The worker is a daemon thread, so neither `stop()` nor interpreter exit can
+hang on a request already in the socket.
+
+*Retry contract preserved.* Acceptance is not publication: both ticks now
+compare the fix stamp against what the worker CONFIRMED, so a failed upload
+is offered again on the next tick exactly as `_put`'s return value used to
+arrange.
+
+**coverage_renderer — every pass takes an abort predicate.** Round 2's
+`deadline` was checked only when one was passed and a scheduled pass passed
+none, so a scheduled pass was as long as the endpoint made it and never
+looked at `self._stop`. `_render_dirty(abort)` / `_render_pending(abort)`
+now consult a predicate before every upload on every path: the stop event
+for a scheduled pass (the default), a wall-clock deadline for the shutdown
+flush. The `_publish_meta` PUT that used to follow the loop unconditionally
+is inside the budget too. The 45 s join — sized against the ceiling that
+does not exist — is now `WORKER_JOIN_SECONDS = 10.0`, which only has to
+cover the request the worker is already inside, because it checks the stop
+event between tiles. Worst-case shutdown is therefore
+`WORKER_JOIN_SECONDS + SHUTDOWN_FLUSH_SECONDS` plus one in-flight request,
+by construction; the flush is skipped only when the worker is genuinely
+wedged, and that is a warning, never a hang.
+
+### Actions
+- [x] (must-fix) the per-PUT ceiling does not exist — restructured rather than re-derived: `s3_upload.py` `AsyncUploader`, `state_renderer.py:245-262`, `coverage_renderer.py:1069-1096`, and every comment asserting `connect + read` deleted (`s3_upload.py:59-84`, `state_renderer.py:238-250`, `coverage_renderer.py:449-462`, `refresh_chart_tiles.py:90-115,341-375`). The STS-client half of the finding is what remains untestable from here — see "Not verified".
+- [x] (must-fix) `stop()` no longer depends on the join winning — abort predicate on every path, short honest join, meta PUT inside the budget — `coverage_renderer.py:1046-1096`, `1204-1232`, `1249-1258`
+- [x] (must-fix) the wiring is bound, not just the helpers — new `test/test_node_upload_wiring.py` runs both real constructors against a recording transport; `main()` gained its first tests (`--force` pass-through, per-`--name` lock, held-lock short-circuit, sync-deadline default)
+- [x] (must-fix) lost-update race on the shared manifest — `update_manifest()` re-reads inside a lock and touches only its own key, staged per-name — `refresh_chart_tiles.py:504-550`, `main()` call site
+- [x] (must-fix) the lock file left the unowned `/tmp` tree — `lock_dir()` uses `$XDG_RUNTIME_DIR`/`~/.cache`, 0700, ownership and group/other-write checked, `O_NOFOLLOW` on the file; a held lock names its holder and a holder older than `LOCK_STALE_SECONDS` exits non-zero — `refresh_chart_tiles.py:367-470`
+- [x] (must-fix) README documents round 2's and round 3's operator-visible changes — "What happens when S3 is slow" and "Operating it from cron" (`--force` as the only cache-policy remedy, the lock's location and both exit codes, the aggregate deadline and what it does not cover, the shared manifest)
+- [x] (suggestion) the tautological per-request cap test is gone with the arithmetic it pinned — `test/test_chart_tile_sync.py` now pins the Config that reaches botocore, and rejects `attempts` 0/-1 and non-positive `read_timeout` (the second suggestion's three bad inputs) — `refresh_chart_tiles.py:s3_client`
+- [x] (suggestion) the shutdown flush no longer overruns by a manifest PUT — same abort check — `coverage_renderer.py:1214-1220`
+- [x] (suggestion) a held lock is no longer indistinguishable from success forever — `LOCK_STALE_SECONDS`, exit 1 past it — `refresh_chart_tiles.py:LOCK_STALE_SECONDS`, `main()`
+
+### Deferred — the operator scoped these out of this pass
+Left **unchecked** in the round-2 entry, deliberately, per the operator's
+"leave them open and unchecked": the 8 round-1 suggestions still open
+(including the pre-existing `load_manifest` blanket-`except`), and the
+round-2 suggestions not entangled with must-fix 1-3: `remote_etags` being
+unguarded, the aggregate deadline's clock start, `max_workers` vs
+`max_pool_connections`, the FETCH-side partial-pyramid manifest, the
+`ROS_DOMAIN_ID` module-import side effect in `test_dry_run_needs_no_aws.py`,
+and versioning the tile prefix by `rule_hash`.
+
+### Mutation evidence
+
+22 mutants, applied one at a time, `__pycache__` cleared and the package
+rebuilt before each run (the install is a copy, not a symlink, on this
+worktree), full suite each time. **All 22 fail at least one test.** Three of
+them survived the first attempt and are the reason three tests exist:
+mutants 4, 10 and 21 below. Numbers are the suite size at the time of the run
+(195 at the end).
+
+| # | mutation | result |
+|---|---|---|
+| 1 | `state_renderer._queue` uploads synchronously through `self._uploader.put` again | 4 failures |
+| 2 | `_render_pending`'s `if abort():` -> `if False:` | 1 failure |
+| 3 | `_render_dirty`'s default abort becomes `lambda: False` | 2 failures |
+| 4 | the post-pass `if abort(): return` before `_publish_meta` -> `if False:` | **survived at first**; caught (1 failure) after the mid-pass test asserted no manifest is published for a truncated pass |
+| 5 | `WORKER_JOIN_SECONDS` 10.0 -> 45.0 | 1 failure |
+| 6 | `coverage_renderer.UPLOAD_READ_TIMEOUT` 25 -> 250 | 1 failure |
+| 7 | `state_renderer.UPLOAD_READ_TIMEOUT` 15 -> 150 | 1 failure |
+| 8 | `AsyncUploader`'s slot cap check -> `full = False` | 1 failure |
+| 9 | a FAILED put confirms the payload anyway | 1 failure |
+| 10 | the worker's inner drain loop stops checking `_stop` (`while True`) | **survived at first**; caught (1 failure) after a test queued a second payload behind a stalled PUT and stopped mid-drain |
+| 11 | `update_manifest` stops re-reading the manifest inside the lock | 1 failure |
+| 12 | the manifest staging file goes back to one shared path | 1 failure |
+| 13 | `lock_dir`'s group/other-writable check -> `if False:` | 1 failure |
+| 14 | `_lock_opener` drops `O_NOFOLLOW` | 1 failure |
+| 15 | `lock_dir` ignores `$XDG_RUNTIME_DIR` | 1 failure |
+| 16 | `main()` drops `force=a.force` from the `sync_dir` call | 1 failure |
+| 17 | `main()` locks `'run'` instead of `a.name` | 2 failures |
+| 18 | a wedged held lock returns 0 instead of 1 | 1 failure |
+| 19 | `sync_dir`'s `deadline_seconds` default -> 86400 | 1 failure |
+| 20 | `s3_client`'s argument guard -> `if False:` | 1 failure |
+| 21 | `LOCK_STALE_SECONDS` x1000 | **survived at first**; caught (1 failure) after the constant was pinned |
+| 22 | `update_manifest`'s lock wait never times out | 1 failure |
+
+All seven mutants the round-2 review listed as surviving are in this table
+(6, 7, 5, 19, 16, 18, 17) and all seven now fail.
+
+### Verification
+
+- `./core_ws/build.sh marine_web_view && ./core_ws/test.sh marine_web_view`:
+  **195 tests, 0 errors, 0 failures** (172 before this pass). Ran with
+  `ROS_DOMAIN_ID=101` / `ROS_AUTOMATIC_DISCOVERY_RANGE=OFF`, as the previous
+  pass did, so the live renderers and the sim on this host were untouched.
+  `marine_interfaces` had to be built in this worktree first.
+- Static analysis via the ament wrappers, individually: `test_flake8`,
+  `test_pep257`, `test_copyright` all pass (they are also inside the 195).
+- **Concurrency was tested for real, not only by mutation.** Every claim
+  about the worker is exercised against a transport that blocks inside `put`
+  until released: submitting behind a stalled PUT returns in well under a
+  second, twenty offers behind a stall produce exactly two sends (the one in
+  flight plus the newest), a new key past the cap is refused, `stop()`
+  returns `False` promptly with a request in flight, the worker starts no
+  further request after a stop, and a busy position key does not overtake the
+  track. `coverage_renderer`'s shutdown is tested the same way, with a
+  `_publish` that blocks until released.
+- No S3 access of any kind: every test injects a stub client or a recording
+  transport. Nothing was uploaded to or deleted from the bucket.
+
+### What I could NOT verify here
+
+- **The per-address `connect_timeout` behaviour itself.** I took the round-2
+  review's host-verified finding (8 A records; per-`getaddrinfo`-result
+  connect timeout) as given rather than re-measuring it. That direction is
+  safe: the restructure removes the dependence on any ceiling, so being
+  wrong about the exact number changes nothing structural.
+- **The STS half of must-fix 1** — that botocore builds the STS client for a
+  role-assuming profile with a config carrying only `signature_version`, so
+  credential resolution runs under botocore defaults outside the caller's
+  `Config`. Nothing in the restructure addresses it and nothing here can
+  test it without a role-assuming profile and network. It is now harmless in
+  `state_renderer` (credential resolution happens on the worker thread with
+  the rest of the request) but it does still mean the first request of a
+  process can take longer than the `Config` suggests. Left as-is
+  deliberately, not fixed and not claimed fixed.
+- **Behaviour under real S3 latency and real load.** The threading is
+  exercised against a deterministic stalling stub, which proves the
+  structure; it does not prove the node's behaviour over a flaky cellular
+  link on the water. What the design guarantees regardless is that no
+  network wait happens on the executor thread and no queue can grow.
+- **The lock's cross-host behaviour.** `update_manifest`'s lock is local by
+  construction; two hosts publishing the same prefix concurrently is
+  documented as unsupported rather than tested.
+- **`lock_dir` on a host with no `$XDG_RUNTIME_DIR` and no writable
+  `~/.cache`.** The `~/.cache` fallback path is exercised only via a
+  monkeypatched `$XDG_RUNTIME_DIR`; a cron host where `$HOME` is unwritable
+  would raise from `makedirs`, which is loud but untested.
