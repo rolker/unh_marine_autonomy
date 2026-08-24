@@ -321,7 +321,8 @@ and bathymetry read on one scale, with a small tint offset so the layers stay
 distinguishable where they overlap. Per the plan this is a recorded **ADR-0001
 interim deviation**: `marine_colormap` is the mandated single source of truth
 but is C++-only today, so it cannot be called from this node. Expiry: adopt it
-once a Python binding exists ([#137](https://github.com/rolker/marine_colormap/issues/137)).
+once a Python binding exists
+([#349](https://github.com/rolker/unh_marine_autonomy/issues/349)).
 
 ### Running
 
