@@ -26,6 +26,13 @@ Nothing else needs it. With `dry_run:=true` both nodes write to the local
 filesystem and never call `aws` at all, which is how the tests and the
 simulator workflow run.
 
+This is a workaround, not the intended end state: the package depends on a
+program it cannot declare, so `rosdep install` on a fresh host yields a
+renderer that looks satisfied and fails on the first upload. Tracked as
+[#351](https://github.com/rolker/unh_marine_autonomy/issues/351) — move the
+upload path to `boto3`, whose rosdep key does resolve on noble, and this
+section goes away.
+
 ## Node: `state_renderer`
 
 ### Subscribed topics

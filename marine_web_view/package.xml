@@ -32,7 +32,8 @@
        could never provide. It is an operator-provided runtime prerequisite,
        documented in README.md; state_renderer has shipped on jazzy the same
        way. Everything except the S3 upload runs without it, and dry_run
-       needs it not at all. -->
+       needs it not at all. Tracked for removal in #351: moving the upload
+       path to boto3 makes the dependency declarable. -->
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
