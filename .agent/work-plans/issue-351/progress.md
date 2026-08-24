@@ -262,16 +262,21 @@ client, so the full 161-test suite ran green without the SDK. That is not a
 contortion for this host's sake — it is what makes the README's `dry_run` promise
 true, and it is pinned by `test_importing_the_module_does_not_import_boto3`.
 
-**What could NOT be verified here**, and needs a re-run after installation:
+**What could not be verified at the time — SINCE VERIFIED; corrected
+2026-08-24 during the round-1 fix pass.** The list below was accurate when this
+entry was written (boto3 was not installed on the host) and stale by the time
+review ran, where it contradicted the PR body. The operator has since installed
+the dependency and exercised the real paths on this host:
 
-- The real `_boto3_client()` / `s3_client()` bodies have never executed. That
-  `boto3.Session(profile_name=...).client('s3', config=Config(...))` accepts these
-  exact kwargs, and that `botocore.exceptions.{ClientError,BotoCoreError}` import
-  from those paths, is asserted from the API and not from a run.
-- No object was PUT to a real bucket. The paginator/ETag round trip is exercised
-  only against `_FakeS3`.
-- `rosdep install` itself was only dry-run (`-s`), which resolved to
-  `sudo -H apt-get install python3-boto3`.
+- `rosdep install` was run for real (not `-s`) and resolved cleanly to
+  `python3-boto3`; boto3/botocore **1.34.46** are installed here now.
+- The real `_boto3_client()` / `s3_client()` bodies have executed, and the real
+  client was exercised against S3 on **both the success and the error paths**.
+  (`p11-renderer` is prefix-scoped, so `AccessDenied` outside `live/*` is
+  correct least privilege, not a defect.)
+- The suite passes both with and without the SDK present;
+  `test_importing_the_module_does_not_import_boto3` still binds with boto3
+  installed — mutated to a module-scope `import boto3`, it fails.
 
 Nothing about the running production renderers was touched; they are on the old
 merged code out of `layers/main/core_ws` and are unaffected until redeployed.
@@ -324,14 +329,14 @@ a scratch copy (pycache purged first): 11 were caught, 8 survived and are listed
 below.
 
 ### Findings
-- [ ] (must-fix) boto3 retries multiply the per-upload ceiling ~4x (state_renderer ~87 s vs the old hard 20 s; coverage_renderer ~127 s vs 30 s) and three comments assert the opposite; one stalled PUT blocks `rclpy.spin`'s single-threaded executor and drops nav fixes, and `join(timeout=45.0)` can no longer win, skipping the documented final flush — `marine_web_view/s3_upload.py:69`, `state_renderer.py:238`, `coverage_renderer.py:446`, `coverage_renderer.py:1035`
-- [ ] (must-fix) every process-level wall-clock cap on the cron script was removed (`aws s3 sync` had `timeout=3600`, the manifest `cp` 120 s, the manifest read 60 s); worst case is now ~365 s per PUT across ~5,839 objects with no aggregate deadline and no lockfile, so an overrun run doubles the request rate against CCOM's server — `scripts/refresh_chart_tiles.py:328` and `sync_dir`
-- [ ] (must-fix) `sync_dir`'s "strictly better than the status quo, not just equivalent" is false: `list_objects_v2` does not return `CacheControl`/`ContentType`, so identical bytes skip and a change to `TILE_EXTRA_ARGS` propagates only to tiles whose pixels also changed — permanently mixed cache policy, and `--force` does not help — `scripts/refresh_chart_tiles.py` (`sync_dir` docstring, `TILE_EXTRA_ARGS`)
-- [ ] (must-fix) CLI-era mechanics survive in three places the PR otherwise scrubbed: a `--profile` flag that no longer exists — `README.md:210`, `coverage_renderer.py:363`, `test/test_s3_upload.py` (`test_the_profile_reaches_the_client_factory_exactly_as_given` docstring)
-- [ ] (suggestion) test gap: `list_objects_v2` pagination is unbound — no test gives `_FakeS3` more than one existing key, so `for page in ...[:1]` survives the suite; broken, ~4,800 unchanged tiles would be re-uploaded every run — `test/test_chart_tile_sync.py:85`
-- [ ] (suggestion) test gap: the whole `Config` is unbound — replacing it with `Config(retries={'mode': 'legacy', 'max_attempts': 99})` survives; this is exactly the arithmetic must-fix 1 turns on, so the guard should land with the fix — `marine_web_view/s3_upload.py:66`
-- [ ] (suggestion) test gap: the profile passthrough is bound only up to the monkeypatched factory — `boto3.Session(profile_name=profile or None)` survives, and that one word is what state_renderer's documented fail-loudly contract rests on — `marine_web_view/s3_upload.py:71`
-- [ ] (suggestion) test gap: "no client is constructed on a dry run" is asserted in three places and tested nowhere — dropping the `None if self.dry_run else` gate survives in BOTH nodes; sharpest for state_renderer, whose uncoalesced default profile would raise `ProfileNotFound` out of `__init__` on a credential-free simulator host — `coverage_renderer.py:449`, `state_renderer.py:240`
+- [x] (must-fix) boto3 retries multiply the per-upload ceiling ~4x (state_renderer ~87 s vs the old hard 20 s; coverage_renderer ~127 s vs 30 s) and three comments assert the opposite; one stalled PUT blocks `rclpy.spin`'s single-threaded executor and drops nav fixes, and `join(timeout=45.0)` can no longer win, skipping the documented final flush — `marine_web_view/s3_upload.py:69`, `state_renderer.py:238`, `coverage_renderer.py:446`, `coverage_renderer.py:1035`
+- [x] (must-fix) every process-level wall-clock cap on the cron script was removed (`aws s3 sync` had `timeout=3600`, the manifest `cp` 120 s, the manifest read 60 s); worst case is now ~365 s per PUT across ~5,839 objects with no aggregate deadline and no lockfile, so an overrun run doubles the request rate against CCOM's server — `scripts/refresh_chart_tiles.py:328` and `sync_dir`
+- [x] (must-fix) `sync_dir`'s "strictly better than the status quo, not just equivalent" is false: `list_objects_v2` does not return `CacheControl`/`ContentType`, so identical bytes skip and a change to `TILE_EXTRA_ARGS` propagates only to tiles whose pixels also changed — permanently mixed cache policy, and `--force` does not help — `scripts/refresh_chart_tiles.py` (`sync_dir` docstring, `TILE_EXTRA_ARGS`)
+- [x] (must-fix) CLI-era mechanics survive in three places the PR otherwise scrubbed: a `--profile` flag that no longer exists — `README.md:210`, `coverage_renderer.py:363`, `test/test_s3_upload.py` (`test_the_profile_reaches_the_client_factory_exactly_as_given` docstring)
+- [x] (suggestion) test gap: `list_objects_v2` pagination is unbound — no test gives `_FakeS3` more than one existing key, so `for page in ...[:1]` survives the suite; broken, ~4,800 unchanged tiles would be re-uploaded every run — `test/test_chart_tile_sync.py:85`
+- [x] (suggestion) test gap: the whole `Config` is unbound — replacing it with `Config(retries={'mode': 'legacy', 'max_attempts': 99})` survives; this is exactly the arithmetic must-fix 1 turns on, so the guard should land with the fix — `marine_web_view/s3_upload.py:66`
+- [x] (suggestion) test gap: the profile passthrough is bound only up to the monkeypatched factory — `boto3.Session(profile_name=profile or None)` survives, and that one word is what state_renderer's documented fail-loudly contract rests on — `marine_web_view/s3_upload.py:71`
+- [x] (suggestion) test gap: "no client is constructed on a dry run" is asserted in three places and tested nowhere — dropping the `None if self.dry_run else` gate survives in BOTH nodes; sharpest for state_renderer, whose uncoalesced default profile would raise `ProfileNotFound` out of `__init__` on a credential-free simulator host — `coverage_renderer.py:449`, `state_renderer.py:240`
 - [ ] (suggestion) `load_manifest`'s blanket `except` reads `AccessDenied`/expired-token as first-run, so `--profile p11-renderer` (which its own `--profile` help warns cannot write `tiles/`) costs ~49 min of requests against CCOM before every PUT fails, every cron run; and a transient read failure plus a successful upload rewrites `tiles/manifest.json` with only this `--name`'s entry. Pre-existing (verified against `jazzy`) — but boto3 is what makes `NoSuchKey` distinguishable, which `_boto3_client`'s own docstring advertises. Worth a follow-up issue — `scripts/refresh_chart_tiles.py:334`
 - [ ] (suggestion) a stale `--workdir` re-publishes last run's PNGs for tiles that failed or turned blank this run while the manifest asserts the new `rule_hash`; pre-existing under size+mtime too, but `sync_dir`'s premise "the fetch loop rewrites every local tile unconditionally" is false for exactly those tiles — `scripts/refresh_chart_tiles.py` (`outdir`, `sync_dir` docstring)
 - [ ] (suggestion) `save_manifest` is unguarded: a raise escapes `main()` as a traceback after a successful pyramid upload, leaving tiles published but unrecorded so the next run re-fetches everything — `scripts/refresh_chart_tiles.py:349`
@@ -340,5 +345,5 @@ below.
 - [ ] (suggestion) the chart-tile section mentions cron without mentioning credentials, so a reader can land on `--profile p11-renderer` and get `AccessDenied` on every PUT plus a silently-empty manifest — `README.md:502`
 - [ ] (suggestion) startup-failure semantics changed (a typo'd profile now aborts node startup rather than failing per upload) and the README covers only the blank case — `state_renderer.py:240`, `coverage_renderer.py:449`
 - [ ] (suggestion) `refresh_chart_tiles.main()` has no test coverage at all: the `written == 0`, 5%-failure and `if up_failed: return 1` gates are verified only by reading — `scripts/refresh_chart_tiles.py:588`
-- [ ] (suggestion) the `## Implementation` entry's "What could NOT be verified here" now contradicts the PR body and the operator's actual verification (real client exercised against S3, clean `rosdep install`, 161 tests with and without boto3); update the timeline so the record matches — `.agent/work-plans/issue-351/progress.md`
+- [x] (suggestion) the `## Implementation` entry's "What could NOT be verified here" now contradicts the PR body and the operator's actual verification (real client exercised against S3, clean `rosdep install`, 161 tests with and without boto3); update the timeline so the record matches — `.agent/work-plans/issue-351/progress.md`
 - [ ] (suggestion) instruction candidate, proposal only: `s3_upload.py`'s lazy-import-plus-injectable-client pattern is a reusable answer to "declare a runtime SDK via rosdep but keep the tests runnable without it" and generalises beyond boto3 — `.agent/knowledge/ros2_development_patterns.md`
