@@ -372,6 +372,21 @@ heartbeat:
   frozen tide reads on the page as ordinary bathymetry. Coverage
   still renders — stale is a degradation, not a stop.
 
+- `rendered_tiles` is the **change signal**, and it is the field the page
+  refreshes on. It is the running total of tiles this process has published,
+  so it does not move on an idle pass. The page needs it because `stamp` moves
+  every pass whether anything changed or not: refreshing on a new stamp means
+  every viewer tears down and re-requests every tile under the viewport once
+  per `render_interval` forever — with the sonar off and the boat docked, and
+  billed to us, since the uncovered majority of the viewport answers 4xx with
+  no cache headers at all. `published_tiles` cannot substitute: it is the
+  *size* of the published set, so it does not move when an already-published
+  tile is re-rendered (the common case as a survey line grows inside a tile)
+  and it *decreases* when coverage is pruned. A restart resets the counter, so
+  the page compares it for **change**, not for growth, and a manifest without
+  the field is read as "no change" — the page will not refresh tiles against a
+  renderer older than this field, though liveness and the readout still work.
+
 It is rewritten every pass, idle or not, which is one extra PUT per
 `render_interval` (~130k/month at 20 s, well under a dollar).
 

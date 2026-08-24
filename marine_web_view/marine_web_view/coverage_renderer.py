@@ -1068,6 +1068,22 @@ class CoverageRenderer(Node):
             'chart_datum_age': age,
             'published_tiles': published_tiles,
             'render_interval': self.render_interval,
+            # The CHANGE SIGNAL, and the only field that says whether this
+            # pass did anything. `stamp` is rewritten every pass, idle or
+            # not, so a page that refreshes on a new stamp tears down and
+            # re-requests every visible tile every `render_interval` for as
+            # long as anyone has the page open -- with the sonar off and the
+            # boat docked, per viewer, billed to us. This is the running
+            # total of tiles this process has actually published; it does not
+            # move on an idle pass. `published_tiles` cannot substitute: it
+            # is the SIZE of the published set, so it does not move when an
+            # already-published tile is re-rendered -- the common case as a
+            # survey line grows inside a tile -- and it goes DOWN when
+            # coverage is pruned. Read off the render thread, which is the
+            # only thread that writes it (see `_render_pending`), so it needs
+            # no lock. A restart resets it, so consumers must compare for
+            # CHANGE, not for growth.
+            'rendered_tiles': self._rendered,
             # WALL CLOCK, deliberately, not the ROS clock. The page computes
             # the manifest's age as Date.now()/1000 - stamp, and under
             # use_sim_time -- the documented simulator workflow -- the ROS

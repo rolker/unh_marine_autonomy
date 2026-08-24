@@ -341,6 +341,46 @@ def test_the_manifest_stamp_is_wall_clock():
     assert meta['ros_stamp'] == 12.5
 
 
+def test_the_manifest_carries_a_change_signal_for_the_page():
+    """An idle pass must be distinguishable from one that rendered.
+
+    `stamp` moves on every pass, idle or not, so a page that refreshes its
+    tile layer on a new stamp tears down and re-requests every tile under
+    every viewer's viewport once per `render_interval` in perpetuity -- with
+    the sonar off and the boat docked, on a public page, billed to us.
+    `rendered_tiles` is the field that says whether anything actually
+    changed.
+
+    `published_tiles` cannot do this job, which is why it is asserted against
+    here: it is the SIZE of the published set, so it does not move when an
+    already-published tile is re-rendered -- exactly what happens as a survey
+    line grows inside a tile that is already on the map.
+    """
+    node = _Pass()
+    node._dirty.add((10, 20))
+    node._render_dirty()
+    first = node.meta[-1]
+    assert first['rendered_tiles'] == 1, (
+        'the manifest carries no usable count of tiles actually published')
+
+    node._render_dirty()                     # idle: nothing is dirty
+    idle = node.meta[-1]
+    assert idle['stamp'] >= first['stamp'], 'the stamp went backwards'
+    assert idle['rendered_tiles'] == first['rendered_tiles'], (
+        'an idle pass moved the change signal: every viewer would tear down '
+        'and re-request every visible tile every render_interval forever')
+
+    node._dirty.add((10, 20))                # the same tile, more coverage
+    node._render_dirty()
+    again = node.meta[-1]
+    assert again['published_tiles'] == idle['published_tiles'], (
+        'the fixture no longer re-renders an already-published tile, so this '
+        'test no longer distinguishes the two candidate signals')
+    assert again['rendered_tiles'] != idle['rendered_tiles'], (
+        're-rendering an already-published tile did not move the change '
+        'signal, so coverage growing inside a tile never reaches the page')
+
+
 def test_the_manifest_is_a_heartbeat_even_with_nothing_to_render():
     """An idle renderer must still say it is alive."""
     node = _Pass()

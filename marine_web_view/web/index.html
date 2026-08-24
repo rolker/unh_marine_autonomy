@@ -394,6 +394,10 @@ const COVERAGE_MAX_Z  = 22;    // the layer's own maxZoom; see minZoom below
 const COVERAGE_OPACITY = 0.95;
 const COVERAGE_STALE_OPACITY = 0.3;
 let coverageLayer = null, coverageZoom = null, coverageStamp = null;
+// The renderer's published-tile counter as of the last manifest we saw.
+// This -- not the stamp -- is what decides whether the tiles are asked
+// for again; see pollCoverage().
+let coverageRendered = null;
 let coverageAlive = true;
 
 // The manifest is remote JSON fetched over the public internet. It is INPUT,
@@ -409,6 +413,11 @@ let coverageAlive = true;
 //            false, and the panel then reports a healthy tile count for a
 //            renderer that has been dead for hours -- defeating the one thing
 //            the manifest exists to be.
+//   rendered_tiles
+//         -> the tile-refresh trigger. NaN or a non-number compares unequal
+//            to itself, which would fire a full re-request of every visible
+//            tile on every single poll -- the runaway this field exists to
+//            stop.
 //
 // A manifest that fails either check is treated exactly like no manifest at
 // all: the layer is not rebuilt from it and the readout says so.
@@ -419,6 +428,14 @@ function saneZoom(value) {
 
 function saneStamp(value) {
   return (typeof value === 'number' && Number.isFinite(value)) ? value : null;
+}
+
+// The renderer's published-tile counter. A renderer too old to publish it
+// yields null, which reads as "no change" -- the layer then refreshes only
+// when the zoom changes, which is the safe direction to fail in: it costs
+// liveness, not money.
+function saneCount(value) {
+  return (Number.isInteger(value) && value >= 0) ? value : null;
 }
 
 // Fade the layer when the renderer stops. With every miss painted transparent
@@ -460,7 +477,10 @@ function buildCoverage(zoom) {
   return true;
 }
 
-// Ask Leaflet for the visible tiles again.
+// Ask Leaflet for the visible tiles again. Called only when the manifest says
+// the renderer actually published something (see pollCoverage) -- this tears
+// down and re-requests every tile in the layout, so it must not run on a
+// timer.
 //
 // Leaflet requests a tile ONLY when it creates the element, and `errorTileUrl`
 // turns a miss into a permanently transparent tile that is never retried. So a
@@ -508,17 +528,25 @@ async function pollCoverage() {
     const meta = await r.json();
     const zoom = saneZoom(meta.zoom);
     const stamp = saneStamp(meta.stamp);
+    const rendered = saneCount(meta.rendered_tiles);
     if (zoom === null || stamp === null) {
       // A manifest we cannot trust is worse than none: it would configure the
       // layer's zoom bounds and its liveness clock from nonsense.
       throw new Error('malformed manifest');
     }
     const rebuilt = buildCoverage(zoom);
-    // A new manifest stamp means the renderer has completed another pass, so
-    // the tiles under the viewport may have changed. A rebuild has just
-    // requested them all anyway; anything else has to be asked for.
-    const advanced = coverageStamp === null || stamp > coverageStamp;
+    // Refresh on "the tiles CHANGED", never on "a pass happened". `stamp` is
+    // rewritten every pass whether or not anything was rendered, so gating on
+    // it meant a docked boat with the sonar off drove a full teardown and
+    // re-request of every tile under the viewport every render_interval, per
+    // viewer, forever -- and most of that viewport is uncovered water, which
+    // answers 4xx with no cache headers, so nothing absorbs it. Compare for
+    // change, not growth: the counter is per-process, so a renderer restart
+    // moves it backwards and that is still news. A rebuild has just requested
+    // every tile anyway.
+    const advanced = rendered !== null && rendered !== coverageRendered;
     if (!rebuilt && advanced) refreshCoverage();
+    coverageRendered = rendered;
     coverageStamp = stamp;
     const age = Date.now()/1000 - stamp;
     setCoverageAlive(age <= COVERAGE_DEAD_S);

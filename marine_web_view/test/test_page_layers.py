@@ -377,6 +377,76 @@ def test_the_coverage_layer_refreshes_for_a_stationary_viewer():
         'calls it, so the tile layer is never refreshed'.format(holders))
 
 
+def test_the_coverage_refresh_is_gated_on_the_change_signal():
+    """The refresh must fire on "the tiles changed", not "a pass happened".
+
+    `meta.json` is rewritten every render pass, idle or not, so gating the
+    refresh on a new `stamp` means every viewer tears down and re-requests
+    every tile under the viewport once per `render_interval` in perpetuity --
+    with the sonar off and the boat docked. Most of that viewport is uncovered
+    water, which answers 4xx with no cache headers at all, so nothing absorbs
+    it: it is a per-viewer bill with no upper bound on a public page.
+
+    This binds the guard EXPRESSION, not the presence of a token. Four
+    mutations of the previous guard restored the defect with the suite green,
+    so each assertion here names the mutation it catches.
+    """
+    page = _code(_page())
+    start, end = _function_span(page, 'pollCoverage')
+    body = page[start:end]
+
+    gate = re.search(r'if\s*\(([^)]*)\)\s*refreshCoverage\s*\(\s*\)', body)
+    assert gate, (
+        'pollCoverage() does not call refreshCoverage() under a guard: the '
+        'tile layer either never refreshes or refreshes unconditionally')
+    terms = [term.replace(' ', '') for term in gate.group(1).split('&&')]
+    assert len(terms) == 2, (
+        'the refresh guard is {!r}: expected exactly the "not just rebuilt" '
+        'and "tiles changed" terms'.format(gate.group(1)))
+    assert terms[0] == '!rebuilt', (
+        'the refresh guard reads {!r}: dropping the negation makes it refresh '
+        'ONLY on a rebuild, i.e. never again after the first poll'
+        .format(gate.group(1)))
+    flag = terms[1]
+    assert re.fullmatch(r'\w+', flag), (
+        'the second guard term is {!r}, not a name this test can follow to '
+        'its definition'.format(flag))
+
+    defined = re.search(r'(?:const|let|var)\s+' + flag + r'\s*=\s*([^;]+);',
+                        body)
+    assert defined, (
+        '{} is not defined in pollCoverage(): the guard cannot be checked '
+        'against the manifest'.format(flag))
+    expression = defined.group(1).strip()
+
+    validated = re.search(r'(?:const|let|var)\s+(\w+)\s*=\s*saneCount\('
+                          r'\s*meta\.rendered_tiles\s*\)', body)
+    assert validated, (
+        'the change signal is not read from meta.rendered_tiles through '
+        'saneCount(): an unvalidated NaN compares unequal to itself and '
+        'refreshes every tile on every single poll')
+    signal = validated.group(1)
+
+    assert signal in expression, (
+        '{} = {!r} does not use the validated change signal {}'
+        .format(flag, expression, signal))
+    assert 'coverageRendered' in expression, (
+        '{} = {!r} is not a comparison against the counter remembered from '
+        'the last manifest -- a constant here either refreshes forever (a '
+        'dead renderer redrawing every poll, unbounded) or never'
+        .format(flag, expression))
+    assert 'stamp' not in expression, (
+        '{} = {!r} is gated on the manifest stamp again: the stamp moves on '
+        'every pass, idle or not'.format(flag, expression))
+    assert '!== null' in expression or '!=null' in expression.replace(' ', ''), (
+        '{} = {!r} does not exclude a null change signal, so a manifest '
+        'without the field fires one spurious full refresh'
+        .format(flag, expression))
+    assert re.search(r'coverageRendered\s*=\s*' + signal + r'\s*;', body), (
+        'the remembered change signal is never updated, so every poll after '
+        'the first sees a change and refreshes every tile')
+
+
 def test_the_manifest_is_validated_before_it_configures_the_layer():
     """meta.json is remote input, and both fields it drives fail badly.
 
