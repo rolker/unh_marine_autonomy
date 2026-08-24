@@ -358,3 +358,45 @@ def test_a_pass_without_the_chart_datum_publishes_nothing_but_says_so():
     node._render_dirty()
     assert [key for key, _ in node.uploads] == ['live/coverage/15/10/20.png']
     assert node.meta[-1]['status'] == 'ok'
+
+
+def test_the_shutdown_flush_is_bounded():
+    """The carefully bounded 45 s join must not be followed by an open pass.
+
+    A flush is one 30 s-capped upload per dirty tile. Against a large mosaic
+    and a failing endpoint that is hours, with the operator's Ctrl-C already
+    spent. Past the deadline the remainder goes back in the dirty set rather
+    than being rendered.
+    """
+    node = _Pass()
+    node._dirty.update((x, 0) for x in range(5))
+    node._render_dirty(deadline=time.monotonic() - 1.0)
+    assert not node.uploads, 'a pass past its deadline still uploaded'
+    assert len(node._dirty) == 5, 'the unrendered tiles were dropped'
+    assert node.meta, 'the manifest is still published for the pass'
+
+    # A deadline that has not passed does not truncate anything.
+    node._render_dirty(deadline=time.monotonic() + 60.0)
+    assert len(node.uploads) == 5
+    assert not node._dirty
+
+
+def test_a_second_interrupt_during_shutdown_does_not_skip_cleanup():
+    """`stop()` is called from `main()`'s `finally`.
+
+    An impatient second Ctrl-C landing in the join or the final flush used to
+    propagate out of `stop()`, skipping `destroy_node()` and
+    `rclpy.shutdown()` -- the cleanup the method exists to make orderly.
+    """
+    node = _Threaded()
+    node._worker.join(timeout=0.1)          # nothing to render yet
+
+    def _interrupt(*args, **kwargs):
+        raise KeyboardInterrupt()
+
+    node._dirty.add((10, 20))
+    node._render_dirty = _interrupt
+    node.stop()                              # must not raise
+    assert any('interrupted while stopping' in line
+               for line in node._logger.lines), (
+        'the interrupt was swallowed without a word')

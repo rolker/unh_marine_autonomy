@@ -146,6 +146,15 @@ DEFAULT_ZOOM = 15
 DEFAULT_PREFIX = 'live/coverage'
 MAX_SLIPPY_ZOOM = 22
 
+# How long the shutdown flush may run. The 45 s join above it exists so that a
+# stop cannot hang on an in-flight upload; following it with an unbounded pass
+# gives exactly that back -- a pass is one 30 s-capped upload per dirty tile,
+# and a large mosaic with a failing S3 endpoint would sit there for hours with
+# the operator's Ctrl-C already spent. Whatever does not fit inside the
+# deadline is lost, which is precisely what would have been lost with no flush
+# at all.
+SHUTDOWN_FLUSH_SECONDS = 30.0
+
 
 # Timer periods come from parameters too, and rclpy's create_timer rejects a
 # non-positive period with a ValueError. That is the right answer -- but it
@@ -863,21 +872,31 @@ class CoverageRenderer(Node):
             return
         self._stop.set()
         self._wake.set()
-        # Generously longer than one upload timeout: the worker may be inside
-        # an `aws s3 cp` when the stop arrives.
-        self._worker.join(timeout=45.0)
-        if self._worker.is_alive():
-            self.get_logger().warn('render thread did not stop in time')
-            return
-        if self._dirty:
-            self.get_logger().info(
-                'flushing {} dirty tile(s) before exit'.format(
-                    len(self._dirty)))
-            try:
-                self._render_dirty()
-            except Exception as error:
-                self.get_logger().error(
-                    'final flush failed: {}'.format(error))
+        try:
+            # Generously longer than one upload timeout: the worker may be
+            # inside an `aws s3 cp` when the stop arrives.
+            self._worker.join(timeout=45.0)
+            if self._worker.is_alive():
+                self.get_logger().warn('render thread did not stop in time')
+                return
+            if self._dirty:
+                self.get_logger().info(
+                    'flushing {} dirty tile(s) before exit '
+                    '(up to {:g} s)'.format(
+                        len(self._dirty), SHUTDOWN_FLUSH_SECONDS))
+                self._render_dirty(
+                    deadline=time.monotonic() + SHUTDOWN_FLUSH_SECONDS)
+        except KeyboardInterrupt:
+            # An impatient second Ctrl-C lands in the join or in the flush.
+            # This is called from `main()`'s `finally`, so letting it out
+            # skips `destroy_node()` and `rclpy.shutdown()` entirely -- the
+            # cleanup this method exists to make orderly. The worker is a
+            # daemon thread; the process is going away regardless.
+            self.get_logger().warn(
+                'interrupted while stopping; the final flush was skipped')
+        except Exception as error:
+            self.get_logger().error(
+                'final flush failed: {}'.format(error))
 
     def _render_one(self, x, y, datum_z):
         """Render and publish one slippy tile.
@@ -942,20 +961,30 @@ class CoverageRenderer(Node):
         self._publish(payload, '{}/meta.json'.format(self.prefix),
                       content_type='application/json')
 
-    def _render_dirty(self):
-        """Run one render pass and publish the manifest for it."""
+    def _render_dirty(self, deadline=None):
+        """Run one render pass and publish the manifest for it.
+
+        `deadline` is a `time.monotonic()` value past which the pass stops and
+        returns what it has not done to the dirty set. Only the shutdown flush
+        sets one; a scheduled pass runs to completion.
+        """
         if not self._update_datum_offset():
             # Without the offset every depth would be coloured from an
             # unreferenced ellipsoidal height -- wrong, and wrong in a way
             # that looks plausible. Leave the tiles dirty and try next pass.
             self._publish_meta('waiting_for_chart_datum')
             return
-        self._render_pending()
+        self._render_pending(deadline)
         # After the pass, so the counts the page shows are this pass's.
         self._publish_meta('ok')
 
-    def _render_pending(self):
-        """Render and publish every slippy tile marked dirty."""
+    def _render_pending(self, deadline=None):
+        """Render and publish every slippy tile marked dirty.
+
+        Stops early if `deadline` (a `time.monotonic()` value) passes, putting
+        the untouched remainder back in the dirty set. See
+        SHUTDOWN_FLUSH_SECONDS.
+        """
         datum_z = self._datum_offset or 0.0
         with self._lock:
             pending = sorted(self._dirty)
@@ -965,7 +994,13 @@ class CoverageRenderer(Node):
 
         published = 0
         retry = set()
-        for x, y in pending:
+        for position, (x, y) in enumerate(pending):
+            if deadline is not None and time.monotonic() >= deadline:
+                retry.update(pending[position:])
+                self.get_logger().warn(
+                    'render deadline reached with {} tile(s) left'.format(
+                        len(pending) - position))
+                break
             try:
                 outcome = self._render_one(x, y, datum_z)
             except Exception as error:
