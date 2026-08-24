@@ -523,7 +523,19 @@ function coverageText(meta, age) {
 
 async function pollCoverage() {
   try {
-    const r = await fetch(COVERAGE_META, { cache: 'default' });
+    // `no-store`, and NOT `default`, because this object is the liveness
+    // signal rather than payload. The renderer publishes it with a max-age
+    // matched to the render interval and this poll runs on that same period,
+    // so with the HTTP cache in play a poll is routinely answered from the
+    // browser's own copy of the PREVIOUS pass -- and both of the things this
+    // manifest exists for then fail silently: `rendered_tiles` does not move,
+    // so the change gate below never fires and newly surveyed ground does not
+    // appear for a stationary viewer; and `stamp` is the old one, so the age
+    // is under-reported and a renderer that has just died still reads alive.
+    // No cache-busting query string: a changing URL would also defeat the
+    // CloudFront edge cache for every viewer, which is the part we want kept.
+    // `no-store` is per-request and leaves the shared cache alone.
+    const r = await fetch(COVERAGE_META, { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const meta = await r.json();
     const zoom = saneZoom(meta.zoom);

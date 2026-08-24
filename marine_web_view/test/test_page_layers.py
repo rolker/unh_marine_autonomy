@@ -213,6 +213,7 @@ def _statement(page, start):
     return page[start:]
 
 
+
 def test_every_layer_reaches_the_map():
     """Every tile-layer construction must be followed by addTo(map).
 
@@ -459,6 +460,45 @@ def test_the_coverage_refresh_is_gated_on_the_change_signal():
     assert re.search(r'coverageRendered\s*=\s*' + signal + r'\s*;', body), (
         'the remembered change signal is never updated, so every poll after '
         'the first sees a change and refreshes every tile')
+
+
+def test_the_manifest_poll_bypasses_the_browser_cache():
+    """The liveness manifest must never be read out of the HTTP cache.
+
+    The renderer stamps `meta.json` with a `max-age` and the page polls it on
+    roughly the same period, so with the cache in play a poll is routinely
+    answered from the browser's copy of the PREVIOUS pass. Both of the things
+    this manifest exists for then fail silently and identically to success:
+    `rendered_tiles` does not move, so the change gate never fires and ground
+    surveyed since page load never appears for a stationary viewer; and
+    `stamp` is the old one, so the age is under-reported and a renderer that
+    has died still reads as alive.
+
+    It must not be done with a cache-busting query string either: a URL that
+    changes per request also defeats the CloudFront edge cache, turning one
+    origin fetch per interval into one per viewer per interval.
+    """
+    page = _code(_page())
+    start, end = _function_span(page, 'pollCoverage')
+    body = page[start:end]
+    fetch = re.search(r'fetch\s*\(\s*COVERAGE_META\s*([^)]*)\)', body)
+    assert fetch, (
+        'pollCoverage() does not fetch COVERAGE_META -- has the page been '
+        'restructured?')
+    options = fetch.group(1).replace(' ', '')
+    assert "cache:'no-store'" in options or 'cache:"no-store"' in options, (
+        'the manifest is fetched with {!r}: anything the HTTP cache may '
+        'answer means a poll can be served the previous pass, which silently '
+        'defeats both the change signal and the dead-renderer detection'
+        .format(fetch.group(0)))
+    raw = _page()
+    raw_fetch = re.search(r'fetch\s*\(\s*COVERAGE_META[^)]*\)', raw)
+    assert raw_fetch and '+' not in raw_fetch.group(0), (
+        'the manifest URL is built per request ({}): a cache-buster defeats '
+        'the CDN edge cache for every viewer'.format(raw_fetch.group(0)))
+    assert 'COVERAGE_META = ' in raw and '?' not in re.search(
+        r'COVERAGE_META\s*=\s*([^;]+);', raw).group(1), (
+        'COVERAGE_META carries a query string -- see above')
 
 
 def test_the_manifest_is_validated_before_it_configures_the_layer():
