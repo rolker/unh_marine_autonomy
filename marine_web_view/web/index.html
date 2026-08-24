@@ -477,7 +477,16 @@ function buildCoverage(zoom) {
 // answer them from its own cache or has to go back to CloudFront. Without a
 // redraw the browser is simply never asked, and the max-age is inert.
 function refreshCoverage() {
-  if (coverageLayer) coverageLayer.redraw();
+  if (!coverageLayer) return;
+  // redraw() does NOT honour the layer's own minZoom. Leaflet applies minZoom
+  // only in _setView; redraw() goes through _clampZoom, which consults
+  // min/maxNativeZoom alone. So redrawing a layer that minZoom is currently
+  // hiding UN-hides it and lays the whole viewport out at the native zoom --
+  // the exact 4^n tile explosion the minZoom above exists to prevent, and at
+  // the map's own minZoom 8 against a native 15 that is hundreds of thousands
+  // of DOM elements. Refresh only while the layer is genuinely displayed.
+  if (map.getZoom() < coverageLayer.options.minZoom) return;
+  coverageLayer.redraw();
 }
 
 function coverageText(meta, age) {

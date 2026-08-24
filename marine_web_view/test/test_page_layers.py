@@ -251,6 +251,37 @@ _VECTOR_CONSTRUCTIONS = (
 _VECTOR_BINDING = r'(?:const|let|var)\s+(\w+)\s*=\s*$'
 
 
+def test_the_refresh_does_not_redraw_a_hidden_layer():
+    """`redraw()` must be gated on the layer actually being displayed.
+
+    Leaflet applies a layer's `minZoom` only in `_setView`. `redraw()` goes
+    through `_clampZoom`, which consults `min/maxNativeZoom` alone -- so
+    redrawing a layer that `minZoom` is hiding un-hides it and lays the whole
+    viewport out at the native zoom. Against the page's own map `minZoom` 8
+    and a native 15 that is hundreds of thousands of DOM elements: the browser
+    freeze the coverage layer's `minZoom` exists to prevent, reintroduced
+    through the back door by the refresh added for stationary viewers.
+
+    The guard must come BEFORE the redraw, so this pins the order rather than
+    the mere presence of a zoom check somewhere in the function.
+    """
+    page = _code(_page())
+    start = page.find('function refreshCoverage')
+    assert start != -1, 'refreshCoverage() is gone -- has the page been restructured?'
+    body = _statement(page, page.index('{', start))
+    redraw = body.find('.redraw(')
+    assert redraw != -1, 'refreshCoverage() no longer redraws -- the layer will not refresh'
+    guard = body.find('getZoom()')
+    assert guard != -1, (
+        'refreshCoverage() does not consult the map zoom -- redraw() ignores '
+        'minZoom and will lay the viewport out at the native zoom')
+    assert 'minZoom' in body, (
+        'refreshCoverage() does not compare against the layer minZoom')
+    assert guard < redraw, (
+        'the zoom guard runs after redraw() -- it cannot prevent the '
+        'tile explosion it exists to prevent')
+
+
 def test_every_vector_layer_reaches_the_map():
     """Every vector-layer construction must reach the map.
 
