@@ -147,13 +147,16 @@ DEFAULT_ZOOM = 15
 DEFAULT_PREFIX = 'live/coverage'
 MAX_SLIPPY_ZOOM = 22
 
-# How long the shutdown flush may run. The 45 s join above it exists so that a
-# stop cannot hang on an in-flight upload; following it with an unbounded pass
-# gives exactly that back -- a pass is one 30 s-capped upload per dirty tile,
-# and a large mosaic with a failing S3 endpoint would sit there for hours with
-# the operator's Ctrl-C already spent. Whatever does not fit inside the
-# deadline is lost, which is precisely what would have been lost with no flush
-# at all.
+# How long the shutdown flush may run. `WORKER_JOIN_SECONDS` below exists so a
+# stop cannot hang waiting on the render thread; following it with an unbounded
+# pass would give exactly that back. A pass is one upload per dirty tile, and
+# NO per-upload ceiling exists -- see `_boto3_client` in s3_upload, and do not
+# write one here: two earlier rounds of this change put a specific number in
+# this comment and both were wrong. A large mosaic against a failing S3
+# endpoint would otherwise sit here for hours with the operator's Ctrl-C
+# already spent. This deadline is what bounds it, and it is checked before
+# every upload. Whatever does not fit is lost, which is precisely what would
+# have been lost with no flush at all.
 SHUTDOWN_FLUSH_SECONDS = 30.0
 
 # How long the render thread waits for a response that has stopped arriving.
