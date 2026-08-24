@@ -97,6 +97,38 @@ def _forwarded_parameters(launch_file):
     return forwarded
 
 
+def _documented_parameters():
+    """Return the parameter names the README's tables carry.
+
+    Table rows only -- a name that appears in prose is discussion, not
+    documentation of a parameter's default and meaning.
+    """
+    names = set()
+    for line in _read('README.md').splitlines():
+        if line.startswith('|'):
+            names.update(re.findall(r'`([a-z_0-9]+)`', line))
+    return names
+
+
+def test_the_readme_documents_every_node_parameter():
+    """The documentation leg of the #341 drift class.
+
+    The launch leg is enforced above; the README was not, and drifted the same
+    way: `state_renderer` shipped with 16 of its 20 parameters in the table
+    while the Running section told you to pass one of the missing four. A
+    parameter nobody can find is as good as one that does not work.
+    """
+    documented = _documented_parameters()
+    assert len(documented) >= 10, (
+        'no parameter tables found in the README -- this guard would pass '
+        'vacuously; update it rather than removing it')
+    for module, _ in PAIRS:
+        missing = _node_parameters(module) - documented
+        assert not missing, (
+            '{} declares {} which no README parameter table documents'
+            .format(module, sorted(missing)))
+
+
 def test_launch_files_forward_every_argument_they_declare():
     """A declared-but-unforwarded argument is silently ignored."""
     for _, launch_file in PAIRS:
