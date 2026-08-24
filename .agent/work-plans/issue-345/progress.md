@@ -772,3 +772,168 @@ request storm. The reverse pairing is also safe: the new page against an older
 renderer simply does not refresh tiles (it reads a missing field as "no
 change"), so the two can be rolled out in either order without breaking, but
 neither order delivers the fix without the page going out.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-24 11:41 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-345 at `dd15bc8`
+**PR**: #350 at `dd15bc8`
+**Addressed**: two Copilot findings raised on PR #350 at head `147f3a1`. They
+are **not** items in an existing review entry: the latest review entry in this
+file is the round-4 `## Local Review (Pre-Push)` (2026-08-24 00:57 -04:00, at
+`a8368bb`), whose 8 remaining suggestions -- and the 14 open round-3 ones --
+are deliberately out of scope for this pass and are left unchecked exactly as
+they were. Nothing in this pass invalidates any of them.
+**Commits**: `5dae4a7` (finding 1, page), `d3d2577` (finding 1, second half --
+the manifest's own max-age), `dd15bc8` (finding 2, the minZoom clamp)
+
+### Actions
+- [x] (must-fix) The manifest poll could be answered from the browser HTTP
+      cache, silently defeating both the change signal and the dead-renderer
+      detection -- `web/index.html:538` (`pollCoverage`)
+- [x] (must-fix, second half) The CloudFront edge still held `meta.json` for
+      up to `cache_control`; the manifest now carries its own shorter max-age
+      -- `marine_web_view/coverage_renderer.py:195,417,1131`
+- [x] (valid) `minZoom: zoom - 2` was unclamped, so a low manifest zoom gave a
+      negative `minZoom` and the hide-when-zoomed-out rule was dead --
+      `web/index.html:471`
+
+### Finding 1a -- the page reads the manifest past the browser cache
+
+`fetch(COVERAGE_META, { cache: 'no-store' })`. Not a cache-busting query
+string: a URL that changes per request also defeats the CloudFront edge cache
+for every viewer, which is the part worth keeping. `no-store` is per-request
+and leaves the shared cache alone.
+
+### Finding 1b -- the manifest's own max-age: DECIDED, changed to 5 s
+
+Judged on the merits rather than skipped. The manifest is not payload: it is
+the liveness signal and the change signal, a few hundred bytes read once per
+poll, and every second a cache holds it is a second in which the page cannot
+see that the renderer has moved or that it has stopped. Stamped with
+`cache_control` -- matched to `render_interval`, which is also the page's poll
+period -- two viewers could still be served a manifest from the previous pass,
+with exactly the same under-reported age and the same missed change signal as
+the browser-cache case, one hop further out.
+
+It now carries `max-age=5` (`META_MAX_AGE_SECONDS`) while the tiles keep the
+operator-set `cache_control`. `meta_max_age()` is a **ceiling, not a fixed
+value**: never longer than the tiles' own max-age, because an operator who
+shortens `cache_control` is asking for a fresher display, not a fresher
+manifest only; and never below 1, which is not a valid max-age.
+
+**What it costs, stated:** a 5 s edge max-age is a hard ceiling of 12 origin
+GETs a minute for this object however many people are watching -- about 13k/day
+more than a 20 s max-age, on the order of $0.15/month at S3 + CloudFront
+request pricing -- for a fourfold cut in the worst-case staleness of the one
+object the display's liveness depends on. **Zero was rejected deliberately**:
+on a public page with unbounded viewers, the ceiling that keeps request volume
+independent of viewer count is worth more than the last five seconds. It is
+**derived rather than a new parameter**, because a knob here would only let an
+operator turn the heartbeat's freshness back off; no ROS parameter was added,
+changed or removed, so no parameter-table entry is triggered. `_publish` gained
+an optional `max_age` so this is per-object rather than a blanket shortening --
+shortening the tiles too would multiply the very request volume the round-4
+change-signal gate exists to bound.
+
+### Finding 2 -- the minZoom clamp
+
+`minZoom: Math.max(0, zoom - COVERAGE_MIN_Z_MARGIN)`, with the two-level margin
+now a named constant. Agreed with the finding's framing: this is not the
+tile-explosion direction (a low native zoom means *fewer* tiles), but a
+negative `minZoom` is below every zoom the map can reach, so the layer is never
+hidden and the `refreshCoverage()` gate (`map.getZoom() <
+coverageLayer.options.minZoom`) can never fire either.
+
+### Mutation evidence -- 15 mutations, 15 caught, 0 uncaught
+
+All run on a scratch copy under the session scratchpad (`PYTHONPATH` prepended
+so the copy's source shadowed the symlink-install), never in the worktree;
+`git status` was clean throughout and the copy is deleted. Baseline on the copy
+before each mutation: **36/36** in the two touched test files.
+
+`test_the_manifest_poll_bypasses_the_browser_cache` (new):
+
+| Mutation | Result |
+|---|---|
+| `cache: 'no-store'` -> `cache: 'default'` | **caught** |
+| the `cache` option removed entirely (`fetch(COVERAGE_META)`) | **caught** |
+| replaced by a `'?t=' + Date.now()` cache-buster | **caught** |
+| `cache: 'reload'` (revalidates, but still writes the cache) | **caught** |
+
+`test_the_coverage_layer_minzoom_is_clamped` (new):
+
+| Mutation | Result |
+|---|---|
+| clamp removed (`minZoom: zoom - COVERAGE_MIN_Z_MARGIN`) | **caught** |
+| floor changed to `Math.max(-1, ...)` | **caught** |
+| `Math.max` -> `Math.min` | **caught** |
+| `COVERAGE_MIN_Z_MARGIN = -2` (minZoom above the rendered zoom) | **caught** |
+
+`test_the_manifest_is_cached_less_than_the_tiles_it_advertises`,
+`test_the_manifest_max_age_never_exceeds_the_tiles`,
+`test_the_upload_stamps_the_max_age_it_is_given` (all new):
+
+| Mutation | Result |
+|---|---|
+| manifest published with no `max_age` (inherits the tiles') | **caught** |
+| manifest published with `max_age=self.cache_control` | **caught** |
+| `META_MAX_AGE_SECONDS` raised to the tiles' value (60) | **caught** (both tests) |
+| `meta_max_age` loses its `min()` ceiling | **caught** |
+| `meta_max_age` loses its `max(1, ...)` floor, so `max-age=0` is reachable | **caught** |
+| `_publish` ignores `max_age` and always stamps `cache_control` | **caught** |
+| `_publish` defaults every object to the short value (shortens the tiles too) | **caught** |
+
+The last of those runs the **real** `_publish` against a stubbed
+`subprocess.run`, so the `--cache-control` flag is asserted on the actual
+command line rather than on an intention.
+
+Two notes on how the page tests were written, both from defects this file has
+produced before: the minZoom test reads the option value **paren-aware**
+(stopping at the first comma reads `Math.max(0, zoom - 2)` as `Math.max(0` and
+then asserts on nothing), and both new page tests scope their search to
+`_function_span(page, ...)` so a guard that exists somewhere unreachable does
+not satisfy them.
+
+### Verification -- real numbers
+
+- `./core_ws/build.sh marine_web_view`: clean.
+- `./core_ws/test.sh marine_web_view`: **137 tests, 0 errors, 0 failures, 0
+  skipped** (132 before; +5 new tests). Re-run after the final commit, same
+  result.
+- Static analysis via the **ament wrappers**, not bare flake8: `test_flake8`,
+  `test_pep257`, `test_copyright` -- **3 passed**, run individually as well as
+  in-suite. One real flake8 finding en route (`Q003`, an escaped inner quote in
+  a new assertion message) was fixed, not suppressed.
+- Nothing was weakened: no existing test or assertion was changed. The only
+  edit to existing test code is `_Pass._publish` gaining the `max_age`
+  parameter it now receives, and recording it.
+
+### NOT exercised end to end -- said plainly
+
+The coverage renderer and the Gazebo sim are both **down** (the operator's
+desktop crashed), so the live pipeline was not run. Nothing here was confirmed
+against a real S3 upload, a real CloudFront response header, or a real browser.
+The evidence above is the test suite and the mutation set only. The one live
+measurement this pass relies on -- CloudFront serving `meta.json` with
+`cache-control: max-age=20` -- was taken before that and is carried from the
+finding, not re-taken.
+
+### Deployment consequence -- BOTH halves need a redeploy
+
+- **`web/index.html` must be redeployed.** Both the `no-store` fetch and the
+  minZoom clamp are page-side and take effect only when the page on CloudFront
+  is replaced. The host will do this.
+- **The renderer must also be restarted / redeployed.** The manifest's shorter
+  `max-age` is stamped by the node at upload time, so the currently-published
+  `meta.json` keeps its 20 s max-age until a restarted renderer overwrites it.
+  (It is down right now anyway, so this is a start rather than a restart.)
+- **Either order is safe; neither order alone is the whole fix.** New page +
+  old renderer: the browser cache is bypassed but the edge still holds the
+  manifest up to 20 s. Old page + new renderer: the edge is fresh but the
+  browser's own cache still answers polls. Nothing breaks in either
+  intermediate state -- the `max_age` change is invisible to the page, and
+  `no-store` is valid against any max-age -- but the fix is only complete once
+  both are out.
