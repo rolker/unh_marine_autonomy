@@ -214,3 +214,20 @@ angle-aware, not a nadir hot-stripe.
 - **Reserving a `source-id` field now** (ADR-0005 insurance) — deferred (D8): the
   display transport is single-source; the extensible message adds it cleanly when
   multi-platform display is real.
+
+## References
+
+- Transport umbrella: [rolker/unh_marine_autonomy#230](https://github.com/rolker/unh_marine_autonomy/issues/230)
+- Producer: [rolker/cube_bathymetry#78](https://github.com/rolker/cube_bathymetry/issues/78)
+- Operator (CAMP) consumer, disk-backed per D5: [rolker/camp#121](https://github.com/rolker/camp/issues/121)
+- **Second consumer — `marine_web_view/coverage_renderer`**
+  ([rolker/unh_marine_autonomy#345](https://github.com/rolker/unh_marine_autonomy/issues/345)):
+  a Python reconciler over the same catalog/request/tile triple, rendering to
+  static web-map PNGs. It **departs from D5's disk-backed cache**: its durable
+  output is the bucket it publishes into, so a restart re-requests from the
+  catalog and every already-published tile is still standing meanwhile — the
+  re-pull-over-a-constrained-link cost D5 was avoiding does not apply to a
+  shore-side renderer on a wired uplink. Recorded here so the departure is
+  discoverable from this ADR; the reasoning and its one known cost (coverage
+  pruned across a restart is never un-published) are in
+  `marine_web_view/README.md` under "Memory-only, by design".

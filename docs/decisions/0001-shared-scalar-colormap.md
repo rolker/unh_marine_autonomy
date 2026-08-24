@@ -186,3 +186,12 @@ close that gap; it is a separate, later decision.
 - rqt migration: [rolker/rqt_operator_tools#44](https://github.com/rolker/rqt_operator_tools/issues/44)
 - rviz migration (jazzy): [rolker/rviz_sonar_image#4](https://github.com/rolker/rviz_sonar_image/issues/4)
 - CAMP adoption: [rolker/camp#63](https://github.com/rolker/camp/issues/63)
+- **Interim deviation — `marine_web_view`** ([rolker/unh_marine_autonomy#345](https://github.com/rolker/unh_marine_autonomy/issues/345)):
+  the public web view and its live coverage renderer colour from a
+  hand-transcribed copy of the basemap depth ramp rather than from
+  `marine_colormap`, because the library has no Python binding. Recorded here
+  so the deviation is discoverable from this ADR and not only from the
+  package README. The gate for retiring it is
+  [rolker/unh_marine_autonomy#349](https://github.com/rolker/unh_marine_autonomy/issues/349)
+  (Python bindings); `marine_web_view/test/test_ramp_sync.py` pins the three
+  copies together until then.

@@ -117,6 +117,7 @@
     <dt>Longitude</dt><dd id="lon">—</dd>
     <dt>Heading</dt><dd id="hdg">—</dd>
     <dt>Fix age</dt><dd id="age">—</dd>
+    <dt>Coverage</dt><dd id="cov">—</dd>
   </dl>
   <div id="status"><span id="dot"></span><span id="msg">connecting…</span></div>
   <div id="details">
@@ -154,7 +155,12 @@ const DEAD_S  = 60;   // red past this
 // maxZoom 22 with maxNativeZoom 19 on the tile layers: the imagery upscales
 // past its native level so the map can zoom in far enough for the hull
 // outline to be worth drawing (see HULL_PX_THRESHOLD below).
-const map = L.map('map', { zoomControl: true, maxZoom: 22 }).setView([43.08, -70.71], 13);
+// minZoom 8: below that the CCOM dynamic layers are requesting
+// continent-scale renders that contain no data, and there is nothing
+// useful to see. It also bounds how far the coverage layer can be
+// zoomed away from its single rendered level.
+const map = L.map('map', { zoomControl: true, minZoom: 8, maxZoom: 22 })
+  .setView([43.08, -70.71], 13);
 
 // Basemap: Esri World Imagery -- genuinely cached. NOTE {z}/{y}/{x} (ArcGIS
 // order), reversed from the usual XYZ, and the tiles are JPEG.
@@ -181,8 +187,11 @@ L.tileLayer(
 // the same depth changes colour as you pan -- fine for exploring, useless for
 // a public page where people compare. Here the scale is PINNED to 0-40 m.
 //
-// RAMP / MAX_DEPTH / STEP are mirrored in scripts/refresh_chart_tiles.py;
-// test/test_ramp_sync.py fails if the two copies drift.
+// RAMP / MAX_DEPTH / STEP are mirrored in scripts/refresh_chart_tiles.py, and
+// RAMP / MAX_DEPTH again in marine_web_view/coverage_renderer.py -- THREE
+// copies. test/test_ramp_sync.py fails if any of them drifts; the third was
+// hand-transcribed and came out shifted at 14 of 24 stops while the guard
+// still covered only two.
 const RAMP = [
   [  0,  38, 115],  // deepest
   [  1,  40, 116],
@@ -340,6 +349,238 @@ new Bathy('', {
              + 'Hydrographic Center (CCOM/JHC), University of New Hampshire '
              + '-- WGOM/LI/SNE compilation'
 }).addTo(map);
+
+// Hillshade of the same 4 m grid, multiplied over the depth colours. Bilinear
+// here on purpose: relief is continuous, and nearest-neighbour would make it
+// blocky. Nearest is only correct for the banded colour layer.
+new Relief('', {
+  opacity: RELIEF_OPACITY, maxZoom: 22, maxNativeZoom: 19,
+  className: 'relief'
+}).addTo(map);
+
+// ---- Live sonar coverage -------------------------------------------------
+//
+// Written by marine_web_view's coverage_renderer from the ADR-0008 display
+// transport. These are OUR static tiles in OUR bucket, so unlike the CCOM
+// bathymetry above this layer costs no third party anything per viewer.
+//
+// Rendered at one zoom only. min/maxNativeZoom pin that, so Leaflet rescales
+// those tiles for every other zoom instead of requesting levels that were
+// never written -- which would be one 403 per tile per pan.
+//
+// Uncovered seafloor stays transparent rather than blank: the shape of the
+// surveyed swath is the information this layer carries. It shares the depth
+// ramp with the basemap, tinted slightly so the two remain distinguishable
+// where they overlap.
+//
+// The zoom is NOT hardcoded here. The renderer writes one level only, and a
+// layer pinned to the wrong native zoom requests tiles that were never
+// written -- so the level, and whether the renderer is running at all, come
+// from the manifest it publishes beside the tiles.
+// Hardcoded, and it has to be: this is where the manifest lives, so it cannot
+// come from the manifest. The `prefix` field meta.json carries is therefore
+// reporting rather than configuration -- useful to anything reading the
+// manifest out of band, but changing the renderer's `prefix` parameter means
+// changing this line too.
+const COVERAGE_DIR  = 'live/coverage/';
+const COVERAGE_META = COVERAGE_DIR + 'meta.json';
+const COVERAGE_MS   = 20000;   // the renderer rewrites the manifest per pass
+const COVERAGE_DEAD_S = 120;   // no manifest update for this long = offline
+const COVERAGE_MAX_Z  = 22;    // the layer's own maxZoom; see minZoom below
+// How far below the rendered zoom the layer stays visible before it is hidden.
+// Two levels of upscaling still reads as coverage; beyond that it is a smear.
+const COVERAGE_MIN_Z_MARGIN = 2;
+// Live opacity, and what the layer fades to once the manifest stops moving.
+// Not zero and not removal: the last coverage the renderer did publish is
+// still the best record of where the vessel has been, and an operator who
+// looks away for two minutes should find it dimmed and labelled, not gone.
+const COVERAGE_OPACITY = 0.95;
+const COVERAGE_STALE_OPACITY = 0.3;
+let coverageLayer = null, coverageZoom = null, coverageStamp = null;
+// The renderer's published-tile counter as of the last manifest we saw.
+// This -- not the stamp -- is what decides whether the tiles are asked
+// for again; see pollCoverage().
+let coverageRendered = null;
+let coverageAlive = true;
+
+// The manifest is remote JSON fetched over the public internet. It is INPUT,
+// not configuration, and every field below is used for something that fails
+// badly when it is wrong:
+//
+//   zoom  -> minZoom/minNativeZoom, the bound that stops Leaflet laying the
+//            viewport out in millions of native-zoom tiles. `typeof x ===
+//            'number'` admits NaN and Infinity, and `NaN - 2` is NaN, so the
+//            browser-freeze guard was itself driven by unvalidated JSON.
+//   stamp -> the liveness age. A missing or non-numeric stamp makes
+//            `Date.now()/1000 - stamp` NaN, every `age > DEAD` comparison
+//            false, and the panel then reports a healthy tile count for a
+//            renderer that has been dead for hours -- defeating the one thing
+//            the manifest exists to be.
+//   rendered_tiles
+//         -> the tile-refresh trigger. NaN or a non-number compares unequal
+//            to itself, which would fire a full re-request of every visible
+//            tile on every single poll -- the runaway this field exists to
+//            stop.
+//
+// A manifest that fails either check is treated exactly like no manifest at
+// all: the layer is not rebuilt from it and the readout says so.
+function saneZoom(value) {
+  return (Number.isInteger(value) && value >= 0 && value <= COVERAGE_MAX_Z)
+    ? value : null;
+}
+
+function saneStamp(value) {
+  return (typeof value === 'number' && Number.isFinite(value)) ? value : null;
+}
+
+// The renderer's published-tile counter. A renderer too old to publish it
+// yields null, which reads as "no change" -- the layer then refreshes only
+// when the zoom changes, which is the safe direction to fail in: it costs
+// liveness, not money.
+function saneCount(value) {
+  return (Number.isInteger(value) && value >= 0) ? value : null;
+}
+
+// Fade the layer when the renderer stops. With every miss painted transparent
+// a dead renderer otherwise presents as a confident, complete mosaic of
+// whatever it last managed to upload.
+function setCoverageAlive(alive) {
+  coverageAlive = alive;
+  if (coverageLayer) {
+    coverageLayer.setOpacity(alive ? COVERAGE_OPACITY
+                                   : COVERAGE_STALE_OPACITY);
+  }
+}
+
+// Returns true when the layer was actually (re)built, so the caller knows the
+// tiles have just been requested and does not immediately ask again.
+function buildCoverage(zoom) {
+  if (coverageZoom === zoom) return false;
+  if (coverageLayer) { map.removeLayer(coverageLayer); coverageLayer = null; }
+  coverageZoom = zoom;
+  coverageLayer = new L.TileLayer(COVERAGE_DIR + '{z}/{x}/{y}.png', {
+    // minZoom, NOT just minNativeZoom. Leaflet's _clampZoom returns
+    // minNativeZoom whenever the map is below it, and then lays the whole
+    // viewport out in tiles OF THAT ZOOM: at map zoom 10 against a native 15
+    // that is 4^5 = 1024x the tile count, and by zoom 5 it is millions of DOM
+    // elements. It freezes the browser. minZoom simply hides the layer when
+    // zoomed out past the point where its single rendered level is useful.
+    // Clamped at 0: `zoom - 2` on a manifest zoom of 0 or 1 is negative, and
+    // a negative minZoom is below every zoom the map can reach, so the layer
+    // is then never hidden and the hide-when-zoomed-out rule above is dead.
+    // (This is not the tile-explosion direction -- a low native zoom means
+    // FEWER tiles -- but the rule should hold at every manifest zoom, not
+    // just the ones we happen to render at today.)
+    minZoom: Math.max(0, zoom - COVERAGE_MIN_Z_MARGIN),
+    maxZoom: COVERAGE_MAX_Z,
+    minNativeZoom: zoom, maxNativeZoom: zoom,
+    opacity: coverageAlive ? COVERAGE_OPACITY : COVERAGE_STALE_OPACITY,
+    zIndex: 350,
+    // A tile exists only where the sonar has covered ground, so a miss is the
+    // normal case rather than an error. Serve a transparent pixel instead of
+    // letting Leaflet show a broken-image tile. That is exactly why the
+    // manifest exists: with every miss painted transparent, a dead renderer
+    // would otherwise be indistinguishable from calm water.
+    errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+    attribution: 'Coverage: live MBES, CCOM/JHC'
+  }).addTo(map);
+  return true;
+}
+
+// Ask Leaflet for the visible tiles again. Called only when the manifest says
+// the renderer actually published something (see pollCoverage) -- this tears
+// down and re-requests every tile in the layout, so it must not run on a
+// timer.
+//
+// Leaflet requests a tile ONLY when it creates the element, and `errorTileUrl`
+// turns a miss into a permanently transparent tile that is never retried. So a
+// viewer sitting still -- which is what an operator watching a survey line does
+// -- saw the mosaic frozen at whatever existed when the page loaded: ground
+// surveyed afterwards never appeared until they panned or zoomed, because
+// nothing here ever called `redraw()`. The position and track layers re-render
+// on every poll; the tile layer has to as well, or the live coverage layer is
+// not live.
+//
+// This is also what makes the `cache_control <= render_interval` matching on
+// the renderer side mean anything for the visible viewport: `redraw()` re-issues
+// the requests, and the short max-age is what decides whether the browser can
+// answer them from its own cache or has to go back to CloudFront. Without a
+// redraw the browser is simply never asked, and the max-age is inert.
+function refreshCoverage() {
+  if (!coverageLayer) return;
+  // redraw() does NOT honour the layer's own minZoom. Leaflet applies minZoom
+  // only in _setView; redraw() goes through _clampZoom, which consults
+  // min/maxNativeZoom alone. So redrawing a layer that minZoom is currently
+  // hiding UN-hides it and lays the whole viewport out at the native zoom --
+  // the exact 4^n tile explosion the minZoom above exists to prevent, and at
+  // the map's own minZoom 8 against a native 15 that is hundreds of thousands
+  // of DOM elements. Refresh only while the layer is genuinely displayed.
+  if (map.getZoom() < coverageLayer.options.minZoom) return;
+  coverageLayer.redraw();
+}
+
+function coverageText(meta, age) {
+  if (meta.status !== 'ok') {
+    // `stale_chart_datum` carries how long the tide offset has been frozen;
+    // the status word alone does not say whether that is one pass or an hour.
+    const datumAge = Number.isFinite(meta.chart_datum_age)
+      ? ' \u2014 ' + meta.chart_datum_age.toFixed(0) + ' s' : '';
+    return String(meta.status).replace(/_/g, ' ') + datumAge;
+  }
+  if (age > COVERAGE_DEAD_S) return 'stale \u2014 ' + age.toFixed(0) + ' s';
+  return meta.published_tiles + ' tiles \u00b7 z' + meta.zoom;
+}
+
+async function pollCoverage() {
+  try {
+    // `no-store`, and NOT `default`, because this object is the liveness
+    // signal rather than payload. The renderer publishes it with a max-age
+    // matched to the render interval and this poll runs on that same period,
+    // so with the HTTP cache in play a poll is routinely answered from the
+    // browser's own copy of the PREVIOUS pass -- and both of the things this
+    // manifest exists for then fail silently: `rendered_tiles` does not move,
+    // so the change gate below never fires and newly surveyed ground does not
+    // appear for a stationary viewer; and `stamp` is the old one, so the age
+    // is under-reported and a renderer that has just died still reads alive.
+    // No cache-busting query string: a changing URL would also defeat the
+    // CloudFront edge cache for every viewer, which is the part we want kept.
+    // `no-store` is per-request and leaves the shared cache alone.
+    const r = await fetch(COVERAGE_META, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const meta = await r.json();
+    const zoom = saneZoom(meta.zoom);
+    const stamp = saneStamp(meta.stamp);
+    const rendered = saneCount(meta.rendered_tiles);
+    if (zoom === null || stamp === null) {
+      // A manifest we cannot trust is worse than none: it would configure the
+      // layer's zoom bounds and its liveness clock from nonsense.
+      throw new Error('malformed manifest');
+    }
+    const rebuilt = buildCoverage(zoom);
+    // Refresh on "the tiles CHANGED", never on "a pass happened". `stamp` is
+    // rewritten every pass whether or not anything was rendered, so gating on
+    // it meant a docked boat with the sonar off drove a full teardown and
+    // re-request of every tile under the viewport every render_interval, per
+    // viewer, forever -- and most of that viewport is uncovered water, which
+    // answers 4xx with no cache headers, so nothing absorbs it. Compare for
+    // change, not growth: the counter is per-process, so a renderer restart
+    // moves it backwards and that is still news. A rebuild has just requested
+    // every tile anyway.
+    const advanced = rendered !== null && rendered !== coverageRendered;
+    if (!rebuilt && advanced) refreshCoverage();
+    coverageRendered = rendered;
+    coverageStamp = stamp;
+    const age = Date.now()/1000 - stamp;
+    setCoverageAlive(age <= COVERAGE_DEAD_S);
+    $('cov').textContent = coverageText(meta, age);
+  } catch (e) {
+    // No usable manifest: either the renderer has never run against this
+    // bucket, or it is down, or what it wrote is malformed. Say so rather
+    // than showing an empty map -- and dim whatever coverage is still on it.
+    setCoverageAlive(false);
+    $('cov').textContent = coverageStamp == null ? 'offline' : 'stale';
+  }
+}
 
 // Legend: continuous bar built from the same RAMP, so it cannot drift from
 // what is rendered. Top = surface, bottom = MAX_DEPTH.
@@ -540,8 +781,10 @@ async function poll() {
 
 poll();
 pollTrack();
+pollCoverage();
 setInterval(poll, POLL_MS);
 setInterval(pollTrack, TRACK_MS);
+setInterval(pollCoverage, COVERAGE_MS);
 setInterval(updateAge, 1000);
 
 // Start collapsed on a phone: the map is the point, the readout is secondary.
