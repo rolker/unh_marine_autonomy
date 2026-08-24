@@ -480,3 +480,79 @@ running on this host; both constructions take about a tenth of a second.
 The other 8 suggestions from the source review are left unchecked, including
 the pre-existing `load_manifest` blanket-`except` that reads `AccessDenied` as
 first-run.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-24 15:25 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**PR**: #353 at `ce77d90`
+**Branch**: feature/issue-351 at `ce77d90`
+**Mode**: post-PR diff (`jazzy...HEAD`), concentrated on `28eb151..HEAD`, reported on the pre-push timeline
+**Depth**: Deep (reason: +759-77 in round 2 on top of +2528-132; credential handling, wall-clock bounds, threading and a new lock file)
+**Specialists**: Static Analysis (ament profile clean), Governance, Plan Drift, Claude Adversarial Lens A + Lens B. Copilot off (reviewing PR #353 in parallel). Local model off (models removed from this host).
+**Must-fix**: 6 | **Suggestions**: 10
+**Round**: 2 | **Ship**: continue — the round-1 must-fix-1 remedy does not achieve what it claims: `max_attempts: 1` does remove SDK retry, but `connect_timeout` is a PER-ADDRESS bound in urllib3 and the S3 endpoint resolves to 8 A records here, so the real per-PUT worst case is ~55 s (state_renderer, asserted 20 s) and ~65 s (coverage_renderer, asserted 30 s). `stop()`'s 45 s join still cannot win. Must-fix count is up 4 -> 6 and includes a correctness concern, not mechanical fixes.
+
+The round-2 pass is honest work: the plan corrections are marked as corrections
+rather than quietly rewritten, `--force` genuinely cannot skip via the
+content-hash path, the sync's deadline abort genuinely withholds the manifest
+and returns 1, the lock file and `manifest.json` both sit outside `outdir` so
+neither is swept into the bucket, and `boto3.Session(profile_name='')` really
+does raise `ProfileNotFound` so state_renderer's fail-loudly contract holds
+(all verified on this host). My initial suspicion that botocore's retry backoff
+blew the cron budget was WRONG — `ExponentialBackoff` adds only ~3 s over 3
+attempts. But 7 mutations survive the green 172-test suite, all of them at the
+call sites that supply the numbers the fix pass argues from.
+
+### Findings
+- [ ] (must-fix) the per-PUT ceiling the whole round-2 argument rests on does not exist: urllib3's `create_connection` applies `connect_timeout` per `getaddrinfo` result and the S3 endpoint has 8 A records, so worst case is ~8x(connect)+read = ~55 s / ~65 s, not 20 s / 30 s; separately botocore builds the STS client for a role-assuming profile with a config carrying only `signature_version`, so credential resolution runs under botocore defaults outside the caller's `Config` — `marine_web_view/s3_upload.py:59-69,84`, `state_renderer.py:238-247`, `coverage_renderer.py:450-457,1040-1046`
+- [ ] (must-fix) `stop()`'s new comment asserts a safety property the code lacks: `_render_pending` checks `deadline` only when one is passed (a scheduled pass passes none) and never checks `self._stop`, so a pass issues one PUT per dirty tile plus `_publish_meta` and two stalled tiles already blow the 45 s join, taking the early return that skips the final flush — `coverage_renderer.py:1037-1046`, `1189-1211`
+- [ ] (must-fix) round 2's fixes are bound at the helper level and unbound at every call site — 7 mutations survive the full suite: both nodes' `read_timeout` (25->250, 15->150, and ->600), `join(timeout=45.0)`->1.0, `sync_dir`'s `deadline_seconds` default ->86400, `main()` dropping `force=a.force`, `main()`'s `if lock is None:`->`if False:`, and `acquire_run_lock(a.workdir, a.name)`->`'run'` — `test/test_s3_upload.py:272-322`, `refresh_chart_tiles.py:630-636,698-700`
+- [ ] (must-fix) the per-`--name` lock scope blesses a lost-update race on the shared manifest: `tiles/manifest.json` is one key, `mf = workdir/manifest.json` is one local path (not under `a.name`), and `man[a.name] = {...}` is a whole-dict read-modify-write, so two concurrent names lose the loser's entry and the next cron run re-crawls CCOM for ~5,839 tiles — `refresh_chart_tiles.py:377`, `645`, `709-719`
+- [ ] (must-fix) the new lock file lives in an unowned `/tmp` tree: `makedirs(exist_ok=True)` accepts a foreign or symlinked dir and `open(...,'w')` follows a planted symlink and truncates it (demonstrated), a squatted lock silently stops every run at exit 0, and because the same tree is `outdir` anything placed there is PUT to the public `tiles/` prefix under the admin profile — `refresh_chart_tiles.py:386-387`
+- [ ] (must-fix) doc consequence: the README documents none of round 2's operator-visible changes — `--force` now re-uploads and is per `sync_dir`'s own docstring the ONLY remedy for a `TILE_EXTRA_ARGS` change, a held lock makes a run exit 0 doing nothing, and the sync gained a 3600 s aggregate deadline — `README.md:489-508`
+- [ ] (suggestion) `test_one_s3_request_stays_under_the_cap_the_shell_out_enforced` is algebraically tautological — `attempts*(CONNECT_TIMEOUT+read_timeout)==max_seconds` holds identically for any `CONNECT_TIMEOUT`; mutating it 10->25 passes — `test/test_chart_tile_sync.py:441-462`
+- [ ] (suggestion) `s3_client`'s guard covers one of three bad inputs: `attempts=0` raises `ZeroDivisionError`, `attempts=-1` gives nonsense text, and a tiny positive budget passes silently (`s3_client('p', 31, attempts=3)` -> 0.333 s read) — `refresh_chart_tiles.py:356-360`
+- [ ] (suggestion) `remote_etags` is unguarded, a parity regression: on `jazzy` a sync/listing failure became `return 1` with "upload failed"; now `ListBucket` AccessDenied escapes `main()` as a traceback after the ~hour of fetching, and `load_manifest` swallows the same denial as "first run" — `refresh_chart_tiles.py:519`
+- [ ] (suggestion) the shutdown flush can overrun `SHUTDOWN_FLUSH_SECONDS` by one full PUT: `_render_dirty` calls `_publish_meta` unconditionally after the deadline-honouring loop, so ~60 s not 30 s — `coverage_renderer.py:1048-1056`, `1174-1186`
+- [ ] (suggestion) the aggregate deadline's clock starts after `remote_etags` and the ~5,839-file MD5 pass and is checked only at job start, so the real bound is listing+hashing+3600 s+one request; and "leaves the next run to finish the job" overstates it — there is no upload-only path to the workdir tiles — `refresh_chart_tiles.py:513-517`, `534`
+- [ ] (suggestion) a held lock exits 0, indistinguishable from success in exit status; the stderr message does reach cron mail, but a wedged run makes every later invocation exit 0 forever — `refresh_chart_tiles.py:630-636`
+- [ ] (suggestion) `max_workers` is unbounded while the client carries no `max_pool_connections` (botocore default 10); `DEFAULT_CONCURRENCY = 10` matches today but the help text invites `--concurrency 32`, which silently exceeds the pool and pays a TLS handshake per PUT — `refresh_chart_tiles.py:88-89`, `555`
+- [ ] (suggestion) a partial pyramid can still get a completeness manifest via the FETCH side: the 5 % gate permits ~290 missing tiles, `up_failed == 0`, and the manifest records `tiles`/`blank` but not `failed`, so the next run reads "unchanged and fresh" for up to 30 days — `refresh_chart_tiles.py:692-720`
+- [ ] (suggestion) `test_dry_run_needs_no_aws.py` writes `ROS_DOMAIN_ID` / `ROS_AUTOMATIC_DISCOVERY_RANGE` into `os.environ` at module import with no restore, so every later-collected module inherits domain 101 — safer, but hidden session-wide coupling — `test/test_dry_run_needs_no_aws.py:44-46`
+- [ ] (suggestion) `public,max-age=604800` on a prefix not versioned per compilation means a `rule_hash` re-render is invisible for up to a week and the map is the old/new patchwork `chart_rule()` exists to prevent; pre-existing, but versioning the prefix by `rule_hash` is the clean fix — `refresh_chart_tiles.py:111`
+
+### The 8 round-1 suggestions still open
+None was invalidated or made wrong by this pass. Four anchors drifted:
+`load_manifest` 334 -> 396, `save_manifest` 349 -> 410, `main()` 588 -> 573,
+`state_renderer.main()` 531 -> 533; the two node-construction anchors moved
+~5 lines (240 -> 245, 449 -> 454). Two were independently re-derived this
+round and are now cross-confirmed: the `load_manifest` blanket-`except`
+(Lens B reached it from the "no credential preflight anywhere" direction) and
+the EC2 route for state_renderer, where I verified that NO parameter value
+reaches the default chain — both `''` and `'   '` raise `ProfileNotFound` — so
+an EC2 operator needs an explicit `credential_source = Ec2InstanceMetadata`
+stanza that neither the code nor the README names. The `main()`-has-no-test
+suggestion is what must-fix 3 above escalates.
+
+### Checked and clean, so it is not re-litigated
+`max_attempts=1` really is one attempt (`MaxAttemptsChecker`, botocore
+1.34.46). `standard`-mode backoff adds only ~3 s over 3 attempts, so the cron
+`read_timeout` arithmetic is not meaningfully off for that reason, and it uses
+true division with a positive-budget guard — no truncation, and no zero or
+negative value reachable from either current call site. `--force` cannot skip
+via the content-hash path. A deadline abort counts as a failure, so `main()`
+returns 1 and the manifest is withheld — no partial pyramid gets a
+completeness claim by that route. The lock file and `manifest.json` both live
+in `workdir`, outside `outdir`, so `sync_dir`'s `os.walk` cannot sweep them
+into the bucket. The `deadline` closure is race-free and `sent`/`failed`/`log`
+are touched only from the main thread's `as_completed` loop; the shared client
+is built in the main thread and the paginator completes before any worker
+starts. flock is released on every exit path. The `--name` regex blocks
+traversal and prefix escape. Plan drift: none — corrections are marked as
+corrections. Static analysis: `ament_flake8` / `pep257` / `copyright` are in
+the green 172; ad-hoc B902/D103/I201 hits are suppressed by the package's own
+ament profile. `.agents/README.md` does not mention `marine_web_view`, so
+there is no parameter-table consequence; no `review-context.yaml` exists.
