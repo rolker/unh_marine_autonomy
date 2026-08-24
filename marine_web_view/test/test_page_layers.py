@@ -330,10 +330,24 @@ def test_the_coverage_layer_is_configured_from_the_manifest():
     code = _code(page)
     definition = re.search(r'function\s+buildCoverage\s*\(', code)
     assert definition, 'the page has no buildCoverage()'
+    # The offset of the NAME inside the definition, not of `function`. The
+    # first version of this exclusion compared against `definition.start()`
+    # -- nine characters earlier -- so it excluded nothing, the definition
+    # itself satisfied `assert calls`, and deleting the ONLY call to
+    # buildCoverage left the whole suite green with no coverage layer ever
+    # built. The test passed solely because the definition's parameter happens
+    # to be spelled `zoom`.
+    defined_at = definition.start() + definition.group(0).index('buildCoverage')
     calls = [m for m in re.finditer(r'\bbuildCoverage\s*\(\s*([^)]*?)\s*\)',
                                     code)
-             if m.start() != definition.start()]
-    assert calls, 'buildCoverage() is defined but never called'
+             if m.start() != defined_at]
+    assert calls, (
+        'buildCoverage() is defined but never called: the coverage layer is '
+        'never built and the map shows no coverage at all')
+    start, end = _function_span(code, 'pollCoverage')
+    assert any(start <= call.start() < end for call in calls), (
+        'buildCoverage() is never called from pollCoverage(): the layer is '
+        'not built from the manifest the poll just read')
     for call in calls:
         assert call.group(1) == 'zoom', (
             'buildCoverage is called with {!r}: the layer must be built from '
