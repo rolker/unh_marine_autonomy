@@ -555,8 +555,18 @@ upload fan-out. Beyond the stdlib it needs only `boto3`, and nothing from
   cry wolf on an ordinary overlap), *unless* the holder has been there longer
   than six hours — a full crawl is well under an hour, so that is a wedged
   run, and it exits **1** so it stops reading as success forever. The message
-  names the holding pid; clear it by killing that process (the lock is
-  released by the kernel) or deleting the lock file.
+  names the holding pid: **clear it by killing that process**, which is what
+  releases the lock — the kernel drops a `flock` when the holder exits. Do
+  **not** delete the lock file: `flock` is held on the *inode*, not on the
+  name, so unlinking it releases nothing and the next run simply creates a
+  fresh inode and acquires immediately — two crawls of CCOM's server at once,
+  the one thing the lock exists to prevent. The pid line is written just
+  *after* the lock is taken, so a reader that catches that gap sees the
+  previous run's line instead; if the named pid is not running, the holder is
+  someone else and `fuser <lockfile>` (or `lsof`) names it. A lock file whose
+  holder has genuinely exited is not held at all — the next run takes it
+  without a word, which is why "the file is still there" is never the
+  diagnosis.
 - **The upload fan-out has a 3600 s aggregate deadline.** Uploads that have
   not started by then are counted as failures, which withholds the manifest,
   so the run reports failure and the next one redoes the upload. The clock

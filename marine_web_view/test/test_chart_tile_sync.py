@@ -473,6 +473,35 @@ def test_a_held_lock_names_its_holder_and_its_age(tmp_path):
         held.close()
 
 
+def test_deleting_the_lock_file_does_not_release_the_lock(tmp_path):
+    """What the README must tell the operator, pinned.
+
+    `flock` is held on the INODE. Unlinking the path releases nothing, and
+    the next run creates a fresh inode and acquires immediately -- so an
+    operator told to "delete the lock file" gets two concurrent crawls of
+    CCOM's server, which is precisely what the lock exists to prevent. The
+    remedy is to kill the holder; the kernel releases the lock when the
+    process exits.
+    """
+    script = _load_script()
+    directory = str(tmp_path / 'locks')
+    os.makedirs(directory)
+
+    held = script.acquire_run_lock('bathy4m', directory=directory)
+    try:
+        os.unlink(os.path.join(directory, 'bathy4m.lock'))
+        # Does NOT raise RunLockHeld -- that is the whole hazard. Two runs
+        # now hold a lock each, on two different inodes, and both crawl.
+        second = script.acquire_run_lock('bathy4m', directory=directory)
+        try:
+            assert not held.closed, 'the first run released anything'
+            assert second.fileno() != held.fileno()
+        finally:
+            second.close()
+    finally:
+        held.close()
+
+
 def test_the_lock_directory_refuses_a_tree_this_user_does_not_own(
         tmp_path, monkeypatch):
     """The lock must not live in a world-writable tree.
