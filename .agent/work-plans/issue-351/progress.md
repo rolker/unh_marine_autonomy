@@ -301,3 +301,44 @@ asserts nothing pulls the SDK in at import time.
 - `test_tile_ingest.py`'s docstring and two in-code comments that named
   "a 30 s-capped subprocess" / "an `aws s3 cp`" were rephrased; they described a
   mechanism that no longer exists.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-24 14:27 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**PR**: #353 at `a75dec3`
+**Branch**: feature/issue-351 at `a75dec3`
+**Mode**: post-PR diff (`jazzy...HEAD`), reported on the pre-push timeline
+**Depth**: Deep (reason: 13 files / +1800-127, credential-handling and cross-cutting transport swap)
+**Specialists**: Static Analysis (flake8 clean, xmllint clean), Governance, Plan Drift, Claude Adversarial Lens A + Lens B. Copilot off (reviewing PR #353 in parallel). Local model off (models removed from this host).
+**Must-fix**: 4 | **Suggestions**: 13
+**Round**: 1 | **Ship**: continue — must-fix 1 is a genuine correctness regression (single-threaded executor stall and a shutdown flush that can no longer win its join), cross-confirmed by both adversarial lenses and verified arithmetically against botocore 1.34.46 on this host.
+
+Nothing raised at issue review or plan review was silently dropped; the
+`3d44436` plan amendment is an honest record and the as-built content-hash rule
+does fix what the size-only rule was rejected for. The four cache policies all
+reach `put_object` and all four are bound by tests. 19 mutations were applied to
+a scratch copy (pycache purged first): 11 were caught, 8 survived and are listed
+below.
+
+### Findings
+- [ ] (must-fix) boto3 retries multiply the per-upload ceiling ~4x (state_renderer ~87 s vs the old hard 20 s; coverage_renderer ~127 s vs 30 s) and three comments assert the opposite; one stalled PUT blocks `rclpy.spin`'s single-threaded executor and drops nav fixes, and `join(timeout=45.0)` can no longer win, skipping the documented final flush — `marine_web_view/s3_upload.py:69`, `state_renderer.py:238`, `coverage_renderer.py:446`, `coverage_renderer.py:1035`
+- [ ] (must-fix) every process-level wall-clock cap on the cron script was removed (`aws s3 sync` had `timeout=3600`, the manifest `cp` 120 s, the manifest read 60 s); worst case is now ~365 s per PUT across ~5,839 objects with no aggregate deadline and no lockfile, so an overrun run doubles the request rate against CCOM's server — `scripts/refresh_chart_tiles.py:328` and `sync_dir`
+- [ ] (must-fix) `sync_dir`'s "strictly better than the status quo, not just equivalent" is false: `list_objects_v2` does not return `CacheControl`/`ContentType`, so identical bytes skip and a change to `TILE_EXTRA_ARGS` propagates only to tiles whose pixels also changed — permanently mixed cache policy, and `--force` does not help — `scripts/refresh_chart_tiles.py` (`sync_dir` docstring, `TILE_EXTRA_ARGS`)
+- [ ] (must-fix) CLI-era mechanics survive in three places the PR otherwise scrubbed: a `--profile` flag that no longer exists — `README.md:210`, `coverage_renderer.py:363`, `test/test_s3_upload.py` (`test_the_profile_reaches_the_client_factory_exactly_as_given` docstring)
+- [ ] (suggestion) test gap: `list_objects_v2` pagination is unbound — no test gives `_FakeS3` more than one existing key, so `for page in ...[:1]` survives the suite; broken, ~4,800 unchanged tiles would be re-uploaded every run — `test/test_chart_tile_sync.py:85`
+- [ ] (suggestion) test gap: the whole `Config` is unbound — replacing it with `Config(retries={'mode': 'legacy', 'max_attempts': 99})` survives; this is exactly the arithmetic must-fix 1 turns on, so the guard should land with the fix — `marine_web_view/s3_upload.py:66`
+- [ ] (suggestion) test gap: the profile passthrough is bound only up to the monkeypatched factory — `boto3.Session(profile_name=profile or None)` survives, and that one word is what state_renderer's documented fail-loudly contract rests on — `marine_web_view/s3_upload.py:71`
+- [ ] (suggestion) test gap: "no client is constructed on a dry run" is asserted in three places and tested nowhere — dropping the `None if self.dry_run else` gate survives in BOTH nodes; sharpest for state_renderer, whose uncoalesced default profile would raise `ProfileNotFound` out of `__init__` on a credential-free simulator host — `coverage_renderer.py:449`, `state_renderer.py:240`
+- [ ] (suggestion) `load_manifest`'s blanket `except` reads `AccessDenied`/expired-token as first-run, so `--profile p11-renderer` (which its own `--profile` help warns cannot write `tiles/`) costs ~49 min of requests against CCOM before every PUT fails, every cron run; and a transient read failure plus a successful upload rewrites `tiles/manifest.json` with only this `--name`'s entry. Pre-existing (verified against `jazzy`) — but boto3 is what makes `NoSuchKey` distinguishable, which `_boto3_client`'s own docstring advertises. Worth a follow-up issue — `scripts/refresh_chart_tiles.py:334`
+- [ ] (suggestion) a stale `--workdir` re-publishes last run's PNGs for tiles that failed or turned blank this run while the manifest asserts the new `rule_hash`; pre-existing under size+mtime too, but `sync_dir`'s premise "the fetch loop rewrites every local tile unconditionally" is false for exactly those tiles — `scripts/refresh_chart_tiles.py` (`outdir`, `sync_dir` docstring)
+- [ ] (suggestion) `save_manifest` is unguarded: a raise escapes `main()` as a traceback after a successful pyramid upload, leaving tiles published but unrecorded so the next run re-fetches everything — `scripts/refresh_chart_tiles.py:349`
+- [ ] (suggestion) `state_renderer.main()` constructs the node outside the `try`, unlike `coverage_renderer.main()` which moved it inside for exactly this reason; this PR adds a new constructor failure mode (`ProfileNotFound`, `NoRegionError`) — `state_renderer.py:531`
+- [ ] (suggestion) the EC2 instance-role path — a stated motivation for this PR — is documented only for coverage_renderer; state_renderer needs a named profile with `credential_source = Ec2InstanceMetadata`. The new section also names only `~/.aws/credentials` (`~/.aws/config` also applies) and dropped all timeout/retry documentation — `README.md:19`
+- [ ] (suggestion) the chart-tile section mentions cron without mentioning credentials, so a reader can land on `--profile p11-renderer` and get `AccessDenied` on every PUT plus a silently-empty manifest — `README.md:502`
+- [ ] (suggestion) startup-failure semantics changed (a typo'd profile now aborts node startup rather than failing per upload) and the README covers only the blank case — `state_renderer.py:240`, `coverage_renderer.py:449`
+- [ ] (suggestion) `refresh_chart_tiles.main()` has no test coverage at all: the `written == 0`, 5%-failure and `if up_failed: return 1` gates are verified only by reading — `scripts/refresh_chart_tiles.py:588`
+- [ ] (suggestion) the `## Implementation` entry's "What could NOT be verified here" now contradicts the PR body and the operator's actual verification (real client exercised against S3, clean `rosdep install`, 161 tests with and without boto3); update the timeline so the record matches — `.agent/work-plans/issue-351/progress.md`
+- [ ] (suggestion) instruction candidate, proposal only: `s3_upload.py`'s lazy-import-plus-injectable-client pattern is a reusable answer to "declare a runtime SDK via rosdep but keep the tests runnable without it" and generalises beyond boto3 — `.agent/knowledge/ros2_development_patterns.md`
