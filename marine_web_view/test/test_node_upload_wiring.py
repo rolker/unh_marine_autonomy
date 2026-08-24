@@ -241,3 +241,29 @@ def test_an_unconfirmed_upload_is_offered_again_on_the_next_tick(live_node):
     finally:
         node.stop()
         node.destroy_node()
+
+
+@pytest.mark.parametrize('live_node', [_Stalling], indirect=True)
+def test_stop_is_bounded_even_with_an_upload_wedged(live_node):
+    """`main()`'s `finally` must reach `destroy_node()`.
+
+    The worker cannot cancel a request already in the socket, so what is
+    guaranteed is that `stop()` returns: it waits UPLOAD_STOP_SECONDS and
+    then abandons a daemon thread. Both halves are shipped values, so pin
+    the constant as well as the behaviour.
+    """
+    assert state_renderer.UPLOAD_STOP_SECONDS == 5.0
+    node = state_renderer.StateRenderer()
+    transport = live_node[0]
+    try:
+        node._fix = _fix(1000.0)
+        node._tick()
+        assert transport.entered.acquire(timeout=5.0)
+        start = time.monotonic()
+        node.stop()
+        elapsed = time.monotonic() - start
+        assert elapsed < state_renderer.UPLOAD_STOP_SECONDS + 2.0, (
+            'stop() took {:.1f} s with an upload wedged'.format(elapsed))
+    finally:
+        transport.release.set()
+        node.destroy_node()

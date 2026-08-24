@@ -491,6 +491,10 @@ def test_a_stop_part_way_through_a_pass_returns_the_rest():
     assert len(node._dirty) == 3, node._dirty
     assert any('stopped with 3 tile(s) left' in line
                for line in node._logger.lines), node._logger.lines
+    # And no manifest: `_publish_meta` is one more request, outside the
+    # budget the pass just ran out of, and its counts would describe a
+    # truncated pass as a completed render.
+    assert not node.meta, 'the manifest PUT ran after the pass was stopped'
 
 
 def test_a_second_interrupt_during_shutdown_does_not_skip_cleanup():
@@ -712,3 +716,50 @@ def test_a_failed_upload_is_counted_and_not_raised():
     assert counted == [1], (
         'a failed upload must increment the failure counter, got {}'.format(
             counted))
+
+
+def test_stop_does_not_wait_out_a_wedged_upload(monkeypatch):
+    """Shutdown is bounded by the join, not by the endpoint answering.
+
+    The join used to be 45 s, chosen to be "longer than one upload" against
+    a per-PUT ceiling that does not exist -- so two stalled tiles blew it and
+    took the early return that skips the final flush. The worker now checks
+    the stop event between tiles, so the join only has to cover the request
+    it is already inside; losing that race costs a warning and a skipped
+    flush, never a hang, because the worker is a daemon thread.
+    """
+    monkeypatch.setattr(coverage_renderer, 'WORKER_JOIN_SECONDS', 0.3)
+    node = _Threaded()
+    released = threading.Event()
+    entered = threading.Event()
+    original = node._publish
+
+    def _wedged(payload, key, **kwargs):
+        entered.set()
+        released.wait(10.0)
+        return original(payload, key, **kwargs)
+
+    node._publish = _wedged
+    node._dirty.add((10, 20))
+    node._wake_renderer()
+    try:
+        assert entered.wait(5.0), 'the worker never started an upload'
+        start = time.monotonic()
+        node.stop()
+        elapsed = time.monotonic() - start
+        assert elapsed < 3.0, (
+            'stop() took {:.1f} s with an upload wedged'.format(elapsed))
+        assert any('still inside a request' in line
+                   for line in node._logger.lines), node._logger.lines
+    finally:
+        released.set()
+
+
+def test_the_shutdown_budget_is_small_enough_to_be_a_shutdown():
+    """Both halves of the bound are shipped values, so pin them.
+
+    Worst case is WORKER_JOIN_SECONDS + SHUTDOWN_FLUSH_SECONDS plus the one
+    request already in flight. An operator's Ctrl-C has to mean something.
+    """
+    assert coverage_renderer.WORKER_JOIN_SECONDS == 10.0
+    assert coverage_renderer.SHUTDOWN_FLUSH_SECONDS == 30.0

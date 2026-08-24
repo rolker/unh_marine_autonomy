@@ -509,6 +509,34 @@ def test_the_worker_does_not_start_new_work_after_stop():
     assert [key for key, _ in transport.sent] == ['first'], transport.sent
 
 
+def test_a_stop_during_a_drain_does_not_start_the_next_request():
+    """The stop check between requests, not just around the wait.
+
+    The case is a stop that arrives while the worker is mid-drain: one PUT
+    in the socket and another payload already pending. Finishing the first
+    is unavoidable; starting the second would extend a shutdown that the
+    caller has already bounded, against an endpoint that has just proved it
+    is not answering.
+    """
+    import time
+
+    transport = _Stalling()
+    sender = AsyncUploader(transport)
+    try:
+        sender.submit(b'a', 'in/flight', 'x', 'y')
+        assert transport.entered.acquire(timeout=5.0)
+        sender.submit(b'b', 'still/pending', 'x', 'y')
+
+        assert sender.stop(timeout=0.2) is False
+        transport.release.set()
+        time.sleep(0.5)
+        assert [key for key, _ in transport.sent] == ['in/flight'], (
+            'the worker started another request after being stopped: '
+            '{}'.format(transport.sent))
+    finally:
+        transport.release.set()
+
+
 def test_a_busy_key_does_not_starve_the_other_one():
     """The track and the position share one worker, deliberately.
 

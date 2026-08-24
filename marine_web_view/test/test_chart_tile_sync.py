@@ -720,3 +720,14 @@ def test_the_sync_deadline_default_is_the_one_main_relies_on(tmp_path):
     default = inspect.signature(script.sync_dir).parameters[
         'deadline_seconds'].default
     assert default == script.SYNC_DEADLINE_SECONDS == 3600, default
+
+
+def test_the_wedged_lock_threshold_is_longer_than_a_real_run():
+    """A full crawl at the default --rate is well under an hour.
+
+    Too short and an ordinary long run starts mailing failures; too long and
+    a wedged lock keeps reading as success. Neither is visible from the code
+    that uses the constant, so pin the value.
+    """
+    script = _load_script()
+    assert script.LOCK_STALE_SECONDS == 6 * 3600
