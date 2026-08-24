@@ -912,3 +912,24 @@ one at shutdown (`test_a_dead_upload_worker_reaches_the_operator`).
   name's re-crawl vs. every other name's), and it is the same uncaught-raise
   exit the round-3 entry already flagged as a suggestion at
   `refresh_chart_tiles.py:544-552`.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-24 19:52 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-351 at `b7d3beb`
+**Mode**: pre-push
+**Depth**: Deep (reason: concurrency/lifecycle containment on a public-facing upload path; round-4 delta `dd78bac..b7d3beb`)
+**Must-fix**: 1 | **Suggestions**: 6
+**Round**: 4 | **Ship**: recommended — the five round-3 must-fixes are all fixed and independently mutation-bound (21/21 mutants killed, 203 tests pass); the single remaining must-fix is a two-number comment correction, and nothing new in the containment code is a defect.
+
+### Findings
+- [ ] (must-fix) stale per-PUT ceiling claim survives next to a constant this PR introduced: the comment says "The 45 s join above it" (the join is now `WORKER_JOIN_SECONDS = 10.0`, defined *below*) and "one 30 s-capped upload per dirty tile" (the 30 s subprocess cap is gone and `_boto3_client` deliberately asserts no ceiling exists) — same class as round-1 must-fix 1 and round-2 must-fix 1, recurring, not new — `marine_web_view/marine_web_view/coverage_renderer.py:149-155`
+- [ ] (suggestion) `_log_upload_failure` is the node's only unthrottled error path; a persistent AccessDenied/NoSuchBucket logs one ERROR per second forever, which is the steady state round 4's containment now makes expected — add `throttle_duration_sec=30.0` to match `_queue`/`stop` — `marine_web_view/marine_web_view/state_renderer.py:617`
+- [ ] (suggestion) `coverageText` returns before the `age > COVERAGE_DEAD_S` branch whenever `status !== 'ok'`, so a renderer that exited after a truncated flush shows "truncated render" forever with no age — and this PR makes `truncated_render` the common last word of a run; only layer opacity says it is dead — `marine_web_view/web/index.html:523-531`
+- [ ] (suggestion) `WORKER_JOIN_SECONDS`'s comment still says the join "only has to cover the request it is already inside"; since round 4 an aborted scheduled pass issues one more unbudgeted manifest PUT first, and losing the join skips the final flush — `stop()`'s docstring was updated for this, the constant's was not — `marine_web_view/marine_web_view/coverage_renderer.py:164-168`
+- [ ] (suggestion) an abort during `_update_datum_offset()` or on `_render_pending`'s first check publishes `truncated_render` having rendered nothing (`rendered_tiles` unmoved); gate the publish on progress this pass, or narrow the test docstring that claims such a pass "has nothing to announce" — `marine_web_view/marine_web_view/coverage_renderer.py:1215-1226`, `test/test_render_pass.py:437-443`
+- [ ] (suggestion) `update_manifest`'s new raise leaves `main()` as a bare traceback, unlike every other failure path there (`print(..., file=sys.stderr); return 1`); exit status is still non-zero, so this is cron-mail presentation only — `marine_web_view/scripts/refresh_chart_tiles.py:927`
+- [ ] (suggestion) `.agents/README.md`'s package inventory does not list `marine_web_view` at all, so the new `python3-boto3` dependency lands in a package the repo's agent guide does not describe — pre-existing gap, follow-up issue rather than this PR
