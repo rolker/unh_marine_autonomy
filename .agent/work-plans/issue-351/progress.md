@@ -749,18 +749,18 @@ All seven mutants the round-2 review listed as surviving are in this table
 **Round**: 3 | **Ship**: continue — three of the five are new correctness holes created by the round-3 restructure itself (a silently dying upload worker, a flush whose tiles no viewer ever sees, a manifest merge that erases its peers on one transient GET); each is local and small, but they are design/correctness concerns rather than mechanical fixes, so they warrant one more independent read.
 
 ### Findings
-- [ ] (must-fix) upload worker dies silently on any exception outside `transport_errors` or from `_log_error`; `submit` then returns True forever, `confirmed` never advances, `counts()` reports 0 failures and `stop()` reports clean — reproduced on this host — `marine_web_view/s3_upload.py:255-284`
-- [ ] (must-fix) a truncated shutdown flush skips `_publish_meta`, so tiles it did publish are never announced; `index.html:568` refreshes only when `rendered_tiles` changes, and the process is exiting — regression vs round 2's unconditional meta PUT — `marine_web_view/coverage_renderer.py:1211-1217`
-- [ ] (must-fix) `update_manifest` merges into `load_manifest`'s blanket-`except` `{}`, so one transient GET inside the lock PUTs `{name: entry}` and erases every other `--name` — the exact lost update the lock was added to prevent — `scripts/refresh_chart_tiles.py:553`
-- [ ] (must-fix) README tells the operator to clear a wedged lock by "deleting the lock file"; that does not release the `flock`, and the next run creates a new inode and acquires immediately — two concurrent crawls of CCOM — `marine_web_view/README.md:553-554`
-- [ ] (must-fix) the manifest staging file still lives in the unowned `--workdir` (`/tmp`) that `lock_dir()`'s own docstring refuses to keep a lock in; `open(staged,'w')` follows a planted symlink and `save_manifest` re-reads the path before PUTting it to the public `tiles/manifest.json` — `scripts/refresh_chart_tiles.py:555-558`
-- [ ] (suggestion) `AsyncUploader`'s worker starts before `create_subscription`/`create_timer`, and `main()` builds the node outside its `try` — the invariant `test_the_render_worker_is_started_after_everything_that_can_raise` codifies for the sibling node, unguarded here — `marine_web_view/state_renderer.py:264-266,604`
-- [ ] (suggestion) `daemon=True` is load-bearing but unpinned: flipping it hangs the suite indefinitely instead of failing a test — pin it beside the `UPLOAD_STOP_SECONDS == 5.0` assertion — `marine_web_view/s3_upload.py:210-212`
-- [ ] (suggestion) a manifest-lock timeout raises out of `main()` uncaught after every tile is already uploaded, costing the next run a full ~5,839-tile re-crawl — catch, report the consequence, retry — `scripts/refresh_chart_tiles.py:544-552`
-- [ ] (suggestion) "All-or-nothing, as `aws s3 sync` was" overstates it: tiles PUT before the failure are already live behind CloudFront; only the manifest is withheld — `scripts/refresh_chart_tiles.py:862`
-- [ ] (suggestion) `_confirmed` is never pruned, so the "no call pattern can grow this unboundedly" claim covers `_pending` only — `marine_web_view/s3_upload.py:173-176,280`
-- [ ] (suggestion) `stop()`'s stated worst case omits the unbudgeted `_publish_meta` PUT that follows a flush which did not abort — `marine_web_view/coverage_renderer.py:1055-1060`
-- [ ] (suggestion) `_pending`'s comment says `key -> (payload, content_type, cache)`; the stored value is a 4-tuple including `tag` — `marine_web_view/s3_upload.py:200`
+- [x] (must-fix) upload worker dies silently on any exception outside `transport_errors` or from `_log_error`; `submit` then returns True forever, `confirmed` never advances, `counts()` reports 0 failures and `stop()` reports clean — reproduced on this host — `marine_web_view/s3_upload.py:255-284`
+- [x] (must-fix) a truncated shutdown flush skips `_publish_meta`, so tiles it did publish are never announced; `index.html:568` refreshes only when `rendered_tiles` changes, and the process is exiting — regression vs round 2's unconditional meta PUT — `marine_web_view/coverage_renderer.py:1211-1217`
+- [x] (must-fix) `update_manifest` merges into `load_manifest`'s blanket-`except` `{}`, so one transient GET inside the lock PUTs `{name: entry}` and erases every other `--name` — the exact lost update the lock was added to prevent — `scripts/refresh_chart_tiles.py:553`
+- [x] (must-fix) README tells the operator to clear a wedged lock by "deleting the lock file"; that does not release the `flock`, and the next run creates a new inode and acquires immediately — two concurrent crawls of CCOM — `marine_web_view/README.md:553-554`
+- [x] (must-fix) the manifest staging file still lives in the unowned `--workdir` (`/tmp`) that `lock_dir()`'s own docstring refuses to keep a lock in; `open(staged,'w')` follows a planted symlink and `save_manifest` re-reads the path before PUTting it to the public `tiles/manifest.json` — `scripts/refresh_chart_tiles.py:555-558`
+- [x] (suggestion) `AsyncUploader`'s worker starts before `create_subscription`/`create_timer`, and `main()` builds the node outside its `try` — the invariant `test_the_render_worker_is_started_after_everything_that_can_raise` codifies for the sibling node, unguarded here — `marine_web_view/state_renderer.py:264-266,604`   (deferred: out of scope for this pass -- the must-fixes were actioned alone; carried to the next round)
+- [x] (suggestion) `daemon=True` is load-bearing but unpinned: flipping it hangs the suite indefinitely instead of failing a test — pin it beside the `UPLOAD_STOP_SECONDS == 5.0` assertion — `marine_web_view/s3_upload.py:210-212`   (deferred: out of scope for this pass -- the must-fixes were actioned alone; carried to the next round)
+- [x] (suggestion) a manifest-lock timeout raises out of `main()` uncaught after every tile is already uploaded, costing the next run a full ~5,839-tile re-crawl — catch, report the consequence, retry — `scripts/refresh_chart_tiles.py:544-552`   (deferred: out of scope for this pass -- the must-fixes were actioned alone; carried to the next round)
+- [x] (suggestion) "All-or-nothing, as `aws s3 sync` was" overstates it: tiles PUT before the failure are already live behind CloudFront; only the manifest is withheld — `scripts/refresh_chart_tiles.py:862`   (deferred: out of scope for this pass -- the must-fixes were actioned alone; carried to the next round)
+- [x] (suggestion) `_confirmed` is never pruned, so the "no call pattern can grow this unboundedly" claim covers `_pending` only — `marine_web_view/s3_upload.py:173-176,280`   (deferred: out of scope for this pass -- the must-fixes were actioned alone; carried to the next round)
+- [x] (suggestion) `stop()`'s stated worst case omits the unbudgeted `_publish_meta` PUT that follows a flush which did not abort — `marine_web_view/coverage_renderer.py:1055-1060`   (deferred: out of scope for this pass -- the must-fixes were actioned alone; carried to the next round)
+- [x] (suggestion) `_pending`'s comment says `key -> (payload, content_type, cache)`; the stored value is a 4-tuple including `tag` — `marine_web_view/s3_upload.py:200`   (deferred: out of scope for this pass -- the must-fixes were actioned alone; carried to the next round)
 
 ### Verified, not findings
 - **Mutation sample re-run independently** (scratch copy, `__pycache__` purged, full suite each time): mutants 2, 4, 5, 8, 9, 10 from the fix pass's table all fail exactly as reported. Three further mutants of my own — `stop()` not waking the worker, `confirmed` reporting the pending tag, and `submit` accepting past the cap — are also caught. The guards bind.
@@ -772,3 +772,143 @@ All seven mutants the round-2 review listed as surviving are in this table
 
 ### Out of scope for this PR
 `coverage_renderer` has no "no catalog received" warning, and the shipped `coverage_namespace` default (`/ben/sensors/mbes/cube_bathymetry`) does not match what BizzyBoat publishes (`/bizzy/sensors/m3/cube_bathymetry`), so a wrong namespace is indistinguishable from an idle sonar — and `meta.json` reports `status: ok` throughout. This will be hit on first deployment to the operator station, but it is unrelated to the transport swap: file it as a follow-up rather than widening this PR. The same applies to the broader `--workdir` exposure (tile files are read with symlink-following `open()` and PUT to the public prefix) — pre-existing, and larger than the one-line staging-file fix above.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-24 19:38 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-351 at `5535b38`
+**PR**: #353 at `5535b38`
+**Addressed**: `## Local Review (Pre-Push)` of 2026-08-24 17:02 -04:00 (round 3, `196dac2`) — its five must-fixes
+**Commits**: `c6c97b8`, `760b810`, `8d42b50`, `5535b38`
+**Scope**: must-fixes only; the seven suggestions in the same entry were placed out of scope for this pass by the dispatching orchestrator and are checked as deferred, not addressed.
+
+### Actions
+- [x] a dying upload worker is now visible — `marine_web_view/s3_upload.py:255-330`, `marine_web_view/state_renderer.py:559-580,596-612`
+- [x] a truncated pass publishes its manifest as `truncated_render` — `marine_web_view/coverage_renderer.py:1214-1227`
+- [x] the manifest merge reads strictly and never erases its peers — `scripts/refresh_chart_tiles.py:494-560`
+- [x] README's wedged-lock remedy is "kill the holder", not "delete the file" — `marine_web_view/README.md:554-569`
+- [x] the manifest is PUT from memory; no staging file under `--workdir` — `scripts/refresh_chart_tiles.py:545-560,588-592`
+- [x] (deferred: out of scope for this pass — orchestrator scoped it to the must-fixes) the seven suggestions from the round-3 entry, checked in place with the same annotation
+
+### Finding 1 — direct-execution proof
+
+The reviewer's reproduction, re-run here as a standalone script against a
+transport that raises OUTSIDE `transport_errors`
+(`S3Uploader(..., transport_errors=(ValueError,))` over a client raising a
+custom exception), one submit, half a second, a second submit:
+
+**Before** (`dd78bac`):
+
+```
+Exception in thread s3-upload:  ... _Boom: endpoint returned something botocore does not model
+worker alive        : False
+first submit        : True
+later submit        : True
+confirmed(position) : None
+counts (w, f, d)    : (0, 0, 0)
+log_error calls     : 0 []
+stop() reports clean: True
+```
+
+**After**:
+
+```
+worker alive        : True
+first submit        : True
+later submit        : True
+confirmed(position) : None
+counts (w, f, d)    : (0, 2, 0)
+log_error calls     : 2 [('live/position.geojson', "_Boom(...)")]
+dead()              : None
+stop() reports clean: True
+```
+
+The failure is now counted and logged, and the worker survives to serve the
+next tick. A second probe drove a failure the per-send guard cannot see (a
+`MemoryError` from the bookkeeping under the worker's own lock):
+
+```
+worker alive        : False
+dead()              : MemoryError: out of memory in the worker loop
+submit after death  : False
+counts (w, f, d)    : (0, 1, 1)
+stop() reports clean: False
+```
+
+So a death that does happen is reported on every channel a caller reads,
+and `state_renderer` turns that into a throttled error on every tick plus
+one at shutdown (`test_a_dead_upload_worker_reaches_the_operator`).
+
+### Verification
+
+- **Build + test**: `./core_ws/build.sh marine_web_view` clean;
+  `./core_ws/test.sh marine_web_view` → **203 tests, 0 errors, 0 failures,
+  0 skipped** (195 before this pass; 8 added). Run with
+  `ROS_DOMAIN_ID=99`, `ROS_LOCALHOST_ONLY=1`,
+  `ROS_AUTOMATIC_DISCOVERY_RANGE=OFF` so nothing touched the live renderers.
+- **Static analysis**: `test_flake8` (ament_flake8 against the ament
+  config), `test_pep257`, `test_copyright` all pass. Two `E116` hits
+  introduced by this pass were fixed, not suppressed.
+- **Mutation-checked — 20 mutants, all caught.** Applied one at a time to a
+  scratch copy with `__pycache__` purged, full suite re-run each time
+  (baseline 200 non-lint tests green):
+
+| # | Mutation | Result |
+|---|---|---|
+| 1 | per-send guard removed (worker dies on a raising put) | 2 failures |
+| 2 | per-send guard stops counting the failure | 2 failures |
+| 3 | per-send guard stops reporting the failure | 1 failure |
+| 4 | outer death guard removed | 1 failure |
+| 5 | the death is not counted as a failure | 1 failure |
+| 6 | `submit` accepts payloads a dead worker will never send | 2 failures |
+| 7 | `stop()` calls a dead worker a clean shutdown | 2 failures |
+| 8 | a raising `log_error` kills the worker again | 1 failure |
+| 9 | truncated pass publishes no manifest (the round-3 regression) | 1 failure |
+| 10 | a truncated pass reports `status: ok` | 1 failure |
+| 11 | strict read falls back to `{}` like the forgiving one | 2 failures |
+| 12 | `update_manifest` reads forgivingly again | 2 failures |
+| 13 | every error counts as "no manifest yet" | 1 failure |
+| 14 | a non-object manifest is merged into anyway | 1 failure |
+| 15 | malformed JSON swallowed under strict too | 1 failure |
+| 16 | manifest staged to a hardcoded `/tmp` path | SURVIVED → bound (see below) |
+| 16b | `save_manifest` re-reads a staged path again (full revert) | 3 failures |
+| 16c | the merged manifest is staged through a file first | 1 failure |
+| 17 | the node stops reporting a dead worker on every tick | 1 failure |
+| 18 | shutdown stops distinguishing a dead worker from a slow one | 1 failure |
+
+  Mutant 16 survived on the first pass: it staged to a hardcoded `/tmp` path
+  rather than to the test's `--workdir`, which the existing assertion could
+  not see. `test_two_names_do_not_erase_each_other_from_the_manifest` now
+  also asserts the lock directory holds nothing but `manifest.lock`, which
+  kills 16c (staging through *any* file) — and 16b shows the bytes-only
+  `save_manifest` contract is bound. The unowned-workdir path itself is gone
+  structurally: `update_manifest` no longer takes a workdir.
+- **No test weakened.** Three existing assertions changed, all in the
+  direction the review asked for: `test_a_stop_part_way_through_a_pass_returns_the_rest`
+  now requires the manifest it used to forbid (and requires it to say
+  `truncated_render`); `test_the_manifest_is_published_with_no_cache` passes
+  bytes because `save_manifest` no longer takes a path; the shared-manifest
+  double now raises a *shaped* `NoSuchKey` for a first run, so a transient
+  failure is distinguishable from an absent object.
+- **No test hangs.** `daemon=True` was left unpinned (that suggestion is out
+  of scope), so nothing in this pass can wedge the harness on it. Every new
+  thread assertion polls through the existing `_settle` helper with a
+  timeout.
+- **Not verified**: nothing was read from or written to the S3 bucket —
+  every S3 interaction in this pass is against injected doubles. The
+  `truncated_render` string is asserted against `index.html`'s renderer by
+  reading the page source (it prints `meta.status` verbatim with underscores
+  replaced), not by loading the page in a browser.
+
+### Notes for the re-review
+
+- `_render_dirty`'s *entry* check still returns without publishing anything:
+  a pass that aborts before rendering has nothing to announce. Only the
+  mid-pass truncation publishes. Two existing tests pin the first case.
+- The strict manifest read fails the run loudly on a read error, which costs
+  *this* `--name` a re-crawl next run. That is the deliberate trade (one
+  name's re-crawl vs. every other name's), and it is the same uncaught-raise
+  exit the round-3 entry already flagged as a suggestion at
+  `refresh_chart_tiles.py:544-552`.
