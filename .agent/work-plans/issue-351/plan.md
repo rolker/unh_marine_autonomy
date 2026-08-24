@@ -378,8 +378,12 @@ This is the one place a naive rewrite regresses badly, so spelling it out:
   behind a stalled PUT returns immediately, twenty offers behind a stall cost
   one send, the pending map cannot exceed its slot cap, `stop()` returns with
   a request in flight, a scheduled render pass stops on the stop event, a
-  flush past its deadline issues no request at all (manifest PUT included),
-  and `stop()` does not wait out a wedged upload. Plus the wiring the round-2
+  flush past its deadline issues no request at all, a flush truncated part
+  way through still announces the tiles it published, and `stop()` does not
+  wait out a wedged upload. Round 4 adds the worker-death battery: a raising
+  `put` costs one object, a raising `log_error` costs none, a death anywhere
+  else is counted, refuses further work and reports a dirty shutdown -- and
+  the node says so. Plus the wiring the round-2
   review found unbound: a new `test/test_node_upload_wiring.py` runs both
   real constructors against a recording transport, and `main()` — which had
   no test at all — is now bound for `--force` pass-through, the per-`--name`
@@ -409,6 +413,14 @@ change the structure instead**. What that means concretely:
    endpoint rather than of the object, so a second thread would stall with
    the first and only add a second shutdown path. `stop()` is bounded and the
    worker is a daemon thread, so shutdown cannot hang.
+   - **A worker that dies is visible** (round 4). Every send is contained, so
+     a `put` that raises outside its declared `transport_errors` -- or a
+     caller's `log_error` that raises -- costs that object, not the thread;
+     and a death that gets past that is recorded rather than left to
+     `threading.excepthook`. `dead()` returns the reason, `submit` refuses
+     (counting a drop), `stop()` reports NOT clean, and `state_renderer` logs
+     it on every tick and again at shutdown. Otherwise the public map freezes
+     mid-survey while every indicator reads healthy.
    - Acceptance is not publication: both ticks now compare against what the
      worker **confirmed**, so a failed upload is offered again next tick —
      the same retry contract `_put`'s return value used to carry.
@@ -417,8 +429,13 @@ change the structure instead**. What that means concretely:
    passed none — so a scheduled pass was as long as the endpoint made it and
    never noticed the stop event. Every pass now consults a predicate before
    every upload: the stop event for a scheduled pass, a wall-clock deadline
-   for the shutdown flush. The manifest PUT that used to follow the loop
-   unconditionally is inside the budget too. The 45 s join (sized against the
+   for the shutdown flush. A pass that runs out of budget part way through
+   still publishes its manifest, with `status: truncated_render` (round 4):
+   the page refreshes its coverage layer only when `rendered_tiles` moves, so
+   withholding it leaves the tiles the pass DID publish invisible -- and on
+   the shutdown flush there is no later pass to announce them. A pass that
+   aborts before rendering anything has nothing to announce and publishes
+   nothing. The 45 s join (sized against the
    non-existent ceiling) becomes a short `WORKER_JOIN_SECONDS = 10`; the
    flush is skipped only when the worker is genuinely inside a request, which
    is a warning rather than a hang.
@@ -431,15 +448,23 @@ change the structure instead**. What that means concretely:
    manifest.json` is one object describing every `--name` while the run lock
    is per `--name`, so two names running together erased each other's entry
    — costing the loser a full ~5,839-tile re-crawl of CCOM. It is now
-   re-read inside a lock, touching only its own key, staged through a
-   per-name local file. Local lock, so one host; two hosts would need a
+   re-read inside a lock, touching only its own key. That read is STRICT
+   (round 4): a GET that fails is not a manifest that is empty, and merging
+   into an empty one erases every other name exactly as the race did, so a
+   read failure raises instead. The merged JSON is PUT from memory -- no
+   staging file under `--workdir`, which is the world-writable tree
+   `lock_dir` refuses to keep a lock in and the tree whose contents are PUT
+   to the public prefix. Local lock, so one host; two hosts would need a
    conditional PUT (stated, not pretended).
 5. **The run lock moved out of `/tmp`.** `$XDG_RUNTIME_DIR/p11-tiles` (or
    `~/.cache/p11-tiles`), created `0700`, ownership and group/other-write
    checked before use, `O_NOFOLLOW` on the file. The lock records its
    holder's pid and start time: an ordinary overlap still exits 0, but a
    holder older than `LOCK_STALE_SECONDS` (6 h) exits non-zero so a wedged
-   lock stops reading as success forever.
+   lock stops reading as success forever. The remedy README gives is to KILL
+   the holder (round 4): `flock` is held on the inode, so deleting the lock
+   file releases nothing and the next run acquires a fresh inode immediately
+   -- two concurrent crawls of CCOM, which is what the lock exists to stop.
 6. **README** documents the operator-visible consequences: what happens when
    S3 is slow in each node, `--force` as the only remedy for a cache-policy
    change, the lock's location and its two exit codes, the aggregate sync
