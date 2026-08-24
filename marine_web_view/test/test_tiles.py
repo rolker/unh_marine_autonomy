@@ -174,3 +174,31 @@ def test_the_decoder_does_not_write_through_to_the_message_buffer():
     tiles.decode_band(tiles.INT16, data, 4, 1, 0.01, 0.0, nodata=-32768)
     assert bytes(data) == original, (
         'decode_band wrote through to the message buffer')
+
+
+def test_an_unrepresentable_sentinel_masks_nothing():
+    """A sentinel that cannot occur in this element type must match no cell.
+
+    Casting an out-of-range sentinel WRAPS: -32768 becomes 0 in uint8, so a
+    UINT8 band carrying a leftover INT16 sentinel would read every zero cell
+    as empty. That is real data silently erased, and it is the reason the
+    representability check exists.
+    """
+    values = [0, 1, 254, 255]
+    out = tiles.decode_band(tiles.UINT8, _pack(tiles.UINT8, values),
+                            4, 1, 1.0, 0.0, nodata=-32768)
+    assert [float(v) for v in out[0]] == [0.0, 1.0, 254.0, 255.0], (
+        'an unrepresentable sentinel wrapped and masked real cells')
+    assert not numpy.isnan(out).any()
+
+    # The same band with a representable sentinel still masks, so the guard
+    # cannot be satisfied by simply never masking anything.
+    masked = tiles.decode_band(tiles.UINT8, _pack(tiles.UINT8, values),
+                               4, 1, 1.0, 0.0, nodata=255)
+    assert numpy.isnan(masked[0][3])
+    assert not numpy.isnan(masked[0][0])
+
+    # Above the range wraps too: 256 -> 0 in uint8.
+    high = tiles.decode_band(tiles.UINT8, _pack(tiles.UINT8, values),
+                             4, 1, 1.0, 0.0, nodata=256)
+    assert not numpy.isnan(high).any()
