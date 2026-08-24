@@ -82,6 +82,9 @@ def test_a_prefix_cannot_climb_out_of_the_directory():
     assert _safe_prefix('/live/coverage/') == 'live/coverage'
     assert _safe_prefix('../../etc') == 'etc'
     assert _safe_prefix('live/../../../coverage') == 'live/coverage'
+    # Empty is what the node refuses at startup: every key would then start
+    # with a slash, os.path.join would discard local_dir, and every write
+    # would fail and retry forever.
     assert _safe_prefix('') == ''
     assert _safe_prefix('live//coverage') == 'live/coverage'
 

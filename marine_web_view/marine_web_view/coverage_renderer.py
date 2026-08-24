@@ -143,6 +143,7 @@ MAX_DIRTY_TILES_PER_GRID = 4096
 # because every grid then trips MAX_DIRTY_TILES_PER_GRID. 22 is the deepest
 # level the page's layers offer (maxZoom: 22 in web/index.html).
 DEFAULT_ZOOM = 15
+DEFAULT_PREFIX = 'live/coverage'
 MAX_SLIPPY_ZOOM = 22
 
 
@@ -221,7 +222,7 @@ class CoverageRenderer(Node):
         self.declare_parameter('band', 'depth')
         self.declare_parameter('zoom', DEFAULT_ZOOM)
         self.declare_parameter('bucket', 'unh-ccom-p11-live')
-        self.declare_parameter('prefix', 'live/coverage')
+        self.declare_parameter('prefix', DEFAULT_PREFIX)
         self.declare_parameter('profile', 'p11-renderer')
         self.declare_parameter('render_interval', 20.0)
         self.declare_parameter('request_interval', 5.0)
@@ -246,6 +247,16 @@ class CoverageRenderer(Node):
                                     self.zoom))
         self.bucket = self._param('bucket')
         self.prefix = _safe_prefix(str(self._param('prefix')))
+        if not self.prefix:
+            # An empty prefix (or one made empty by the traversal scrub) puts
+            # a leading slash on every key: os.path.join(local_dir, '/15/..')
+            # discards local_dir entirely, the realpath guard then refuses the
+            # write, and every object fails and retries for the life of the
+            # node. Refuse at startup instead of failing per tile forever.
+            self.get_logger().warn(
+                "prefix {!r} is empty after scrubbing; using '{}'".format(
+                    self._param('prefix'), DEFAULT_PREFIX))
+            self.prefix = DEFAULT_PREFIX
         self.profile = self._param('profile')
         self.dry_run = bool(self._param('dry_run'))
         self.local_dir = self._param('local_dir')
