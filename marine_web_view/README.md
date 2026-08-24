@@ -207,7 +207,7 @@ the catalog's back.
 | `render_interval` | `20.0` | seconds between render passes; must be positive and at most a day, or it falls back to 20 s with a warning (`create_timer` rejects a non-positive period) |
 | `request_interval` | `5.0` | seconds between `TileRequest` publications; validated the same way, falling back to 5 s |
 | `bucket` / `prefix` | `unh-ccom-p11-live` / `live/coverage` | an empty or malformed `bucket` **refuses to start** when `dry_run` is false: every upload would be a doomed S3 PUT in a retry loop that never drains, and defaulting instead would publish a survey's coverage somewhere nobody asked for |
-| `profile` | `p11-renderer` | scoped to `s3:PutObject` on `live/*`. Empty means "use the default credential chain" — the `--profile` flag is omitted rather than passed empty |
+| `profile` | `p11-renderer` | scoped to `s3:PutObject` on `live/*`. Empty means "use the default credential chain" — boto3 is handed no profile at all rather than an empty one |
 | `cache_control` | `20` | `max-age` stamped on each **tile**; matched to `render_interval` so a viewer does not hold a tile past its replacement. `meta.json` is deliberately not covered by it — see [The manifest](#the-manifest) |
 | `cache_budget_bytes` | `536870912` | resident tile-cache ceiling (512 MiB); `0` disables the bound |
 | `max_requests_per_message` | `256` | tiles asked for per `TileRequest`; the rest wait for the next interval |

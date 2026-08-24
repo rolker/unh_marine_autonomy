@@ -362,8 +362,9 @@ class CoverageRenderer(Node):
             self.prefix = DEFAULT_PREFIX
         # An empty profile is not an error: it means "use the default
         # credential chain", which is what a machine with an instance role or
-        # a plain ~/.aws/credentials wants. Passing `--profile ''` instead
-        # fails every upload. Omit the flag entirely in that case.
+        # a plain ~/.aws/credentials wants. Handing boto3 an empty profile
+        # name instead fails every upload, so it is coalesced to None where
+        # the uploader is built (below).
         self.profile = str(self._param('profile')).strip()
         self.dry_run = bool(self._param('dry_run'))
         if not self.dry_run and not _is_usable_bucket(self.bucket):
@@ -442,7 +443,8 @@ class CoverageRenderer(Node):
         # means "use the default credential chain" -- an EC2 instance role or
         # a plain ~/.aws/credentials -- which is what the 'no AWS profile
         # configured' info line above announces. Passing '' instead would
-        # fail every upload, exactly as `--profile ''` did.
+        # fail every upload: boto3.Session would look for a profile
+        # literally named ''.
         # state_renderer deliberately does NOT coalesce; see its own comment.
         # One PUT is bounded at connect_timeout + read_timeout = 5 + 25 =
         # 30 s, exactly the ceiling the CLI shell-out enforced at the process

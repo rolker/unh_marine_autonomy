@@ -127,10 +127,11 @@ def test_only_the_declared_error_classes_are_caught():
 def test_the_profile_reaches_the_client_factory_exactly_as_given():
     """Coalescing here would erase the two nodes' deliberate asymmetry.
 
-    coverage_renderer passes `profile or None` so an unset profile means the
-    default credential chain (an EC2 instance role); state_renderer passes its
-    profile through so a blanked one fails loudly. Both depend on this helper
-    not second-guessing the value on its way to boto3.Session.
+    The distinction lives in the two constructor call sites, not in any
+    flag: coverage_renderer passes `profile or None` so an unset profile
+    means the default credential chain (an EC2 instance role), while
+    state_renderer passes its profile through so a blanked one fails loudly.
+    Both depend on this helper not second-guessing the value it is handed.
     """
     seen = []
     real = s3_upload._boto3_client
