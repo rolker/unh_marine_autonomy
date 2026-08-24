@@ -617,9 +617,9 @@ The 14 remaining suggestions in the round-3 entry (validation call sites, `zoom:
 **Specialists**: Static Analysis (run, clean) | Governance | Plan Drift (no drift) | Claude Adversarial x2 (Lens A + Lens B, Deep) | Copilot off (default) | Local Adversarial **run** (qwen3.5:35b) -- 6 findings, **0 carried**, 1 weak corroboration (see False positives)
 
 ### Findings
-- [ ] (must-fix, Lens B + lead-verified against Leaflet source) `refreshCoverage()` reinstates the browser freeze the layer's `minZoom` exists to prevent, on a 20 s timer. The hide-below-`minZoom` rule lives only in `GridLayer._setView`, which sets `_tileZoom = undefined` when the map zoom is outside `options.minZoom/maxZoom` (leaflet-src.js:11653-11660). `redraw()` never calls it: it recomputes `_tileZoom` via `_clampZoom`, which consults only `minNativeZoom`/`maxNativeZoom` (leaflet-src.js:11330-11341, 11639-11651), so a hidden layer is un-hidden and `_update()` lays out the viewport at the single native zoom. `_update`'s `Math.abs(zoom - this._tileZoom) > 1` escape can never fire here -- both operands are clamped to the same native zoom, so the difference is permanently 0. At default `zoom:=15`, layer `minZoom` 13, map `minZoom` 8, 1920x1080: ~54 tiles at map zoom 15, ~510 at 13, ~2k at 12, ~33k at 10, ~518k at 8. Zooming out to see the whole survey area is the most ordinary thing an operator does on this page, and nothing resets `_tileZoom` until they manage to interact with the map again -- so it repeats every poll. Gate `refreshCoverage` on the layer being visible, or swap layers (`onAdd -> _resetView -> _setView` applies the `minZoom` rule correctly and fixes the blank-flash below for free) -- `web/index.html:479,512`
-- [ ] (must-fix, lead + Lens A + Lens B, three independent reads) The refresh is triggered by "a render pass happened", not "the tiles changed". `_render_dirty` calls `_publish_meta` on every pass and `_publish_meta` always writes a fresh wall-clock `stamp`; the README says so outright ("It is rewritten every pass, idle or not"). So `advanced` is true every `render_interval` in perpetuity, and every fire is a full Leaflet teardown-and-re-request of every tile in the layout -- with the sonar off, the boat docked, nothing changing, on a public page with unbounded viewers and no rate limit in front of it. The renderer already holds the right signal: `self._rendered` is a count of tiles actually published and is **not** in the manifest. Expose it and gate on it changing (compare for change, not `>`, so a restart that resets the counter still refreshes). `published_tiles` will not substitute -- it is `len(self._published)` and does not move when an already-published tile is re-rendered, which is the common case as a survey line grows inside a tile -- `web/index.html:508-512`, `coverage_renderer.py:1079,1166`
-- [ ] (must-fix, Lens A + lead, all by mutation) The new guards bind the *call token*, not the behaviour, so the round-3 must-fix is only half-pinned. Four mutations that restore the original defect and leave **129/129 green**: `!rebuilt && advanced` -> `rebuilt && advanced` (refreshes only on a rebuild, i.e. never again after the first poll); `const advanced = false`; `const advanced = true` (a dead renderer redraws forever -- the only thing bounding request volume against a dead renderer is unguarded); and `const rebuilt = buildCoverage(zoom)` -> `const rebuilt = false`, which deletes the **only call to `buildCoverage`** so the coverage layer is never built at all and nothing notices. Root cause of the last one: the definition-exclusion added this round compares `m.start()` (offset of `buildCoverage`) against `definition.start()` (offset of `function`, nine characters earlier), so it never excludes anything and `assert calls` is satisfied by the definition itself. The test passes only because the definition's parameter happens to be spelled `zoom`; renaming just that parameter fails the test with a message blaming the call site (verified). The file's own `_statement()` helper is the tool for asserting on the guard expression -- `test/test_page_layers.py:300-305,318-347`
+- [x] (must-fix, Lens B + lead-verified against Leaflet source) `refreshCoverage()` reinstates the browser freeze the layer's `minZoom` exists to prevent, on a 20 s timer. The hide-below-`minZoom` rule lives only in `GridLayer._setView`, which sets `_tileZoom = undefined` when the map zoom is outside `options.minZoom/maxZoom` (leaflet-src.js:11653-11660). `redraw()` never calls it: it recomputes `_tileZoom` via `_clampZoom`, which consults only `minNativeZoom`/`maxNativeZoom` (leaflet-src.js:11330-11341, 11639-11651), so a hidden layer is un-hidden and `_update()` lays out the viewport at the single native zoom. `_update`'s `Math.abs(zoom - this._tileZoom) > 1` escape can never fire here -- both operands are clamped to the same native zoom, so the difference is permanently 0. At default `zoom:=15`, layer `minZoom` 13, map `minZoom` 8, 1920x1080: ~54 tiles at map zoom 15, ~510 at 13, ~2k at 12, ~33k at 10, ~518k at 8. Zooming out to see the whole survey area is the most ordinary thing an operator does on this page, and nothing resets `_tileZoom` until they manage to interact with the map again -- so it repeats every poll. Gate `refreshCoverage` on the layer being visible, or swap layers (`onAdd -> _resetView -> _setView` applies the `minZoom` rule correctly and fixes the blank-flash below for free) -- `web/index.html:479,512`
+- [x] (must-fix, lead + Lens A + Lens B, three independent reads) The refresh is triggered by "a render pass happened", not "the tiles changed". `_render_dirty` calls `_publish_meta` on every pass and `_publish_meta` always writes a fresh wall-clock `stamp`; the README says so outright ("It is rewritten every pass, idle or not"). So `advanced` is true every `render_interval` in perpetuity, and every fire is a full Leaflet teardown-and-re-request of every tile in the layout -- with the sonar off, the boat docked, nothing changing, on a public page with unbounded viewers and no rate limit in front of it. The renderer already holds the right signal: `self._rendered` is a count of tiles actually published and is **not** in the manifest. Expose it and gate on it changing (compare for change, not `>`, so a restart that resets the counter still refreshes). `published_tiles` will not substitute -- it is `len(self._published)` and does not move when an already-published tile is re-rendered, which is the common case as a survey line grows inside a tile -- `web/index.html:508-512`, `coverage_renderer.py:1079,1166`
+- [x] (must-fix, Lens A + lead, all by mutation) The new guards bind the *call token*, not the behaviour, so the round-3 must-fix is only half-pinned. Four mutations that restore the original defect and leave **129/129 green**: `!rebuilt && advanced` -> `rebuilt && advanced` (refreshes only on a rebuild, i.e. never again after the first poll); `const advanced = false`; `const advanced = true` (a dead renderer redraws forever -- the only thing bounding request volume against a dead renderer is unguarded); and `const rebuilt = buildCoverage(zoom)` -> `const rebuilt = false`, which deletes the **only call to `buildCoverage`** so the coverage layer is never built at all and nothing notices. Root cause of the last one: the definition-exclusion added this round compares `m.start()` (offset of `buildCoverage`) against `definition.start()` (offset of `function`, nine characters earlier), so it never excludes anything and `assert calls` is satisfied by the definition itself. The test passes only because the definition's parameter happens to be spelled `zoom`; renaming just that parameter fails the test with a message blaming the call site (verified). The file's own `_statement()` helper is the tool for asserting on the guard expression -- `test/test_page_layers.py:300-305,318-347`
 - [ ] (suggestion, Lens B + lead) `redraw()` calls `_removeAllTiles()` before re-requesting anything (leaflet-src.js:11562), and with `cache_control` matched to `render_interval` the browser's copy is at or past expiry at every redraw, so the coverage mosaic goes blank for a full network round trip -- every 20 s, on the marginal links this page is watched over. The commit message and the comment both reason about *whether* tiles get re-requested; neither mentions the teardown. A layer swap keeps the old tiles painted -- `web/index.html:480`
 - [ ] (suggestion, lead) The new comment's cache claim is backwards. It says the `cache_control <= render_interval` matching "is what decides whether the browser can answer them from its own cache or has to go back to CloudFront" -- but matching max-age to the redraw period guarantees the object is expired every time it is re-requested, so it saves no requests at all; it bounds staleness. And uncovered tiles (most of the viewport over open water) return 4xx from S3 with no `Cache-Control` and no validators, so max-age never applies to them: the comment at `index.html:369` cites avoiding "one 403 per tile per pan" as a design win (and `:365` notes the layer "costs no third party anything per viewer" -- true, the bill is ours), which this converts into one 403 per tile per 20 s per viewer forever. `README.md:215`'s wording ("so a viewer does not hold a tile past its replacement") is the accurate framing -- `web/index.html:474-480`
 - [ ] (suggestion, lead) The README's Cost section models S3 PUTs only ("the **upload interval** is the cost lever") and the intro says the design "is indifferent to viewer count". True while the page requested each tile once; this change makes viewer-side GETs the dominant request term. Needs a viewer-side line alongside the PUT table -- `README.md:7-9,89-107`
@@ -645,3 +645,130 @@ The 14 remaining suggestions in the round-3 entry (validation call sites, `zoom:
 - Plan drift: **none**. Every file in this delta is in `plan.md`'s reconciled Files to Change; no new file, no approach deviation.
 - Local Adversarial fitted for the first time in two rounds (the source-only delta is 614 lines, well inside `num_ctx`), ran clean to completion, and contributed 0 carried findings from 6 -- consistent with its documented ~50% precision and over-confident-speculation failure mode. Its whole first-order thesis (rclpy attribute names) was disproved in one probe.
 - No file in this worktree was modified by this review; `git status` was clean before and after, and the live `coverage_renderer` (pid 4015824) was left running. All test copies, mutations and the Leaflet source lived under the session scratchpad and are removed.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-24 09:24 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-345 at `563a506`
+**PR**: #350 at `563a506`
+**Addressed**: `## Local Review (Pre-Push)` (round 4, 2026-08-24 00:57 -04:00, at `a8368bb`) -- its 3 must-fix items
+**Commits**: `d46fbac` (must-fix 1, landed before this pass), `834dae8` (must-fix 2), `563a506` (must-fix 3)
+
+### Actions
+- [x] must-fix 1 -- `refreshCoverage()` un-hiding a `minZoom`-hidden layer -- `web/index.html:479,512` (already fixed in `d46fbac` before this pass; box checked, not re-implemented)
+- [x] must-fix 2 -- the refresh fired on "a pass happened", not "the tiles changed" -- `web/index.html`, `coverage_renderer.py`
+- [x] must-fix 3 -- the sixth non-binding guard: the definition-exclusion excluded nothing -- `test/test_page_layers.py`
+
+Round-4 suggestions (8) and the 14 open round-3 suggestions were deliberately
+left open -- out of scope for this pass, and none of them is invalidated by it.
+One overlaps: suggestion 5 says the `refreshCoverage` comment's cache claim is
+backwards. That paragraph was left as-is; only the trigger prose above it was
+rewritten to match the new gate, so the suggestion is still actionable exactly
+as written.
+
+### Must-fix 2 -- the change signal
+
+`meta.json` gained `rendered_tiles` = `self._rendered`, the running total of
+tiles this process has actually published. It is written on the render thread,
+which is the only thread that mutates it, so it needs no lock; `_render_dirty`
+already calls `_render_pending` before `_publish_meta`, so the value published
+is this pass's. The page validates it through a new `saneCount()` and refreshes
+only when it **changes**:
+
+    const advanced = rendered !== null && rendered !== coverageRendered;
+    if (!rebuilt && advanced) refreshCoverage();
+
+Change rather than growth, so a renderer restart (which resets the counter to
+zero) still refreshes. `published_tiles` was rejected for the reasons the
+reviewer gave and the rejection is now asserted, not just argued: it is
+`len(self._published)`, so it does not move when an already-published tile is
+re-rendered -- the common case as a survey line grows inside a tile -- and it
+decreases when coverage is pruned.
+
+A manifest **without** the field reads as "no change", so the page will not
+refresh tiles against a renderer older than the field. That is the direction
+that costs liveness rather than money, and it is documented in the README.
+Liveness (`stamp`, `setCoverageAlive`, the readout) is untouched, so the
+manifest is still a heartbeat rewritten every pass.
+
+**Behavioural demonstration** (the requirement was: an idle pass must not
+refresh, a changing pass must). Four real manifests were generated by running
+the actual render pass through `test_render_pass._Pass`, and the page's own gate
+expression and `saneCount()` were lifted verbatim out of `web/index.html` by
+regex and evaluated over them in node -- no re-typed logic:
+
+    pass 1: rendered a tile           rendered_tiles=1  published_tiles=1  -> does NOT fire (layer rebuilt; all tiles requested anyway)
+    pass 2: idle                      rendered_tiles=1  published_tiles=1  -> does NOT fire   (stamp moved)
+    pass 3: idle                      rendered_tiles=1  published_tiles=1  -> does NOT fire   (stamp moved)
+    pass 4: re-rendered the SAME tile rendered_tiles=2  published_tiles=1  -> FIRES
+
+Passes 2 and 3 are where the old `stamp`-gated guard fired and the new one does
+not; pass 4 is the case `published_tiles` would have missed.
+
+### Must-fix 3 -- binding the guard
+
+Root cause confirmed as reported: `m.start()` is the offset of `buildCoverage`,
+`definition.start()` the offset of `function` nine characters earlier, so the
+exclusion excluded nothing and `assert calls` was satisfied by the definition.
+Fixed by comparing against `definition.start() +
+definition.group(0).index('buildCoverage')`, and a second assertion now requires
+a call from **inside** `pollCoverage()`'s span -- a call kept alive somewhere
+unreachable builds no layer either.
+
+The guard expression itself is now bound rather than the call token, in a new
+`test_the_coverage_refresh_is_gated_on_the_change_signal`: it splits the
+`if (...) refreshCoverage()` condition on `&&`, requires exactly the two terms,
+requires the first to be literally `!rebuilt`, follows the second term by name
+to its `const` definition, and asserts that definition references both the
+validated signal (`saneCount(meta.rendered_tiles)`) and the remembered
+`coverageRendered` -- so no constant, and no return to the stamp, can satisfy
+it.
+
+### Mutation evidence
+
+13 mutations, all on a scratch copy under the session scratchpad (never the
+worktree; `git status` was clean throughout and the copy is deleted). Baseline
+31/31 in the two touched files, 132/132 in the package. **13 caught, 0
+uncaught.** The four the reviewer named as leaving 129/129 green are the first
+four:
+
+| Mutation | Result |
+|---|---|
+| `const rebuilt = buildCoverage(zoom)` -> `const rebuilt = false` (deletes the ONLY call) | **caught** -- "buildCoverage() is defined but never called: the coverage layer is never built and the map shows no coverage at all" |
+| `!rebuilt && advanced` -> `rebuilt && advanced` | **caught** -- "dropping the negation makes it refresh ONLY on a rebuild, i.e. never again after the first poll" |
+| `const advanced = false` | **caught** -- not a comparison against the remembered counter |
+| `const advanced = true` | **caught** -- same assertion |
+| `advanced` back to `coverageStamp === null \|\| stamp > coverageStamp` | **caught** -- "gated on the manifest stamp again" |
+| delete `coverageRendered = rendered;` | **caught** -- remembered signal never updated |
+| `saneCount(meta.rendered_tiles)` -> raw `meta.rendered_tiles` | **caught** -- validator bypassed |
+| drop the `rendered !== null` term | **caught** -- null signal fires one spurious full refresh |
+| `if (...) refreshCoverage();` -> unguarded `refreshCoverage();` | **caught** -- no guard found |
+| renderer omits `rendered_tiles` | **caught** (`test_render_pass`) |
+| `'rendered_tiles': published_tiles` | **caught** -- "re-rendering an already-published tile did not move the change signal" |
+| `'rendered_tiles': 0` | **caught** |
+| `'rendered_tiles': int(time.time())` (moves on an idle pass) | **caught** -- "an idle pass moved the change signal" |
+
+### Verification
+
+- `./core_ws/build.sh marine_web_view` clean; `./core_ws/test.sh marine_web_view`
+  = **132 tests, 0 errors, 0 failures, 0 skipped** (130 before; +1 page test,
+  +1 renderer test).
+- Static analysis via the ament wrappers (not bare flake8): `test_flake8`,
+  `test_pep257`, `test_copyright` -- **3 passed**, run individually as well as
+  in-suite.
+- The live `coverage_renderer` (pid 4015824) was left running; the package was
+  rebuilt over its symlink-install as expected.
+
+### Deployment consequence -- a page redeploy IS required
+
+The renderer change is **additive and backward-compatible**: `rendered_tiles`
+is a new manifest field, and the page currently on CloudFront ignores unknown
+fields, so it keeps behaving exactly as before (refreshing on every stamp) until
+it is replaced. The **cost fix does not take effect until `web/index.html` is
+redeployed** -- that is the half of this change that stops the per-viewer
+request storm. The reverse pairing is also safe: the new page against an older
+renderer simply does not refresh tiles (it reads a missing field as "no
+change"), so the two can be rolled out in either order without breaking, but
+neither order delivers the fix without the page going out.
