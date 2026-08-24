@@ -291,3 +291,36 @@ Lifecycle: **Implementation** → **review-code** (re-review the fixes)
 - Two Lens B claims were spot-checked and NOT carried: the request-queue "starvation past index 256" (each `reconcile` re-derives `to_request` and drops what arrived, so the head advances) and the "hundreds of thousands of tiles" re-render scale (wrong by orders of magnitude for a realistic survey at z15).
 - Local Adversarial unavailable for the second round running: the diff exceeds the server's `num_ctx`, and the source-only delta OOM-killed `llama-server` twice. No findings either way.
 - No file in this worktree was modified by this review. The mutation test ran on a copy under the session scratchpad, which has been deleted; `git status` is clean. No sub-agent edited the worktree this round.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-23 21:05 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+
+**PR**: #350 at `546490a`
+**Sources**: 3 (Copilot @ `546490a`, Local Review (Pre-Push) R2 @ `2df3823`, CI rollup @ `546490a`)
+**Cross-source confirmations**: 8
+**CI**: failures-noted -- `build` job FAILS at rosdep install
+
+### Findings
+- [ ] (cross-confirmed, must-fix) Orphaned-layer guard does not bind for the coverage layer: search window runs to end-of-page and picks up trail/hull `.addTo(map)`. Limit it to the end of the construction statement -- `marine_web_view/test/test_page_layers.py:88`
+- [ ] (cross-confirmed, must-fix) Colour-direction guard passes under inversion (`abs(table[255][2]-table[0][2]) > 40` is symmetric). Assert exact endpoint mapping via `ramp_colour()` for indices 0 and 255 -- `marine_web_view/test/test_colour.py:146`
+- [ ] (cross-confirmed, must-fix) `assert node._wake.is_set() or node.uploads is not None` is unfailable -- `uploads` is always a list. Assert the wake flag / thread identity directly -- `marine_web_view/test/test_render_pass.py:231`
+- [ ] (cross-confirmed, must-fix) Tile geometry change on an already-cached index is patched into the stale-geometry array: larger wedges the index permanently, smaller mis-georeferences silently. Detect `held.shape != (msg.height, msg.width)`, drop cached state + possession, rebuild -- `marine_web_view/marine_web_view/coverage_renderer.py:481`
+- [ ] (cross-confirmed, must-fix) All-NaN drop path pops only `_tiles`, leaving `_applied`, `_touch` and reconciler possession -- the catalog never re-requests a tile the node no longer holds -- `marine_web_view/marine_web_view/coverage_renderer.py:503`
+- [ ] (cross-confirmed, must-fix) `meta.json` `stamp` is ROS time but the page computes age against `Date.now()/1000`; under `use_sim_time` (the documented sim workflow) the page reports `stale` forever. Publish wall clock for liveness -- `marine_web_view/marine_web_view/coverage_renderer.py:814`
+- [ ] (cross-confirmed, must-fix) `zoom` unvalidated: negative raises `ValueError: negative shift count` uncontained in `_on_tile`/`_on_catalog` and kills the node on the first tile; too-large silently renders nothing. Validate/clamp at init and log the fallback -- `marine_web_view/marine_web_view/coverage_renderer.py:219`
+- [ ] (cross-confirmed, must-fix) Fabricated GitHub URL `marine_colormap/issues/137` does not resolve; AGENTS.md forbids constructing GitHub URLs. Point the ADR-0001 expiry gate at the real tracking issue (#349) -- `marine_web_view/README.md:321`
+- [ ] (must-fix, CI) `<exec_depend>awscli</exec_depend>` breaks the hosted `build` job: `E: Package 'awscli' has no installation candidate` on noble (reproduced locally: `apt-cache policy awscli` -> `Candidate: (none)`). The whole job aborts before build/test. The declaration is truthful (the node shells out to `aws`) but unsatisfiable, and the operator's AWS CLI is a userland v2 install apt could never provide. Drop the key and document the CLI as an operator-provided prerequisite, or move uploads to `python3-boto3` -- `marine_web_view/package.xml`
+- [ ] (suggestion, cross-confirmed) `_safe_prefix` can return `''`, giving keys `/15/x/y.png`; `os.path.join` then discards `local_dir` and every object fails and retries forever. Reject an empty prefix at startup -- `coverage_renderer.py:772`
+- [ ] (suggestion, cross-confirmed) Eviction plus a neighbouring grid sharing a slippy tile uploads a transparent PNG over still-surveyed ground -- `coverage_renderer.py:536`
+
+### Notes
+- **8 of 8 local must-fixes were independently confirmed by Copilot** -- a different model family, reviewing at the exact head SHA. This directly closes the single-model-family gap flagged in the PR description (Local Adversarial OOM-killed both rounds). No local must-fix was contradicted, and Copilot raised no finding the local review had missed.
+- Copilot produced **zero false positives** across 7 inline comments; comment 6 merges local findings 4 and 5 into one.
+- The head moved from `2df3823` to `546490a` by a progress.md commit only (`git diff --stat` = 1 file, 62 insertions), so the round-2 findings apply verbatim at the reviewed head.
+- The 27 remaining suggestions from the round-2 `## Local Review (Pre-Push)` entry stay open there and are not re-listed here; triage them from that entry.
+- CI `build` failure is a **new** finding from neither review: local `build.sh`/`test.sh` do not run `rosdep install`, so 99/99 green locally coexists with a red hosted build.
+
+### False positives
+- (none) All 7 Copilot inline comments were verified valid against the code at head; two (`meta.stamp` wall-clock mismatch, unvalidated `zoom`) were re-verified directly during this triage.
