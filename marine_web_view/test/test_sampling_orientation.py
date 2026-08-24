@@ -160,3 +160,114 @@ def test_a_gap_in_the_finer_tile_does_not_erase_the_coarser_one():
     covered = numpy.isfinite(out)
     assert covered.any(), 'the coarse coverage was erased by an empty finer tile'
     assert numpy.allclose(out[covered], -10.0)
+
+
+def _latitude_grids(level, south, west, north, east):
+    """Return grids over a box whose every cell holds its own centre latitude.
+
+    Sampling such a cache makes the output image self-describing: pixel row r
+    comes back holding the latitude the sampler actually read it from, to
+    within half a cell.
+    """
+    indices = set()
+    for lat in numpy.linspace(south + 1e-6, north - 1e-6, 50):
+        for lon in numpy.linspace(west + 1e-6, east - 1e-6, 50):
+            indices.add(gggs.grid_index_for(level, float(lat), float(lon)))
+    grids = {}
+    for row, col in indices:
+        g_south, _, g_north, _ = gggs.grid_bounds(level, row, col)
+        cells = gggs.CELL_ROWS_PER_GRID
+        centres = g_south + ((numpy.arange(cells) + 0.5)
+                             * (g_north - g_south) / cells)
+        grids[(level, row, col)] = numpy.repeat(
+            centres[:, None], gggs.CELL_COLUMNS_PER_GRID,
+            axis=1).astype(numpy.float32)
+    return grids
+
+
+def test_image_rows_are_sampled_on_mercator_latitudes():
+    """The sampler must place rows by inverting the projection, not evenly.
+
+    A slippy tile is linear in Mercator y, not in latitude. Spacing the 256
+    rows evenly in latitude reads every row from ground it does not cover --
+    sub-pixel at zoom 15, but the coarse zooms the `zoom` parameter admits are
+    the whole justification for the fix, and there the error is several pixel
+    rows of vertical stretch.
+
+    `gggs.tile_pixel_latitudes` is pinned in isolation elsewhere; this pins
+    that `_sample_tile` actually USES it. Reverting the call site to even
+    latitude interpolation left the suite green.
+
+    Zoom 5 near 43 N: the two spacings differ by up to 0.14 deg, about 17
+    level-0 cells and 4.5 pixel rows, so the two hypotheses are far apart
+    compared with the half-cell quantisation of the answer.
+    """
+    zoom = 5
+    x, y = gggs.lonlat_to_tile(zoom, -70.0, 43.0)
+    south, west, north, east = gggs.tile_bounds(zoom, x, y)
+    grids = _latitude_grids(0, south, west, north, east)
+    out = _Sampler(grids, zoom)._sample_tile(x, y)
+
+    sampled = numpy.nanmedian(out, axis=1)
+    covered = numpy.isfinite(sampled)
+    assert covered.all(), 'the synthetic cache did not cover the whole tile'
+
+    mercator = numpy.array(gggs.tile_pixel_latitudes(zoom, y, 256))
+    even = north - (numpy.arange(256) + 0.5) * (north - south) / 256.0
+    half_cell = gggs.grid_angular_span(0) / gggs.CELL_ROWS_PER_GRID / 2.0
+
+    from_mercator = numpy.max(numpy.abs(sampled - mercator))
+    from_even = numpy.max(numpy.abs(sampled - even))
+    assert from_mercator <= half_cell * 1.01, (
+        'image rows are {:.4f} deg away from the Mercator row latitudes -- '
+        'more than the half-cell {:.4f} deg the sampling quantises to, so '
+        'the rows are not placed by inverting the projection'
+        .format(from_mercator, half_cell))
+    assert from_even > half_cell * 4, (
+        'even-latitude spacing is indistinguishable from Mercator spacing at '
+        'this zoom ({:.4f} deg apart) -- the test would pass against the bug'
+        .format(from_even))
+
+
+def test_image_columns_are_sampled_at_pixel_centres():
+    """Longitudes must be the pixel CENTRES, not the pixel left edges.
+
+    The `+ 0.5` on `lons` is a half-pixel shift of the whole image. It is small
+    but systematic, and it was unbound: dropping it left the suite green.
+
+    Zoom 15 against a level-10 grid: a pixel is about 5 cells wide, so half a
+    pixel is ~2.6 cells -- resolvable against the one-cell quantisation.
+    """
+    level = 10
+    row, col = gggs.grid_index_for(level, 43.07, -70.71)
+    g_south, g_west, g_north, g_east = gggs.grid_bounds(level, row, col)
+    cells = gggs.CELL_COLUMNS_PER_GRID
+    centres = g_west + (numpy.arange(cells) + 0.5) * (g_east - g_west) / cells
+    grid = numpy.repeat(centres[None, :], gggs.CELL_ROWS_PER_GRID,
+                        axis=0).astype(numpy.float32)
+
+    zoom = 15
+    x, y = gggs.lonlat_to_tile(zoom, (g_west + g_east) / 2.0,
+                               (g_south + g_north) / 2.0)
+    south, west, north, east = gggs.tile_bounds(zoom, x, y)
+    out = _Sampler({(level, row, col): grid}, zoom)._sample_tile(x, y)
+
+    columns = numpy.flatnonzero(numpy.isfinite(out).any(axis=0))
+    assert len(columns) > 32, 'too few covered columns to judge the offset'
+    sampled = numpy.array([numpy.nanmedian(out[:, c]) for c in columns])
+
+    span = (east - west) / 256.0
+    cell = (g_east - g_west) / cells
+    pixel_centres = west + (columns + 0.5) * span
+    pixel_edges = west + columns * span
+
+    from_centres = numpy.max(numpy.abs(sampled - pixel_centres))
+    from_edges = numpy.max(numpy.abs(sampled - pixel_edges))
+    assert from_centres <= cell, (
+        'columns are sampled {:.2e} deg from the pixel centres, more than '
+        'the {:.2e} deg cell they quantise to -- the half-pixel offset is '
+        'gone'.format(from_centres, cell))
+    assert from_edges > cell * 2, (
+        'pixel centres and pixel edges are indistinguishable here ({:.2e} '
+        'deg apart, cell {:.2e}) -- the test would pass against the bug'
+        .format(from_edges, cell))
