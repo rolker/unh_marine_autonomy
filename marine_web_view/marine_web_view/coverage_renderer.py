@@ -1055,8 +1055,10 @@ class CoverageRenderer(Node):
         the stop event between tiles, so the join wins unless it is inside a
         request; the flush stops at a wall-clock deadline it checks between
         tiles too; and neither waits on the other. Worst case is
-        WORKER_JOIN_SECONDS + SHUTDOWN_FLUSH_SECONDS plus whatever single
-        request was already in flight when the stop arrived.
+        WORKER_JOIN_SECONDS + SHUTDOWN_FLUSH_SECONDS, plus the manifest PUT
+        every pass ends with (truncated or not -- see `_render_dirty`), plus
+        whatever single request was already in flight when the stop arrived.
+        Neither of those last two is budgeted; both are single PUTs.
         """
         if self._stop.is_set():
             return
@@ -1211,9 +1213,17 @@ class CoverageRenderer(Node):
             return
         self._render_pending(abort)
         if abort():
-            # Out of budget. `_publish_meta` is another PUT, and publishing
-            # a manifest whose counts describe a truncated pass would report
-            # the truncation as a completed render anyway.
+            # Out of budget, with tiles already PUT. The manifest is what
+            # ANNOUNCES them: the page refreshes its layer only when
+            # `rendered_tiles` moves (see index.html's pollCoverage), so
+            # skipping this PUT means the tiles this pass did publish are
+            # invisible until some later pass moves the counter -- and on the
+            # shutdown flush, where truncation is likeliest, there is no later
+            # pass. That is the exact loss the flush exists to prevent.
+            # The manifest can say what happened rather than overclaim: the
+            # `status` field is carried for precisely this, and the page
+            # renders it verbatim.
+            self._publish_meta('truncated_render')
             return
         # After the pass, so the counts the page shows are this pass's.
         age = self._datum_age()

@@ -437,8 +437,10 @@ def test_the_shutdown_flush_is_bounded():
     ceiling (see `_boto3_client`), so against a large mosaic and a wedged
     endpoint an unbounded flush is hours -- with the operator's Ctrl-C
     already spent. Past the deadline the remainder goes back in the dirty
-    set, and the manifest PUT that used to follow the loop unconditionally
-    (one more request, outside the budget) is skipped too.
+    set, and nothing is published at all -- not even the manifest, because a
+    pass that aborted before it rendered anything has nothing to announce.
+    (A pass truncated part way through DOES publish its manifest; see
+    `test_a_stop_part_way_through_a_pass_returns_the_rest`.)
     """
     node = _Pass()
     node._dirty.update((x, 0) for x in range(5))
@@ -491,10 +493,17 @@ def test_a_stop_part_way_through_a_pass_returns_the_rest():
     assert len(node._dirty) == 3, node._dirty
     assert any('stopped with 3 tile(s) left' in line
                for line in node._logger.lines), node._logger.lines
-    # And no manifest: `_publish_meta` is one more request, outside the
-    # budget the pass just ran out of, and its counts would describe a
-    # truncated pass as a completed render.
-    assert not node.meta, 'the manifest PUT ran after the pass was stopped'
+    # And the manifest IS published, saying what happened. The page refreshes
+    # its coverage layer only when `rendered_tiles` moves, so without this PUT
+    # the two tiles that did land are in the bucket and invisible -- and on
+    # the shutdown flush, which is where a truncated pass is likeliest, there
+    # is no later pass to announce them.
+    assert node.meta, (
+        'tiles were published and never announced; the page refreshes on '
+        'rendered_tiles, so a viewer never requests them')
+    assert node.meta[-1]['status'] == 'truncated_render', (
+        'a truncated pass reported as a completed render')
+    assert node.meta[-1]['rendered_tiles'] == 2, node.meta[-1]
 
 
 def test_a_second_interrupt_during_shutdown_does_not_skip_cleanup():

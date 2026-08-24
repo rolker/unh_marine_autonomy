@@ -377,6 +377,11 @@ heartbeat:
   manifest at all.
 
 - `status` says what the pass actually did. `ok` is a normal render;
+  `truncated_render` means the pass ran out of budget — the stop event on a
+  scheduled pass, the flush deadline on the way out — so some tiles it had
+  published are in the bucket while the rest stayed dirty; the manifest is
+  published anyway, because it is what tells the page to re-request the tiles
+  that *did* land, and on the shutdown flush there is no later pass to do it;
   `waiting_for_chart_datum` means no offset has been read yet and nothing was
   coloured; `stale_chart_datum` means the transform the offset came
   from is more than `DATUM_STALE_SECONDS` (60 s) old and `chart_datum_age`
