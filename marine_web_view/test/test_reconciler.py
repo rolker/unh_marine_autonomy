@@ -146,3 +146,21 @@ def test_empty_catalog_prunes_everything_old_enough():
     r.mark_have(B, 100)
     _, to_prune = r.reconcile([], generation=200)
     assert sorted(to_prune) == sorted([A, B])
+
+
+def test_an_index_of_the_wrong_type_is_invalid_rather_than_fatal():
+    """The predicate must answer False, never raise.
+
+    It guards a subscription callback against wire input, so an escape from
+    here is a node death rather than a dropped message. Unpacking three
+    members proves nothing about them: a string level survives the unpack and
+    then raises `TypeError` from the comparison, and a float level raises from
+    `1 << level` inside `row_count`.
+    """
+    for index in (None, 3, 'abc', (1, 2), (1, 2, 3, 4),
+                  ('ten', 17801, 13988), (10.5, 17801, 13988),
+                  (10, None, 13988), (10, 17801, 'col'),
+                  (10, 17801, [13988])):
+        assert is_valid_index(index) is False, index
+
+    assert is_valid_index((10, 17801, 13988)) is True

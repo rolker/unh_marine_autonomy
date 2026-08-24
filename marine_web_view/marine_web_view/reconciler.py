@@ -60,16 +60,24 @@ from marine_web_view import gggs
 
 
 def is_valid_index(index):
-    """Return True if (level, row, column) is a real GGGS grid."""
+    """Return True if (level, row, column) is a real GGGS grid.
+
+    This is a validity predicate over untrusted input, so it answers False
+    rather than raising for anything it cannot make sense of. Guarding only
+    the unpack was half the job: a three-member index whose members are not
+    numbers passes the unpack and then raises `TypeError` from the
+    comparisons -- or from `1 << level` inside `row_count` -- which escapes
+    into the subscription callback the guard exists to protect.
+    """
     try:
         level, row, column = index
+        if level < 0 or level > gggs.MAX_LEVEL or row < 0 or column < 0:
+            return False
+        if row >= gggs.row_count(level):
+            return False
+        return column < gggs.column_count(level, row)
     except (TypeError, ValueError):
         return False
-    if level < 0 or level > gggs.MAX_LEVEL or row < 0 or column < 0:
-        return False
-    if row >= gggs.row_count(level):
-        return False
-    return column < gggs.column_count(level, row)
 
 
 class TileCatalogReconciler:
