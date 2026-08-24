@@ -347,3 +347,136 @@ below.
 - [ ] (suggestion) `refresh_chart_tiles.main()` has no test coverage at all: the `written == 0`, 5%-failure and `if up_failed: return 1` gates are verified only by reading — `scripts/refresh_chart_tiles.py:588`
 - [x] (suggestion) the `## Implementation` entry's "What could NOT be verified here" now contradicts the PR body and the operator's actual verification (real client exercised against S3, clean `rosdep install`, 161 tests with and without boto3); update the timeline so the record matches — `.agent/work-plans/issue-351/progress.md`
 - [ ] (suggestion) instruction candidate, proposal only: `s3_upload.py`'s lazy-import-plus-injectable-client pattern is a reusable answer to "declare a runtime SDK via rosdep but keep the tests runnable without it" and generalises beyond boto3 — `.agent/knowledge/ros2_development_patterns.md`
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-24 14:47 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-351 at `48f0afb`
+**PR**: #353
+**Addressed**: `## Local Review (Pre-Push)` of 2026-08-24 14:27 -04:00 at `a75dec3` — all 4 must-fixes and the 4 test gaps it verified as surviving mutants, plus the stale-record suggestion. The remaining 8 suggestions stay open and unchecked.
+**Commits**: `816d0d2`, `8f25a3b`, `7b43d7f`, `95c8029`, `c6a953e`, `80488ed`, `535826c`, `46e3ad2`, `48f0afb`
+
+### The retry decision, with its arithmetic
+
+**`max_attempts: 1` in the two nodes** — the review's preferred option, taken.
+
+botocore counts `max_attempts` as TOTAL attempts (verified in the installed
+botocore 1.34.46: `MaxAttemptsChecker.is_retryable` returns
+`attempt_number < self._max_attempts`, so `1` never retries), and both connect
+and read timeouts are retryable. The worst case for one PUT is therefore
+`max_attempts * (connect_timeout + read_timeout)`:
+
+| Node | connect | read | at 4 attempts | at 1 attempt | old CLI cap |
+|---|---|---|---|---|---|
+| `state_renderer` | 5 | 15 | 80 s | **20 s** | 20 s (`subprocess.run(timeout=20)`) |
+| `coverage_renderer` | 5 | 25 | 120 s | **30 s** | 30 s (`subprocess.run(timeout=30)`) |
+
+One attempt restores each node's old ceiling *exactly*, which is what
+`state_renderer._put` (on `rclpy.spin`'s single-threaded executor) and
+`coverage_renderer.stop()`'s `join(timeout=45.0)` were both built around.
+Nothing is lost: both nodes already retry on their own schedule — the next
+timer tick, or the tile staying dirty for the next render pass — which is what
+both docstrings say and what the CLI shell-out did. The three comments that
+asserted the opposite now state this arithmetic, and
+`coverage_renderer.stop()`'s comment now names the 30 s figure its 45 s join is
+sized against.
+
+**The cron script is the opposite case and keeps SDK retries** — a run gets no
+second chance for hours, and one failed PUT withholds the whole manifest. The
+budget is sized instead: `s3_client(profile, max_seconds, attempts)` solves
+`read_timeout` from the ceiling it is handed, so
+`attempts * (connect + read)` lands on the old cap and cannot drift from the
+number written beside it. `main()` builds one client per cap — 120 s for the
+uploads and the manifest write, 60 s (2 attempts) for the manifest read.
+
+### Wall-clock bounds restored on the cron script
+
+| Operation | Old cap | Restored as |
+|---|---|---|
+| `aws s3 sync` | `timeout=3600` | `sync_dir(deadline_seconds=3600)` — an aggregate deadline; jobs not started by it fail rather than run, so the manifest is withheld and the next run finishes the job |
+| manifest `cp` (write) | `timeout=120` | `s3_client(profile, MANIFEST_WRITE_SECONDS)` → 3 × (10 + 30) |
+| manifest `cp -` (read) | `timeout=60` | `s3_client(profile, MANIFEST_READ_SECONDS, attempts=2)` → 2 × (10 + 20) |
+
+**A lockfile does belong here** — `acquire_run_lock()` takes a per-`--name`
+`flock` before the first request to CCOM. This is not belt and braces: a run
+takes most of an hour at the default `--rate`, so cron re-entry is the realistic
+case, and two overlapping runs double the request rate against the server this
+script's own docstring says to ask before loading harder — while both write the
+same `--workdir`. Per `--name`, because that is the unit that shares a workdir
+subtree and an S3 prefix; two different layers are a deliberate operator choice
+and may run together. flock is released by the kernel on exit, so a killed run
+strands nothing.
+
+### `sync_dir`'s honesty, and the metadata gap
+
+The docstring now says **better on skipping, worse on metadata** — not
+"strictly better". `list_objects_v2` returns no `CacheControl`/`ContentType`,
+so a change to `TILE_EXTRA_ARGS` reaches only tiles whose pixels also changed.
+`sync_dir(force=True)` is new and is wired to `--force`, which previously only
+re-rendered: that is the remedy an operator has today for propagating a policy
+change. A metadata-only path that avoids the ~hour of CCOM requests a re-render
+costs (a re-upload-from-workdir mode, or a `head_object` per key) is named in
+the docstring as an explicit follow-up rather than silently implied.
+
+### Mutation evidence — 12 mutations applied, 12 caught
+
+Each applied one at a time with `PYTHONDONTWRITEBYTECODE=1`, the relevant tests
+re-run, and the source restored and diffed against the original.
+
+| Mutation | Caught by |
+|---|---|
+| `max_attempts` 1 → 4 | `test_the_client_config_is_the_per_put_time_budget` + both `test_one_put_stays_under_the_ceiling_each_node_was_built_around` cases |
+| retry mode `standard` → `legacy` | `test_the_client_config_is_the_per_put_time_budget` |
+| `profile_name=profile` → `profile or None` | `test_the_profile_reaches_boto3_session_uncoalesced` |
+| module-scope `import boto3` (with boto3 INSTALLED) | `test_importing_the_module_does_not_import_boto3` |
+| paginator truncated to its first page | `test_every_page_of_the_listing_is_read` |
+| aggregate deadline check removed | `test_a_sync_past_its_deadline_stops_instead_of_overrunning` |
+| `SYNC_DEADLINE_SECONDS` 3600 → 86400 | same |
+| `force` ignored (always compare) | `test_force_reuploads_unchanged_tiles` |
+| `flock` call removed from the run lock | `test_a_second_run_for_the_same_name_is_locked_out` |
+| request budget blown (3 attempts → 5, fixed 60 s read) | `test_one_s3_request_stays_under_the_cap_the_shell_out_enforced` |
+| dry-run gate deleted in `state_renderer` | `test_state_renderer_builds_no_client_on_a_dry_run` |
+| dry-run gate deleted in `coverage_renderer` | `test_coverage_renderer_builds_no_client_on_a_dry_run` |
+
+The dry-run gate is the one the review called most important, and binding it
+needed the only test module here that builds the **real** ROS nodes — the gate
+lives in `__init__` and nothing short of running it binds anything. Discovery is
+turned OFF and the domain moved to 101 so a test run cannot reach the renderers
+running on this host; both constructions take about a tenth of a second.
+
+### Verification
+
+- Build: `./core_ws/build.sh marine_web_view` — clean.
+- Tests: `./core_ws/test.sh marine_web_view` — **172 tests, 0 errors,
+  0 failures, 0 skipped** (up from 161; 11 new tests). `ament_flake8`,
+  `ament_pep257` and `ament_copyright` are in that count and green — flake8 via
+  the ament wrapper against the package's own config, which caught two CNL100s
+  and an I100 that bare flake8 did not.
+- boto3/botocore **1.34.46 are installed on this host** and the suite passes
+  with them present; `test_importing_the_module_does_not_import_boto3` still
+  binds under that condition (mutation above). The new Config tests execute the
+  real `_boto3_client` body against stand-in `boto3`/`botocore` modules
+  installed with `monkeypatch.setitem`, so the SDK is still never imported.
+- Nothing was uploaded to or deleted from the bucket; no S3 access at all was
+  made from this pass. The production renderers running out of
+  `layers/main/core_ws` were not touched.
+- `plan.md` is synced: the three claims the review falsified are corrected in
+  place and marked as corrections rather than quietly rewritten.
+
+### Actions
+- [x] (must-fix) retry ceiling — `max_attempts: 1`; three comments corrected — `marine_web_view/s3_upload.py:71`, `state_renderer.py:238`, `coverage_renderer.py:446`, `coverage_renderer.py:1035`
+- [x] (must-fix) process-level caps on the cron script, aggregate sync deadline, and a run lock — `scripts/refresh_chart_tiles.py`
+- [x] (must-fix) `sync_dir` docstring corrected; `--force` now re-uploads; metadata path named as a follow-up — `scripts/refresh_chart_tiles.py`
+- [x] (must-fix) CLI-era `--profile` prose removed — `README.md:210`, `coverage_renderer.py:365`, `coverage_renderer.py:445`, `test/test_s3_upload.py`
+- [x] (suggestion) test gap: `list_objects_v2` pagination — `test/test_chart_tile_sync.py`
+- [x] (suggestion) test gap: the whole `Config` — `test/test_s3_upload.py`
+- [x] (suggestion) test gap: profile passthrough past the factory — `test/test_s3_upload.py`
+- [x] (suggestion) test gap: no client on a dry run, BOTH nodes — `test/test_dry_run_needs_no_aws.py`
+- [x] (suggestion) the stale "What could NOT be verified here" record — `.agent/work-plans/issue-351/progress.md`
+
+### Still open (out of scope this round)
+The other 8 suggestions from the source review are left unchecked, including
+the pre-existing `load_manifest` blanket-`except` that reads `AccessDenied` as
+first-run.
