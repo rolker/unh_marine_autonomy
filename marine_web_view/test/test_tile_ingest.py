@@ -522,3 +522,33 @@ def test_nothing_pending_publishes_nothing():
     node = _Requester()
     node._send_requests()
     assert not node._requests.messages
+
+
+def test_an_unusable_interval_falls_back_to_the_default():
+    """Timer periods are parameters, and rclpy rejects a non-positive one."""
+    for bad in (0, -1, 0.0, float('nan'), float('inf'), 'soon', None,
+                coverage_renderer.MAX_INTERVAL_SECONDS + 1):
+        assert coverage_renderer.sane_interval(bad, 20.0) == (20.0, False), bad
+    for good in (0.1, 5.0, 20, coverage_renderer.MAX_INTERVAL_SECONDS):
+        assert coverage_renderer.sane_interval(good, 20.0) == (
+            float(good), True), good
+
+
+def test_the_render_worker_is_started_after_everything_that_can_raise():
+    """A worker started early outlives a constructor that then fails.
+
+    `main()` binds `node` only if the constructor returns, so a raise after
+    `_worker.start()` leaves a live render thread nobody can `stop()` --
+    sampling, encoding and uploading against a half-built node. Constructing
+    a real node here would need an rclpy context and a live transport, so
+    this pins the ordering in the source instead.
+    """
+    import inspect
+
+    source = inspect.getsource(CoverageRenderer.__init__)
+    started = source.index('self._worker.start()')
+    for later in ('create_timer', 'declare_parameter', 'create_subscription',
+                  'create_publisher'):
+        assert source.rindex(later) < started, (
+            '{} runs after the render worker is started; a failure there '
+            'strands the thread'.format(later))

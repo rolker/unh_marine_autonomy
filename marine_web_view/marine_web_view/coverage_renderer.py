@@ -147,6 +147,27 @@ DEFAULT_PREFIX = 'live/coverage'
 MAX_SLIPPY_ZOOM = 22
 
 
+# Timer periods come from parameters too, and rclpy's create_timer rejects a
+# non-positive period with a ValueError. That is the right answer -- but it
+# used to be raised AFTER the render worker had been started, from a
+# constructor whose caller then held no node to stop it, leaving a live thread
+# behind a failed start. Validate first, and stand the worker up last.
+DEFAULT_RENDER_INTERVAL = 20.0
+DEFAULT_REQUEST_INTERVAL = 5.0
+MAX_INTERVAL_SECONDS = 86400.0
+
+
+def sane_interval(value, default):
+    """Return `(seconds, True)`, or `(default, False)` if unusable."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return default, False
+    if seconds > 0.0 and seconds <= MAX_INTERVAL_SECONDS:
+        return seconds, True
+    return default, False
+
+
 def sane_zoom(zoom):
     """Return `(zoom, True)`, or `(DEFAULT_ZOOM, False)` if it is unusable."""
     try:
@@ -224,8 +245,8 @@ class CoverageRenderer(Node):
         self.declare_parameter('bucket', 'unh-ccom-p11-live')
         self.declare_parameter('prefix', DEFAULT_PREFIX)
         self.declare_parameter('profile', 'p11-renderer')
-        self.declare_parameter('render_interval', 20.0)
-        self.declare_parameter('request_interval', 5.0)
+        self.declare_parameter('render_interval', DEFAULT_RENDER_INTERVAL)
+        self.declare_parameter('request_interval', DEFAULT_REQUEST_INTERVAL)
         self.declare_parameter('dry_run', False)
         self.declare_parameter('local_dir', '/tmp/coverage')
         # Matched to render_interval by default: a tile held longer than
@@ -265,7 +286,20 @@ class CoverageRenderer(Node):
         # to be at most the interval at which new tiles appear: at the shipped
         # 60 s against a 20 s render the display was up to a minute stale for
         # no reason. Zero or negative is not a valid max-age at all.
-        render_interval = float(self._param('render_interval'))
+        self.render_interval, render_ok = sane_interval(
+            self._param('render_interval'), DEFAULT_RENDER_INTERVAL)
+        if not render_ok:
+            self.get_logger().warn(
+                'render_interval {} is not a usable period; using {:g} s'
+                .format(self._param('render_interval'), self.render_interval))
+        self.request_interval, request_ok = sane_interval(
+            self._param('request_interval'), DEFAULT_REQUEST_INTERVAL)
+        if not request_ok:
+            self.get_logger().warn(
+                'request_interval {} is not a usable period; using {:g} s'
+                .format(self._param('request_interval'),
+                        self.request_interval))
+        render_interval = self.render_interval
         if self.cache_control < 1:
             self.get_logger().warn(
                 'cache_control {} is not a valid max-age; using {}'.format(
@@ -357,12 +391,15 @@ class CoverageRenderer(Node):
         self._wake = threading.Event()
         self._worker = threading.Thread(
             target=self._render_loop, name='coverage_render', daemon=True)
-        self._worker.start()
 
-        self.create_timer(float(self._param('request_interval')),
-                          self._send_requests)
-        self.create_timer(float(self._param('render_interval')),
-                          self._wake_renderer)
+        self.create_timer(self.request_interval, self._send_requests)
+        self.create_timer(self.render_interval, self._wake_renderer)
+
+        # Started LAST, once nothing left in the constructor can raise. A
+        # thread started earlier outlives a constructor that then fails:
+        # `main()` is left with `node is None`, never calls `stop()`, and the
+        # worker goes on rendering and uploading against a half-built node.
+        self._worker.start()
 
         target = (self.local_dir if self.dry_run
                   else 's3://{}/{}'.format(self.bucket, self.prefix))
