@@ -975,16 +975,24 @@ class CoverageRenderer(Node):
         map. This object is both the configuration and the heartbeat.
         """
         age = self._datum_age()
+        # This runs on the render thread. `_tiles` is mutated by the executor
+        # thread, so its size is read under the lock like every other access
+        # to it -- and `render_interval` is read from the attribute cached at
+        # construction rather than through `get_parameter`, which is not the
+        # render thread's to call.
+        with self._lock:
+            cached_tiles = len(self._tiles)
+            published_tiles = len(self._published)
         payload = json.dumps({
             'band': self.band_name,
             'cache_control': self.cache_control,
-            'cached_tiles': len(self._tiles),
+            'cached_tiles': cached_tiles,
             'chart_datum_offset': self._datum_offset,
             'max_depth': MAX_DEPTH,
             'prefix': self.prefix,
             'chart_datum_age': age,
-            'published_tiles': len(self._published),
-            'render_interval': float(self._param('render_interval')),
+            'published_tiles': published_tiles,
+            'render_interval': self.render_interval,
             # WALL CLOCK, deliberately, not the ROS clock. The page computes
             # the manifest's age as Date.now()/1000 - stamp, and under
             # use_sim_time -- the documented simulator workflow -- the ROS

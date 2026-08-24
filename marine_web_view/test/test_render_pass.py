@@ -86,6 +86,7 @@ class _Pass:
         self.upload_ok = True
         self.band_name = 'depth'
         self.cache_control = 60
+        self.render_interval = 20.0
         self.covered = covered
         self.raise_on_sample = False
         self.sim_clock_seconds = 1_700_000_000.0
@@ -130,9 +131,16 @@ class _Pass:
             )})()
 
     def _param(self, name):
-        """Return the one parameter the manifest reads."""
-        assert name == 'render_interval'
-        return 20.0
+        """Fail loudly: the render thread must not read parameters.
+
+        `get_parameter` is the executor thread's to call, and the manifest was
+        reaching for `render_interval` through it on every pass. The value is
+        cached at construction now, so nothing on this path needs a parameter
+        at all.
+        """
+        raise AssertionError(
+            'the render pass read parameter {!r} off the executor '
+            'thread'.format(name))
 
     _colourise = CoverageRenderer._colourise
     _datum_age = CoverageRenderer._datum_age
