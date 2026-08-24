@@ -213,6 +213,18 @@ def empty_png():
     return _EMPTY_PNG
 
 
+def _is_usable_bucket(bucket):
+    """Return True if a string could be an S3 bucket name.
+
+    Not a full validation of AWS's naming rules -- just enough to catch the
+    parameter that makes every upload fail forever: empty, or carrying the
+    separators that would make `s3://<bucket>/<key>` mean something else.
+    """
+    if not bucket or len(bucket) > 63:
+        return False
+    return not any(character in bucket for character in ' \t/:')
+
+
 def _safe_prefix(prefix):
     """Return a bucket/directory prefix with no traversal in it.
 
@@ -284,7 +296,7 @@ class CoverageRenderer(Node):
                 'zoom {} is not a usable slippy level (0-{}); rendering at '
                 '{} instead'.format(self._param('zoom'), MAX_SLIPPY_ZOOM,
                                     self.zoom))
-        self.bucket = self._param('bucket')
+        self.bucket = str(self._param('bucket')).strip()
         self.prefix = _safe_prefix(str(self._param('prefix')))
         if not self.prefix:
             # An empty prefix (or one made empty by the traversal scrub) puts
@@ -296,8 +308,28 @@ class CoverageRenderer(Node):
                 "prefix {!r} is empty after scrubbing; using '{}'".format(
                     self._param('prefix'), DEFAULT_PREFIX))
             self.prefix = DEFAULT_PREFIX
-        self.profile = self._param('profile')
+        # An empty profile is not an error: it means "use the default
+        # credential chain", which is what a machine with an instance role or
+        # a plain ~/.aws/credentials wants. Passing `--profile ''` instead
+        # fails every upload. Omit the flag entirely in that case.
+        self.profile = str(self._param('profile')).strip()
         self.dry_run = bool(self._param('dry_run'))
+        if not self.dry_run and not _is_usable_bucket(self.bucket):
+            # `prefix` is carefully normalised while the bucket -- the other
+            # half of every key -- went unchecked. An empty or malformed one
+            # is not recoverable by falling back to a default: that would
+            # quietly publish a survey's coverage somewhere nobody asked for.
+            # It is also not survivable, because every upload becomes a
+            # 30 s-capped subprocess inside a retry loop that never drains.
+            # Refuse to start, loudly, while an operator is still watching.
+            raise ValueError(
+                "bucket {!r} is not a usable S3 bucket name; set 'bucket', "
+                "or set 'dry_run' to write to local_dir instead".format(
+                    self._param('bucket')))
+        if not self.dry_run and not self.profile:
+            self.get_logger().info(
+                'no AWS profile configured; using the default credential '
+                'chain')
         self.local_dir = self._param('local_dir')
         self.cache_control = int(self._param('cache_control'))
         # max-age is what makes a viewer come back for a new tile, so it has
@@ -1139,8 +1171,9 @@ class CoverageRenderer(Node):
             'aws', 's3', 'cp', '-', 's3://{}/{}'.format(self.bucket, key),
             '--content-type', content_type,
             '--cache-control', 'max-age={}'.format(self.cache_control),
-            '--profile', self.profile,
         ]
+        if self.profile:
+            command += ['--profile', self.profile]
         try:
             result = subprocess.run(command, input=payload,
                                     capture_output=True, timeout=30)

@@ -554,3 +554,17 @@ def test_the_render_worker_is_started_after_everything_that_can_raise():
         assert source.rindex(later) < started, (
             '{} runs after the render worker is started; a failure there '
             'strands the thread'.format(later))
+
+
+def test_an_unusable_bucket_is_rejected_rather_than_retried():
+    """The other half of every key went unchecked while prefix was scrubbed.
+
+    A bad bucket is not survivable: every object becomes a 30 s-capped
+    subprocess in a retry loop that never drains, and it is not recoverable by
+    falling back to the default either -- that would publish a survey's
+    coverage somewhere nobody asked for.
+    """
+    for bad in ('', '   ', 'has space', 'has/slash', 'has:colon', 'x' * 64):
+        assert not coverage_renderer._is_usable_bucket(bad), bad
+    for good in ('unh-ccom-p11-live', 'a.b.c', 'bucket123'):
+        assert coverage_renderer._is_usable_bucket(good), good

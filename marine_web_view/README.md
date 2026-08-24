@@ -203,10 +203,10 @@ the catalog's back.
 | `coverage_namespace` | `/ben/sensors/mbes/cube_bathymetry` | where the coverage triple lives |
 | `band` | `depth` | which `VisualizationBand` to render |
 | `zoom` | `15` | slippy zoom, 0-22; higher means more tiles and more PUTs per dirty GGGS tile. Anything outside the range falls back to 15 with a warning -- a negative zoom would otherwise kill the node on the first tile |
-| `render_interval` | `20.0` | seconds between render passes |
-| `request_interval` | `5.0` | seconds between `TileRequest` publications |
-| `bucket` / `prefix` | `unh-ccom-p11-live` / `live/coverage` | |
-| `profile` | `p11-renderer` | scoped to `s3:PutObject` on `live/*` |
+| `render_interval` | `20.0` | seconds between render passes; must be positive and at most a day, or it falls back to 20 s with a warning (`create_timer` rejects a non-positive period) |
+| `request_interval` | `5.0` | seconds between `TileRequest` publications; validated the same way, falling back to 5 s |
+| `bucket` / `prefix` | `unh-ccom-p11-live` / `live/coverage` | an empty or malformed `bucket` **refuses to start** when `dry_run` is false: every upload would be a 30 s-capped subprocess in a retry loop that never drains, and defaulting instead would publish a survey's coverage somewhere nobody asked for |
+| `profile` | `p11-renderer` | scoped to `s3:PutObject` on `live/*`. Empty means "use the default credential chain" — the `--profile` flag is omitted rather than passed empty |
 | `cache_control` | `20` | `max-age` stamped on each object; matched to `render_interval` so a viewer does not hold a tile past its replacement |
 | `cache_budget_bytes` | `536870912` | resident tile-cache ceiling (512 MiB); `0` disables the bound |
 | `max_requests_per_message` | `256` | tiles asked for per `TileRequest`; the rest wait for the next interval |
