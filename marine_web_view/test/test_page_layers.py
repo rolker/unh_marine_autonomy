@@ -77,22 +77,102 @@ def test_every_layer_class_is_instantiated():
 _CONSTRUCTIONS = r'\bnew\s+L\.TileLayer\s*\(|\bL\.tileLayer\s*\(|\bnew\s+(?:Bathy|Relief)\s*\('
 
 
+def _code(page):
+    """Return the page with comment text blanked out, offsets preserved.
+
+    The scan below tracks quotes, and the page's own prose is full of
+    apostrophes ("Leaflet's", "layer's"). Left in, each one opens a phantom
+    string and the bracket depth after it is meaningless -- which is how the
+    statement window silently ran to the end of the file.
+    """
+    out = list(page)
+    index = 0
+    end = len(page)
+    while index < end:
+        char = page[index]
+        if char in '\'"`':
+            quote = char
+            index += 1
+            while index < end:
+                if page[index] == '\\':
+                    index += 2
+                    continue
+                if page[index] == quote:
+                    break
+                index += 1
+            index += 1
+        elif page.startswith('//', index):
+            while index < end and page[index] != '\n':
+                out[index] = ' '
+                index += 1
+        elif page.startswith('/*', index) or page.startswith('<!--', index):
+            close = '*/' if page[index + 1] == '*' else '-->'
+            stop = page.find(close, index + 2)
+            stop = end if stop < 0 else stop + len(close)
+            for position in range(index, stop):
+                if page[position] != '\n':
+                    out[position] = ' '
+            index = stop
+        else:
+            index += 1
+    return ''.join(out)
+
+
+def _statement(page, start):
+    """Return just the JavaScript statement that begins at `start`.
+
+    The window a construction site is checked in has to end where its own
+    statement ends. Running it to the next construction -- and, for the last
+    site, to the end of the page -- let the coverage layer borrow the
+    `.addTo(map)` of the trail and hull polylines further down the file. That
+    is the exact layer this test exists for, and deleting `.addTo(map)` from
+    `buildCoverage()` left the suite green twice.
+
+    Scans forward tracking bracket depth, skipping quoted text (the coverage
+    layer's data: URL contains a `;` of its own), and stops at the first `;`
+    outside all brackets. Call it on `_code(page)`, not on the raw page.
+    """
+    depth = 0
+    index = start
+    end = len(page)
+    while index < end:
+        char = page[index]
+        if char in '\'"`':
+            quote = char
+            index += 1
+            while index < end:
+                if page[index] == '\\':
+                    index += 2
+                    continue
+                if page[index] == quote:
+                    break
+                index += 1
+        elif char in '([{':
+            depth += 1
+        elif char in ')]}':
+            depth -= 1
+        elif char == ';' and depth <= 0:
+            return page[start:index]
+        index += 1
+    return page[start:]
+
+
 def test_every_layer_reaches_the_map():
     """Every tile-layer construction must be followed by addTo(map).
 
     Counting constructions against `.addTo(map)` calls did not bind: the
     comparison was `>=`, and the trail and hull contribute addTo calls of
     their own, so an orphaned tile layer could hide behind them. This checks
-    each construction site individually instead.
+    each construction site inside its own statement instead.
     """
-    page = _page()
+    page = _code(_page())
     sites = [m.start() for m in re.finditer(_CONSTRUCTIONS, page)]
     assert len(sites) >= 4, (
         'expected at least imagery, bathymetry, hillshade and coverage; '
         'found {} -- has the page been restructured?'.format(len(sites)))
-    for position, start in enumerate(sites):
-        end = sites[position + 1] if position + 1 < len(sites) else len(page)
-        assert '.addTo(map)' in page[start:end], (
+    for start in sites:
+        statement = _statement(page, start)
+        assert '.addTo(map)' in statement, (
             'the tile layer constructed at offset {} is never added to the '
             'map -- it will not appear, silently'.format(start))
 
