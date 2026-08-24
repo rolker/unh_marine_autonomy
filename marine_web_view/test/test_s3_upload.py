@@ -41,10 +41,27 @@ it (see the module docstring of marine_web_view/s3_upload.py).
 """
 
 from marine_web_view import s3_upload
+from marine_web_view.s3_upload import AsyncUploader
 from marine_web_view.s3_upload import describe_error
 from marine_web_view.s3_upload import S3Uploader
 
 import pytest
+
+
+def _settle(predicate, timeout=5.0):
+    """Poll `predicate` until true or `timeout` expires; return the result.
+
+    The upload worker is a real thread, so every assertion about what reached
+    the transport is inherently a wait. A generous timeout with an early exit
+    keeps that from being either flaky or slow.
+    """
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return bool(predicate())
 
 
 class _Client:
@@ -155,28 +172,30 @@ def test_the_profile_reaches_the_client_factory_exactly_as_given():
 
 
 def test_the_position_upload_carries_geojson_and_the_interval_max_age():
-    """state_renderer's own cache policy, pinned on the new seam.
+    """state_renderer's own cache policy, pinned through the upload worker.
 
     The position object's max-age IS the publish interval: hold it longer and
     a viewer sits on a stale fix; the object is typed application/geo+json so
-    the page's fetch parses it as GeoJSON. Neither survives a `_put` that
-    drops what it is handed.
+    the page's fetch parses it as GeoJSON. Neither survives a `_queue` that
+    drops what it is handed, and the payload now crosses a thread on the way
+    out, so this runs the real worker rather than the transport alone.
     """
     from marine_web_view.state_renderer import StateRenderer
 
     client = _Client()
+    sender = AsyncUploader(S3Uploader('unh-ccom-p11-live', client=client))
 
     class _Node:
         bucket = 'unh-ccom-p11-live'
-        _failures = 0
-        _uploader = S3Uploader('unh-ccom-p11-live', client=client)
+        _sender = sender
 
         def get_logger(self):
             raise AssertionError('the upload should not have failed')
 
     node = _Node()
-    assert StateRenderer._put(node, '{"type": "Feature"}',
-                              'live/position.geojson', 1.0) is True
+    assert StateRenderer._queue(node, '{"type": "Feature"}',
+                                'live/position.geojson', 1.0, 12.5) is True
+    assert _settle(lambda: client.calls), 'nothing reached the transport'
     assert client.calls == [{
         'Bucket': 'unh-ccom-p11-live',
         'Key': 'live/position.geojson',
@@ -184,6 +203,8 @@ def test_the_position_upload_carries_geojson_and_the_interval_max_age():
         'ContentType': 'application/geo+json',
         'CacheControl': 'max-age=1',
     }]
+    assert sender.confirmed('live/position.geojson') == 12.5
+    assert sender.stop(timeout=2.0)
 
 
 def test_a_failed_position_upload_is_counted_not_raised():
@@ -199,19 +220,31 @@ def test_a_failed_position_upload_is_counted_not_raised():
     from marine_web_view.state_renderer import StateRenderer
 
     class _Node:
-        bucket = 'unh-ccom-p11-live'
-        _failures = 0
-        _uploader = S3Uploader(
-            'unh-ccom-p11-live',
-            client=_Client(error=_ClientError('AccessDenied', 'nope')))
+        """A node whose failure logger is the real one, called off-thread."""
 
         def get_logger(self):
+            """Return the capturing logger."""
             return _Logger()
 
+        _log_upload_failure = StateRenderer._log_upload_failure
+
     node = _Node()
-    assert StateRenderer._put(node, '{}', 'live/position.geojson', 1.0) is False
-    assert node._failures == 1
+    sender = AsyncUploader(
+        S3Uploader('unh-ccom-p11-live',
+                   client=_Client(error=_ClientError('AccessDenied', 'nope'))),
+        log_error=node._log_upload_failure)
+    node._sender = sender
+    node.bucket = 'unh-ccom-p11-live'
+
+    # Accepted, because acceptance is not publication: the worker discovers
+    # the failure, and `confirmed` keeps reporting the older stamp so the
+    # next tick offers this object again.
+    assert StateRenderer._queue(node, '{}', 'live/position.geojson',
+                                1.0, 7.0) is True
+    assert _settle(lambda: sender.counts()[1] == 1), sender.counts()
+    assert sender.confirmed('live/position.geojson') is None
     assert logged and 'AccessDenied' in logged[0], logged
+    assert sender.stop(timeout=2.0)
 
 
 class _FakeConfig:
@@ -269,57 +302,27 @@ def _install_fake_sdk(monkeypatch):
     return sessions
 
 
-@pytest.mark.parametrize('connect_timeout,read_timeout,ceiling', [
-    (5, 15, 20),    # state_renderer: the `aws s3 cp` shell-out's 20 s cap
-    (5, 25, 30),    # coverage_renderer: the same shell-out's 30 s cap
-])
-def test_one_put_stays_under_the_ceiling_each_node_was_built_around(
-        monkeypatch, connect_timeout, read_timeout, ceiling):
-    """The retry budget IS the per-PUT wall-clock ceiling; pin the arithmetic.
+def test_the_client_config_is_what_reaches_botocore(monkeypatch):
+    """Every field of the Config is load-bearing; pin all of them.
 
-    botocore counts `max_attempts` as TOTAL attempts, and both a connect and
-    a read timeout are retryable -- so anything above 1 multiplies the worst
-    case. state_renderer's `_put` runs on rclpy.spin's single-threaded
-    executor (a stalled PUT stops nav fixes being recorded for its whole
-    duration, leaving a permanent hole in the track) and coverage_renderer's
-    `stop()` joins the render worker on a 45 s budget that has to be able to
-    win, or the final flush it exists for is skipped. Both ceilings below are
-    what the `aws s3 cp` shell-out enforced at the process level.
+    Deliberately NOT expressed as a per-PUT wall-clock ceiling. Two rounds of
+    this change asserted one -- `attempts * (connect + read)` -- and both were
+    wrong: urllib3 applies `connect_timeout` per address returned by
+    `getaddrinfo` and the S3 endpoint resolves to several A records, so the
+    arithmetic understated the worst case by ~2x on top of the 4x the retry
+    count had already added. Nothing in either node is built on that number
+    now (see `AsyncUploader` and `coverage_renderer._render_dirty`), so what
+    is worth pinning is what actually reaches botocore.
     """
-    sessions = _install_fake_sdk(monkeypatch)
-    client, errors = s3_upload._boto3_client(
-        None, connect_timeout, read_timeout)
-
-    assert errors == (_ClientError, OSError)
-    assert client is not None
-    kwargs = sessions[0].config.kwargs
-    worst_case = kwargs['retries']['max_attempts'] * (
-        kwargs['connect_timeout'] + kwargs['read_timeout'])
-    assert worst_case <= ceiling, (
-        'one PUT can now take up to {} s against a {} s ceiling'.format(
-            worst_case, ceiling))
-
-
-def test_the_client_config_is_the_per_put_time_budget(monkeypatch):
-    """Every field of the Config is load-bearing; pin all of them."""
     sessions = _install_fake_sdk(monkeypatch)
     s3_upload._boto3_client('p11-renderer', 5, 15)
 
     assert len(sessions) == 1
-    config = sessions[0].config
-    assert config.kwargs == {
+    assert sessions[0].config.kwargs == {
         'connect_timeout': 5,
         'read_timeout': 15,
         'retries': {'mode': 'standard', 'max_attempts': 1},
-    }, config.kwargs
-
-    attempts = config.kwargs['retries']['max_attempts']
-    worst_case = attempts * (config.kwargs['connect_timeout']
-                             + config.kwargs['read_timeout'])
-    assert worst_case <= 20, (
-        'one PUT can now take {} s; state_renderer built its 20 s ceiling '
-        '(and coverage_renderer its 45 s shutdown join) on this '
-        'arithmetic'.format(worst_case))
+    }, sessions[0].config.kwargs
 
 
 def test_the_profile_reaches_boto3_session_uncoalesced(monkeypatch):
@@ -353,3 +356,182 @@ def test_importing_the_module_does_not_import_boto3():
     assert 'boto3' not in sys.modules, (
         's3_upload pulled boto3 in at import time; the lazy import in '
         '_boto3_client is what keeps a dry-run host free of it')
+
+
+class _Stalling:
+    """An uploader whose PUTs block until released, recording each one.
+
+    This is the condition every claim in this section is about: an endpoint
+    that accepted the connection and then stopped answering. It is also the
+    only way to test the structure rather than the arithmetic -- a stalled
+    PUT is exactly what no timeout value was able to bound.
+    """
+
+    def __init__(self):
+        import threading
+        self.entered = threading.Semaphore(0)
+        self.release = threading.Event()
+        self.sent = []
+        self._lock = threading.Lock()
+
+    def put(self, payload, key, content_type, cache_control):
+        """Block until released, then record and succeed."""
+        self.entered.release()
+        self.release.wait(10.0)
+        with self._lock:
+            self.sent.append((key, payload))
+        return True, None
+
+
+def test_submitting_while_the_transport_is_stalled_does_not_block():
+    """The whole point of the worker.
+
+    `_tick` and `_on_fix` share rclpy.spin's single-threaded executor, so a
+    PUT issued from a timer callback stops position fixes being recorded for
+    as long as it takes -- and they are not replayed, so the track keeps a
+    permanent hole for the stall. No `read_timeout` makes that acceptable.
+    """
+    import time
+
+    transport = _Stalling()
+    sender = AsyncUploader(transport)
+    try:
+        assert sender.submit(b'first', 'live/position.geojson', 'a', 'b',
+                             tag=1)
+        assert transport.entered.acquire(timeout=5.0), (
+            'the worker never started the first PUT')
+
+        # The transport is now inside a PUT that will not return.
+        start = time.monotonic()
+        for index in range(20):
+            assert sender.submit(b'later', 'live/position.geojson', 'a', 'b',
+                                 tag=index)
+        elapsed = time.monotonic() - start
+        assert elapsed < 1.0, (
+            'submitting behind a stalled PUT took {:.1f} s -- the caller is '
+            'still waiting on the network'.format(elapsed))
+    finally:
+        transport.release.set()
+        sender.stop(timeout=5.0)
+
+
+def test_a_stalled_worker_drops_superseded_payloads_rather_than_queueing():
+    """Latest-wins, and bounded: 20 offers behind a stall cost one send.
+
+    A queue here would grow for as long as the endpoint is slow and then
+    publish a march of stale positions, each one already contradicted by the
+    next. Both objects this node writes are complete snapshots, so the
+    superseded ones carry nothing the newest lacks.
+    """
+    transport = _Stalling()
+    sender = AsyncUploader(transport)
+    try:
+        sender.submit(b'first', 'live/position.geojson', 'a', 'b', tag=0)
+        assert transport.entered.acquire(timeout=5.0)
+        for index in range(1, 21):
+            sender.submit('n{}'.format(index).encode(),
+                          'live/position.geojson', 'a', 'b', tag=index)
+        transport.release.set()
+        assert _settle(lambda: sender.confirmed(
+            'live/position.geojson') == 20), sender.counts()
+        # One in flight plus exactly one survivor -- not 21.
+        assert [payload for _, payload in transport.sent] == [b'first',
+                                                              b'n20'], (
+            transport.sent)
+        writes, failures, dropped = sender.counts()
+        assert (writes, failures, dropped) == (2, 0, 0)
+    finally:
+        transport.release.set()
+        sender.stop(timeout=5.0)
+
+
+def test_the_pending_map_cannot_grow_past_its_slot_cap():
+    """Bounded independently of the caller's key discipline.
+
+    The per-key rule already bounds this node at two keys. The cap is what
+    makes the bound a property of the class rather than of its caller: a
+    future third artifact cannot turn a stall into unbounded memory.
+    """
+    transport = _Stalling()
+    sender = AsyncUploader(transport, max_slots=2)
+    try:
+        sender.submit(b'x', 'in/flight', 'a', 'b')
+        assert transport.entered.acquire(timeout=5.0)
+        assert sender.submit(b'x', 'key/1', 'a', 'b')
+        assert sender.submit(b'x', 'key/2', 'a', 'b')
+        for index in range(3, 10):
+            assert not sender.submit(b'x', 'key/{}'.format(index), 'a', 'b'), (
+                'a new key was accepted past the slot cap')
+        # Replacing an occupied slot is always allowed -- that is latest-wins.
+        assert sender.submit(b'y', 'key/1', 'a', 'b')
+        assert sender.counts()[2] == 7, sender.counts()
+    finally:
+        transport.release.set()
+        sender.stop(timeout=5.0)
+
+
+def test_stop_returns_promptly_even_with_a_put_in_flight():
+    """Shutdown is bounded whatever the endpoint does.
+
+    `stop()` cannot cancel a request already in the socket, so what it
+    guarantees is that it RETURNS: the worker is a daemon thread, and the
+    caller is `main()`'s `finally`, which still has to reach
+    `destroy_node()`.
+    """
+    import time
+
+    transport = _Stalling()
+    sender = AsyncUploader(transport)
+    try:
+        sender.submit(b'x', 'live/position.geojson', 'a', 'b')
+        assert transport.entered.acquire(timeout=5.0)
+        start = time.monotonic()
+        assert sender.stop(timeout=0.5) is False, (
+            'stop claimed the worker ended while it was inside a PUT')
+        elapsed = time.monotonic() - start
+        assert elapsed < 2.0, (
+            'stop() took {:.1f} s with a PUT in flight'.format(elapsed))
+    finally:
+        transport.release.set()
+
+
+def test_the_worker_does_not_start_new_work_after_stop():
+    """A stop must not be followed by another PUT to a dead endpoint."""
+    transport = _Stalling()
+    transport.release.set()                  # PUTs return immediately
+    sender = AsyncUploader(transport)
+    sender.submit(b'x', 'first', 'a', 'b')
+    assert _settle(lambda: sender.counts()[0] == 1)
+    assert sender.stop(timeout=5.0)
+    sender.submit(b'x', 'second', 'a', 'b')
+    import time
+    time.sleep(0.2)
+    assert [key for key, _ in transport.sent] == ['first'], transport.sent
+
+
+def test_a_busy_key_does_not_starve_the_other_one():
+    """The track and the position share one worker, deliberately.
+
+    The position is offered 30x as often as the track. FIFO across keys with
+    latest-wins inside one is what keeps the slower object from being
+    perpetually overtaken.
+    """
+    transport = _Stalling()
+    sender = AsyncUploader(transport)
+    try:
+        sender.submit(b'x', 'in/flight', 'a', 'b')
+        assert transport.entered.acquire(timeout=5.0)
+        sender.submit(b'p1', 'live/position.geojson', 'a', 'b')
+        sender.submit(b't1', 'live/track.geojson', 'a', 'b')
+        for index in range(2, 30):
+            sender.submit('p{}'.format(index).encode(),
+                          'live/position.geojson', 'a', 'b')
+        transport.release.set()
+        assert _settle(lambda: len(transport.sent) == 3), transport.sent
+        assert [key for key, _ in transport.sent] == [
+            'in/flight', 'live/position.geojson', 'live/track.geojson'], (
+            transport.sent)
+        assert transport.sent[1][1] == b'p29', 'not the newest position'
+    finally:
+        transport.release.set()
+        sender.stop(timeout=5.0)
