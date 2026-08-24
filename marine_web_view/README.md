@@ -273,7 +273,10 @@ run at a different zoom or prefix are not tracked, so they are not cleaned up.
 ### The manifest
 
 Each render pass writes `<prefix>/meta.json` — the zoom, the band, the tile
-counts, the chart-datum offset, and a stamp. It is both configuration and
+counts, the chart-datum offset, and a stamp. `stamp` is **wall clock**
+(`ros_stamp` carries the ROS clock beside it): the page measures liveness
+against `Date.now()`, and under `use_sim_time` a ROS stamp would report a
+running renderer as permanently stale. It is both configuration and
 heartbeat:
 
 - the page **builds its coverage layer from the manifest's zoom** rather than

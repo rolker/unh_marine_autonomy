@@ -40,6 +40,7 @@ and the map simply stops moving.
 
 import json
 import threading
+import time
 
 from marine_web_view.coverage_renderer import colour_table
 from marine_web_view.coverage_renderer import CoverageRenderer
@@ -85,6 +86,7 @@ class _Pass:
         self.cache_control = 60
         self.covered = covered
         self.raise_on_sample = False
+        self.sim_clock_seconds = 1_700_000_000.0
 
     def get_logger(self):
         """Return the collecting logger."""
@@ -113,10 +115,11 @@ class _Pass:
         return self.upload_ok
 
     def get_clock(self):
-        """Return a stand-in clock."""
+        """Return a stand-in ROS clock reading `sim_clock_seconds`."""
+        nanoseconds = int(self.sim_clock_seconds * 10 ** 9)
         return type('C', (), {
             'now': staticmethod(
-                lambda: type('T', (), {'nanoseconds': 1_700_000_000 * 10 ** 9})
+                lambda: type('T', (), {'nanoseconds': nanoseconds})
             )})()
 
     def _param(self, name):
@@ -298,6 +301,25 @@ def test_every_pass_publishes_the_manifest():
     assert meta['band'] == 'depth'
     assert meta['published_tiles'] == 1
     assert meta['stamp'] > 0
+
+
+def test_the_manifest_stamp_is_wall_clock():
+    """Liveness must not be measured on the ROS clock.
+
+    The page computes age as `Date.now()/1000 - stamp`. Under `use_sim_time`
+    -- the documented simulator workflow -- the ROS clock starts near zero,
+    so a ROS stamp made the page report a live renderer as permanently stale:
+    the one thing the manifest exists to get right.
+    """
+    node = _Pass()
+    node.sim_clock_seconds = 12.5          # a freshly started sim clock
+    node._dirty.add((10, 20))
+    node._render_dirty()
+    meta = node.meta[-1]
+    assert abs(meta['stamp'] - time.time()) < 60, (
+        'the manifest stamp is not wall clock: the page will read a live '
+        'renderer as stale forever under use_sim_time')
+    assert meta['ros_stamp'] == 12.5
 
 
 def test_the_manifest_is_a_heartbeat_even_with_nothing_to_render():

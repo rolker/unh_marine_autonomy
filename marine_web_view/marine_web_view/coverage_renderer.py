@@ -64,6 +64,7 @@ import os
 import subprocess
 import tempfile
 import threading
+import time
 
 from marine_interfaces.msg import SonarVisualizationTile
 from marine_interfaces.msg import TileCatalog
@@ -839,7 +840,15 @@ class CoverageRenderer(Node):
             'prefix': self.prefix,
             'published_tiles': len(self._published),
             'render_interval': float(self._param('render_interval')),
-            'stamp': self.get_clock().now().nanoseconds / 1e9,
+            # WALL CLOCK, deliberately, not the ROS clock. The page computes
+            # the manifest's age as Date.now()/1000 - stamp, and under
+            # use_sim_time -- the documented simulator workflow -- the ROS
+            # clock starts near zero, so every live pass would read as
+            # decades stale and the heartbeat this object exists to be would
+            # report a healthy renderer as dead. The ROS stamp is carried
+            # alongside for anyone correlating against a bag.
+            'ros_stamp': self.get_clock().now().nanoseconds / 1e9,
+            'stamp': time.time(),
             'status': status,
             'zoom': self.zoom,
         }, sort_keys=True).encode()
