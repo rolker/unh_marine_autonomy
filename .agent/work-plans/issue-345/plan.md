@@ -61,7 +61,12 @@ messages, anti-entropy reconciliation via `TileCatalog` / `TileRequest`, with CA
 | `marine_web_view/setup.py` | Add `coverage_renderer` entry point |
 | `marine_web_view/package.xml` | Deps: `python3-numpy`, `python3-pil`, `tf2_ros` (as built; `std_msgs` was not needed — `Header` arrives inside the marine_interfaces messages, and `awscli` was dropped again: the key has no apt candidate on noble and aborted the hosted build at `rosdep install`, so the AWS CLI is documented as an operator-provided runtime prerequisite instead) |
 | `marine_web_view/README.md` | Add the `coverage_renderer` section (named in Documentation Impact below; it belongs in this table too) |
-| `marine_web_view/web/index.html` | Add the coverage layer and its manifest-driven configuration |
+| `marine_web_view/web/index.html` | Add the coverage layer, its manifest-driven configuration, and validation of the manifest before it configures anything |
+| `marine_web_view/test/test_page_layers.py` | New (not foreseen): textual guard that every tile layer the page constructs is added to the map, and that the manifest is validated — the #341 orphaned-layer failure had no test |
+| `marine_web_view/test/test_launch_params.py` | New (not foreseen): guard that every node parameter is exposed by its launch file and documented in the README |
+| `marine_web_view/test/test_ramp_sync.py` | Edited (not foreseen): extended from two ramp copies to three, so `coverage_renderer`'s hand-transcribed RAMP is pinned to the page's. This edit is what made the ADR-0001 row's "shared scale" claim true — the transcription was shifted at 14 of 24 stops |
+| `marine_web_view/scripts/refresh_chart_tiles.py` | Edited (not foreseen): its "two copies" ramp comment now names all three |
+| `docs/sonar_ecosystem.md`, `docs/decisions/0001-*`, `docs/decisions/0008-*` | Edited (not foreseen): the web renderer is a live ADR-0008 consumer rather than a plan, and the ADR-0001 / ADR-0008-D5 departures are recorded in the ADRs themselves (workspace ADR-0012 cross-reference addendums) |
 
 ## Node design — `CoverageRenderer`
 
@@ -263,8 +268,20 @@ own. `test_page_layers.py` now guards against the class of bug.
 
 ## Estimated Scope
 
-Single PR, builds on #341 (`marine_web_view` package). Approximately 350–450 lines of new
-Python (node + reconciler + gggs math) + tests + launch. No C++ changes.
+Single PR, builds on #341 (`marine_web_view` package). Estimated at 350–450 lines
+of new Python (node + reconciler + gggs math) + tests + launch, with no C++
+changes.
+
+**As built this was off by roughly an order of magnitude**: about 1,800 lines
+of package Python, 2,700 lines of tests, plus the page, launch file and
+documentation — near 5,900 lines against the base branch. The estimate counted
+the happy path. What it did not count: the GGGS bounds math is a
+correctness-critical cross-language port that has to be pinned against the C++
+by test rather than trusted; the transport is best-effort and lossy, so every
+reconciliation, possession and healing rule needs its own guard; and two review
+rounds found three *non-binding* tests, each of which cost more to make bind
+than to write. Recorded here rather than quietly corrected, because
+"port + node + tests" reliably reads as small and reliably is not.
 
 ## Operator decisions (2026-08-22)
 
