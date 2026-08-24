@@ -23,8 +23,16 @@
        sampling, Pillow for PNG encoding. rosdep keys, not pip. -->
   <depend>python3-numpy</depend>
   <depend>python3-pil</depend>
-  <!-- Both renderers shell out to the AWS CLI to write objects. -->
-  <exec_depend>awscli</exec_depend>
+  <!-- Both renderers shell out to the AWS CLI (`aws s3 cp`) to write
+       objects, but the CLI is deliberately NOT declared here. The `awscli`
+       rosdep key resolves to the apt package of the same name, which has no
+       installation candidate on Ubuntu noble, so declaring it aborts the
+       whole hosted build at `rosdep install` before anything is compiled.
+       The operator's CLI is the userland AWS CLI v2 installer, which apt
+       could never provide. It is an operator-provided runtime prerequisite,
+       documented in README.md; state_renderer has shipped on jazzy the same
+       way. Everything except the S3 upload runs without it, and dry_run
+       needs it not at all. -->
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

@@ -59,7 +59,7 @@ messages, anti-entropy reconciliation via `TileCatalog` / `TileRequest`, with CA
 | `marine_web_view/test/` | New: unit tests. As built these are `test_gggs.py`, `test_reconciler.py`, `test_tiles.py`, `test_tile_ingest.py`, `test_colour.py`, `test_render_pass.py`, `test_sampling_orientation.py`, `test_local_output.py` rather than one `test_coverage_renderer.py` |
 | `marine_web_view/launch/coverage_renderer_launch.py` | New: launch file |
 | `marine_web_view/setup.py` | Add `coverage_renderer` entry point |
-| `marine_web_view/package.xml` | Deps: `python3-numpy`, `python3-pil`, `tf2_ros`, `awscli` (as built; `std_msgs` was not needed — `Header` arrives inside the marine_interfaces messages) |
+| `marine_web_view/package.xml` | Deps: `python3-numpy`, `python3-pil`, `tf2_ros` (as built; `std_msgs` was not needed — `Header` arrives inside the marine_interfaces messages, and `awscli` was dropped again: the key has no apt candidate on noble and aborted the hosted build at `rosdep install`, so the AWS CLI is documented as an operator-provided runtime prerequisite instead) |
 | `marine_web_view/README.md` | Add the `coverage_renderer` section (named in Documentation Impact below; it belongs in this table too) |
 | `marine_web_view/web/index.html` | Add the coverage layer and its manifest-driven configuration |
 
@@ -187,8 +187,12 @@ invisible. Exact offset settled during implementation and shown to the operator.
   0-40 m, reusing #342's extracted CCOM ramp with a small offset so the layers stay
   distinguishable. See "Operator decisions" below.
 - [x] ~~`Pillow`/`numpy` availability~~ **RESOLVED (as built)**: declared as the rosdep
-  keys `python3-numpy` and `python3-pil` in `package.xml`, not pip. `awscli` and
-  `tf2_ros` are declared for the same reason — both were being used undeclared.
+  keys `python3-numpy` and `python3-pil` in `package.xml`, not pip. `tf2_ros` is
+  declared for the same reason — it was being used undeclared. The AWS CLI is
+  the exception: `awscli` resolves to an apt package with no installation
+  candidate on noble, which aborts the hosted build at `rosdep install`, so it
+  is documented as an operator-provided runtime prerequisite in the README
+  (as `state_renderer` has always relied on it).
 - [x] ~~Orphaned S3 tiles on a zoom/prefix change~~ **RESOLVED (as built): documented,
   not automated.** Within a run the node tracks what it has published and overwrites a
   tile that loses its coverage with a transparent PNG, so pruning is reflected on the

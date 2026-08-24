@@ -11,6 +11,21 @@ so it is indifferent to viewer count.
 Part of [#333](https://github.com/rolker/unh_marine_autonomy/issues/333); this
 package is [#341](https://github.com/rolker/unh_marine_autonomy/issues/341).
 
+## Runtime prerequisite: the AWS CLI
+
+Both nodes upload by shelling out to `aws s3 cp`, so the **AWS CLI v2 must be
+installed and a profile configured** on any host that publishes to the bucket.
+It is not a package dependency and cannot be: the `awscli` rosdep key resolves
+to an apt package with no installation candidate on Ubuntu noble, so declaring
+it aborts the build at `rosdep install` — and the CLI in use is the userland
+v2 installer, which apt could not provide anyway. Install it per
+[AWS's instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+and check with `aws --version`.
+
+Nothing else needs it. With `dry_run:=true` both nodes write to the local
+filesystem and never call `aws` at all, which is how the tests and the
+simulator workflow run.
+
 ## Node: `state_renderer`
 
 ### Subscribed topics
