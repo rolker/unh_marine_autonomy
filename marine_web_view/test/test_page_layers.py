@@ -293,8 +293,24 @@ def test_the_coverage_layer_is_configured_from_the_manifest():
     assert 'meta.json' in page, 'the coverage manifest is not fetched'
     assert re.search(r'saneZoom\(\s*meta\.zoom\s*\)', page), (
         'the coverage zoom no longer comes from the manifest')
-    assert re.search(r'buildCoverage\(\s*zoom\s*\)', page), (
-        'the coverage layer is not built from the validated manifest zoom')
+    # The CALL sites, not the definition: `buildCoverage\(\s*zoom\s*\)` also
+    # matches `function buildCoverage(zoom)`, so bypassing the validator
+    # entirely -- `buildCoverage(meta.zoom)` -- left this test green.
+    code = _code(page)
+    definition = re.search(r'function\s+buildCoverage\s*\(', code)
+    assert definition, 'the page has no buildCoverage()'
+    calls = [m for m in re.finditer(r'\bbuildCoverage\s*\(\s*([^)]*?)\s*\)',
+                                    code)
+             if m.start() != definition.start()]
+    assert calls, 'buildCoverage() is defined but never called'
+    for call in calls:
+        assert call.group(1) == 'zoom', (
+            'buildCoverage is called with {!r}: the layer must be built from '
+            'the validated zoom, not from the raw manifest field'
+            .format(call.group(1)))
+    assert re.search(r'(?:const|let|var)\s+zoom\s*=\s*saneZoom\('
+                     r'\s*meta\.zoom\s*\)', code), (
+        'the name passed to buildCoverage is not the validated manifest zoom')
     assert not re.search(r'COVERAGE_Z\s*=\s*\d', page), (
         'the render zoom is hardcoded in the page again')
 
