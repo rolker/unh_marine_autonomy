@@ -61,7 +61,6 @@ are referenced through TF before they are coloured -- see _update_datum_offset.
 import io
 import json
 import os
-import subprocess
 import tempfile
 import threading
 import time
@@ -75,6 +74,8 @@ from marine_web_view import gggs
 from marine_web_view import tiles as tile_util
 from marine_web_view.reconciler import is_valid_index
 from marine_web_view.reconciler import TileCatalogReconciler
+from marine_web_view.s3_upload import describe_error
+from marine_web_view.s3_upload import S3Uploader
 
 import numpy
 
@@ -371,7 +372,7 @@ class CoverageRenderer(Node):
             # is not recoverable by falling back to a default: that would
             # quietly publish a survey's coverage somewhere nobody asked for.
             # It is also not survivable, because every upload becomes a
-            # 30 s-capped subprocess inside a retry loop that never drains.
+            # doomed S3 PUT inside a retry loop that never drains.
             # Refuse to start, loudly, while an operator is still watching.
             raise ValueError(
                 "bucket {!r} is not a usable S3 bucket name; set 'bucket', "
@@ -433,6 +434,22 @@ class CoverageRenderer(Node):
                     self.tide_invalidate_threshold,
                     DEFAULT_TIDE_INVALIDATE_THRESHOLD))
             self.tide_invalidate_threshold = DEFAULT_TIDE_INVALIDATE_THRESHOLD
+
+        # Not on a dry run: writing under local_dir needs no AWS access at
+        # all, and constructing a client would go looking for credentials a
+        # simulator host has no reason to carry. `or None` is deliberate and
+        # preserves this node's long-standing behaviour: an empty profile
+        # means "use the default credential chain" -- an EC2 instance role or
+        # a plain ~/.aws/credentials -- which is what the 'no AWS profile
+        # configured' info line above announces. Passing '' instead would
+        # fail every upload, exactly as `--profile ''` did.
+        # state_renderer deliberately does NOT coalesce; see its own comment.
+        # read_timeout leaves headroom under the 30 s ceiling the CLI
+        # shell-out used to enforce at the process level.
+        self._uploader = (None if self.dry_run else
+                          S3Uploader(self.bucket,
+                                     profile=self.profile or None,
+                                     read_timeout=25))
 
         self._reconciler = TileCatalogReconciler()
         self._tiles = {}          # index -> full-tile float array
@@ -1016,7 +1033,7 @@ class CoverageRenderer(Node):
         self._wake.set()
         try:
             # Generously longer than one upload timeout: the worker may be
-            # inside an `aws s3 cp` when the stop arrives.
+            # inside an S3 PUT when the stop arrives.
             self._worker.join(timeout=45.0)
             if self._worker.is_alive():
                 self.get_logger().warn('render thread did not stop in time')
@@ -1270,24 +1287,12 @@ class CoverageRenderer(Node):
 
         if max_age is None:
             max_age = self.cache_control
-        command = [
-            'aws', 's3', 'cp', '-', 's3://{}/{}'.format(self.bucket, key),
-            '--content-type', content_type,
-            '--cache-control', 'max-age={}'.format(max_age),
-        ]
-        if self.profile:
-            command += ['--profile', self.profile]
-        try:
-            result = subprocess.run(command, input=payload,
-                                    capture_output=True, timeout=30)
-        except subprocess.TimeoutExpired:
-            self._note_failure()
-            self.get_logger().error('upload of {} timed out'.format(key))
-            return False
-        if result.returncode != 0:
+        ok, exc = self._uploader.put(
+            payload, key, content_type, 'max-age={}'.format(max_age))
+        if not ok:
             self._note_failure()
             self.get_logger().error('upload of {} failed: {}'.format(
-                key, result.stderr.decode().strip()[:200]))
+                key, describe_error(exc)))
             return False
         return True
 

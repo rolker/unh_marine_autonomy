@@ -46,6 +46,7 @@ from marine_web_view import coverage_renderer
 from marine_web_view.coverage_renderer import colour_table
 from marine_web_view.coverage_renderer import CoverageRenderer
 from marine_web_view.coverage_renderer import empty_png
+from marine_web_view.s3_upload import S3Uploader
 
 import numpy
 
@@ -578,23 +579,37 @@ def test_the_manifest_max_age_never_exceeds_the_tiles():
     )
 
 
-def test_the_upload_stamps_the_max_age_it_is_given():
-    """The per-object max-age has to reach the aws CLI to mean anything.
+class _RecordingClient:
+    """Stand in for a boto3 S3 client, recording every put_object kwarg."""
 
-    `_publish` builds the `--cache-control` flag, so a `max_age` argument the
-    command line ignores is a comment, not a cache policy.
+    def __init__(self, error=None):
+        self.calls = []
+        self.error = error
+
+    def put_object(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return {}
+
+
+def test_the_upload_stamps_the_whole_object_shape_it_is_given():
+    """Everything `_publish` is told has to reach the S3 call to mean anything.
+
+    `_publish` is the only place the bucket, key, body, content type and cache
+    policy are assembled, so an argument the PUT drops is a comment, not a
+    policy. The max-age halves are the load-bearing pair -- the manifest's
+    whole job is to be current and the tiles' is to be cached -- but asserting
+    only that one field would leave the rest of the call unbound.
     """
-    calls = []
+    client = _RecordingClient()
 
-    class _Result:
-        returncode = 0
-        stderr = b''
-
-    class _Uploader:
+    class _Node:
         dry_run = False
         bucket = 'unh-ccom-p11-live'
         profile = ''
         cache_control = 60
+        _uploader = S3Uploader('unh-ccom-p11-live', client=client)
 
         def _note_failure(self):
             raise AssertionError('the upload should not have failed')
@@ -602,25 +617,55 @@ def test_the_upload_stamps_the_max_age_it_is_given():
         def get_logger(self):
             return _Logger()
 
-    def _run(command, **kwargs):
-        calls.append(command)
-        return _Result()
+    assert CoverageRenderer._publish(
+        _Node(), b'{}', 'live/coverage/meta.json',
+        content_type='application/json', max_age=5)
+    assert CoverageRenderer._publish(
+        _Node(), b'png', 'live/coverage/1/2/3.png')
 
-    original = coverage_renderer.subprocess.run
-    coverage_renderer.subprocess.run = _run
-    try:
-        CoverageRenderer._publish(
-            _Uploader(), b'{}', 'live/coverage/meta.json',
-            content_type='application/json', max_age=5)
-        CoverageRenderer._publish(_Uploader(), b'png', 'live/coverage/1/2/3.png')
-    finally:
-        coverage_renderer.subprocess.run = original
+    assert len(client.calls) == 2
+    manifest, tile = client.calls
+    assert manifest == {
+        'Bucket': 'unh-ccom-p11-live',
+        'Key': 'live/coverage/meta.json',
+        'Body': b'{}',
+        'ContentType': 'application/json',
+        'CacheControl': 'max-age=5',
+    }, 'the manifest was uploaded as {}'.format(manifest)
+    assert tile == {
+        'Bucket': 'unh-ccom-p11-live',
+        'Key': 'live/coverage/1/2/3.png',
+        'Body': b'png',
+        'ContentType': 'image/png',
+        'CacheControl': 'max-age=60',
+    }, 'the tile was uploaded as {}'.format(tile)
 
-    assert len(calls) == 2
-    manifest, tile = calls
-    assert 'max-age=5' in manifest, (
-        'the manifest was uploaded as {}: the requested max-age never '
-        'reached the CLI'.format(manifest))
-    assert 'max-age=60' in tile, (
-        'the tile was uploaded as {}: the default max-age must remain the '
-        'configured cache_control'.format(tile))
+
+def test_a_failed_upload_is_counted_and_not_raised():
+    """An exception out of `_publish` stops the render thread for good.
+
+    The render worker has no exception handling around its publishes, so a
+    transport error has to come back as False-plus-a-counted-failure the way
+    the CLI's nonzero exit code did, not as a raise.
+    """
+    client = _RecordingClient(error=RuntimeError('AccessDenied'))
+    counted = []
+
+    class _Node:
+        dry_run = False
+        bucket = 'unh-ccom-p11-live'
+        profile = ''
+        cache_control = 60
+        _uploader = S3Uploader('unh-ccom-p11-live', client=client)
+
+        def _note_failure(self):
+            counted.append(1)
+
+        def get_logger(self):
+            return _Logger()
+
+    assert CoverageRenderer._publish(
+        _Node(), b'png', 'live/coverage/1/2/3.png') is False
+    assert counted == [1], (
+        'a failed upload must increment the failure counter, got {}'.format(
+            counted))

@@ -52,11 +52,12 @@ from collections import deque
 import json
 import math
 import os
-import subprocess
 import time
 
 from geographic_msgs.msg import GeoPointStamped
 from marine_interfaces.msg import PlatformList
+from marine_web_view.s3_upload import describe_error
+from marine_web_view.s3_upload import S3Uploader
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
@@ -226,6 +227,19 @@ class StateRenderer(Node):
         # rebuilt several times a second inside the subscriber callback.
         self._history = deque()
         self._track_stamp = None
+
+        # Not on a dry run: writing to local_path needs no AWS access at all,
+        # and constructing a client would go looking for a profile that a
+        # simulator host has no reason to have. `self.profile` is passed
+        # through UNCOALESCED -- this node has always required a profile, and
+        # an operator who blanks it should still fail loudly rather than
+        # silently pick up whatever credentials the host happens to carry.
+        # (coverage_renderer deliberately differs: see its own construction.)
+        # read_timeout leaves headroom under the 20 s ceiling the CLI
+        # shell-out used to enforce at the process level.
+        self._uploader = (None if self.dry_run else
+                          S3Uploader(self.bucket, profile=self.profile,
+                                     read_timeout=15))
 
         self.fix_type = (GeoPointStamped if self.msg_type == 'geopoint'
                          else NavSatFix)
@@ -496,25 +510,17 @@ class StateRenderer(Node):
         Cache-Control drives CloudFront freshness. Invalidation is deliberately
         not used: it is billed per path beyond a small monthly allowance, which
         at any real update rate would dwarf every other cost.
+
+        A failure is counted and logged, never raised: the next tick retries,
+        which is the same behaviour the CLI shell-out this replaced had.
         """
-        command = [
-            'aws', 's3', 'cp', '-',
-            's3://{}/{}'.format(self.bucket, key),
-            '--content-type', 'application/geo+json',
-            '--cache-control', 'max-age={}'.format(max(1, int(max_age))),
-            '--profile', self.profile,
-        ]
-        try:
-            result = subprocess.run(command, input=payload.encode(),
-                                    capture_output=True, timeout=20)
-        except subprocess.TimeoutExpired:
-            self._failures += 1
-            self.get_logger().error('upload of {} timed out'.format(key))
-            return False
-        if result.returncode != 0:
+        ok, exc = self._uploader.put(
+            payload.encode(), key, 'application/geo+json',
+            'max-age={}'.format(max(1, int(max_age))))
+        if not ok:
             self._failures += 1
             self.get_logger().error('upload of {} failed: {}'.format(
-                key, result.stderr.decode().strip()[:300]))
+                key, describe_error(exc)))
             return False
         return True
 
