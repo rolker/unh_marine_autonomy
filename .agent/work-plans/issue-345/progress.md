@@ -471,3 +471,25 @@ Every one is **fix** or **already fixed**. Nothing was dropped and nothing was d
 Lifecycle: **Implementation** -> **review-code** (re-review the fixes)
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 345 --skill review-code
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-23 23:02 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+
+**PR**: #350 at `b8eac73`
+**Sources**: 2 (Copilot @ `b8eac73`, CI rollup @ `b8eac73`)
+**Cross-source confirmations**: 0
+**CI**: all-pass -- `build` SUCCESS
+
+### Findings
+- (none) No valid finding survived verification this round.
+
+### False positives
+- (Copilot @ `b8eac73`) "`cache_control`, `cache_budget_bytes` and `max_requests_per_message` are parsed with `int(...)` without validation; a non-integer/NaN/Inf value can raise and abort node startup, so parse defensively with a warning + fallback" -- **empirically disproven, not merely argued**. All three are declared with integer literal defaults (`20`, `512*1024*1024`, `256`), so rclpy types them PARAMETER_INTEGER. A probe node declaring an int parameter under `--ros-args -p cache_control:=3.5` and `-p budget:=.nan` raises `InvalidParameterTypeException` **at `declare_parameter()`** ("Trying to set parameter ... of type 'DOUBLE', expecting type 'INTEGER'"), before any `int()` call executes. A double cannot reach these lines from the CLI, a YAML file or `ros2 param set`. The *range* concern the comment does not raise is separately already handled: `cache_control < 1` warns and falls back to the render interval (line 353), `cache_budget_bytes <= 0` disables eviction by design (line 712), `max_requests_per_message` is wrapped in `max(1, ...)`. The suggested remedy would also be a regression: silently substituting a default for an operator's explicit configuration is the silent-degradation class this node has been repeatedly hardened against, whereas the current abort names the offending parameter and its expected type.
+
+### Notes
+- **Convergence reached on the Copilot leg**: four Copilot reviews across four heads -- 7 comments at `546490a` (all valid, all fixed), 0 at `f8b32ee`, 0 at `d64ecb4`, 1 at `b8eac73` (this false positive). No valid finding has survived since `546490a`.
+- **Gap in the review coverage the operator relies on**: the 24 commits between `d64ecb4` and `b8eac73` -- the 29-suggestion triage pass and the vector-layer guard -- have been reviewed by **Copilot only**. The last independent Claude review (`## Local Review (Pre-Push)` round 2) was at `2df3823`, long superseded. The operator's stated review model is the combination of Claude and Copilot reviews rather than a personal read-through of a ~5,900-line diff, so a fresh `review-code` round at `b8eac73` is what would complete that gate before merge.
+- Local Adversarial has been unavailable for every round of this PR (Ollama `llama-server` OOM-killed; diff exceeds `num_ctx`), so the third review leg has never contributed.
+- Host verification at this head, independent of any sub-agent report: 123 tests pass; the mutation check gives exactly 2 failures (`test_every_layer_reaches_the_map`, `test_the_colour_table_is_indexed_deepest_last`) with the coverage layer orphaned and the colour table inverted; the new vector-layer guard fails when either the hull or the trail is orphaned.
