@@ -40,17 +40,22 @@ Three call sites shell out to `aws`:
    `tiles/`).
 
 `python3-boto3` is confirmed to resolve via rosdep (`apt` candidate
-`1.34.46+dfsg-1ubuntu1` on noble) and is not currently installed on this
-host — implementers must `sudo apt install python3-boto3` (or
-`rosdep install`) before running/testing this locally. `awscli` has no apt
-candidate on noble, which is why it could never be declared.
+`1.34.46+dfsg-1ubuntu1` on noble). `awscli` has no apt candidate on noble,
+which is why it could never be declared. boto3 is **not installed on the dev
+host** where this was implemented; the operator installs it via
+`rosdep install`. The implementation therefore imports boto3 **lazily** (see
+section 1) and every test injects a stub client, so the whole suite runs
+without the SDK present — which is also the property the README promises for
+a `dry_run` host.
 
-The `tiles/` prefix in the target bucket is currently **empty (0 objects)**:
-the CLI's incremental "skip unchanged" comparison inside `sync` has
-effectively never been exercised in production, so there is no existing
-on-bucket state whose exact comparison semantics we're obligated to match
-bit-for-bit — we're free to choose a comparison rule and state it, rather
-than reverse-engineer the CLI's.
+**CORRECTION to the original framing (Plan Review, must-fix):** the `tiles/`
+prefix is NOT per-compilation. `--name` (default `bathy4m`) is a FIXED S3 key
+prefix; only the CCOM *service name* carries the compilation date. The script
+tracks a `rule_hash` over `RAMP`/`MAX_DEPTH`/`STEP` and, when it changes,
+deliberately re-renders and re-uploads **into that same prefix**. A size-only
+comparison would silently skip a recoloured PNG of identical byte size,
+serving stale colours indefinitely. The comparison rule in section 4 is
+therefore **content-hash (MD5 vs ETag)**, not size.
 
 ## Approach
 
@@ -59,14 +64,29 @@ than reverse-engineer the CLI's.
 New module `marine_web_view/marine_web_view/s3_upload.py`:
 
 ```python
+def _boto3_client(profile, connect_timeout, read_timeout):
+    """Lazy import; returns (client, transport_error_classes)."""
+    import boto3
+    from botocore.config import Config
+    from botocore.exceptions import BotoCoreError, ClientError
+    config = Config(connect_timeout=connect_timeout,
+                    read_timeout=read_timeout,
+                    retries={'mode': 'standard', 'max_attempts': 4})
+    return (boto3.Session(profile_name=profile).client('s3', config=config),
+            (ClientError, BotoCoreError))
+
+
 class S3Uploader:
-    def __init__(self, bucket, profile=None, connect_timeout=5, read_timeout=25):
+    def __init__(self, bucket, profile=None, connect_timeout=5,
+                 read_timeout=25, client=None, transport_errors=None):
         self.bucket = bucket
-        config = botocore.config.Config(
-            connect_timeout=connect_timeout, read_timeout=read_timeout,
-            retries={'mode': 'standard', 'max_attempts': 4})
-        session = boto3.Session(profile_name=profile)
-        self._client = session.client('s3', config=config)
+        if client is None:
+            client, transport_errors = _boto3_client(
+                profile, connect_timeout, read_timeout)
+        elif transport_errors is None:
+            transport_errors = (Exception,)   # test seam
+        self._client = client
+        self._errors = transport_errors
 
     def put(self, payload, key, content_type, cache_control):
         """Upload bytes to key. Returns (True, None) or (False, exc)."""
@@ -74,11 +94,26 @@ class S3Uploader:
             self._client.put_object(
                 Bucket=self.bucket, Key=key, Body=payload,
                 ContentType=content_type, CacheControl=cache_control)
-            return True, None
-        except (botocore.exceptions.ClientError,
-                botocore.exceptions.BotoCoreError) as exc:
+        except self._errors as exc:
             return False, exc
+        return True, None
 ```
+
+- **boto3 is imported LAZILY, inside `_boto3_client`**, not at module scope.
+  Both renderers import this module unconditionally, but a `dry_run` /
+  `local_dir` host never constructs an uploader and needs no AWS SDK at all.
+  A module-level import would make boto3 a hard import-time requirement for
+  exactly the configuration documented as needing none, and would make the
+  package's own test suite unrunnable without it.
+- **`client` / `transport_errors` are an injection seam for tests.** Every
+  test in this PR passes a stub client, so no test needs the real SDK. An
+  injected client with no declared error classes catches `Exception`; the
+  real path declares `(ClientError, BotoCoreError)` so a programming error
+  is not laundered into a counted upload failure.
+- A module-level `describe_error(exc)` renders a `ClientError`'s
+  `response['Error']['Code']`/`Message` (so `AccessDenied` vs `NoSuchBucket`
+  vs `SlowDown` are distinguishable in the log line) and falls back to
+  `type(exc).__name__: exc` for a `BotoCoreError` with no response dict.
 
 - **Profile pass-through, not coalescing, is the helper's contract** — the
   helper does exactly `boto3.Session(profile_name=profile)` with whatever it
@@ -170,28 +205,43 @@ This is the one place a naive rewrite regresses badly, so spelling it out:
   upload; `aws s3 sync`'s default 10-way concurrency brings that to
   **~1-2 minutes**. This must not regress.
 - **Concurrency**: a `concurrent.futures.ThreadPoolExecutor` (boto3 clients
-  are documented thread-safe for concurrent calls; one shared `S3Uploader`-style
-  client, many worker threads). New `--concurrency` CLI arg, default `16`
-  (CLI's default is 10; small PNGs and a single bucket mean headroom to go a
-  little higher, but this stays operator-tunable without a code change).
-  Each worker calls `client.upload_file(local_path, BUCKET, key,
-  ExtraArgs={'ContentType': 'image/png', 'CacheControl':
-  'public,max-age=604800'})` — `upload_file` is used (not `put_object`) so a
-  future oversized tile transparently gets multipart handling from
-  `boto3.s3.transfer.TransferConfig`, though at ~256x256 PNG sizes every
-  object today is a single-part PUT regardless.
-- **"Already uploaded" comparison rule** (new code — no existing on-bucket
-  data to match, per the empty-`tiles/`-prefix fact above): one
-  `list_objects_v2` paginator call over `tiles/<name>/` up front builds a
-  `{key: size}` dict (one cheap list call instead of one `head_object` per
-  file). A local file is **skipped** if the remote key exists **and its
-  size matches exactly**; otherwise it is uploaded. This is deliberately
-  size-only, not size+mtime like the CLI: local mtimes are always "now"
-  (freshly downloaded in this same run), so an mtime comparison would never
-  skip anything and buys nothing; size is what actually distinguishes "same
-  render" from "compilation changed, different band boundaries." State this
-  choice in the code comment — it is a simplification enabled by the
-  never-yet-exercised incremental path, not an attempt at CLI parity.
+  are documented thread-safe for concurrent calls; one shared client, many
+  worker threads). New `--concurrency` CLI arg, **default 10** —
+  `DEFAULT_CONCURRENCY`, settled rather than left open (Plan Review
+  suggestion). 10 matches the AWS CLI's own default, i.e. the concurrency
+  this pyramid has actually been published at; parity at the cutover is worth
+  more than a guess at a faster number, and the flag raises it without a code
+  change if a run proves too slow. It is documented as governing the S3
+  upload only, distinct from `--rate`, which governs politeness toward CCOM.
+  Each worker calls **`put_object`** (not `upload_file`): a single-part PUT is
+  what makes the ETag comparison rule below hold for everything this script
+  writes. Tiles are 256x256 PNGs, tens of kB, far under the 5 GB PUT limit.
+- **"Already uploaded" comparison rule — CONTENT HASH, not size**
+  (operator-mandated correction; supersedes this plan's original size-only
+  rule): one `list_objects_v2` paginator pass over `tiles/<name>/` builds a
+  `{key: etag}` dict (one cheap list call instead of a `head_object` per
+  file). The ETag comes back quoted and is unquoted. A local file is
+  **skipped** only if the remote key exists, its ETag is comparable, and it
+  equals the local file's MD5; otherwise it is uploaded.
+  - An S3 ETag equals the object's MD5 **only for a single-part, non-KMS
+    upload**. `is_content_hash(etag)` requires 32 lowercase hex characters,
+    which rejects a multipart `<hash>-<partcount>` ETag left by the old
+    `aws s3 sync` (which switches to multipart above 8 MB). An
+    uncomparable ETag **falls back to uploading**, never to skipping. The
+    single-part guarantee and its fragility are stated in a comment, because
+    the rule silently stops holding if a future change introduces multipart.
+  - SSE-KMS ETags are also non-MD5 and are **not** distinguishable by shape.
+    That direction fails safe: a mismatch means upload, so a KMS-encrypted
+    bucket loses the skip optimisation but never serves a stale tile.
+  - This is a genuine improvement over the status quo, not a wash: the fetch
+    loop rewrites every local tile unconditionally, so local mtimes are
+    always "now" and `aws s3 sync`'s size+mtime rule re-uploaded all ~5,839
+    objects on every run. Content hashing is the first comparison here that
+    actually skips anything.
+- **`TILE_EXTRA_ARGS`** (`image/png` + `public,max-age=604800`) is a module
+  constant rather than a literal inside `main()`, so a test can pin the
+  values the upload actually uses instead of a copy of them — a mutation that
+  drops the 7-day policy now fails a test.
 - **Failure handling**: preserve today's all-or-nothing semantics — any
   per-object upload exception (after the SDK's own `standard`-mode retries
   are exhausted) counts as a sync failure; if any object failed, print
@@ -255,12 +305,14 @@ This is the one place a naive rewrite regresses badly, so spelling it out:
   `profile=None` vs `profile=''` vs `profile='p11-renderer'` each reach
   `boto3.Session(profile_name=...)` unchanged — pins the pass-through
   contract in section 1.
-- **Rewrite `test/test_render_pass.py::test_the_upload_stamps_the_max_age_it_is_given`**
-  to stub `CoverageRenderer._uploader.put` (or patch
-  `coverage_renderer.S3Uploader`) instead of `coverage_renderer.subprocess.run`,
-  asserting the `cache_control` string reaching the stub for both the
-  manifest (`max_age=5`) and a tile call (default `cache_control`) — same
-  assertions, different seam.
+- **`test/test_render_pass.py::test_the_upload_stamps_the_whole_object_shape_it_is_given`**
+  (renamed from `..._the_max_age_it_is_given`) injects a recording stub client
+  into `S3Uploader` and asserts the **full** `put_object` call shape —
+  `Bucket`, `Key`, `Body`, `ContentType`, `CacheControl` — for both the
+  manifest (`max_age=5`) and a tile (default `cache_control`), per the Plan
+  Review suggestion, rather than carrying over the old test's cache-control-only
+  assertion. A sibling test pins that a failed publish is counted and returns
+  False rather than raising into the render worker.
 - **New `test/test_chart_tile_sync.py`** — the issue explicitly calls out
   the sync comparison logic as new, untested code. Extract `_sync_dir` (and
   the size-comparison helper) so it's callable with an injected fake client
@@ -276,9 +328,21 @@ This is the one place a naive rewrite regresses badly, so spelling it out:
   client) surfaces as a nonzero failure count and the caller does not then
   attempt the manifest publish (test at the `main()`-adjacent level, or
   by checking `_sync_dir`'s return contract that `main()` gates on).
+- **`test/test_local_output.py`** gains
+  `test_a_dry_run_never_reaches_the_s3_transport`, which sets `_uploader` to
+  an object that raises on any access and asserts the dry-run publish still
+  writes locally — binding the "no AWS access at all" guarantee.
+- **`test/test_s3_upload.py`** also pins that importing the module does not
+  import boto3, and that `state_renderer._put` carries
+  `application/geo+json` plus the interval-derived max-age.
 - Existing `test_tile_ingest.py::test_an_unusable_bucket_is_rejected_rather_than_retried`
   needs no change (tests `_is_usable_bucket` directly, independent of
-  transport).
+  transport) — only its docstring's "30 s-capped subprocess" wording.
+- **Mutation-checked**: 19 mutations were applied one at a time and the suite
+  re-run with bytecode caching disabled; all 19 failed a test, including "skip
+  a changed tile", "trust every ETag", "serial uploads", each of the four
+  cache policies, and each failure counter. Recorded in the progress.md
+  `## Implementation` entry.
 
 ## Files to Change
 
@@ -292,7 +356,9 @@ This is the one place a naive rewrite regresses badly, so spelling it out:
 | `marine_web_view/README.md` | Remove the "Runtime prerequisite: the AWS CLI" section. |
 | `marine_web_view/test/test_s3_upload.py` | New — `S3Uploader` unit tests against a stubbed client. |
 | `marine_web_view/test/test_render_pass.py` | Rewrite the CLI-arg-inspecting max-age test to inspect the stubbed boto3 call instead. |
-| `marine_web_view/test/test_chart_tile_sync.py` | New — sync comparison + concurrency + failure-gating tests. |
+| `marine_web_view/test/test_chart_tile_sync.py` | New — content-hash comparison, multipart-ETag fallback, concurrency, failure-gating, and the chart tile/manifest cache policies. |
+| `marine_web_view/test/test_local_output.py` | New test: a dry run never reaches the S3 transport. |
+| `marine_web_view/test/test_tile_ingest.py` | Docstring only: stale "30 s-capped subprocess" wording. |
 
 ## Principles Self-Check
 
@@ -340,21 +406,24 @@ This is the one place a naive rewrite regresses badly, so spelling it out:
   documents (which already names `python3-boto3` as exactly this kind of
   Tier 1 case in spirit, even though it predates this specific package).
 
-## Open Questions
+## Open Questions — resolved during implementation
 
-- **README structure for the `dry_run`/no-AWS-access sentence**: once the
-  "Runtime prerequisite" section is deleted wholesale, should the one
-  sentence about `dry_run` needing no AWS access move under each node's own
-  parameter docs, or is it already redundant with per-node `dry_run`
-  parameter descriptions elsewhere in the README? Implementer should check
-  the current README's node sections before landing the deletion and use
-  judgment; flagging rather than guessing since it's a documentation
-  completeness call, not a behavior one.
-- **`--concurrency` default of 16 for the sync reimplementation**: reasonable
-  given ~256x256 PNGs and S3's per-prefix request-rate headroom, but if the
-  operator wants to match the CLI's default of 10 exactly for parity during
-  the cutover, that's a one-line default change — flagging the choice
-  rather than assuming 16 is uncontroversial.
+- **README structure for the `dry_run`/no-AWS-access sentence**: RESOLVED.
+  The "Runtime prerequisite: the AWS CLI" section is replaced by a short
+  "AWS credentials" section, because credentials are still a real operator
+  prerequisite even with no CLI. It keeps the `dry_run` sentence (now
+  stronger: no client is constructed at all) and states the two nodes'
+  profile asymmetry explicitly, which the deleted section did not.
+- **`--concurrency` default**: RESOLVED to **10**, matching the AWS CLI's
+  default — parity at the cutover, justified in a comment beside
+  `DEFAULT_CONCURRENCY`, and pinned by a test so a silent change to the load
+  put on one S3 prefix fails.
+- **Dependency tag**: `<depend>python3-boto3</depend>`, not `<exec_depend>`.
+  boto3 is a runtime import only, so `exec_depend` is the narrower-correct
+  tag, but `python3-numpy` and `python3-pil` — runtime imports in exactly the
+  same way — are declared with `<depend>` in this same manifest; declaring
+  the third differently would read as a distinction that does not exist, and
+  `rosdep install` resolves both identically. Stated in the manifest comment.
 
 ## Estimated Scope
 
