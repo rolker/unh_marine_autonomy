@@ -201,6 +201,48 @@ def test_every_layer_reaches_the_map():
             'map -- it will not appear, silently'.format(start))
 
 
+# Leaflet's vector layers. These are how the boat itself is drawn -- the
+# trail and the hull -- and they are NOT L.TileLayer constructions, so
+# `test_every_layer_reaches_the_map` above does not see them. Orphaning one
+# leaves the vessel off the map entirely with the suite green: the same #341
+# failure class, on the layers that matter most to an operator.
+_VECTOR_CONSTRUCTIONS = (
+    r'\bL\.polyline\s*\(',
+    r'\bL\.polygon\s*\(',
+    r'\bL\.circleMarker\s*\(',
+    r'\bL\.marker\s*\(',
+)
+
+_VECTOR_BINDING = r'(?:const|let|var)\s+(\w+)\s*=\s*$'
+
+
+def test_every_vector_layer_reaches_the_map():
+    """Every vector-layer construction must reach the map.
+
+    Either in its own statement, or later through the name it is bound to --
+    a layer built now and added on a state change is legitimate, so the name
+    is followed rather than requiring addTo at the construction site.
+    """
+    page = _code(_page())
+    sites = [m.start() for m in
+             re.finditer('|'.join(_VECTOR_CONSTRUCTIONS), page)]
+    assert len(sites) >= 2, (
+        'expected at least the trail and the hull; found {} -- has the page '
+        'been restructured?'.format(len(sites)))
+    for start in sites:
+        statement = _statement(page, start)
+        if '.addTo(map)' in statement:
+            continue
+        bound = re.search(_VECTOR_BINDING, page[:start])
+        assert bound, (
+            'the vector layer constructed at offset {} is neither added to '
+            'the map nor bound to a name -- it cannot appear'.format(start))
+        name = bound.group(1)
+        assert re.search(r'\b' + name + r'\s*\.addTo\s*\(\s*map\s*\)', page), (
+            '{} is constructed but never added to the map -- it will not '
+            'appear, silently'.format(name))
+
+
 def test_the_coverage_layer_is_configured_from_the_manifest():
     """The page must not hardcode the zoom the renderer writes.
 
