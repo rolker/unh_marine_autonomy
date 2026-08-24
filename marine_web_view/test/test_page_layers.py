@@ -61,20 +61,41 @@ def _page():
 def test_every_layer_class_is_instantiated():
     """A defined-but-unused L.TileLayer subclass is a dead layer."""
     page = _page()
-    defined = set(re.findall(r'const\s+([A-Z]\w*)\s*=\s*L\.TileLayer\.extend',
-                             page))
+    defined = _layer_classes(page)
     assert defined, 'no layer classes found -- has the page been restructured?'
-    for name in sorted(defined):
+    for name in defined:
         assert re.search(r'\bnew\s+' + name + r'\s*\(', page), (
             '{} is defined but never instantiated -- the layer will not '
             'appear on the map, silently'.format(name))
 
 
-# Every way this page builds a tile layer. `new L.TileLayer(` is here because
-# it was NOT matched by the original `new [A-Z]\w*(` pattern -- the coverage
-# layer was built through it and went unguarded by the very test written to
-# catch an orphaned layer.
-_CONSTRUCTIONS = r'\bnew\s+L\.TileLayer\s*\(|\bL\.tileLayer\s*\(|\bnew\s+(?:Bathy|Relief)\s*\('
+# Leaflet's two built-in ways of making a tile layer. `new L.TileLayer(` is
+# here because it was NOT matched by the original `new [A-Z]\w*(` pattern --
+# the coverage layer was built through it and went unguarded by the very test
+# written to catch an orphaned layer.
+_BUILTIN_CONSTRUCTIONS = (r'\bnew\s+L\.TileLayer\s*\(', r'\bL\.tileLayer\s*\(')
+
+_LAYER_CLASS = r'const\s+([A-Z]\w*)\s*=\s*L\.TileLayer\.extend'
+
+
+def _layer_classes(page):
+    """Return the names of the page's own `L.TileLayer` subclasses."""
+    return sorted(set(re.findall(_LAYER_CLASS, page)))
+
+
+def _constructions(page):
+    """Return a regex matching every way this page builds a tile layer.
+
+    Derived from the subclasses the page actually defines rather than from a
+    hardcoded `Bathy|Relief`: a list spelled out here goes stale the moment
+    someone adds a fourth layer, and the new one would then escape the addTo
+    check silently -- which is the exact class of failure (#341) this file
+    exists to catch.
+    """
+    alternatives = list(_BUILTIN_CONSTRUCTIONS)
+    alternatives += [r'\bnew\s+' + name + r'\s*\(' for name in
+                     _layer_classes(page)]
+    return '|'.join(alternatives)
 
 
 def _code(page):
@@ -166,7 +187,10 @@ def test_every_layer_reaches_the_map():
     each construction site inside its own statement instead.
     """
     page = _code(_page())
-    sites = [m.start() for m in re.finditer(_CONSTRUCTIONS, page)]
+    assert _layer_classes(page), (
+        'no L.TileLayer subclass found -- the construction pattern would '
+        'then guard only the built-in constructors')
+    sites = [m.start() for m in re.finditer(_constructions(page), page)]
     assert len(sites) >= 4, (
         'expected at least imagery, bathymetry, hillshade and coverage; '
         'found {} -- has the page been restructured?'.format(len(sites)))
@@ -263,3 +287,23 @@ def test_expected_layers_are_present():
             ('live/track.geojson', 'vessel track')):
         assert marker in page, '{} ({}) missing from the page'.format(
             description, marker)
+
+
+def test_the_construction_pattern_tracks_the_pages_layer_classes():
+    """A new layer subclass must be guarded without editing this file.
+
+    The alternation used to spell out `Bathy|Relief`. A fourth subclass added
+    to the page would have been constructed, orphaned and never noticed --
+    exactly the #341 failure the file exists to catch.
+    """
+    page = _code(_page())
+    pattern = _constructions(page)
+    for name in _layer_classes(page):
+        assert re.search(pattern, 'x = new {}({{}});'.format(name)), (
+            '{} is not covered by the construction pattern'.format(name))
+
+    invented = 'const Sidescan = L.TileLayer.extend({});'
+    assert 'Sidescan' in _layer_classes(invented), (
+        'a newly defined layer class is not discovered')
+    assert re.search(_constructions(invented), 'x = new Sidescan({});'), (
+        'a newly defined layer class would escape the addTo check')
