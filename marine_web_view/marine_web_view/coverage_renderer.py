@@ -597,6 +597,13 @@ class CoverageRenderer(Node):
         already published for it. The already-published PNG stands until then,
         so the display does not flicker -- an evicted tile is not marked
         dirty. Being over budget at all is abnormal, hence the warning.
+
+        Not flickering holds for a slippy tile fed by one grid. One that
+        straddles two is re-rendered when either changes, from whatever the
+        cache still holds, so an evicted neighbour's half re-publishes
+        transparent until the catalog re-serves it -- bounded to the seam and
+        self-healing, but another reason eviction is a warning and not a
+        routine operating point. Noted in the README.
         """
         if self.cache_budget_bytes <= 0 or not self._tiles:
             return

@@ -260,6 +260,15 @@ re-requests the tile in full. The already-published PNG stands until then, so
 an evicted tile is not marked dirty and the display does not flicker. Being
 over budget is abnormal and is warned about.
 
+That last guarantee has one hole worth knowing: a slippy tile straddling two
+GGGS grids is re-rendered whenever *either* of them changes, and it is
+rendered from whatever is in the cache. If one of the two has been evicted,
+its half of that tile is re-published transparent — surveyed ground that
+blanks until the catalog round re-serves the evicted grid. It is bounded (the
+tiles along a grid seam, for one render interval) and self-healing, but it is
+why running over budget is a warning rather than routine: the answer is a
+larger `cache_budget_bytes` or a coarser `zoom`, not living with eviction.
+
 ### Threading
 
 Rendering runs on its own thread; the `render_interval` timer only wakes it.
