@@ -374,6 +374,11 @@ new Relief('', {
 // layer pinned to the wrong native zoom requests tiles that were never
 // written -- so the level, and whether the renderer is running at all, come
 // from the manifest it publishes beside the tiles.
+// Hardcoded, and it has to be: this is where the manifest lives, so it cannot
+// come from the manifest. The `prefix` field meta.json carries is therefore
+// reporting rather than configuration -- useful to anything reading the
+// manifest out of band, but changing the renderer's `prefix` parameter means
+// changing this line too.
 const COVERAGE_DIR  = 'live/coverage/';
 const COVERAGE_META = COVERAGE_DIR + 'meta.json';
 const COVERAGE_MS   = 20000;   // the renderer rewrites the manifest per pass

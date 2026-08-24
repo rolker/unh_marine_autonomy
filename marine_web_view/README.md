@@ -371,10 +371,27 @@ having any coverage under it, a fully transparent tile is uploaded over it.
 Skipping the upload instead leaves the display — and CloudFront — showing
 coverage the source no longer holds.
 
-That bookkeeping is in memory, so it covers this run. Objects left by an
-earlier run at a different `zoom` or `prefix` are not tracked and are not
-cleaned up; give a survey its own prefix, or expire the old one with a bucket
-lifecycle rule.
+That bookkeeping is in memory, so it covers this run and no other. Two
+consequences, and the second is the one that bites:
+
+- objects left by an earlier run at a different `zoom` or `prefix` are not
+  tracked and are not cleaned up. Give a survey its own prefix, or expire the
+  old one with a bucket lifecycle rule.
+- **a restart against the same bucket and prefix starts with an empty
+  `_published` set.** Coverage the source pruned while the node was down is
+  never un-published: the restarted node has no record of having published
+  those tiles, so it renders nothing for them and their old PNGs stand in the
+  bucket indefinitely. Anything the source *still* holds is re-requested and
+  overwritten by the ordinary catalog round, so this only strands ground that
+  was pruned across the outage. A prune is rare enough that carrying a
+  persistent index was judged the wrong trade (see Memory-only, by design);
+  if it matters for a given deployment, clear the prefix before restarting.
+
+The manifest's `prefix` field is **reporting, not configuration**: the page
+hardcodes `COVERAGE_DIR` because it has to know where the manifest is before
+it can read the manifest. The field is there so anything reading `meta.json`
+out of band — a script, an operator checking which prefix a live renderer is
+writing to — does not have to guess.
 
 A failed upload leaves its tile dirty and is retried on the next pass rather
 than becoming a permanent hole, and a per-tile failure is contained: an
