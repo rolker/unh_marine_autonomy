@@ -240,12 +240,32 @@ def test_a_level_10_grid_marks_a_handful_of_tiles():
 
 
 def test_a_malformed_band_is_dropped_not_cached():
-    """A truncated patch must not leave a half-written tile behind."""
+    """A truncated patch must not leave a half-written tile behind.
+
+    Counting the failure is not the assertion the name makes. What matters is
+    that nothing is left behind: an entry in `_tiles` renders as coverage, and
+    an `_applied` version or reconciler possession would tell the catalog the
+    node holds a tile it does not, so the tile is never re-served and the hole
+    is permanent.
+    """
     node = _Ingest()
+    index = (10, 17801, 13988)
     tile = _Tile()
     tile.bands[0].data = tile.bands[0].data[:-2]
     node._on_tile(tile)
     assert node._failures == 1
+    assert index not in node._tiles, 'a malformed patch was cached'
+    assert index not in node._applied
+    assert index not in node._touch
+    assert not node._reconciler.has(index), (
+        'possession was recorded for a tile that never decoded; the catalog '
+        'will never re-serve it')
+    assert not node._dirty, 'a tile that was never decoded was marked dirty'
+    assert node._cache_bytes == 0
+
+    # And the tile is still accepted when a well-formed copy arrives.
+    node._on_tile(_Tile())
+    assert index in node._tiles
 
 
 def _values(constant, cells):
