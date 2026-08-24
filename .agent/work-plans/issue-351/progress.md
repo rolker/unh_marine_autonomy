@@ -734,3 +734,41 @@ All seven mutants the round-2 review listed as surviving are in this table
   `~/.cache`.** The `~/.cache` fallback path is exercised only via a
   monkeypatched `$XDG_RUNTIME_DIR`; a cron host where `$HOME` is unwritable
   would raise from `makedirs`, which is loud but untested.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-24 17:02 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-351 at `196dac2`
+**PR**: #353 at `196dac2`
+**Mode**: pre-push (PR #353 open, base `jazzy`)
+**Depth**: Deep (reason: new concurrency in a node that publishes during operations; 4229/182 lines across 15 files; credentials and a public bucket in play)
+**Must-fix**: 5 | **Suggestions**: 7
+**Round**: 3 | **Ship**: continue — three of the five are new correctness holes created by the round-3 restructure itself (a silently dying upload worker, a flush whose tiles no viewer ever sees, a manifest merge that erases its peers on one transient GET); each is local and small, but they are design/correctness concerns rather than mechanical fixes, so they warrant one more independent read.
+
+### Findings
+- [ ] (must-fix) upload worker dies silently on any exception outside `transport_errors` or from `_log_error`; `submit` then returns True forever, `confirmed` never advances, `counts()` reports 0 failures and `stop()` reports clean — reproduced on this host — `marine_web_view/s3_upload.py:255-284`
+- [ ] (must-fix) a truncated shutdown flush skips `_publish_meta`, so tiles it did publish are never announced; `index.html:568` refreshes only when `rendered_tiles` changes, and the process is exiting — regression vs round 2's unconditional meta PUT — `marine_web_view/coverage_renderer.py:1211-1217`
+- [ ] (must-fix) `update_manifest` merges into `load_manifest`'s blanket-`except` `{}`, so one transient GET inside the lock PUTs `{name: entry}` and erases every other `--name` — the exact lost update the lock was added to prevent — `scripts/refresh_chart_tiles.py:553`
+- [ ] (must-fix) README tells the operator to clear a wedged lock by "deleting the lock file"; that does not release the `flock`, and the next run creates a new inode and acquires immediately — two concurrent crawls of CCOM — `marine_web_view/README.md:553-554`
+- [ ] (must-fix) the manifest staging file still lives in the unowned `--workdir` (`/tmp`) that `lock_dir()`'s own docstring refuses to keep a lock in; `open(staged,'w')` follows a planted symlink and `save_manifest` re-reads the path before PUTting it to the public `tiles/manifest.json` — `scripts/refresh_chart_tiles.py:555-558`
+- [ ] (suggestion) `AsyncUploader`'s worker starts before `create_subscription`/`create_timer`, and `main()` builds the node outside its `try` — the invariant `test_the_render_worker_is_started_after_everything_that_can_raise` codifies for the sibling node, unguarded here — `marine_web_view/state_renderer.py:264-266,604`
+- [ ] (suggestion) `daemon=True` is load-bearing but unpinned: flipping it hangs the suite indefinitely instead of failing a test — pin it beside the `UPLOAD_STOP_SECONDS == 5.0` assertion — `marine_web_view/s3_upload.py:210-212`
+- [ ] (suggestion) a manifest-lock timeout raises out of `main()` uncaught after every tile is already uploaded, costing the next run a full ~5,839-tile re-crawl — catch, report the consequence, retry — `scripts/refresh_chart_tiles.py:544-552`
+- [ ] (suggestion) "All-or-nothing, as `aws s3 sync` was" overstates it: tiles PUT before the failure are already live behind CloudFront; only the manifest is withheld — `scripts/refresh_chart_tiles.py:862`
+- [ ] (suggestion) `_confirmed` is never pruned, so the "no call pattern can grow this unboundedly" claim covers `_pending` only — `marine_web_view/s3_upload.py:173-176,280`
+- [ ] (suggestion) `stop()`'s stated worst case omits the unbudgeted `_publish_meta` PUT that follows a flush which did not abort — `marine_web_view/coverage_renderer.py:1055-1060`
+- [ ] (suggestion) `_pending`'s comment says `key -> (payload, content_type, cache)`; the stored value is a 4-tuple including `tag` — `marine_web_view/s3_upload.py:200`
+
+### Verified, not findings
+- **Mutation sample re-run independently** (scratch copy, `__pycache__` purged, full suite each time): mutants 2, 4, 5, 8, 9, 10 from the fix pass's table all fail exactly as reported. Three further mutants of my own — `stop()` not waking the worker, `confirmed` reporting the pending tag, and `submit` accepting past the cap — are also caught. The guards bind.
+- **Ordering.** The 1 s position stream cannot starve the 30 s track: a popped key leaves the map, so its re-submission re-enters at the tail and the two alternate. The claim in the `_run` comment holds.
+- **Logging after shutdown.** Probed directly on Jazzy: `get_logger().error()` and `get_clock().now()` on a destroyed node, and after `rclpy.shutdown()`, both succeed. The abandoned-thread-logs-after-teardown hazard does not fire here.
+- **Static analysis** clean: `test_flake8`, `test_pep257`, `test_copyright` pass; the eight `B902` blind-except hits are the documented containment backstops.
+- **Round-2 must-fix 1, STS half** — acceptable as left. A role-assuming profile would build its STS client under botocore's own defaults outside the caller's `Config`, but nothing now depends on a per-request ceiling: state_renderer's PUTs are off the executor thread, coverage_renderer aborts between tiles, and the cron script is bounded by the run lock. The shipped profile is an IAM user, so the path is not even taken. Worth one sentence in `_boto3_client` so round 4 does not rediscover it.
+- **`$XDG_RUNTIME_DIR` / `~/.cache` fallbacks** behave: a symlinked lock dir is refused by the `lstat` check; an unwritable `$HOME` or `$XDG_RUNTIME_DIR` exits non-zero with an unhandled `OSError` traceback (loud, if untidy). `LOCK_STALE_SECONDS` (6 h) clears `SYNC_DEADLINE_SECONDS` (1 h) with room; a legitimately long run past 6 h would false-alarm, which checking the recorded pid with `os.kill(pid, 0)` would settle.
+
+### Out of scope for this PR
+`coverage_renderer` has no "no catalog received" warning, and the shipped `coverage_namespace` default (`/ben/sensors/mbes/cube_bathymetry`) does not match what BizzyBoat publishes (`/bizzy/sensors/m3/cube_bathymetry`), so a wrong namespace is indistinguishable from an idle sonar — and `meta.json` reports `status: ok` throughout. This will be hit on first deployment to the operator station, but it is unrelated to the transport swap: file it as a follow-up rather than widening this PR. The same applies to the broader `--workdir` exposure (tile files are read with symlink-following `open()` and PUT to the public prefix) — pre-existing, and larger than the one-line staging-file fix above.
