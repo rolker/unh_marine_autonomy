@@ -358,11 +358,18 @@ heartbeat:
 
 - `status` says what the pass actually did. `ok` is a normal render;
   `waiting_for_chart_datum` means no offset has been read yet and nothing was
-  coloured; `stale_chart_datum` means the offset has not been refreshed for
-  `DATUM_STALE_SECONDS` (60 s) and `chart_datum_age` says how long. That last
-  one is the degradation the manifest used to hide: the offset is the *tide*,
-  so once TF goes away the node keeps rendering happily against a frozen water
-  level, and frozen tide reads on the page as ordinary bathymetry. Coverage
+  coloured; `stale_chart_datum` means the transform the offset came
+  from is more than `DATUM_STALE_SECONDS` (60 s) old and `chart_datum_age`
+  says how old. The age is taken from the transform's own stamp, not from when
+  the lookup ran: `lookup_transform(..., Time())` returns the *latest
+  available* transform and tf2 prunes only on insert, so a tide publisher that
+  dies keeps resolving the same transform forever and timing the lookup would
+  report a permanently fresh datum. A *static* chart-datum transform has no
+  age — tf2 answers a `Time()` query on one with a zero stamp, and a datum
+  that never moves cannot go stale. That staleness is the degradation the
+  manifest used to hide: the offset is the *tide*, so once the publisher goes
+  away the node keeps rendering happily against a frozen water level, and
+  frozen tide reads on the page as ordinary bathymetry. Coverage
   still renders — stale is a degradation, not a stop.
 
 It is rewritten every pass, idle or not, which is one extra PUT per

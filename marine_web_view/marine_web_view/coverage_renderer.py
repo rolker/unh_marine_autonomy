@@ -155,8 +155,12 @@ MAX_SLIPPY_ZOOM = 22
 # at all.
 SHUTDOWN_FLUSH_SECONDS = 30.0
 
-# How long the chart-datum offset may go un-refreshed before the manifest says
-# so. The offset is the tide: it moves, and a stale one colours live coverage
+# How old the transform the chart-datum offset came from may get before the
+# manifest says so. Age OF THE DATA -- see `_transform_seconds` and
+# `CoverageRenderer._datum_age`: the lookup itself keeps succeeding after the
+# publisher dies, so the time of the last lookup measures nothing.
+#
+# The offset is the tide: it moves, and a stale one colours live coverage
 # against an old water level -- wrong, and wrong in a way that looks entirely
 # plausible on the page. A total TF outage after the first successful lookup
 # is the one degradation the manifest used to hide behind `status: 'ok'`,
@@ -173,6 +177,27 @@ DATUM_STALE_SECONDS = 60.0
 DEFAULT_RENDER_INTERVAL = 20.0
 DEFAULT_REQUEST_INTERVAL = 5.0
 MAX_INTERVAL_SECONDS = 86400.0
+
+
+def _transform_seconds(transform):
+    """Return a transform's own stamp in seconds, or None if it has none.
+
+    This is the age of the DATA, which is what staleness has to be measured
+    from; see `CoverageRenderer._datum_age`.
+
+    A zero stamp is returned as None rather than as 1970. tf2 answers a
+    `Time()` query against a STATIC transform by handing back the requested
+    time -- zero -- so a static chart-datum publisher (an opt-out for water
+    with no tide correction, and a legitimate configuration) would otherwise
+    read as decades stale and dim the layer forever. A static datum cannot go
+    stale, so it has no age.
+    """
+    stamp = getattr(getattr(transform, 'header', None), 'stamp', None)
+    if stamp is None:
+        return None
+    seconds = float(getattr(stamp, 'sec', 0)) + \
+        float(getattr(stamp, 'nanosec', 0)) / 1e9
+    return seconds if seconds > 0.0 else None
 
 
 def sane_interval(value, default):
@@ -396,7 +421,11 @@ class CoverageRenderer(Node):
         # holding self._lock, and self._lock is not reentrant.
         self._failure_lock = threading.Lock()
         self._datum_offset = None
-        self._datum_stamp = None    # monotonic time of the last good lookup
+        # ROS time, in seconds, OF THE TRANSFORM DATA -- not of the lookup.
+        # See `_datum_age`: a lookup at Time() keeps succeeding forever
+        # after the publisher dies, so the wall clock of the last lookup
+        # measures nothing.
+        self._datum_stamp = None
 
         # Only stand up TF when the correction is actually configured: an
         # empty chart_datum_frame is the documented way to say "the band is
@@ -862,7 +891,7 @@ class CoverageRenderer(Node):
         # Height of chart datum expressed in the map frame, so a sounding's
         # depth below datum is (datum_z - z).
         offset = float(transform.transform.translation.z)
-        self._datum_stamp = time.monotonic()
+        self._datum_stamp = _transform_seconds(transform)
         if self._datum_offset is None:
             self._datum_offset = offset
             self.get_logger().info(
@@ -880,14 +909,28 @@ class CoverageRenderer(Node):
         return True
 
     def _datum_age(self):
-        """Return seconds since the chart-datum offset was last refreshed.
+        """Return the age of the chart-datum DATA, in seconds.
 
-        `None` when the correction is disabled by configuration, or when no
-        offset has ever been read -- neither is staleness.
+        Measured from the stamp on the transform, against the ROS clock -- not
+        from when the lookup ran. This is the whole point: `lookup_transform`
+        with `Time()` asks for the LATEST AVAILABLE transform, and tf2 prunes
+        its buffer only when something is inserted, so a tide publisher that
+        dies keeps resolving the same transform forever. Timing the lookup
+        therefore reports a permanently fresh datum for a permanently frozen
+        water level -- exactly the degradation `DATUM_STALE_SECONDS` exists to
+        surface, reported as `status: 'ok'`.
+
+        `None` when the correction is disabled by configuration, when no
+        offset has ever been read, or when the transform carries no usable
+        stamp (a static publisher -- see `_transform_seconds`). None of those
+        is staleness.
         """
         if self._tf_buffer is None or self._datum_stamp is None:
             return None
-        return time.monotonic() - self._datum_stamp
+        now = self.get_clock().now().nanoseconds / 1e9
+        # Clamp: a transform stamped slightly ahead of this node's clock is
+        # not negatively old, and a negative age would read as fresh anyway.
+        return max(0.0, now - self._datum_stamp)
 
     def _colourise(self, values, datum_z):
         """Return RGBA bytes for a sampled tile; NaN becomes transparent.

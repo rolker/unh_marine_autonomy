@@ -77,18 +77,34 @@ class _Translation:
         self.z = z
 
 
-class _Transform:
-    """Stand-in for a TF transform."""
+class _Stamp:
+    """Stand-in for a builtin_interfaces/Time."""
 
-    def __init__(self, z):
+    def __init__(self, seconds):
+        self.sec = int(seconds)
+        self.nanosec = int(round((seconds - int(seconds)) * 1e9))
+
+
+class _Transform:
+    """Stand-in for a TF transform, carrying its own stamp like the real one."""
+
+    def __init__(self, z, stamp_seconds=0.0):
         self.transform = type('T', (), {'translation': _Translation(z)})()
+        self.header = type('H', (), {'stamp': _Stamp(stamp_seconds)})()
 
 
 class _Buffer:
-    """Stand-in TF buffer serving a scripted offset."""
+    """Stand-in TF buffer serving a scripted offset.
 
-    def __init__(self, z):
+    `stamp` is the ROS time the served transform is stamped with. It does NOT
+    advance on its own: that is the point. `lookup_transform(..., Time())`
+    returns the LATEST AVAILABLE transform and tf2 prunes only on insert, so a
+    publisher that dies keeps resolving the same transform forever.
+    """
+
+    def __init__(self, z, stamp=0.0):
         self.z = z
+        self.stamp = stamp
         self.lookups = 0
 
     def lookup_transform(self, target, source, when):
@@ -96,20 +112,22 @@ class _Buffer:
         self.lookups += 1
         if self.z is None:
             raise tf2_ros.LookupException('no transform')
-        return _Transform(self.z)
+        return _Transform(self.z, self.stamp)
 
 
 class _Renderer:
     """Minimal stand-in exposing the colour path over a hand-built cache."""
 
-    def __init__(self, z=-28.03, threshold=0.15):
+    def __init__(self, z=-28.03, threshold=0.15, stamp=1_700_000_000.0):
         self.zoom = 15
+        self.sim_clock_seconds = stamp
         self._colours = colour_table()
         self._tiles = {}
         self._dirty = set()
         self._lock = threading.Lock()
         self._datum_offset = None
-        self._tf_buffer = _Buffer(z)
+        self._datum_stamp = None
+        self._tf_buffer = _Buffer(z, stamp)
         self.map_frame = 'ben/map'
         self.chart_datum_frame = 'ben/chart_datum'
         self.tide_invalidate_threshold = threshold
@@ -119,7 +137,16 @@ class _Renderer:
         """Return the collecting logger."""
         return self._logger
 
+    def get_clock(self):
+        """Return a stand-in ROS clock reading `sim_clock_seconds`."""
+        nanoseconds = int(self.sim_clock_seconds * 10 ** 9)
+        return type('C', (), {
+            'now': staticmethod(
+                lambda: type('T', (), {'nanoseconds': nanoseconds})
+            )})()
+
     _colourise = CoverageRenderer._colourise
+    _datum_age = CoverageRenderer._datum_age
     _update_datum_offset = CoverageRenderer._update_datum_offset
     _mark_dirty = CoverageRenderer._mark_dirty
 
@@ -265,3 +292,61 @@ def test_a_disabled_correction_renders_unreferenced():
     node = _Renderer()
     node._tf_buffer = None
     assert node._update_datum_offset()
+
+
+def test_a_dead_tide_publisher_ages_even_though_the_lookup_succeeds():
+    """Staleness must be measured on the DATA, not on the lookup.
+
+    `lookup_transform(..., Time())` asks for the latest available transform,
+    and tf2 prunes its buffer only when something is inserted -- so a tide
+    publisher that dies keeps resolving the same transform forever, with no
+    exception, for as long as the node runs. Timing the lookup therefore
+    reported a permanently fresh datum for a permanently frozen water level,
+    and the manifest said `ok` while every tile was coloured against an old
+    tide. That is the exact degradation `DATUM_STALE_SECONDS` exists to
+    surface, so it is checked against the transform's own stamp.
+    """
+    start = 1_700_000_000.0
+    node = _Renderer(z=-28.03, stamp=start)
+    assert node._update_datum_offset()
+    assert node._datum_age() < 1.0, 'a just-published transform is not old'
+
+    # Time passes. The publisher is gone -- the buffer still answers, with the
+    # same transform and the same stamp it had at `start`.
+    for elapsed in (30.0, coverage_renderer.DATUM_STALE_SECONDS + 5.0, 3600.0):
+        node.sim_clock_seconds = start + elapsed
+        assert node._update_datum_offset(), 'the dead lookup still succeeds'
+        assert node._tf_buffer.lookups > 1
+        age = node._datum_age()
+        assert abs(age - elapsed) < 1.0, (
+            'the offset has been frozen for {:.0f} s but reads as {:.0f} s '
+            'old -- the age is being taken from the lookup rather than from '
+            'the transform'.format(elapsed, age))
+    assert node._datum_age() > coverage_renderer.DATUM_STALE_SECONDS
+
+
+def test_a_live_tide_publisher_stays_fresh():
+    """A publisher that keeps stamping fresh transforms must not read stale."""
+    start = 1_700_000_000.0
+    node = _Renderer(z=-28.03, stamp=start)
+    for elapsed in (0.0, 30.0, 600.0, 7200.0):
+        node.sim_clock_seconds = start + elapsed
+        node._tf_buffer.stamp = start + elapsed      # a live publisher
+        assert node._update_datum_offset()
+        assert node._datum_age() < 1.0, (
+            'a transform stamped now reads as {:.0f} s old'
+            .format(node._datum_age()))
+
+
+def test_a_static_chart_datum_has_no_age():
+    """tf2 answers a Time() query on a static transform with a zero stamp.
+
+    A static chart-datum publisher is a legitimate configuration -- water with
+    no tide correction to apply -- and a zero stamp read literally is 1970, so
+    it would dim the layer forever. A static datum cannot go stale, so it has
+    no age at all.
+    """
+    node = _Renderer(z=-28.03, stamp=0.0)
+    assert node._update_datum_offset()
+    assert node._datum_offset == -28.03
+    assert node._datum_age() is None

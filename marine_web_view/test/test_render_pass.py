@@ -91,10 +91,12 @@ class _Pass:
         self.raise_on_sample = False
         self.sim_clock_seconds = 1_700_000_000.0
         self.datum_available = True
-        # The correction is enabled (a real Buffer would sit here) and was
-        # refreshed just now, so `_datum_age` reads as fresh by default.
+        # The correction is enabled (a real Buffer would sit here) and the
+        # transform it last read is stamped now on the ROS clock, so
+        # `_datum_age` reads as fresh by default. The stamp is ROS time of the
+        # DATA, not of the lookup -- see `_transform_seconds`.
         self._tf_buffer = object()
-        self._datum_stamp = time.monotonic()
+        self._datum_stamp = self.sim_clock_seconds
 
     def get_logger(self):
         """Return the collecting logger."""
@@ -431,8 +433,9 @@ def test_a_frozen_chart_datum_is_reported_rather_than_rendered_as_normal():
     assert node.meta[-1]['status'] == 'ok'
     assert node.meta[-1]['chart_datum_age'] < 1.0
 
-    node._datum_stamp = time.monotonic() - (
-        coverage_renderer.DATUM_STALE_SECONDS + 5.0)
+    # The publisher dies: the same transform keeps resolving, so its stamp
+    # stays where it was while the ROS clock moves on.
+    node.sim_clock_seconds += coverage_renderer.DATUM_STALE_SECONDS + 5.0
     node._dirty.add((10, 21))
     node._render_dirty()
     assert node.meta[-1]['status'] == 'stale_chart_datum', (
