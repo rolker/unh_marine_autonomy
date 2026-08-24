@@ -149,3 +149,155 @@ The plan is well-researched and traces most of the source faithfully (cache-cont
 - [ ] Revise the "Already uploaded comparison rule" in `plan.md` section 4 to close the rule-hash/same-prefix gap (see must-fix finding above) before implementation begins.
 - [ ] Settle the `--concurrency` default explicitly rather than leaving it open.
 - [ ] When rewriting the max-age test, assert the full stubbed call shape, not just `cache_control`.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-24 14:35 -04:00
+**By**: Claude Opus
+
+**Plan**: `.agent/work-plans/issue-351/plan.md` at `3d44436` (updated to match what was built)
+**Branch**: feature/issue-351 at `3d44436`
+**Commits**: `2e5e720` (renderers), `03f0ade` (chart tile sync), `d8028a7` (package.xml + README), `3d44436` (plan sync)
+**PR**: none opened (not pushed, per instruction)
+
+### What was built
+
+All three `aws` shell-out sites are gone; `grep -rn "subprocess\|'aws'"` over the
+package finds no invocation, only prose references to the CLI that was replaced.
+
+1. New `marine_web_view/marine_web_view/s3_upload.py` — `S3Uploader.put()` returns
+   `(ok, exception_or_None)` so a transport error lands on each node's existing
+   failure counter rather than raising into a ROS timer or the render worker.
+   `describe_error()` renders a `ClientError`'s S3 code/message, so `AccessDenied`,
+   `NoSuchBucket` and `SlowDown` are distinguishable in the log line.
+2. `state_renderer._put` and `coverage_renderer._publish` call it. Neither
+   constructs a client on a dry run. The profile asymmetry is preserved with the
+   reason stated at each construction site (`profile or None` in coverage_renderer,
+   uncoalesced in state_renderer).
+3. `scripts/refresh_chart_tiles.py` gets its own standalone implementation:
+   `get_object`/`put_object` for the manifest, and `sync_dir()` — a
+   `list_objects_v2` paginator pass plus a `ThreadPoolExecutor` of `put_object`
+   calls — for the pyramid. Still stdlib plus a lazily imported boto3, nothing from
+   `marine_web_view`, so it still runs from cron without the ROS overlay.
+4. `package.xml` declares `<depend>python3-boto3</depend>`; the `awscli`-undeclarable
+   comment is gone. The README's "Runtime prerequisite: the AWS CLI" section is
+   replaced by a short "AWS credentials" section (credentials remain a real operator
+   prerequisite; the CLI does not).
+
+### Operator-mandated correction: content hash, not size
+
+Implemented as directed. `sync_dir` compares the local file's MD5 against the S3
+object's unquoted `ETag` and uploads when they differ or the key is absent.
+`is_content_hash()` requires 32 lowercase hex characters, which rejects the
+multipart `<hash>-<partcount>` shape an older `aws s3 sync` could have left; an
+uncomparable ETag falls back to **uploading**, never to skipping. `put_object` (not
+`upload_file`) keeps everything this script writes single-part, and both the
+guarantee and its fragility are stated in comments. SSE-KMS ETags are noted as
+shape-indistinguishable and failing safe toward uploading.
+
+### Concurrency default: 10
+
+Settled at **10** (`DEFAULT_CONCURRENCY`), matching the AWS CLI's own default —
+i.e. the concurrency this pyramid has actually been published at. Parity at the
+cutover is worth more than a guess at a faster number, and `--concurrency` raises
+it without a code change if a run proves too slow. Justified in a comment beside
+the constant, documented as governing the S3 upload only (distinct from `--rate`,
+which governs politeness toward CCOM's server), and pinned by
+`test_the_default_concurrency_matches_the_cli_it_replaces` so a silent change to
+the load put on one S3 prefix fails a test.
+
+### Verification
+
+- Build: `./core_ws/build.sh marine_web_view` — clean (marine_interfaces had to be
+  built first in this fresh worktree).
+- Tests: `./core_ws/test.sh marine_web_view` — **161 tests, 0 errors, 0 failures,
+  0 skipped**. That count includes `ament_flake8`, `ament_pep257` and
+  `ament_copyright`, all green (flake8 was run through the ament wrapper against
+  the package's own config, not bare). Up from 145 before this work; 26 of the 161
+  are new or rewritten upload tests.
+- The suite ran **without boto3 installed** — see the next section.
+
+### Mutation evidence — 19 mutations, 19 caught
+
+Each mutation was applied one at a time to the source, the upload-relevant test
+files re-run, and the source restored. Re-run with `PYTHONDONTWRITEBYTECODE=1`
+after discovering that a stale `__pycache__` entry (same file size, same mtime
+second) had made one earlier result untrustworthy; the numbers below are from the
+clean pass. Every one failed at least one test:
+
+| Mutation | Caught by |
+|---|---|
+| dry run reaches the transport anyway | `test_a_dry_run_never_reaches_the_s3_transport` |
+| **sync skips anything already present (existence/size only)** | `test_a_recoloured_tile_of_the_same_size_is_uploaded` |
+| sync trusts every ETag as a content hash | `test_a_multipart_etag_is_never_trusted_as_a_content_hash` |
+| sync swallows a failed upload | `test_a_failed_upload_is_counted_so_the_manifest_is_withheld` |
+| sync uploads serially (concurrency ignored) | `test_the_upload_actually_runs_in_parallel` |
+| default concurrency changed 10 -> 16 | `test_the_default_concurrency_matches_the_cli_it_replaces` |
+| **POLICY: chart tiles lose `public,max-age=604800`** | `test_a_missing_tile_is_uploaded_with_the_cache_policy` + `test_chart_tiles_are_cached_for_a_week_as_pngs` |
+| **POLICY: chart manifest loses `no-cache`** | `test_the_manifest_is_published_with_no_cache` |
+| manifest read error aborts instead of re-rendering | `test_an_unreadable_manifest_reads_as_empty` |
+| **POLICY: coverage `meta.json` max-age override ignored** | `test_the_upload_stamps_the_whole_object_shape_it_is_given` |
+| **POLICY: coverage content type hardcoded to `image/png`** | same |
+| coverage failed upload not counted | `test_a_failed_upload_is_counted_and_not_raised` |
+| **POLICY: state content type not `application/geo+json`** | `test_the_position_upload_carries_geojson_and_the_interval_max_age` |
+| **POLICY: state max-age dropped** | same |
+| state failed upload not counted | `test_a_failed_position_upload_is_counted_not_raised` |
+| uploader drops `CacheControl` from the PUT | all three call-shape tests |
+| uploader coalesces the profile | `test_the_profile_reaches_the_client_factory_exactly_as_given` |
+| uploader swallows the exception and reports success | `test_a_client_error_comes_back_as_a_value_not_a_raise` |
+| `describe_error` drops the S3 error code | same |
+
+Both mutations the operator named specifically are covered: a sync that skips a
+changed tile fails a test, and each of the four cache policies fails a test when
+dropped. To make the chart-tile policy bindable rather than a copy of itself in
+the test, the literal was lifted out of `main()` into a module constant
+`TILE_EXTRA_ARGS`.
+
+### boto3's absence blocked nothing in the suite — one gap remains
+
+boto3 is **not installed on this host** and nothing was installed (no `sudo apt`,
+no pip, no `--break-system-packages`). It blocked nothing: `import boto3` happens
+lazily inside `_boto3_client()` / `s3_client()`, and every test injects a stub
+client, so the full 161-test suite ran green without the SDK. That is not a
+contortion for this host's sake — it is what makes the README's `dry_run` promise
+true, and it is pinned by `test_importing_the_module_does_not_import_boto3`.
+
+**What could NOT be verified here**, and needs a re-run after installation:
+
+- The real `_boto3_client()` / `s3_client()` bodies have never executed. That
+  `boto3.Session(profile_name=...).client('s3', config=Config(...))` accepts these
+  exact kwargs, and that `botocore.exceptions.{ClientError,BotoCoreError}` import
+  from those paths, is asserted from the API and not from a run.
+- No object was PUT to a real bucket. The paginator/ETag round trip is exercised
+  only against `_FakeS3`.
+- `rosdep install` itself was only dry-run (`-s`), which resolved to
+  `sudo -H apt-get install python3-boto3`.
+
+Nothing about the running production renderers was touched; they are on the old
+merged code out of `layers/main/core_ws` and are unaffected until redeployed.
+
+### Command for the operator
+
+```bash
+cd /home/roland/project11/layers/worktrees/issue-unh_marine_autonomy-351/core_ws
+rosdep install --from-paths src/unh_marine_autonomy/marine_web_view --ignore-src -y
+```
+
+Then, to confirm the real SDK path:
+
+```bash
+cd /home/roland/project11/layers/worktrees/issue-unh_marine_autonomy-351
+source setup.bash && ./core_ws/build.sh marine_web_view && ./core_ws/test.sh marine_web_view
+```
+
+The suite should still report 161/161. `test_importing_the_module_does_not_import_boto3`
+is the one to watch: it must keep passing **with** boto3 installed, since it
+asserts nothing pulls the SDK in at import time.
+
+### Follow-ups / notes for review
+
+- Not pushed, no PR opened, per instruction.
+- The `Closes #351` keyword is in commit `d8028a7` only.
+- `test_tile_ingest.py`'s docstring and two in-code comments that named
+  "a 30 s-capped subprocess" / "an `aws s3 cp`" were rephrased; they described a
+  mechanism that no longer exists.
