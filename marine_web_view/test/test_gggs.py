@@ -216,3 +216,40 @@ def test_tiles_covering_includes_the_corners():
     assert gggs.lonlat_to_tile(14, west, north) in tiles
     assert gggs.lonlat_to_tile(14, east, south) in tiles
     assert len(tiles) > 1
+
+
+def test_pixel_rows_are_spaced_in_mercator_not_in_latitude():
+    """A slippy tile is linear in Mercator y, so its rows must be too.
+
+    Spacing rows evenly in latitude draws each one at a latitude it does not
+    cover -- a vertical stretch of the image. This pins the row centres to the
+    inverse projection and shows the linear-in-latitude approximation is a
+    real error at the coarse zooms the renderer's `zoom` parameter admits.
+    """
+    zoom, y = 4, 5
+    south, _, north, _ = gggs.tile_bounds(zoom, 0, y)
+    lats = gggs.tile_pixel_latitudes(zoom, y, 256)
+
+    assert len(lats) == 256
+    assert lats == sorted(lats, reverse=True), 'rows must run north to south'
+    assert north > lats[0] > lats[-1] > south, (
+        'every row centre must sit inside the tile')
+
+    linear = [north - (row + 0.5) * (north - south) / 256.0
+              for row in range(256)]
+    worst = max(abs(a - b) for a, b in zip(lats, linear))
+    assert worst > 0.01, (
+        'expected the two spacings to differ measurably at zoom 4; got '
+        '{} deg -- has the projection been linearised?'.format(worst))
+
+
+def test_pixel_rows_are_consistent_with_the_tile_they_sample():
+    """Each row centre must index back to the tile it came from.
+
+    At zoom 15 -- the shipped render level -- the Mercator and linear spacings
+    agree to well under a pixel, so this is the check that the new spacing did
+    not move the sampling somewhere else entirely.
+    """
+    zoom, y = 15, 12000
+    for latitude in gggs.tile_pixel_latitudes(zoom, y, 256):
+        assert gggs.lonlat_to_tile(zoom, -70.8, latitude)[1] == y

@@ -689,9 +689,15 @@ class CoverageRenderer(Node):
         matter.
         """
         south, west, north, east = gggs.tile_bounds(self.zoom, x, y)
-        # Pixel centres, north-to-south to match image row order.
+        # Pixel centres, north-to-south to match image row order. Longitude is
+        # linear across a slippy tile; latitude is NOT -- the tile is linear in
+        # Mercator y -- so the rows are placed by inverting the projection
+        # rather than by dividing the latitude span evenly. Spacing them in
+        # latitude puts every row at a latitude it does not cover: sub-pixel at
+        # zoom 15, a visible vertical stretch at the coarse zooms the parameter
+        # admits.
         lons = west + (numpy.arange(256) + 0.5) * (east - west) / 256.0
-        lats = north - (numpy.arange(256) + 0.5) * (north - south) / 256.0
+        lats = numpy.array(gggs.tile_pixel_latitudes(self.zoom, y, 256))
         out = numpy.full((256, 256), numpy.nan, dtype=numpy.float32)
 
         for _, _, array, bounds in self._candidates(south, west, north, east):

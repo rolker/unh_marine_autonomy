@@ -228,6 +228,26 @@ def tile_bounds(zoom, x, y):
     return south, west, north, east
 
 
+def tile_pixel_latitudes(zoom, y, count=256):
+    """Return the latitudes of a slippy tile's pixel-row centres, north first.
+
+    A web-map tile is linear in *Mercator y*, not in latitude, so sampling it
+    on latitudes spaced evenly between its north and south edges stretches the
+    image: every row is drawn at a latitude slightly different from the one it
+    actually covers. The error is worst in the middle of the tile and grows
+    with the tile's latitude span -- negligible (well under a pixel) at zoom
+    15, where a tile is ~0.005 deg tall, but a visible vertical distortion at
+    the coarse zooms the `zoom` parameter admits.
+
+    Inverse of `tile_coordinates`' y term, evaluated at each pixel centre.
+    """
+    n = float(1 << zoom)
+    return [
+        math.degrees(math.atan(math.sinh(
+            math.pi * (1.0 - 2.0 * (y + (row + 0.5) / count) / n))))
+        for row in range(count)]
+
+
 # Tolerance, in tile units, for the half-open interval arithmetic below.
 # `tile_bounds` and `tile_coordinates` are inverses only to within double
 # round-trip error (~1e-12 tiles here); 1e-6 of a tile is about a millimetre
