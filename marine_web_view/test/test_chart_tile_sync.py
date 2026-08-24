@@ -422,10 +422,14 @@ def test_one_s3_request_stays_under_the_cap_the_shell_out_enforced(
     built = []
 
     class _Config:
+        """Record the botocore Config kwargs instead of validating them."""
+
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
     class _Session:
+        """Record the profile and the config the client is built with."""
+
         def __init__(self, profile_name=None):
             self.profile_name = profile_name
 

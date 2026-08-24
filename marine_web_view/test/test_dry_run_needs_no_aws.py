@@ -46,12 +46,12 @@ import os
 os.environ['ROS_DOMAIN_ID'] = '101'
 os.environ['ROS_AUTOMATIC_DISCOVERY_RANGE'] = 'OFF'
 
-import rclpy                                            # noqa: E402
-
 from marine_web_view import coverage_renderer           # noqa: E402
 from marine_web_view import state_renderer              # noqa: E402
 
 import pytest                                           # noqa: E402
+
+import rclpy                                            # noqa: E402
 
 
 class _Detonator:
