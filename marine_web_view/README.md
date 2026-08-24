@@ -267,6 +267,14 @@ re-requests the tile in full. The already-published PNG stands until then, so
 an evicted tile is not marked dirty and the display does not flicker. Being
 over budget is abnormal and is warned about.
 
+`cache_budget_bytes` bounds the *resident generation*, not peak RSS. Patching
+is copy-on-write — `_on_tile` replaces a tile's array wholesale so the render
+thread can sample outside the lock — and the renderer's snapshot keeps the
+superseded copies reachable for the length of a pass, while `_cache_bytes`
+counts only the current ones. A pass that touches every cached tile can
+therefore peak near **twice** the budget. Size the host for 2× the number you
+set, not 1×.
+
 That last guarantee has one hole worth knowing: a slippy tile straddling two
 GGGS grids is re-rendered whenever *either* of them changes, and it is
 rendered from whatever is in the cache. If one of the two has been evicted,
@@ -275,6 +283,16 @@ blanks until the catalog round re-serves the evicted grid. It is bounded (the
 tiles along a grid seam, for one render interval) and self-healing, but it is
 why running over budget is a warning rather than routine: the answer is a
 larger `cache_budget_bytes` or a coarser `zoom`, not living with eviction.
+
+A tide crossing re-renders everything. When the chart-datum offset moves more
+than `tide_invalidate_threshold` (0.15 m — one 8-bit step of the 0–40 m ramp),
+every cached tile is marked dirty and the whole mosaic is re-coloured and
+re-uploaded. Cost scales with **surveyed area × 4^zoom**: at zoom 15 a tile is
+about 870 m across at 43° N, so a 10 km² survey is a few dozen tiles and the
+re-render is seconds and pennies. It is not free at every setting — the same
+area at zoom 18 is 64× the tiles — so raise the threshold, or coarsen the
+zoom, before rendering a large area at a deep level. On a 3 m tide the
+threshold is crossed roughly every few minutes near mid-tide.
 
 ### Threading
 
