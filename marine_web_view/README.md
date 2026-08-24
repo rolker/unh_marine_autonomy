@@ -566,5 +566,11 @@ upload fan-out. Beyond the stdlib it needs only `boto3`, and nothing from
 - **`tiles/manifest.json` is shared by every `--name`.** It is re-read and
   merged under a lock at the end of a run, so two names running together no
   longer erase each other's entry (which cost the loser a full ~5,839-tile
-  re-crawl). That lock is local to the host; publishing this prefix from two
-  hosts at once is not supported.
+  re-crawl). That read is strict, unlike the one at the top of a run: a GET
+  that *fails* is not a manifest that is *empty*, and merging into an empty
+  one would erase the other names just as thoroughly as the race did — so the
+  run fails loudly instead, leaving the published manifest untouched — which
+  costs *this* name a re-crawl next run, and is the cheaper of the two
+  losses. The merged JSON is PUT from memory; nothing is
+  staged through `--workdir`. That lock is local to the host; publishing this
+  prefix from two hosts at once is not supported.

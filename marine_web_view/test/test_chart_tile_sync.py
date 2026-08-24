@@ -109,6 +109,42 @@ class _FakeS3:
         return {}
 
 
+class _S3Error(Exception):
+    """Shaped like botocore's ClientError, without needing botocore.
+
+    The script reads the S3 error code off `response` rather than importing
+    botocore (it must stay importable without the SDK), so a double that
+    wants to be a genuine 404 -- as opposed to a transient failure -- has to
+    carry one.
+    """
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.response = {'Error': {'Code': code, 'Message': code}}
+
+
+class _Store:
+    """The shared manifest object, as S3 holds it: one body, read and written.
+
+    `error` scripts the next GET to fail, which is how the transient-read
+    case is reproduced from inside the lock.
+    """
+
+    def __init__(self, error=None):
+        self.body = None
+        self.error = error
+
+    def get_object(self, Bucket, Key):
+        if self.error is not None:
+            raise self.error
+        if self.body is None:
+            raise _S3Error('NoSuchKey')
+        return {'Body': io.BytesIO(self.body)}
+
+    def put_object(self, Bucket, Key, Body, **kwargs):
+        self.body = Body
+
+
 def _write(directory, relative, payload):
     """Write payload at directory/relative, creating parents."""
     path = os.path.join(directory, *relative.split('/'))
@@ -280,15 +316,11 @@ def test_chart_tiles_are_cached_for_a_week_as_pngs():
     }
 
 
-def test_the_manifest_is_published_with_no_cache(tmp_path):
+def test_the_manifest_is_published_with_no_cache():
     """The manifest's whole job is to be current, so it must not be cached."""
     script = _load_script()
-    path = str(tmp_path / 'manifest.json')
-    with open(path, 'wb') as handle:
-        handle.write(b'{"bathy4m": {}}')
-
     client = _FakeS3()
-    script.save_manifest(client, path)
+    script.save_manifest(client, b'{"bathy4m": {}}')
     assert client.puts == [{
         'Bucket': script.BUCKET,
         'Key': 'tiles/manifest.json',
@@ -496,34 +528,104 @@ def test_two_names_do_not_erase_each_other_from_the_manifest(
     workdir = str(tmp_path / 'work')
     os.makedirs(workdir)
 
-    class _Store:
-        """A manifest object that both runs read and write, as S3 is."""
-
-        def __init__(self):
-            self.body = None
-
-        def get_object(self, Bucket, Key):
-            if self.body is None:
-                raise RuntimeError('NoSuchKey')
-            return {'Body': io.BytesIO(self.body)}
-
-        def put_object(self, Bucket, Key, Body, **kwargs):
-            self.body = Body
-
     store = _Store()
     # The stale dict each run read an hour ago, before the other published.
-    script.update_manifest(store, workdir, 'bathy4m', {'tiles': 1},
+    script.update_manifest(store, 'bathy4m', {'tiles': 1},
                            directory=directory)
-    script.update_manifest(store, workdir, 'bathy8m', {'tiles': 2},
+    script.update_manifest(store, 'bathy8m', {'tiles': 2},
                            directory=directory)
 
     assert json.loads(store.body) == {'bathy4m': {'tiles': 1},
                                       'bathy8m': {'tiles': 2}}, (
         'one name erased the other from the shared manifest')
-    # And the staging file is per-name, so the local write does not race
-    # either.
-    assert sorted(os.listdir(workdir)) == ['manifest.bathy4m.json',
-                                           'manifest.bathy8m.json']
+    # And nothing was staged through --workdir on the way: that tree is
+    # world-writable /tmp by default, and it is also the tree whose contents
+    # are PUT to the public tiles/ prefix.
+    assert os.listdir(workdir) == [], (
+        'the manifest was staged through the unowned workdir')
+    # Nor through any other file: the merged JSON goes to S3 from memory, so
+    # the only thing on disk is the lock itself.
+    assert sorted(os.listdir(directory)) == ['manifest.lock'], (
+        os.listdir(directory))
+
+
+def test_a_transient_read_inside_the_lock_does_not_erase_the_others(
+        tmp_path):
+    """The lost update again, from one failed GET instead of a race.
+
+    `load_manifest` answers {} for anything it cannot read, so merging this
+    run's entry into that answer PUTs a manifest holding ONE --name and drops
+    every other -- inside the lock that exists to stop exactly that, and at
+    the ~5,839-tile re-crawl the docstring quotes. A read that failed is not
+    a manifest that is empty, and this run's entry is worth less than every
+    other name's.
+    """
+    script = _load_script()
+    directory = str(tmp_path / 'locks')
+    os.makedirs(directory)
+
+    store = _Store()
+    script.update_manifest(store, 'bathy4m', {'tiles': 1},
+                           directory=directory)
+    published = store.body
+
+    store.error = _S3Error('SlowDown')
+    with pytest.raises(Exception) as failure:
+        script.update_manifest(store, 'bathy8m', {'tiles': 2},
+                               directory=directory)
+    assert not isinstance(failure.value, AssertionError)
+    assert store.body == published, (
+        'a manifest was published over a read that failed, erasing every '
+        'other --name'
+    )
+
+    # A genuinely absent object is still the first-run case, not an error.
+    store.error = None
+    store.body = None
+    assert script.update_manifest(store, 'bathy8m', {'tiles': 2},
+                                  directory=directory) == {
+        'bathy8m': {'tiles': 2}}
+
+
+def test_a_manifest_that_is_not_an_object_is_refused_not_overwritten(
+        tmp_path):
+    """Whatever is there is the only record of what the other names published."""
+    script = _load_script()
+    directory = str(tmp_path / 'locks')
+    os.makedirs(directory)
+
+    store = _Store()
+    store.body = b'["not", "a", "manifest"]'
+    with pytest.raises(RuntimeError):
+        script.update_manifest(store, 'bathy4m', {'tiles': 1},
+                               directory=directory)
+    assert store.body == b'["not", "a", "manifest"]'
+
+    store.body = b'{truncated'
+    with pytest.raises(Exception):
+        script.update_manifest(store, 'bathy4m', {'tiles': 1},
+                               directory=directory)
+    assert store.body == b'{truncated'
+
+
+def test_the_run_start_read_stays_forgiving():
+    """At the top of a run there is nothing to lose by re-rendering.
+
+    The strict read is for the read-modify-write alone: making the opening
+    read fatal would stop a cron run on a transient GET when re-crawling is
+    the correct, if expensive, answer.
+    """
+    script = _load_script()
+
+    class _Broken:
+        """A client whose get_object always fails, and not with a 404."""
+
+        def get_object(self, **kwargs):
+            raise RuntimeError('connection reset by peer')
+
+    assert script.load_manifest(_Broken()) == {}
+    with pytest.raises(RuntimeError):
+        script.load_manifest(_Broken(), strict=True)
 
 
 def test_the_client_config_is_what_reaches_botocore(tmp_path, monkeypatch):
@@ -613,7 +715,7 @@ def _run_main(script, monkeypatch, tmp_path, argv, held=None):
         seen['sync'].append((prefix, extra, kwargs))
         return 1, 0, 0
 
-    def _update(client, workdir, name, entry, **kwargs):
+    def _update(client, name, entry, **kwargs):
         seen['manifest'].append((name, entry))
         return {name: entry}
 

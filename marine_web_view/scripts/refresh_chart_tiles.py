@@ -490,30 +490,79 @@ def _lock_holder(path):
         return None, None
 
 
-def load_manifest(client):
+MISSING_KEY_CODES = ('NoSuchKey', 'NoSuchBucket', 'NotFound', '404')
+
+
+def _is_missing_object(exc):
+    """Return True if `exc` says the object is not there (vs. unreadable).
+
+    Read off the S3 error code the same way `describe_error` does in
+    marine_web_view/s3_upload.py, so nothing here has to import botocore --
+    the module-scope rule this script keeps so it stays importable without
+    the SDK. Anything else -- a timeout, AccessDenied, a 500, a truncated
+    body -- is NOT "there is no manifest yet".
+    """
+    response = getattr(exc, 'response', None)
+    if not isinstance(response, dict):
+        return False
+    code = (response.get('Error') or {}).get('Code')
+    return str(code) in MISSING_KEY_CODES
+
+
+def load_manifest(client, strict=False):
     """Return the tile manifest, or {} if it cannot be read.
 
-    Blanket except, deliberately: a missing manifest is the first-run case and
-    an unreadable one is handled identically -- re-render. Nothing here should
-    stop the script before it has even chosen a service.
+    Blanket except by default, deliberately: at the top of a run a missing
+    manifest is the first-run case and an unreadable one is handled
+    identically -- re-render. Nothing there should stop the script before it
+    has even chosen a service.
+
+    `strict` is for the read-modify-write in `update_manifest`, where the two
+    are NOT the same. Merging this run's entry into a `{}` that really meant
+    "the GET failed" PUTs a manifest holding one --name and erases every
+    other, which is the lost update the lock exists to prevent and costs the
+    erased name a full ~5,839-tile re-crawl of CCOM. So a strict read
+    distinguishes a genuinely absent (or absently-bucketed) manifest from one
+    it could not read, and raises on the latter: this run's entry is worth
+    less than every other name's. Malformed JSON raises too -- overwriting it
+    would destroy the only copy of what the other names published.
     """
     try:
         body = client.get_object(Bucket=BUCKET, Key='tiles/manifest.json')
-        return json.loads(body['Body'].read())
-    except Exception:
+    except Exception as exc:
+        if strict and not _is_missing_object(exc):
+            raise
         return {}
+    try:
+        man = json.loads(body['Body'].read())
+    except Exception:
+        if strict:
+            raise
+        return {}
+    if not isinstance(man, dict):
+        if strict:
+            raise RuntimeError(
+                'tiles/manifest.json holds {}, not an object of --name '
+                'entries'.format(type(man).__name__))
+        return {}
+    return man
 
 
-def save_manifest(client, path):
-    """Upload the rewritten manifest with no-cache."""
-    with open(path, 'rb') as handle:
-        client.put_object(Bucket=BUCKET, Key='tiles/manifest.json',
-                          Body=handle.read(),
-                          ContentType='application/json',
-                          CacheControl='no-cache')
+def save_manifest(client, payload):
+    """Upload the manifest `payload` bytes with no-cache.
+
+    Bytes, not a path: an earlier round staged the JSON to a file under
+    --workdir and re-read it here, which put the object destined for the
+    public tiles/ prefix through a world-writable directory this script does
+    not own (see `lock_dir`) between writing it and PUTting it.
+    """
+    client.put_object(Bucket=BUCKET, Key='tiles/manifest.json',
+                      Body=payload,
+                      ContentType='application/json',
+                      CacheControl='no-cache')
 
 
-def update_manifest(client, workdir, name, entry, wait_seconds=120.0,
+def update_manifest(client, name, entry, wait_seconds=120.0,
                     directory=None):
     """Merge `entry` into the shared manifest as one locked read-modify-write.
 
@@ -526,9 +575,14 @@ def update_manifest(client, workdir, name, entry, wait_seconds=120.0,
     rendered" and re-crawls CCOM for the entire pyramid, ~5,839 tiles.
 
     So the manifest is re-read INSIDE the lock rather than reused from the
-    top of the run, and only this run's key is touched. The staging file is
-    per --name too, because a single shared path under --workdir was the same
-    lost update one layer down.
+    top of the run, and only this run's key is touched. The read is STRICT
+    (see `load_manifest`): a GET that fails inside the lock must not be
+    merged into as if the manifest were empty, or this run PUTs its own entry
+    alone and erases every other name -- the same lost update, from one
+    transient error instead of a race. The merged JSON goes straight to S3
+    from memory; there is no staging file under --workdir, which is the
+    world-writable tree `lock_dir` refuses to keep a lock in and the same
+    tree whose contents are PUT to the public prefix.
 
     The lock is local, so this closes the race between runs on one host --
     which is the deployment: one cron host writes this prefix. Two hosts
@@ -550,12 +604,9 @@ def update_manifest(client, workdir, name, entry, wait_seconds=120.0,
                         'the manifest lock at {} stayed held for {:g} s'
                         .format(path, wait_seconds))
                 time.sleep(0.2)
-        man = load_manifest(client)
+        man = load_manifest(client, strict=True)
         man[name] = entry
-        staged = os.path.join(workdir, 'manifest.{}.json'.format(name))
-        with open(staged, 'w') as output:
-            json.dump(man, output, indent=1)
-        save_manifest(client, staged)
+        save_manifest(client, json.dumps(man, indent=1).encode())
         return man
     finally:
         handle.close()
@@ -874,7 +925,7 @@ def main():
     # Re-read and merge under a lock rather than rewriting the dict this run
     # read an hour ago: another --name may have published in the meantime,
     # and dropping its entry costs it a full re-crawl of CCOM.
-    update_manifest(client, a.workdir, a.name, entry)
+    update_manifest(client, a.name, entry)
     print(f'done: {written} tiles ({skipped} blank skipped, {failed} failed)')
     return 0
 
