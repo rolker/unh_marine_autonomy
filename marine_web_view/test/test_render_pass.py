@@ -78,6 +78,7 @@ class _Pass:
         self._published = set()
         self._rendered = 0
         self._failures = 0
+        self._failure_lock = threading.Lock()
         self._datum_offset = -28.03
         self._logger = _Logger()
         self.uploads = []
@@ -135,6 +136,7 @@ class _Pass:
 
     _colourise = CoverageRenderer._colourise
     _datum_age = CoverageRenderer._datum_age
+    _note_failure = CoverageRenderer._note_failure
     _publish_meta = CoverageRenderer._publish_meta
     _render_one = CoverageRenderer._render_one
     _render_dirty = CoverageRenderer._render_dirty
@@ -447,3 +449,21 @@ def test_a_disabled_chart_datum_correction_is_not_stale():
     node._render_dirty()
     assert node.meta[-1]['status'] == 'ok'
     assert node.meta[-1]['chart_datum_age'] is None
+
+
+def test_the_failure_counter_survives_concurrent_threads():
+    """`_failures` is incremented from the executor and the render thread.
+
+    `+=` on an int is a read-modify-write, so concurrent increments lose
+    counts -- and this counter is the whole of what the node reports about
+    what went wrong when it shuts down.
+    """
+    node = _Pass()
+    workers = [threading.Thread(
+        target=lambda: [node._note_failure() for _ in range(2000)])
+        for _ in range(4)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    assert node._failures == 8000

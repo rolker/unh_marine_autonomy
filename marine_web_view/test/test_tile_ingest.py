@@ -138,12 +138,14 @@ class _Ingest:
         self._reconciler = TileCatalogReconciler()
         self._failures = 0
         self._logger = _Logger()
+        self._failure_lock = threading.Lock()
 
     def get_logger(self):
         """Return the collecting logger."""
         return self._logger
 
     _forget = CoverageRenderer._forget
+    _note_failure = CoverageRenderer._note_failure
     _evict_if_over_budget = CoverageRenderer._evict_if_over_budget
     _tile_is_sane = CoverageRenderer._tile_is_sane
     _on_tile = CoverageRenderer._on_tile

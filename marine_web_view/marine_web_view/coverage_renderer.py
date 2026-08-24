@@ -360,6 +360,9 @@ class CoverageRenderer(Node):
         self._published = set()   # slippy tiles currently holding coverage
         self._rendered = 0
         self._failures = 0
+        # A lock of its own, deliberately: _on_tile counts a bad tile while
+        # holding self._lock, and self._lock is not reentrant.
+        self._failure_lock = threading.Lock()
         self._datum_offset = None
         self._datum_stamp = None    # monotonic time of the last good lookup
 
@@ -430,6 +433,19 @@ class CoverageRenderer(Node):
         """Return a declared parameter's value."""
         return self.get_parameter(name).value
 
+    def _note_failure(self):
+        """Count one failure, from whichever thread hit it.
+
+        `+=` on an int is a read-modify-write, and this counter is the one
+        piece of shared mutable state the copy-on-write discipline does not
+        cover: the executor thread counts malformed tiles and failed request
+        publications while the render thread counts failed uploads. Concurrent
+        increments lose counts, and this number is the whole of what the node
+        reports about what went wrong.
+        """
+        with self._failure_lock:
+            self._failures += 1
+
     # -- transport ---------------------------------------------------------
 
     def _on_catalog(self, msg):
@@ -468,7 +484,7 @@ class CoverageRenderer(Node):
             # Same reasoning as the render timer: an escape here kills the
             # timer, and the node then never asks for another tile while
             # looking perfectly healthy.
-            self._failures += 1
+            self._note_failure()
             self.get_logger().error(
                 'request publication failed: {}'.format(error),
                 throttle_duration_sec=10.0)
@@ -542,7 +558,7 @@ class CoverageRenderer(Node):
         except ValueError as error:
             # A malformed patch is the source's problem, not ours: drop it and
             # let the next catalog round re-request the tile in full.
-            self._failures += 1
+            self._note_failure()
             self.get_logger().warn('bad tile {}: {}'.format(index, error))
             return
 
@@ -601,7 +617,7 @@ class CoverageRenderer(Node):
                 tile_util.apply_window(
                     held, values, msg.window_row, msg.window_col)
             except ValueError as error:
-                self._failures += 1
+                self._note_failure()
                 self.get_logger().warn(
                     'window does not fit {}: {}'.format(index, error))
                 # A first patch that did not fit leaves an all-NaN entry
@@ -877,7 +893,7 @@ class CoverageRenderer(Node):
             except Exception as error:
                 # The per-tile containment is inside _render_dirty; this is
                 # the backstop that keeps the thread itself alive.
-                self._failures += 1
+                self._note_failure()
                 self.get_logger().error(
                     'render pass failed: {}'.format(error),
                     throttle_duration_sec=10.0)
@@ -1044,7 +1060,7 @@ class CoverageRenderer(Node):
                 # tile, it ends the timer and the node keeps spinning with
                 # nothing rendering -- silently, because the subscriptions go
                 # on working. Contain it per tile.
-                self._failures += 1
+                self._note_failure()
                 self.get_logger().error(
                     'rendering {},{} failed: {}'.format(x, y, error),
                     throttle_duration_sec=10.0)
@@ -1096,7 +1112,7 @@ class CoverageRenderer(Node):
             os.chmod(temporary, 0o644)
             os.replace(temporary, path)
         except OSError as error:
-            self._failures += 1
+            self._note_failure()
             self.get_logger().error(
                 'writing {} failed: {}'.format(path, error))
             try:
@@ -1121,11 +1137,11 @@ class CoverageRenderer(Node):
             result = subprocess.run(command, input=payload,
                                     capture_output=True, timeout=30)
         except subprocess.TimeoutExpired:
-            self._failures += 1
+            self._note_failure()
             self.get_logger().error('upload of {} timed out'.format(key))
             return False
         if result.returncode != 0:
-            self._failures += 1
+            self._note_failure()
             self.get_logger().error('upload of {} failed: {}'.format(
                 key, result.stderr.decode().strip()[:200]))
             return False
