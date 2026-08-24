@@ -102,8 +102,10 @@ Those are **ceilings for 24/7 operation**. The node uploads only when the fix
 stamp has advanced, so an idle or disconnected vessel costs nothing: a 40-hour
 survey week at 1 Hz is roughly 144k PUTs, about $0.72.
 
-Freshness comes from `Cache-Control: max-age` on the object. CloudFront
-invalidation is deliberately **not** used — it is billed per path beyond a small
+Freshness comes from `Cache-Control: max-age` on the object — per object,
+not one value for the bucket: the tiles carry `cache_control` and the liveness
+manifest carries a shorter one of its own (see [The manifest](#the-manifest)).
+CloudFront invalidation is deliberately **not** used — it is billed per path beyond a small
 monthly allowance and would dominate every other cost at any real update rate.
 
 ## Running
@@ -212,7 +214,7 @@ the catalog's back.
 | `request_interval` | `5.0` | seconds between `TileRequest` publications; validated the same way, falling back to 5 s |
 | `bucket` / `prefix` | `unh-ccom-p11-live` / `live/coverage` | an empty or malformed `bucket` **refuses to start** when `dry_run` is false: every upload would be a 30 s-capped subprocess in a retry loop that never drains, and defaulting instead would publish a survey's coverage somewhere nobody asked for |
 | `profile` | `p11-renderer` | scoped to `s3:PutObject` on `live/*`. Empty means "use the default credential chain" — the `--profile` flag is omitted rather than passed empty |
-| `cache_control` | `20` | `max-age` stamped on each object; matched to `render_interval` so a viewer does not hold a tile past its replacement |
+| `cache_control` | `20` | `max-age` stamped on each **tile**; matched to `render_interval` so a viewer does not hold a tile past its replacement. `meta.json` is deliberately not covered by it — see [The manifest](#the-manifest) |
 | `cache_budget_bytes` | `536870912` | resident tile-cache ceiling (512 MiB); `0` disables the bound |
 | `max_requests_per_message` | `256` | tiles asked for per `TileRequest`; the rest wait for the next interval |
 | `map_frame` | `ben/map` | frame the band's z values are expressed in |
@@ -386,6 +388,28 @@ heartbeat:
   the page compares it for **change**, not for growth, and a manifest without
   the field is read as "no change" — the page will not refresh tiles against a
   renderer older than this field, though liveness and the readout still work.
+
+- the manifest is **cached differently from the tiles it advertises**, at
+  both ends of the path. It carries `max-age=5` (`META_MAX_AGE_SECONDS`,
+  never longer than `cache_control` — an operator who shortens the tiles'
+  max-age is asking for a fresher display, not a fresher manifest only) and
+  the page fetches it with `cache: 'no-store'`. Stamped and fetched like a
+  tile, it is not: the renderer's max-age is matched to `render_interval`,
+  which is also the page's poll period, so a poll is routinely answered from
+  a copy of the *previous* pass — and then `rendered_tiles` has not moved, so
+  the change gate never fires and newly surveyed ground does not appear for a
+  stationary viewer, while `stamp` is old, so the age is under-reported and a
+  renderer that has just died still reads as alive. Both failures look exactly
+  like success. `no-store` is per-request and leaves the shared cache alone; a
+  cache-busting query string was rejected because a URL that changes per
+  request also defeats the CloudFront edge cache, which is the part worth
+  keeping. The 5 s edge max-age is what keeps request volume independent of
+  viewer count: 12 origin GETs a minute however many people are watching,
+  about 13k/day more than a 20 s max-age would be — on the order of $0.15 a
+  month — for a fourfold cut in the worst-case staleness of the one object
+  the display's liveness depends on. Zero was rejected for that reason: on a
+  public page with unbounded viewers the ceiling is worth more than the last
+  five seconds.
 
 It is rewritten every pass, idle or not, which is one extra PUT per
 `render_interval` (~130k/month at 20 s, well under a dollar).

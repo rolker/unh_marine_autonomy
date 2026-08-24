@@ -178,6 +178,32 @@ DEFAULT_RENDER_INTERVAL = 20.0
 DEFAULT_REQUEST_INTERVAL = 5.0
 MAX_INTERVAL_SECONDS = 86400.0
 
+# The manifest gets a SHORTER max-age than the tiles it advertises. It is the
+# liveness signal, not payload: a few hundred bytes read once per poll, and
+# every second a cache holds it is a second in which the page under-reports
+# the renderer's age and does not learn that new tiles exist. Matching it to
+# `cache_control` (i.e. to the render interval, which is also the page's poll
+# period) means two viewers can be shown a manifest from the previous pass.
+# It is not set to zero: a hard ceiling on origin requests is worth keeping on
+# a public page with unbounded viewers, and it is what makes the request cost
+# independent of viewer count. At 5 s that ceiling is 12 origin GETs a minute
+# no matter how many people are watching -- ~13k more S3 GETs a day than a
+# 20 s max-age, on the order of $0.15 a month, for a fourfold cut in the
+# worst-case staleness of the one object the display's liveness depends on.
+# Never longer than the tiles' own max-age: an operator who shortens
+# `cache_control` is asking for a fresher display, not a fresher manifest only.
+META_MAX_AGE_SECONDS = 5
+
+
+def meta_max_age(cache_control):
+    """Return the manifest's `max-age`, given the tiles' own.
+
+    Never longer than the tiles' (an operator who shortens `cache_control`
+    wants a fresher display, not a fresher manifest only) and never below 1,
+    which is not a valid `max-age`.
+    """
+    return max(1, min(META_MAX_AGE_SECONDS, int(cache_control)))
+
 
 def _transform_seconds(transform):
     """Return a transform's own stamp in seconds, or None if it has none.
@@ -385,6 +411,10 @@ class CoverageRenderer(Node):
                 'cache_control {} s exceeds render_interval {:g} s: '
                 'viewers will hold a tile past its replacement'.format(
                     self.cache_control, render_interval))
+        # Derived, not a parameter: there is one right answer for a liveness
+        # manifest (see META_MAX_AGE_SECONDS) and a knob here would only let
+        # an operator turn the freshness of the heartbeat back off.
+        self.meta_cache_control = meta_max_age(self.cache_control)
         self.cache_budget_bytes = int(self._param('cache_budget_bytes'))
         self.max_requests_per_message = max(
             1, int(self._param('max_requests_per_message')))
@@ -1097,7 +1127,8 @@ class CoverageRenderer(Node):
             'zoom': self.zoom,
         }, sort_keys=True).encode()
         self._publish(payload, '{}/meta.json'.format(self.prefix),
-                      content_type='application/json')
+                      content_type='application/json',
+                      max_age=self.meta_cache_control)
 
     def _render_dirty(self, deadline=None):
         """Run one render pass and publish the manifest for it.
@@ -1228,15 +1259,21 @@ class CoverageRenderer(Node):
             return False
         return True
 
-    def _publish(self, payload, key, content_type='image/png'):
-        """Write one object locally or to S3; return True on success."""
+    def _publish(self, payload, key, content_type='image/png', max_age=None):
+        """Write one object locally or to S3; return True on success.
+
+        `max_age` overrides the tiles' `cache_control` for objects that want a
+        different one -- the manifest, whose whole job is to be current.
+        """
         if self.dry_run:
             return self._write_local(payload, key)
 
+        if max_age is None:
+            max_age = self.cache_control
         command = [
             'aws', 's3', 'cp', '-', 's3://{}/{}'.format(self.bucket, key),
             '--content-type', content_type,
-            '--cache-control', 'max-age={}'.format(self.cache_control),
+            '--cache-control', 'max-age={}'.format(max_age),
         ]
         if self.profile:
             command += ['--profile', self.profile]

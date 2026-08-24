@@ -83,9 +83,12 @@ class _Pass:
         self._logger = _Logger()
         self.uploads = []
         self.meta = []
+        self.meta_max_ages = []
+        self.tile_max_ages = []
         self.upload_ok = True
         self.band_name = 'depth'
         self.cache_control = 60
+        self.meta_cache_control = coverage_renderer.META_MAX_AGE_SECONDS
         self.render_interval = 20.0
         self.covered = covered
         self.raise_on_sample = False
@@ -115,13 +118,20 @@ class _Pass:
             out[:, :] = -35.0
         return out
 
-    def _publish(self, payload, key, content_type='image/png'):
-        """Record an upload attempt, keeping the manifest separate."""
+    def _publish(self, payload, key, content_type='image/png', max_age=None):
+        """Record an upload attempt, keeping the manifest separate.
+
+        `max_age` is recorded because the manifest asks for a shorter one than
+        the tiles: it is the liveness signal, and a cache holding it is a
+        cache in which the page cannot see that the renderer has moved.
+        """
         if key.endswith('meta.json'):
             assert content_type == 'application/json'
             self.meta.append(json.loads(payload))
+            self.meta_max_ages.append(max_age)
             return self.upload_ok
         self.uploads.append((key, payload))
+        self.tile_max_ages.append(max_age)
         return self.upload_ok
 
     def get_clock(self):
@@ -518,3 +528,99 @@ def test_the_failure_counter_survives_concurrent_threads():
     for worker in workers:
         worker.join()
     assert node._failures == 8000
+
+
+def test_the_manifest_is_cached_less_than_the_tiles_it_advertises():
+    """The liveness signal must not be held as long as the payload.
+
+    `meta.json` is the heartbeat and the change signal, a few hundred bytes
+    read once per poll. Stamped with the tiles' own `max-age` -- which is
+    matched to `render_interval`, which is also the page's poll period -- a
+    cache between the renderer and the viewer can answer a poll with the
+    PREVIOUS pass's manifest, and then `rendered_tiles` does not move (so
+    newly surveyed ground never appears for a stationary viewer) and `stamp`
+    is old (so the age is under-reported and a dead renderer reads alive).
+    """
+    node = _Pass()
+    node._dirty.add((10, 20))
+    node._render_dirty()
+    assert node.meta_max_ages, 'no manifest was published'
+    assert node.tile_max_ages, 'no tile was published'
+    manifest = node.meta_max_ages[-1]
+    assert manifest is not None, (
+        'the manifest is published with no max-age of its own, so it '
+        "inherits the tiles' -- the whole defect this pins")
+    assert manifest >= 1, (
+        'max-age={} is not a valid max-age'.format(manifest))
+    assert manifest < node.cache_control, (
+        'the manifest is cached for {} s against tiles at {} s: the liveness '
+        'signal must be the fresher of the two'
+        .format(manifest, node.cache_control))
+    # The tiles keep the operator-set value: this must not have become a
+    # blanket shortening of every object's max-age, which would multiply the
+    # tile request volume the change-signal gate exists to bound.
+    assert node.tile_max_ages[-1] in (None, node.cache_control), (
+        'tiles are published with max-age={} rather than the configured {}'
+        .format(node.tile_max_ages[-1], node.cache_control))
+
+
+def test_the_manifest_max_age_never_exceeds_the_tiles():
+    """`meta_max_age` is a ceiling, not a fixed value.
+
+    An operator who shortens `cache_control` is asking for a fresher display,
+    not for the manifest alone to lag behind the tiles it advertises.
+    """
+    assert coverage_renderer.meta_max_age(60) < 60
+    assert coverage_renderer.meta_max_age(3) <= 3
+    assert coverage_renderer.meta_max_age(1) == 1
+    assert coverage_renderer.meta_max_age(0) >= 1, (
+        'max-age=0 is not a valid max-age'
+    )
+
+
+def test_the_upload_stamps_the_max_age_it_is_given():
+    """The per-object max-age has to reach the aws CLI to mean anything.
+
+    `_publish` builds the `--cache-control` flag, so a `max_age` argument the
+    command line ignores is a comment, not a cache policy.
+    """
+    calls = []
+
+    class _Result:
+        returncode = 0
+        stderr = b''
+
+    class _Uploader:
+        dry_run = False
+        bucket = 'unh-ccom-p11-live'
+        profile = ''
+        cache_control = 60
+
+        def _note_failure(self):
+            raise AssertionError('the upload should not have failed')
+
+        def get_logger(self):
+            return _Logger()
+
+    def _run(command, **kwargs):
+        calls.append(command)
+        return _Result()
+
+    original = coverage_renderer.subprocess.run
+    coverage_renderer.subprocess.run = _run
+    try:
+        CoverageRenderer._publish(
+            _Uploader(), b'{}', 'live/coverage/meta.json',
+            content_type='application/json', max_age=5)
+        CoverageRenderer._publish(_Uploader(), b'png', 'live/coverage/1/2/3.png')
+    finally:
+        coverage_renderer.subprocess.run = original
+
+    assert len(calls) == 2
+    manifest, tile = calls
+    assert 'max-age=5' in manifest, (
+        'the manifest was uploaded as {}: the requested max-age never '
+        'reached the CLI'.format(manifest))
+    assert 'max-age=60' in tile, (
+        'the tile was uploaded as {}: the default max-age must remain the '
+        'configured cache_control'.format(tile))
