@@ -11,27 +11,21 @@ so it is indifferent to viewer count.
 Part of [#333](https://github.com/rolker/unh_marine_autonomy/issues/333); this
 package is [#341](https://github.com/rolker/unh_marine_autonomy/issues/341).
 
-## Runtime prerequisite: the AWS CLI
+## AWS credentials
 
-Both nodes upload by shelling out to `aws s3 cp`, so the **AWS CLI v2 must be
-installed and a profile configured** on any host that publishes to the bucket.
-It is not a package dependency and cannot be: the `awscli` rosdep key resolves
-to an apt package with no installation candidate on Ubuntu noble, so declaring
-it aborts the build at `rosdep install` — and the CLI in use is the userland
-v2 installer, which apt could not provide anyway. Install it per
-[AWS's instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
-and check with `aws --version`.
+Uploads go through `boto3`, declared as `python3-boto3` in `package.xml`, so
+`rosdep install` satisfies the package's own dependency — no separate CLI
+install ([#351](https://github.com/rolker/unh_marine_autonomy/issues/351)).
+A host that publishes to the bucket still needs **credentials**: the `profile`
+parameter names an entry in `~/.aws/credentials`. `coverage_renderer` treats an
+empty `profile` as "use boto3's default chain", which is how an EC2 instance
+role is picked up with no key on disk; `state_renderer` passes its `profile`
+through unchanged, so blanking it there fails loudly rather than quietly
+borrowing whatever the host carries.
 
-Nothing else needs it. With `dry_run:=true` both nodes write to the local
-filesystem and never call `aws` at all, which is how the tests and the
-simulator workflow run.
-
-This is a workaround, not the intended end state: the package depends on a
-program it cannot declare, so `rosdep install` on a fresh host yields a
-renderer that looks satisfied and fails on the first upload. Tracked as
-[#351](https://github.com/rolker/unh_marine_autonomy/issues/351) — move the
-upload path to `boto3`, whose rosdep key does resolve on noble, and this
-section goes away.
+With `dry_run:=true` both nodes write to the local filesystem and reach for no
+credentials at all — no client is constructed — which is how the tests and
+the simulator workflow run.
 
 ## Node: `state_renderer`
 
@@ -212,7 +206,7 @@ the catalog's back.
 | `zoom` | `15` | slippy zoom, 0-22; higher means more tiles and more PUTs per dirty GGGS tile. Anything outside the range falls back to 15 with a warning -- a negative zoom would otherwise kill the node on the first tile |
 | `render_interval` | `20.0` | seconds between render passes; must be positive and at most a day, or it falls back to 20 s with a warning (`create_timer` rejects a non-positive period) |
 | `request_interval` | `5.0` | seconds between `TileRequest` publications; validated the same way, falling back to 5 s |
-| `bucket` / `prefix` | `unh-ccom-p11-live` / `live/coverage` | an empty or malformed `bucket` **refuses to start** when `dry_run` is false: every upload would be a 30 s-capped subprocess in a retry loop that never drains, and defaulting instead would publish a survey's coverage somewhere nobody asked for |
+| `bucket` / `prefix` | `unh-ccom-p11-live` / `live/coverage` | an empty or malformed `bucket` **refuses to start** when `dry_run` is false: every upload would be a doomed S3 PUT in a retry loop that never drains, and defaulting instead would publish a survey's coverage somewhere nobody asked for |
 | `profile` | `p11-renderer` | scoped to `s3:PutObject` on `live/*`. Empty means "use the default credential chain" — the `--profile` flag is omitted rather than passed empty |
 | `cache_control` | `20` | `max-age` stamped on each **tile**; matched to `render_interval` so a viewer does not hold a tile past its replacement. `meta.json` is deliberately not covered by it — see [The manifest](#the-manifest) |
 | `cache_budget_bytes` | `536870912` | resident tile-cache ceiling (512 MiB); `0` disables the bound |
@@ -505,3 +499,10 @@ rate-limits, and refuses to publish a partial pyramid. See
 Its `RAMP` / `MAX_DEPTH` / `STEP` must stay in sync with `web/index.html`; the
 rule is hashed into `tiles/manifest.json` so a change forces a re-render, and
 `test/test_ramp_sync.py` fails if the Python and JS copies ever diverge.
+
+Uploads compare each local tile's MD5 against the S3 object's ETag and skip
+only genuine matches — a re-render into the same `--name` prefix after a ramp
+change is caught even when the new PNG happens to be the same size. `--rate`
+limits requests to CCOM; `--concurrency` (default 10) is the separate S3
+upload fan-out. Beyond the stdlib it needs only `boto3`, and nothing from
+`marine_web_view`, so it runs from cron without the ROS overlay sourced.

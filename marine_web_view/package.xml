@@ -23,17 +23,22 @@
        sampling, Pillow for PNG encoding. rosdep keys, not pip. -->
   <depend>python3-numpy</depend>
   <depend>python3-pil</depend>
-  <!-- Both renderers shell out to the AWS CLI (`aws s3 cp`) to write
-       objects, but the CLI is deliberately NOT declared here. The `awscli`
-       rosdep key resolves to the apt package of the same name, which has no
-       installation candidate on Ubuntu noble, so declaring it aborts the
-       whole hosted build at `rosdep install` before anything is compiled.
-       The operator's CLI is the userland AWS CLI v2 installer, which apt
-       could never provide. It is an operator-provided runtime prerequisite,
-       documented in README.md; state_renderer has shipped on jazzy the same
-       way. Everything except the S3 upload runs without it, and dry_run
-       needs it not at all. Tracked for removal in #351: moving the upload
-       path to boto3 makes the dependency declarable. -->
+  <!-- S3 uploads (both renderers and scripts/refresh_chart_tiles.py) go
+       through boto3. Declarable, unlike the AWS CLI it replaced: `awscli`
+       resolves to an apt package with no installation candidate on noble,
+       so declaring it aborted the hosted build at `rosdep install` (#351).
+       botocore arrives transitively via apt, as numpy's and Pillow's own
+       dependencies do.
+
+       depend, not exec_depend, deliberately: boto3 is a runtime import
+       only (nothing here builds against it), so exec_depend would be the
+       narrower-correct tag. But python3-numpy and python3-pil, runtime
+       imports in exactly the same way, are declared with depend just above;
+       declaring the third one differently would read as a distinction that
+       does not exist. rosdep install resolves the two identically, so the
+       redundancy costs nothing. Verified: rosdep resolve python3-boto3
+       yields apt python3-boto3, candidate 1.34.46+dfsg-1ubuntu1 on noble. -->
+  <depend>python3-boto3</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
