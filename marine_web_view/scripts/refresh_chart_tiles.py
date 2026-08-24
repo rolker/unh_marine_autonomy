@@ -70,6 +70,7 @@ import json
 import math
 import os
 import re
+import stat
 import sys
 import time
 import urllib.error
@@ -87,22 +88,34 @@ BUCKET = 'unh-ccom-p11-live'
 # nothing to do with --rate, which governs politeness toward CCOM's server.
 DEFAULT_CONCURRENCY = 10
 
-# WALL-CLOCK BOUNDS. The `aws s3` shell-outs this script replaced were capped
-# at the process level -- subprocess.run(timeout=...) killed them -- and those
-# caps are restored here, because there is nothing else standing between a
-# stuck S3 endpoint and a cron run that overlaps the next one. Overlap is a
-# real harm, not a tidiness point: two runs double the request rate against
-# CCOM's server (see POLITENESS above) and interleave writes into the same
-# --workdir.
+# WALL-CLOCK BOUNDS.
 #
-# A single request is bounded by ATTEMPTS * (CONNECT_TIMEOUT + read_timeout);
-# s3_client() derives read_timeout from the ceiling it is handed so the
-# arithmetic cannot drift from the number beside it.
+# What overlap actually costs: two runs double the request rate against CCOM's
+# server (see POLITENESS above) and interleave writes into the same --workdir.
+# THE RUN LOCK is what prevents that -- not any of the numbers below. An
+# earlier round of this change claimed a per-request ceiling of
+# ATTEMPTS * (CONNECT_TIMEOUT + read_timeout) and sized read_timeout by
+# solving it; that ceiling does not exist. urllib3 applies connect_timeout
+# PER ADDRESS returned by getaddrinfo, and the S3 endpoint resolves to
+# several A records (eight, measured), so the real worst case is that many
+# connect timeouts per attempt. The arithmetic is gone rather than corrected:
+# a number that has been wrong twice should not be load-bearing a third time.
+#
+# So the timeouts below do one job -- stop a dead connection from occupying a
+# worker forever -- and the aggregate SYNC_DEADLINE_SECONDS is the real bound
+# on the fan-out, checked before each upload starts. A run can still overrun
+# it by the one request already in flight; the lock, not the deadline, is
+# what keeps the next cron run out.
 CONNECT_TIMEOUT = 10
+READ_TIMEOUT = 30
 REQUEST_ATTEMPTS = 3            # 1 try + 2 retries, for SlowDown on a big fan-out
-MANIFEST_READ_SECONDS = 60      # was: subprocess timeout on `aws s3 cp ... -`
-MANIFEST_WRITE_SECONDS = 120    # was: subprocess timeout on `aws s3 cp mf ...`
 SYNC_DEADLINE_SECONDS = 3600    # was: subprocess timeout on `aws s3 sync`
+
+# A held lock older than this is not an overrunning run, it is a wedged one:
+# a full crawl at the default --rate is well under an hour. Past it the
+# script says so and exits NON-zero, so a lock that stops every run forever
+# is visible in cron mail as a failure rather than as a silent success.
+LOCK_STALE_SECONDS = 6 * 3600
 
 # Tiles are immutable for the life of a compilation, so cache them hard: a
 # viewer that already holds one should not ask again for a week. Kept as a
@@ -326,9 +339,9 @@ def fetch_tile(endpoint, z, x, y, timeout):
     return http_get(endpoint + '?' + urllib.parse.urlencode(params), timeout=timeout)
 
 
-def s3_client(profile, max_seconds=MANIFEST_WRITE_SECONDS,
-              attempts=REQUEST_ATTEMPTS):
-    """Build an S3 client for `profile`, bounded at `max_seconds` per request.
+def s3_client(profile, attempts=REQUEST_ATTEMPTS,
+              read_timeout=READ_TIMEOUT):
+    """Build an S3 client for `profile`.
 
     boto3 is imported HERE and not at module scope so that everything above --
     the ramp, the rendering rule, the tile maths, and the sync helpers below
@@ -339,58 +352,142 @@ def s3_client(profile, max_seconds=MANIFEST_WRITE_SECONDS,
     `profile` is passed through as given: cron runs this with an explicit
     admin profile, and None falls through to the default credential chain
     (an EC2 instance role, or a plain ~/.aws/credentials).
+
+    Retries: botocore's own exponential backoff for throttling and 5xx. A few
+    thousand PUTs against one prefix is exactly where SlowDown shows up.
+    Unlike the renderer nodes -- which retry on their next tick and so ask
+    botocore for a single attempt -- a cron run gets no second chance for
+    hours, and one failed PUT withholds the whole manifest. So retries stay
+    on. The timeouts are NOT a per-request wall-clock ceiling and no code
+    here treats them as one (see the constants above); one client serves the
+    whole run, because the three different process-level caps they replaced
+    were bounding something that is now bounded structurally instead.
     """
     import boto3
     from botocore.config import Config
 
-    # Retries: botocore's own exponential backoff for throttling and 5xx.
-    # A few thousand PUTs against one prefix is exactly where SlowDown shows
-    # up. Unlike the renderer nodes -- which retry on their next tick and so
-    # ask botocore for a single attempt -- a cron run gets no second chance
-    # for hours, and one failed PUT withholds the whole manifest. So retries
-    # stay on, and the budget is sized instead: botocore counts max_attempts
-    # as TOTAL attempts and retries connect and read timeouts alike, so the
-    # worst case for one request is attempts * (connect + read). read_timeout
-    # is solved from the ceiling rather than written beside it, so the two
-    # cannot drift apart.
-    read_timeout = float(max_seconds) / attempts - CONNECT_TIMEOUT
-    if read_timeout <= 0:
+    if not (float(read_timeout) > 0 and float(attempts) >= 1):
         raise ValueError(
-            '{} s over {} attempts leaves no read budget past the {} s '
-            'connect timeout'.format(max_seconds, attempts, CONNECT_TIMEOUT))
+            'attempts must be >= 1 and read_timeout > 0, not {} and {}'
+            .format(attempts, read_timeout))
     return boto3.Session(profile_name=profile).client(
         's3', config=Config(
             retries={'mode': 'standard', 'max_attempts': attempts},
             connect_timeout=CONNECT_TIMEOUT, read_timeout=read_timeout))
 
 
-def acquire_run_lock(workdir, name):
-    """Take the exclusive run lock for `name`, or return None if held.
+class RunLockHeld(RuntimeError):
+    """Raised when another run already holds the lock for this --name."""
+
+    def __init__(self, path, holder, age):
+        """Record the lock `path` and, if readable, who holds it."""
+        super().__init__('{} is held{}'.format(
+            path, '' if holder is None else ' by pid {}'.format(holder)))
+        self.path = path
+        self.holder = holder
+        self.age = age
+
+
+def _lock_opener(path, flags):
+    """Open a lock file without following a symlink, mode 0600.
+
+    O_NOFOLLOW so a symlink planted where the lock file belongs is an error
+    rather than a silent truncation of whatever it points at (demonstrated on
+    the old /tmp location). `flags` is ignored deliberately: the caller's
+    'w' would carry O_TRUNC, and truncating a lock file before knowing
+    whether the flock succeeds destroys the holder record the failure path
+    reads.
+    """
+    return os.open(path, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+
+
+def lock_dir():
+    """Return the directory the run locks live in, owned by this user.
+
+    NOT --workdir. That defaults under /tmp, which is a world-writable tree
+    this script does not own: `makedirs(exist_ok=True)` accepts a directory
+    somebody else made, `open(..., 'w')` follows a symlink planted in it and
+    truncates whatever it points at, and a squatted lock file would stop
+    every run for good. The same tree is also `outdir`, so anything that
+    lands in it is PUT to the public tiles/ prefix under an admin profile.
+    A lock belongs somewhere only this user can write.
+
+    $XDG_RUNTIME_DIR when there is one (per-user, 0700, cleaned at logout);
+    ~/.cache otherwise, which is where a cron job without a session lands.
+    """
+    base = os.environ.get('XDG_RUNTIME_DIR')
+    path = (os.path.join(base, 'p11-tiles') if base
+            else os.path.join(os.path.expanduser('~'), '.cache', 'p11-tiles'))
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    # lstat, not stat: a symlink here is exactly the substitution being
+    # refused, and stat would follow it and report the target.
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode):
+        raise RuntimeError('{} is not a directory'.format(path))
+    if info.st_uid != os.geteuid():
+        raise RuntimeError(
+            '{} is owned by uid {}, not by this user'.format(
+                path, info.st_uid))
+    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise RuntimeError(
+            '{} is group- or world-writable ({:o}); refusing to keep a run '
+            'lock there'.format(path, stat.S_IMODE(info.st_mode)))
+    return path
+
+
+def acquire_run_lock(name, directory=None):
+    """Take the exclusive run lock for `name`; raise RunLockHeld if taken.
 
     A lockfile IS warranted here, not just belt and braces: this script is
     driven by cron, one run takes the better part of an hour at the default
     --rate, and an overrunning run that meets the next one doubles the
     request rate against CCOM's server -- the one thing this script's
     docstring says to ask before doing -- while both runs write the same
-    tiles into the same --workdir.
+    tiles into the same --workdir. It is also the only thing bounding
+    overlap: no per-request timeout does (see the constants above).
 
     Per --name, because that is the unit that shares a workdir subtree and an
     S3 prefix; two different layers are a deliberate operator choice and can
     legitimately run together.
 
-    The returned handle must stay referenced for the life of the run: closing
-    it (or letting it be garbage collected) releases the lock. flock is
-    released by the kernel when the process exits, so a killed run does not
-    strand it.
+    O_NOFOLLOW so a symlink where the lock file should be is an error rather
+    than a truncation of its target, and 0600 so the file this run creates is
+    no more open than the directory holding it.
+
+    The handle carries this run's pid and start time so a HELD lock can say
+    who holds it and for how long -- the difference between an overrunning
+    run (normal) and a wedged one that would otherwise stop every future run
+    silently. The handle must stay referenced for the life of the run:
+    closing it releases the lock. flock is released by the kernel when the
+    process exits, so a killed run does not strand it.
     """
-    os.makedirs(workdir, exist_ok=True)
-    handle = open(os.path.join(workdir, '.{}.lock'.format(name)), 'w')
+    directory = lock_dir() if directory is None else directory
+    path = os.path.join(directory, '{}.lock'.format(name))
+    handle = open(path, 'w', opener=_lock_opener)
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         handle.close()
-        return None
+        holder, age = _lock_holder(path)
+        raise RunLockHeld(path, holder, age)
+    handle.truncate(0)
+    handle.write('{} {}\n'.format(os.getpid(), int(time.time())))
+    handle.flush()
     return handle
+
+
+def _lock_holder(path):
+    """Return (pid, age_seconds) of the run holding `path`, or (None, None).
+
+    Best effort by design: the lock is held whatever this reports, and a
+    holder that wrote nothing must not turn a normal overlap into a crash.
+    """
+    try:
+        with open(path) as handle:
+            pid, started = handle.read().split()[:2]
+        return int(pid), max(0.0, time.time() - int(started))
+    except (OSError, ValueError, IndexError):
+        return None, None
 
 
 def load_manifest(client):
@@ -414,6 +511,54 @@ def save_manifest(client, path):
                           Body=handle.read(),
                           ContentType='application/json',
                           CacheControl='no-cache')
+
+
+def update_manifest(client, workdir, name, entry, wait_seconds=120.0,
+                    directory=None):
+    """Merge `entry` into the shared manifest as one locked read-modify-write.
+
+    `tiles/manifest.json` is ONE object describing every --name, and the run
+    lock is per --name, so two names running together -- which the run lock
+    deliberately permits -- used to race: each read the whole dict at the top
+    of its run, and each wrote the whole dict back at the end, so whichever
+    finished second erased the other's entry. The cost of losing one is not
+    an inconsistency to reconcile later: the next cron run reads "never
+    rendered" and re-crawls CCOM for the entire pyramid, ~5,839 tiles.
+
+    So the manifest is re-read INSIDE the lock rather than reused from the
+    top of the run, and only this run's key is touched. The staging file is
+    per --name too, because a single shared path under --workdir was the same
+    lost update one layer down.
+
+    The lock is local, so this closes the race between runs on one host --
+    which is the deployment: one cron host writes this prefix. Two hosts
+    would need a conditional PUT (If-Match on the manifest's ETag); noted
+    rather than pretended.
+    """
+    directory = lock_dir() if directory is None else directory
+    path = os.path.join(directory, 'manifest.lock')
+    handle = open(path, 'w', opener=_lock_opener)
+    try:
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        'the manifest lock at {} stayed held for {:g} s'
+                        .format(path, wait_seconds))
+                time.sleep(0.2)
+        man = load_manifest(client)
+        man[name] = entry
+        staged = os.path.join(workdir, 'manifest.{}.json'.format(name))
+        with open(staged, 'w') as output:
+            json.dump(man, output, indent=1)
+        save_manifest(client, staged)
+        return man
+    finally:
+        handle.close()
 
 
 def file_md5(path, chunk=1 << 20):
@@ -627,24 +772,37 @@ def main():
     # Before a single request to CCOM: an overrunning previous run is the
     # case this exists for, and probing the folder first would already have
     # doubled the request rate.
-    lock = acquire_run_lock(a.workdir, a.name)
-    if lock is None:
-        print('another run for {!r} holds {}/.{}.lock -- exiting so the two '
-              'do not both crawl CCOM.'.format(a.name, a.workdir, a.name),
-              file=sys.stderr)
-        return 0
+    try:
+        lock = acquire_run_lock(a.name)
+    except RunLockHeld as held:
+        wedged = held.age is not None and held.age > LOCK_STALE_SECONDS
+        print('another run for {!r} holds {}{} -- {}'.format(
+            a.name, held.path,
+            '' if held.holder is None else ' (pid {}, {:.1f} h)'.format(
+                held.holder, (held.age or 0) / 3600.0),
+            'it is wedged: no run can proceed until it is cleared.' if wedged
+            else 'exiting so the two do not both crawl CCOM.'),
+            file=sys.stderr)
+        # Exit 0 for an ordinary overlap -- that is the lock working, and a
+        # nightly failure mail for it would train the operator to ignore
+        # them. Non-zero once the holder is too old to be a real run, so a
+        # lock that stops every future run is not indistinguishable from
+        # success forever.
+        return 1 if wedged else 0
+    # Also keeps the handle referenced for the life of the run: closing it
+    # releases the lock, and nothing else below mentions it.
+    print('run lock: {}'.format(lock.name))
 
     print('\nselecting a service that actually has data over the target area:')
     service, endpoint = pick_service(a.layer, tuple(a.bbox), a.timeout,
                                      a.blank_bytes)
     print(f'service: {service}\nendpoint: {endpoint}')
 
-    # Two clients, because the three operations had three different
-    # process-level caps under the CLI and each is restored on its own.
-    client = s3_client(a.profile, MANIFEST_WRITE_SECONDS)
-    man = load_manifest(s3_client(a.profile, MANIFEST_READ_SECONDS,
-                                  attempts=2))
-    prev = man.get(a.name, {})
+    # One client for the whole run: the three different process-level caps
+    # the CLI shell-outs carried were bounding overlap, and the run lock
+    # above bounds that now (see the WALL-CLOCK BOUNDS constants).
+    client = s3_client(a.profile)
+    prev = load_manifest(client).get(a.name, {})
     age_d = (time.time() - prev.get('rendered_at', 0)) / 86400
     rule_hash = hashlib.sha256(chart_rule().encode()).hexdigest()[:12]
     if prev.get('rule_hash') not in (None, rule_hash):
@@ -706,17 +864,17 @@ def main():
         print('upload failed', file=sys.stderr)
         return 1
 
-    man[a.name] = {'service': service, 'endpoint': endpoint,
-                   'rule_hash': rule_hash, 'max_depth': MAX_DEPTH,
-                   'step': STEP, 'ramp_points': len(RAMP),
-                   'bbox': a.bbox, 'zmin': a.zmin, 'zmax': a.zmax,
-                   'tiles': written, 'blank': skipped,
-                   'rendered_at': time.time(),
-                   'rendered_iso': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
-    mf = os.path.join(a.workdir, 'manifest.json')
-    with open(mf, 'w') as f:
-        json.dump(man, f, indent=1)
-    save_manifest(client, mf)
+    entry = {'service': service, 'endpoint': endpoint,
+             'rule_hash': rule_hash, 'max_depth': MAX_DEPTH,
+             'step': STEP, 'ramp_points': len(RAMP),
+             'bbox': a.bbox, 'zmin': a.zmin, 'zmax': a.zmax,
+             'tiles': written, 'blank': skipped,
+             'rendered_at': time.time(),
+             'rendered_iso': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+    # Re-read and merge under a lock rather than rewriting the dict this run
+    # read an hour ago: another --name may have published in the meantime,
+    # and dropping its entry costs it a full re-crawl of CCOM.
+    update_manifest(client, a.workdir, a.name, entry)
     print(f'done: {written} tiles ({skipped} blank skipped, {failed} failed)')
     return 0
 

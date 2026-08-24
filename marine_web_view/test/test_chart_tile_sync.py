@@ -43,9 +43,14 @@ purpose, so it runs from cron without the ROS overlay sourced.
 
 import hashlib
 import importlib.util
+import io
+import json
 import os
+import stat
 import threading
 import time
+
+import pytest
 
 _TEST_DIR = os.path.dirname(__file__)
 _SCRIPT = os.path.join(os.path.dirname(_TEST_DIR), 'scripts',
@@ -386,34 +391,150 @@ def test_a_second_run_for_the_same_name_is_locked_out(tmp_path):
     """Cron re-entry is the case: one run takes most of an hour.
 
     Two overlapping runs double the request rate against CCOM and interleave
-    writes into the same --workdir.
+    writes into the same --workdir. With no per-request ceiling to appeal to,
+    this lock is the ONLY thing bounding overlap.
     """
     script = _load_script()
-    workdir = str(tmp_path / 'p11-tiles')
+    directory = str(tmp_path / 'locks')
+    os.makedirs(directory)
 
-    first = script.acquire_run_lock(workdir, 'bathy4m')
-    assert first is not None
-    assert script.acquire_run_lock(workdir, 'bathy4m') is None, (
-        'a second concurrent run was allowed to start')
+    first = script.acquire_run_lock('bathy4m', directory=directory)
+    with pytest.raises(script.RunLockHeld):
+        script.acquire_run_lock('bathy4m', directory=directory)
     # A different --name is a deliberate operator choice and may run.
-    other = script.acquire_run_lock(workdir, 'bathy8m')
-    assert other is not None
+    other = script.acquire_run_lock('bathy8m', directory=directory)
     other.close()
 
     first.close()
-    assert script.acquire_run_lock(workdir, 'bathy4m') is not None, (
-        'the lock outlived the run that held it')
+    script.acquire_run_lock('bathy4m', directory=directory).close()
 
 
-def test_one_s3_request_stays_under_the_cap_the_shell_out_enforced(
+def test_a_held_lock_names_its_holder_and_its_age(tmp_path):
+    """A wedged lock must not stop every future run silently.
+
+    Exiting 0 on a held lock is right for an ordinary overlap and wrong
+    forever after a run wedges: every later invocation would report success
+    while doing nothing. The holder's pid and start time are written into the
+    lock file so the two cases can be told apart.
+    """
+    script = _load_script()
+    directory = str(tmp_path / 'locks')
+    os.makedirs(directory)
+
+    held = script.acquire_run_lock('bathy4m', directory=directory)
+    try:
+        with pytest.raises(script.RunLockHeld) as raised:
+            script.acquire_run_lock('bathy4m', directory=directory)
+        assert raised.value.holder == os.getpid()
+        assert raised.value.age is not None and raised.value.age < 60
+    finally:
+        held.close()
+
+    # An unreadable holder record is still a held lock, not a crash.
+    with open(os.path.join(directory, 'bathy4m.lock'), 'w') as handle:
+        handle.write('nonsense')
+    held = script.acquire_run_lock('bathy4m', directory=directory)
+    try:
+        with pytest.raises(script.RunLockHeld) as raised:
+            script.acquire_run_lock('bathy4m', directory=directory)
+    finally:
+        held.close()
+
+
+def test_the_lock_directory_refuses_a_tree_this_user_does_not_own(
         tmp_path, monkeypatch):
-    """Restore the three process-level caps `subprocess.run` used to enforce.
+    """The lock must not live in a world-writable tree.
 
-    botocore counts max_attempts as TOTAL attempts and retries connect and
-    read timeouts alike, so the worst case for one request is
-    attempts * (connect + read). The client is built from the ceiling rather
-    than the other way round; this pins that the arithmetic actually lands on
-    the old numbers.
+    --workdir defaults under /tmp. `makedirs(exist_ok=True)` accepts a
+    directory somebody else made, and a symlink planted where the lock file
+    goes was demonstrated to truncate its target. The same tree is `outdir`,
+    so anything landing in it is PUT to the public tiles/ prefix under an
+    admin profile.
+    """
+    script = _load_script()
+    monkeypatch.setenv('XDG_RUNTIME_DIR', str(tmp_path))
+    directory = script.lock_dir()
+    assert directory.startswith(str(tmp_path))
+    assert stat.S_IMODE(os.lstat(directory).st_mode) & (
+        stat.S_IWGRP | stat.S_IWOTH) == 0
+
+    os.chmod(directory, 0o777)
+    with pytest.raises(RuntimeError):
+        script.lock_dir()
+
+    # A symlink where the lock file belongs is refused, not followed.
+    os.chmod(directory, 0o700)
+    target = tmp_path / 'precious'
+    target.write_text('do not truncate me')
+    os.symlink(str(target), os.path.join(directory, 'bathy4m.lock'))
+    with pytest.raises(OSError):
+        script.acquire_run_lock('bathy4m', directory=directory)
+    assert target.read_text() == 'do not truncate me'
+
+
+def test_the_lock_directory_is_not_the_workdir(tmp_path, monkeypatch):
+    """A file in --workdir is a file in `outdir`'s parent, and gets PUT."""
+    script = _load_script()
+    monkeypatch.setenv('XDG_RUNTIME_DIR', str(tmp_path / 'run'))
+    os.makedirs(str(tmp_path / 'run'))
+    assert '/tmp/p11-tiles' not in script.lock_dir()
+
+
+def test_two_names_do_not_erase_each_other_from_the_manifest(
+        tmp_path, monkeypatch):
+    """The lost update that costs a full re-crawl of CCOM.
+
+    `tiles/manifest.json` is one object describing every --name and the run
+    lock is per --name, so two names running together -- which the lock
+    deliberately permits -- each read the whole dict at the start of their
+    run and wrote the whole dict back at the end. The loser's entry vanished,
+    and the next cron run read "never rendered" and re-fetched ~5,839 tiles.
+    """
+    script = _load_script()
+    directory = str(tmp_path / 'locks')
+    os.makedirs(directory)
+    workdir = str(tmp_path / 'work')
+    os.makedirs(workdir)
+
+    class _Store:
+        """A manifest object that both runs read and write, as S3 is."""
+
+        def __init__(self):
+            self.body = None
+
+        def get_object(self, Bucket, Key):
+            if self.body is None:
+                raise RuntimeError('NoSuchKey')
+            return {'Body': io.BytesIO(self.body)}
+
+        def put_object(self, Bucket, Key, Body, **kwargs):
+            self.body = Body
+
+    store = _Store()
+    # The stale dict each run read an hour ago, before the other published.
+    script.update_manifest(store, workdir, 'bathy4m', {'tiles': 1},
+                           directory=directory)
+    script.update_manifest(store, workdir, 'bathy8m', {'tiles': 2},
+                           directory=directory)
+
+    assert json.loads(store.body) == {'bathy4m': {'tiles': 1},
+                                      'bathy8m': {'tiles': 2}}, (
+        'one name erased the other from the shared manifest')
+    # And the staging file is per-name, so the local write does not race
+    # either.
+    assert sorted(os.listdir(workdir)) == ['manifest.bathy4m.json',
+                                           'manifest.bathy8m.json']
+
+
+def test_the_client_config_is_what_reaches_botocore(tmp_path, monkeypatch):
+    """Pin the Config, without asserting a per-request wall-clock ceiling.
+
+    An earlier round derived read_timeout by solving
+    `attempts * (connect + read) == cap`, and pinned the arithmetic with a
+    test that held identically for any CONNECT_TIMEOUT. The ceiling was not
+    real -- urllib3 applies connect_timeout per address and the endpoint has
+    several -- so the derivation is gone and what is left to bind is what
+    actually reaches botocore.
     """
     import sys
     import types
@@ -446,16 +567,156 @@ def test_one_s3_request_stays_under_the_cap_the_shell_out_enforced(
     monkeypatch.setitem(sys.modules, 'botocore', botocore)
     monkeypatch.setitem(sys.modules, 'botocore.config', config_mod)
 
-    for ceiling, attempts in ((script.MANIFEST_WRITE_SECONDS, 3),
-                              (script.MANIFEST_READ_SECONDS, 2)):
-        script.s3_client('ccom-jhc', ceiling, attempts=attempts)
-        profile, kwargs = built[-1]
-        assert profile == 'ccom-jhc'
-        worst_case = (kwargs['retries']['max_attempts']
-                      * (kwargs['connect_timeout'] + kwargs['read_timeout']))
-        assert worst_case == ceiling, (
-            'one request can take {} s against a {} s cap'.format(
-                worst_case, ceiling))
+    script.s3_client('ccom-jhc')
+    assert built[-1] == ('ccom-jhc', {
+        'retries': {'mode': 'standard', 'max_attempts': 3},
+        'connect_timeout': 10,
+        'read_timeout': 30,
+    }), built[-1]
+    assert (script.REQUEST_ATTEMPTS, script.CONNECT_TIMEOUT,
+            script.READ_TIMEOUT) == (3, 10, 30)
 
-    assert (script.MANIFEST_WRITE_SECONDS, script.MANIFEST_READ_SECONDS) == (
-        120, 60), 'the caps no longer match the subprocess timeouts they replace'
+    # Retries stay ON here, unlike the nodes: a cron run gets no second
+    # chance for hours and one failed PUT withholds the whole manifest.
+    assert built[-1][1]['retries']['max_attempts'] > 1
+
+    for bad in ({'attempts': 0}, {'attempts': -1}, {'read_timeout': 0},
+                {'read_timeout': -5}):
+        with pytest.raises(ValueError):
+            script.s3_client('ccom-jhc', **bad)
+
+
+def _run_main(script, monkeypatch, tmp_path, argv, held=None):
+    """Run `main()` over stubbed CCOM and S3, returning what it wired up.
+
+    `main()` had no test at all, which is how six mutations at its call sites
+    survived a green suite: a dropped `force=a.force`, a lock taken for a
+    constant instead of `--name`, a held-lock branch turned into `if False`.
+    Every one of those is a line in this function's caller.
+    """
+    import sys
+
+    seen = {'sync': [], 'manifest': [], 'locks': []}
+    locks = str(tmp_path / 'locks')
+    os.makedirs(locks, exist_ok=True)
+
+    def _lock_dir():
+        return locks
+
+    real_lock = script.acquire_run_lock
+
+    def _acquire(name, directory=None):
+        seen['locks'].append(name)
+        return real_lock(name, directory=directory)
+
+    def _sync(client, local_dir, bucket, prefix, extra, **kwargs):
+        seen['sync'].append((prefix, extra, kwargs))
+        return 1, 0, 0
+
+    def _update(client, workdir, name, entry, **kwargs):
+        seen['manifest'].append((name, entry))
+        return {name: entry}
+
+    monkeypatch.setattr(script, 'lock_dir', _lock_dir)
+    monkeypatch.setattr(script, 'acquire_run_lock', _acquire)
+    monkeypatch.setattr(script, 'sync_dir', _sync)
+    monkeypatch.setattr(script, 'update_manifest', _update)
+    monkeypatch.setattr(script, 's3_client', lambda *a, **k: object())
+    monkeypatch.setattr(script, 'load_manifest', lambda client: {})
+    monkeypatch.setattr(
+        script, 'pick_service',
+        lambda layer, bbox, timeout, blank: ('BTY_4m', 'http://ccom/tiles'))
+    monkeypatch.setattr(
+        script, 'fetch_tile',
+        lambda endpoint, z, x, y, timeout: b'x' * 2000)
+    monkeypatch.setattr(sys, 'argv', ['refresh_chart_tiles.py'] + argv)
+    seen['exit'] = script.main()
+    return seen
+
+
+_MAIN_ARGV = ['--bbox', '-70.61', '43.06', '-70.60', '43.07',
+              '--zmin', '10', '--zmax', '10', '--rate', '1000',
+              '--name', 'bathy4m']
+
+
+def test_main_passes_force_through_to_the_upload(tmp_path, monkeypatch):
+    """`--force` is the ONLY way a cache-policy change reaches a tile.
+
+    `sync_dir` skips any object whose remote ETag matches its MD5, and a
+    `TILE_EXTRA_ARGS` change moves no bytes -- so dropping `force=a.force`
+    here leaves the prefix on a permanently mixed cache policy with nothing
+    in the suite noticing. That mutation survived the last round.
+    """
+    script = _load_script()
+    argv = _MAIN_ARGV + ['--workdir', str(tmp_path / 'work')]
+
+    seen = _run_main(script, monkeypatch, tmp_path, argv)
+    assert seen['exit'] == 0
+    assert seen['sync'][0][2].get('force') is False, seen['sync']
+
+    seen = _run_main(script, monkeypatch, tmp_path, argv + ['--force'])
+    assert seen['sync'][0][2].get('force') is True, (
+        '--force no longer reaches the upload, so a TILE_EXTRA_ARGS change '
+        'has no way to propagate')
+
+
+def test_main_locks_and_publishes_under_the_requested_name(
+        tmp_path, monkeypatch):
+    """The lock and the manifest entry must both follow --name."""
+    script = _load_script()
+    seen = _run_main(script, monkeypatch, tmp_path,
+                     ['--bbox', '-70.61', '43.06', '-70.60', '43.07',
+                      '--zmin', '10', '--zmax', '10', '--rate', '1000',
+                      '--name', 'bathy8m',
+                      '--workdir', str(tmp_path / 'work')])
+    assert seen['locks'] == ['bathy8m'], seen['locks']
+    assert seen['sync'][0][0] == 'tiles/bathy8m/', seen['sync']
+    assert [name for name, _ in seen['manifest']] == ['bathy8m']
+    assert seen['sync'][0][1] == script.TILE_EXTRA_ARGS
+
+
+def test_main_stops_before_touching_ccom_when_the_lock_is_held(
+        tmp_path, monkeypatch):
+    """The whole point of taking the lock first.
+
+    Probing CCOM before checking the lock would already have doubled the
+    request rate. A held lock exits 0 -- an ordinary overlap is the lock
+    working -- but a holder too old to be a real run exits non-zero, so a
+    wedged lock is not indistinguishable from success forever.
+    """
+    script = _load_script()
+    locks = str(tmp_path / 'locks')
+    os.makedirs(locks)
+    monkeypatch.setattr(script, 'lock_dir', lambda: locks)
+    held = script.acquire_run_lock('bathy4m', directory=locks)
+    try:
+        def _explode(*args, **kwargs):
+            raise AssertionError('a locked-out run reached CCOM')
+
+        monkeypatch.setattr(script, 'pick_service', _explode)
+        monkeypatch.setattr(script, 'fetch_tile', _explode)
+        import sys
+        monkeypatch.setattr(sys, 'argv', ['refresh_chart_tiles.py']
+                            + _MAIN_ARGV + ['--workdir', str(tmp_path / 'w')])
+        assert script.main() == 0, 'an ordinary overlap is not a failure'
+
+        # Now the holder looks wedged: same lock, an older start time.
+        with open(os.path.join(locks, 'bathy4m.lock'), 'r+') as handle:
+            handle.seek(0)
+            handle.write('{} {}\n'.format(
+                os.getpid(), int(time.time() - script.LOCK_STALE_SECONDS - 1)))
+            handle.truncate()
+        assert script.main() == 1, (
+            'a lock older than LOCK_STALE_SECONDS still exited 0, so a '
+            'wedged lock reads as success forever')
+    finally:
+        held.close()
+
+
+def test_the_sync_deadline_default_is_the_one_main_relies_on(tmp_path):
+    """`sync_dir`'s default IS the aggregate bound; nothing else passes one."""
+    script = _load_script()
+    import inspect
+    default = inspect.signature(script.sync_dir).parameters[
+        'deadline_seconds'].default
+    assert default == script.SYNC_DEADLINE_SECONDS == 3600, default
