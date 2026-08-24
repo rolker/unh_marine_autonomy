@@ -71,7 +71,7 @@ def _boto3_client(profile, connect_timeout, read_timeout):
     from botocore.exceptions import BotoCoreError, ClientError
     config = Config(connect_timeout=connect_timeout,
                     read_timeout=read_timeout,
-                    retries={'mode': 'standard', 'max_attempts': 4})
+                    retries={'mode': 'standard', 'max_attempts': 1})
     return (boto3.Session(profile_name=profile).client('s3', config=config),
             (ClientError, BotoCoreError))
 
@@ -134,25 +134,26 @@ class S3Uploader:
     dependency swap, and nothing in the issue asks for that.
 - **Timeouts**: `connect_timeout`/`read_timeout` replace the CLI's
   process-level `timeout=20`/`timeout=30`. `state_renderer` passes
-  `read_timeout=15` (leaves headroom under its 20 s ceiling once connect
-  time is included); `coverage_renderer` passes `read_timeout=25` (under its
-  30 s ceiling). A `botocore.exceptions.ReadTimeoutError` /
+  `read_timeout=15` and `coverage_renderer` `read_timeout=25`, so one PUT is
+  bounded at `connect + read` = **20 s** and **30 s** respectively — exactly
+  the old ceilings. A `botocore.exceptions.ReadTimeoutError` /
   `ConnectTimeoutError` (both `BotoCoreError` subclasses) is the typed
   equivalent of today's `subprocess.TimeoutExpired`.
-- **Retry/backoff — stating what should exist, not preserving what doesn't**:
-  today there is no in-call retry at all — one `subprocess.run` attempt, a
-  failure counter increment, and reliance on the *next scheduled pass* (the
-  ROS timer / coverage's dirty-tile re-queue) to retry. This plan does
-  **not** add a custom in-call retry loop (that would be a scope increase
-  and could interact badly with the per-call timeouts above). It does turn
-  on botocore's built-in `retries={'mode': 'standard', 'max_attempts': 4}`
-  in the `Config` — this is SDK-internal exponential backoff for transient
-  errors (throttling, 5xx, connection resets) with zero custom code, and it
-  is strictly additive: today's CLI-based calls got no automatic retry of
-  any kind, so this is new robustness without new complexity in our code.
-  Anything that exhausts the SDK's retries, or is non-retryable
-  (`AccessDenied`, `NoSuchBucket`), still falls through to the existing
-  failure-counter-and-next-pass behavior — unchanged.
+- **Retry/backoff — `max_attempts: 1` in the nodes** (corrected in round 1
+  of review; this plan originally specified `max_attempts: 4` and called it
+  "strictly additive", which was wrong). botocore counts `max_attempts` as
+  TOTAL attempts and retries connect and read timeouts alike, so 4 attempts
+  multiply the per-PUT ceiling above by four — ~87 s in `state_renderer`
+  against its 20 s cap, ~127 s in `coverage_renderer` against 30 s. Neither
+  node can afford that: `_put` runs on `rclpy.spin`'s single-threaded
+  executor, so a stalled PUT blocks `_on_fix` and leaves a permanent hole in
+  the track, and `stop()`'s `join(timeout=45.0)` could no longer win, taking
+  the early return that skips the final flush it exists for. So the SDK gets
+  ONE attempt, and the retry stays where it already was and where both
+  docstrings say it is: the next timer tick, or the tile staying dirty for
+  the next render pass. `AccessDenied` / `NoSuchBucket` fall through to the
+  failure counter exactly as before. (The cron script is the opposite case
+  and keeps SDK retries — see section 3.)
 - **Error mapping**: `_put`/`_publish` change from checking
   `result.returncode != 0` / logging `result.stderr` to checking the `exc`
   returned by `S3Uploader.put()`. For a `ClientError`, log
@@ -233,11 +234,33 @@ This is the one place a naive rewrite regresses badly, so spelling it out:
   - SSE-KMS ETags are also non-MD5 and are **not** distinguishable by shape.
     That direction fails safe: a mismatch means upload, so a KMS-encrypted
     bucket loses the skip optimisation but never serves a stale tile.
-  - This is a genuine improvement over the status quo, not a wash: the fetch
-    loop rewrites every local tile unconditionally, so local mtimes are
+  - **Better on skipping, worse on metadata** (corrected in round 1; the
+    plan originally claimed "strictly better"). Better on skipping: the
+    fetch loop rewrites every local tile it renders, so local mtimes are
     always "now" and `aws s3 sync`'s size+mtime rule re-uploaded all ~5,839
-    objects on every run. Content hashing is the first comparison here that
-    actually skips anything.
+    objects every run, where content hashing genuinely skips the unchanged
+    ones. Worse on metadata: `list_objects_v2` returns no `CacheControl` or
+    `ContentType`, so a change to `TILE_EXTRA_ARGS` reaches only tiles whose
+    pixels also changed, leaving the prefix on a permanently mixed cache
+    policy. `sync_dir(force=True)` — wired to `--force` — skips the
+    comparison and re-PUTs everything, which is the remedy available today.
+    A metadata-only path that avoids the ~hour of CCOM requests a re-render
+    costs (a re-upload-from-workdir mode, or a `head_object` per key) is an
+    explicit follow-up, named in the docstring.
+- **Wall-clock bounds and re-entry** (added in round 1 of review): the CLI
+  shell-outs were capped at the process level — 3600 s on the sync, 120 s on
+  the manifest put, 60 s on the manifest read — and nothing replaced them.
+  `s3_client(profile, max_seconds, attempts)` now derives `read_timeout`
+  from the ceiling it is handed, so `attempts * (connect + read)` lands on
+  the old cap and cannot drift from the number beside it; `main()` builds
+  one client per cap. Retries stay ON here, unlike the nodes: a cron run
+  gets no second chance for hours and one failed PUT withholds the whole
+  manifest. `sync_dir` takes an aggregate `deadline_seconds` (3600) after
+  which unstarted jobs fail rather than run. `acquire_run_lock()` takes a
+  per-`--name` `flock` before the first request to CCOM: a run takes most of
+  an hour at the default `--rate`, and an overrunning run that meets the
+  next cron slot doubles the request rate against CCOM's server while both
+  runs write the same `--workdir`.
 - **`TILE_EXTRA_ARGS`** (`image/png` + `public,max-age=604800`) is a module
   constant rather than a literal inside `main()`, so a test can pin the
   values the upload actually uses instead of a copy of them — a mutation that
