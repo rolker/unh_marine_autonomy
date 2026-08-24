@@ -44,6 +44,13 @@ compares it against a manifest stored beside the tiles. No change and not stale
 
 POLITENESS: this hits Paul Johnson's server a few thousand times. Default rate
 is deliberately gentle and concurrency is 1. Talk to him before raising either.
+(--concurrency governs the S3 UPLOAD only; the fetch loop stays serial and
+rate-limited.)
+
+DEPENDENCIES: stdlib plus boto3, and NOTHING from marine_web_view -- this runs
+from cron without the ROS overlay sourced, so it must not need install/
+setup.bash on sys.path. boto3 is imported lazily inside s3_client() so the
+pure-computation entry points (and the package's tests) work without it.
 
   Estimate only (no requests to CCOM, no uploads):
       ./refresh_chart_tiles.py --dry-run
@@ -56,12 +63,12 @@ is deliberately gentle and concurrency is 1. Talk to him before raising either.
 """
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import math
 import os
 import re
-import subprocess
 import sys
 import time
 import urllib.error
@@ -71,6 +78,20 @@ import urllib.request
 CCOM = 'https://gis.ccom.unh.edu/server/rest/services'
 FOLDER = 'WGOM-LI-SNE'          # hyphens -- the folder the CCOM viewer uses
 BUCKET = 'unh-ccom-p11-live'
+
+# S3 upload fan-out. 10 matches the AWS CLI's own default, which is the
+# concurrency this pyramid has actually been published at -- parity at the
+# cutover is worth more than a guess at a faster number, and --concurrency
+# raises it without a code change if a run ever proves too slow. This has
+# nothing to do with --rate, which governs politeness toward CCOM's server.
+DEFAULT_CONCURRENCY = 10
+
+# Tiles are immutable for the life of a compilation, so cache them hard: a
+# viewer that already holds one should not ask again for a week. Kept as a
+# module constant so test/test_chart_tile_sync.py can pin the values the
+# upload actually uses, rather than a copy of them.
+TILE_EXTRA_ARGS = {'ContentType': 'image/png',
+                   'CacheControl': 'public,max-age=604800'}   # 7 days
 
 # Piscataqua approaches + Isles of Shoals.
 DEFAULT_BBOX = (-70.90, 42.92, -70.50, 43.15)     # W, S, E, N
@@ -287,17 +308,177 @@ def fetch_tile(endpoint, z, x, y, timeout):
     return http_get(endpoint + '?' + urllib.parse.urlencode(params), timeout=timeout)
 
 
-def load_manifest(profile):
+def s3_client(profile):
+    """Build an S3 client for `profile`.
+
+    boto3 is imported HERE and not at module scope so that everything above --
+    the ramp, the rendering rule, the tile maths, and the sync helpers below
+    when handed a client -- stays importable on a host with no AWS SDK. That is
+    what lets --dry-run and the package's tests run without boto3, and it keeps
+    this script's stdlib-only-plus-boto3 property honest.
+
+    `profile` is passed through as given: cron runs this with an explicit
+    admin profile, and None falls through to the default credential chain
+    (an EC2 instance role, or a plain ~/.aws/credentials).
+    """
+    import boto3
+    from botocore.config import Config
+
+    # Retries: botocore's own exponential backoff for throttling and 5xx.
+    # A few thousand PUTs against one prefix is exactly where SlowDown shows
+    # up, and the CLI shell-out this replaces got its retries the same way.
+    return boto3.Session(profile_name=profile).client(
+        's3', config=Config(retries={'mode': 'standard', 'max_attempts': 5},
+                            connect_timeout=10, read_timeout=60))
+
+
+def load_manifest(client):
+    """Return the tile manifest, or {} if it cannot be read.
+
+    Blanket except, deliberately: a missing manifest is the first-run case and
+    an unreadable one is handled identically -- re-render. Nothing here should
+    stop the script before it has even chosen a service.
+    """
     try:
-        out = subprocess.run(
-            ['aws', 's3', 'cp', f's3://{BUCKET}/tiles/manifest.json', '-',
-             '--profile', profile],
-            capture_output=True, timeout=60)
-        if out.returncode == 0:
-            return json.loads(out.stdout)
+        body = client.get_object(Bucket=BUCKET, Key='tiles/manifest.json')
+        return json.loads(body['Body'].read())
     except Exception:
-        pass
-    return {}
+        return {}
+
+
+def save_manifest(client, path):
+    """Upload the rewritten manifest with no-cache."""
+    with open(path, 'rb') as handle:
+        client.put_object(Bucket=BUCKET, Key='tiles/manifest.json',
+                          Body=handle.read(),
+                          ContentType='application/json',
+                          CacheControl='no-cache')
+
+
+def file_md5(path, chunk=1 << 20):
+    """Hex MD5 of a file's bytes.
+
+    A content fingerprint compared against S3's ETag, not a security digest.
+    """
+    digest = hashlib.md5()
+    with open(path, 'rb') as handle:
+        for block in iter(lambda: handle.read(chunk), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def remote_etags(client, bucket, prefix):
+    """Map every key already under `prefix` to its unquoted ETag.
+
+    One paginated list instead of a head_object per file: ~5,800 tiles would
+    otherwise be ~5,800 extra round trips before a single byte is uploaded.
+    """
+    found = {}
+    paginator = client.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get('Contents') or []:
+            # S3 returns the ETag quoted -- '"d41d8..."'.
+            found[obj['Key']] = str(obj.get('ETag', '')).strip('"')
+    return found
+
+
+def is_content_hash(etag):
+    """Return True if `etag` can be compared against a local file's MD5.
+
+    An S3 ETag equals the object's MD5 only for a SINGLE-PART, non-KMS upload.
+    A multipart upload's ETag is '<md5-of-part-md5s>-<partcount>', which this
+    rejects on the trailing '-<n>'. THIS SCRIPT ONLY EVER USES put_object, so
+    everything it writes is single-part by construction -- but the bucket may
+    still hold objects put there by `aws s3 sync` (which switches to multipart
+    above 8 MB) or by hand, so the shape is checked rather than assumed. If a
+    future change introduces multipart uploads here, this rule stops holding
+    and the comparison must change with it.
+
+    Objects encrypted with SSE-KMS also carry a non-MD5 ETag that is NOT
+    distinguishable by shape. That direction fails safe: a mismatch means
+    upload, so a KMS-encrypted bucket loses the skip optimisation but never
+    serves a stale tile.
+    """
+    return len(etag) == 32 and all(c in '0123456789abcdef' for c in etag)
+
+
+def local_files(local_dir):
+    """Sorted (key suffix, absolute path) for every file under `local_dir`."""
+    found = []
+    for root, _dirs, names in os.walk(local_dir):
+        for name in names:
+            full = os.path.join(root, name)
+            rel = os.path.relpath(full, local_dir).replace(os.sep, '/')
+            found.append((rel, full))
+    return sorted(found)
+
+
+def sync_dir(client, local_dir, bucket, prefix, extra_args,
+             concurrency=DEFAULT_CONCURRENCY, log=print):
+    """Upload `local_dir` to `bucket`/`prefix`; return (sent, skipped, failed).
+
+    Upload-only, like the `aws s3 sync` it replaces: no --delete flag was ever
+    passed, so nothing here deletes.
+
+    WHAT COUNTS AS ALREADY UPLOADED -- by CONTENT HASH, not size. The tile
+    prefix is FIXED (--name, default 'bathy4m'), not versioned per
+    compilation, and main() deliberately re-renders into that same prefix when
+    the colour ramp changes (the rule_hash check). A recoloured PNG of
+    identical byte size is entirely plausible, and a size-only comparison
+    would silently skip it -- leaving stale colours served until the next rule
+    change or a --force. So the local MD5 is compared against the object's
+    ETag, and anything that differs, is absent, or has an ETag that cannot be
+    compared (see is_content_hash) is uploaded.
+
+    This is strictly better than the status quo, not just equivalent: the
+    fetch loop rewrites every local tile unconditionally, so local mtimes are
+    always 'now' and `aws s3 sync`'s size+mtime rule re-uploaded all ~5,839
+    objects every run. Content hashing is the first comparison here that
+    actually skips anything.
+    """
+    remote = remote_etags(client, bucket, prefix)
+    pending = []
+    skipped = 0
+    for rel, path in local_files(local_dir):
+        key = prefix + rel
+        etag = remote.get(key)
+        if etag and is_content_hash(etag) and etag == file_md5(path):
+            skipped += 1
+            continue
+        pending.append((key, path))
+
+    sent = failed = 0
+    if not pending:
+        return sent, skipped, failed
+
+    def _upload(job):
+        key, path = job
+        with open(path, 'rb') as handle:
+            body = handle.read()
+        # put_object, NOT upload_file: a single-part PUT is what makes the
+        # ETag == MD5 rule above hold for everything this script writes.
+        # Tiles are 256x256 PNGs (tens of kB), far under the 5 GB PUT limit.
+        client.put_object(Bucket=bucket, Key=key, Body=body, **extra_args)
+
+    # Threads, because boto3 clients are documented safe for concurrent calls
+    # and ~5,839 serial PUTs at S3 round-trip latency is a quarter hour.
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(1, int(concurrency))) as pool:
+        futures = {pool.submit(_upload, job): job for job in pending}
+        done = 0
+        for future in concurrent.futures.as_completed(futures):
+            done += 1
+            try:
+                future.result()
+                sent += 1
+            except Exception as exc:
+                failed += 1
+                if failed <= 10:
+                    log('  ! {}: {}'.format(futures[future][0], exc))
+            if done % 500 == 0 or done == len(pending):
+                log('  {}/{} uploaded={} skipped(unchanged)={} failed={}'
+                    .format(done, len(pending), sent, skipped, failed))
+    return sent, skipped, failed
 
 
 def main():
@@ -319,6 +500,10 @@ def main():
                     help='AWS profile. NOTE: p11-renderer is scoped to live/* '
                          'only and cannot write tiles/ -- use an admin profile '
                          'or extend the policy.')
+    ap.add_argument('--concurrency', type=int, default=DEFAULT_CONCURRENCY,
+                    help='parallel S3 uploads (default %(default)s, matching '
+                         'the AWS CLI; does NOT affect the request rate to '
+                         'CCOM, see --rate)')
     ap.add_argument('--workdir', default='/tmp/p11-tiles')
     ap.add_argument('--timeout', type=float, default=60)
     ap.add_argument('--dry-run', action='store_true')
@@ -352,7 +537,8 @@ def main():
                                      a.blank_bytes)
     print(f'service: {service}\nendpoint: {endpoint}')
 
-    man = load_manifest(a.profile)
+    client = s3_client(a.profile)
+    man = load_manifest(client)
     prev = man.get(a.name, {})
     age_d = (time.time() - prev.get('rendered_at', 0)) / 86400
     rule_hash = hashlib.sha256(chart_rule().encode()).hexdigest()[:12]
@@ -403,15 +589,15 @@ def main():
               f'NOT publishing a partial pyramid.', file=sys.stderr)
         return 1
 
-    # Tiles are immutable for the life of a compilation, so cache them hard.
     print('\nuploading...')
-    up = subprocess.run(
-        ['aws', 's3', 'sync', outdir, f's3://{BUCKET}/tiles/{a.name}/',
-         '--profile', a.profile, '--only-show-errors',
-         '--content-type', 'image/png',
-         '--cache-control', 'public,max-age=604800'],   # 7 days
-        timeout=3600)
-    if up.returncode != 0:
+    sent, unchanged, up_failed = sync_dir(
+        client, outdir, BUCKET, f'tiles/{a.name}/', TILE_EXTRA_ARGS,
+        concurrency=a.concurrency)
+    print(f'uploaded {sent}, unchanged {unchanged}, failed {up_failed}')
+    if up_failed:
+        # All-or-nothing, as `aws s3 sync` was: the manifest is what tells the
+        # next run 'this pyramid is current', so publishing it over a partial
+        # upload would strand the missing tiles until the next rule change.
         print('upload failed', file=sys.stderr)
         return 1
 
@@ -425,10 +611,7 @@ def main():
     mf = os.path.join(a.workdir, 'manifest.json')
     with open(mf, 'w') as f:
         json.dump(man, f, indent=1)
-    subprocess.run(['aws', 's3', 'cp', mf, f's3://{BUCKET}/tiles/manifest.json',
-                    '--profile', a.profile, '--content-type', 'application/json',
-                    '--cache-control', 'no-cache', '--only-show-errors'],
-                   timeout=120)
+    save_manifest(client, mf)
     print(f'done: {written} tiles ({skipped} blank skipped, {failed} failed)')
     return 0
 
