@@ -143,6 +143,7 @@ class _Ingest:
         """Return the collecting logger."""
         return self._logger
 
+    _forget = CoverageRenderer._forget
     _evict_if_over_budget = CoverageRenderer._evict_if_over_budget
     _tile_is_sane = CoverageRenderer._tile_is_sane
     _on_tile = CoverageRenderer._on_tile
@@ -286,6 +287,56 @@ def test_a_window_that_does_not_fit_leaves_no_empty_tile():
         'an all-NaN entry renders as "no coverage" and blocks the '
         're-request that would fix it')
     assert node._failures == 1
+
+
+def test_a_dropped_tile_is_dropped_from_every_book():
+    """The all-NaN drop must release possession too, or nothing re-serves it.
+
+    Popping only `_tiles` left `_applied`, `_touch` and the reconciler's
+    possession behind: the catalog then sees a tile we claim to hold, never
+    re-requests it, and the gap is permanent -- exactly the healing the
+    possession bookkeeping exists to protect.
+    """
+    index = (10, 17801, 13988)
+    node = _Ingest()
+    node._on_tile(_Tile(seconds=100))          # whole tile: claims possession
+    assert node._reconciler.has(index)
+    # A later patch that overruns the tile leaves it all-NaN and dropped.
+    node._tiles[index][:, :] = float('nan')
+    node._on_tile(_Tile(seconds=200, window_row=3, window_col=3,
+                        window_width=4, window_height=4,
+                        values=_values(500, 16)))
+    assert index not in node._tiles
+    assert index not in node._applied
+    assert index not in node._touch
+    assert not node._reconciler.has(index), (
+        'possession outlived the tile: the catalog will never re-serve it')
+    assert node._cache_bytes == 0
+    to_request, _ = node._reconciler.reconcile([(index, 200 * 10 ** 9)], 0)
+    assert to_request == [index], 'the dropped tile must be re-requested'
+
+
+def test_a_tile_that_changes_geometry_is_rebuilt():
+    """A re-cut grid must not be patched into the old array.
+
+    Larger wedges the index permanently -- apply_window raises on every
+    message, the all-NaN guard does not fire because the old cells are
+    finite, and possession never advances -- while smaller lands the cells at
+    the wrong offsets and mis-georeferences without a word.
+    """
+    index = (10, 17801, 13988)
+    node = _Ingest()
+    node._on_tile(_Tile(seconds=100))
+    assert node._tiles[index].shape == (4, 4)
+    node._on_tile(_Tile(seconds=200, width=8, height=8,
+                        values=_values(500, 64)))
+    held = node._tiles[index]
+    assert held.shape == (8, 8), (
+        'the new geometry was patched into the stale array')
+    assert round(float(held[0, 0]), 3) == 5.0
+    assert node._reconciler.version_of(index) == 200 * 10 ** 9
+    assert node._cache_bytes == held.nbytes
+    assert 'changed geometry' in ' '.join(node._logger.lines)
 
 
 def test_the_cache_is_bounded_by_its_budget():

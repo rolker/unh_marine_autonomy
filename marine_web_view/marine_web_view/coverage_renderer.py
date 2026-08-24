@@ -479,6 +479,19 @@ class CoverageRenderer(Node):
                         index, version, applied))
                 return
             held = self._tiles.get(index)
+            if held is not None and held.shape != (msg.height, msg.width):
+                # The grid was re-cut: a level's tile geometry changed under
+                # us. Patching the new window into the old array is wrong in
+                # both directions -- a larger window makes apply_window raise
+                # on every message forever (the index wedges: possession and
+                # _applied never advance, so it is re-requested and re-fails),
+                # and a smaller one lands the cells at the wrong offsets and
+                # mis-georeferences silently. Forget the tile and rebuild.
+                self.get_logger().warn(
+                    'tile {} changed geometry {} -> {}; rebuilding'.format(
+                        index, held.shape, (msg.height, msg.width)))
+                self._forget(index)
+                held = None
             if held is None:
                 held = tile_util.new_tile(msg.width, msg.height)
                 self._cache_bytes += held.nbytes
@@ -499,9 +512,12 @@ class CoverageRenderer(Node):
                     'window does not fit {}: {}'.format(index, error))
                 # A first patch that did not fit leaves an all-NaN entry
                 # behind, which renders as "no coverage here" and blocks the
-                # re-request that would fix it. Drop it instead.
+                # re-request that would fix it. Drop it instead -- all of it:
+                # popping only _tiles left _applied, _touch and reconciler
+                # possession claiming a tile the node no longer holds, so the
+                # catalog never re-requested it and the hole was permanent.
                 if not numpy.isfinite(self._tiles[index]).any():
-                    self._cache_bytes -= self._tiles.pop(index).nbytes
+                    self._forget(index)
                 return
             self._applied[index] = version
             self._touch_seq += 1
@@ -510,6 +526,23 @@ class CoverageRenderer(Node):
                 self._reconciler.mark_have(index, version)
             self._mark_dirty(index)
             self._evict_if_over_budget()
+
+    def _forget(self, index):
+        """Drop every trace of a cached tile. Call with the lock held.
+
+        The cache is four pieces of state that have to move together: the
+        array, the applied version, the LRU stamp and the reconciler's
+        possession. Dropping the array alone leaves the catalog believing we
+        hold a tile we do not, so it is never re-served and the gap never
+        heals -- which is the failure the possession bookkeeping exists to
+        prevent in the first place.
+        """
+        array = self._tiles.pop(index, None)
+        if array is not None:
+            self._cache_bytes -= array.nbytes
+        self._applied.pop(index, None)
+        self._touch.pop(index, None)
+        self._reconciler.drop(index)
 
     def _evict_if_over_budget(self):
         """Drop least-recently-updated tiles until the cache fits its budget.
@@ -536,12 +569,7 @@ class CoverageRenderer(Node):
         for index, _ in order:
             if self._cache_bytes <= self.cache_budget_bytes:
                 break
-            array = self._tiles.pop(index, None)
-            if array is not None:
-                self._cache_bytes -= array.nbytes
-            self._touch.pop(index, None)
-            self._applied.pop(index, None)
-            self._reconciler.drop(index)
+            self._forget(index)
             evicted += 1
         if evicted:
             self.get_logger().warn(
