@@ -132,15 +132,21 @@ class _Pass:
 
 
 class _Threaded(_Pass):
-    """A stand-in that also runs the render worker."""
+    """A stand-in that also runs the render worker, recording who renders."""
 
     def __init__(self):
         super().__init__()
+        self.render_threads = set()
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._worker = threading.Thread(
             target=self._render_loop, name='test_render', daemon=True)
         self._worker.start()
+
+    def _sample_tile(self, x, y):
+        """Record the thread the render pass is running on."""
+        self.render_threads.add(threading.current_thread())
+        return super()._sample_tile(x, y)
 
     _wake_renderer = CoverageRenderer._wake_renderer
     _render_loop = CoverageRenderer._render_loop
@@ -222,13 +228,27 @@ def test_the_timer_only_rings_the_bell():
     A pass samples, encodes and uploads with a 30 s timeout per object. Doing
     that in a timer callback blocks the single-threaded executor for the whole
     pass, and every BEST_EFFORT tile pushed meanwhile is dropped.
+
+    The check is the identity of the thread that runs the pass, taken inside
+    the pass itself. The previous form asserted
+    `node._wake.is_set() or node.uploads is not None`, and `uploads` is a list
+    built in the constructor -- it could not fail, so a `_wake_renderer` that
+    rendered inline would have gone unnoticed.
     """
     node = _Threaded()
+    caller = threading.current_thread()
     try:
-        node._wake.clear()
         node._dirty.add((10, 20))
         node._wake_renderer()
-        assert node._wake.is_set() or node.uploads is not None
+        for _ in range(200):
+            if node.uploads:
+                break
+            threading.Event().wait(0.01)
+        assert node.uploads, 'the worker never rendered'
+        assert node.render_threads == {node._worker}, (
+            'the pass ran on {} -- rendering on the executor thread blocks '
+            'it for the whole pass'.format(node.render_threads))
+        assert caller not in node.render_threads
     finally:
         node.stop()
 
