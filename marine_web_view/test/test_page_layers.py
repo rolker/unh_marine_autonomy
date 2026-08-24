@@ -139,6 +139,41 @@ def _code(page):
     return ''.join(out)
 
 
+def _function_span(page, name):
+    """Return the (start, end) offsets of `function <name>()`'s body.
+
+    Call it on `_code(page)`. A behaviour is only bound if it is checked in the
+    function that actually runs it -- a `redraw()` that exists somewhere on the
+    page but is never reached from the poll is exactly the defect this file
+    keeps finding.
+    """
+    match = re.search(r'function\s+' + name + r'\s*\([^)]*\)\s*\{', page)
+    assert match, 'the page has no function {}()'.format(name)
+    depth = 0
+    index = match.end() - 1
+    end = len(page)
+    while index < end:
+        char = page[index]
+        if char in '\'"`':
+            quote = char
+            index += 1
+            while index < end:
+                if page[index] == '\\':
+                    index += 2
+                    continue
+                if page[index] == quote:
+                    break
+                index += 1
+        elif char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                return match.end(), index
+        index += 1
+    raise AssertionError('function {}() is never closed'.format(name))
+
+
 def _statement(page, start):
     """Return just the JavaScript statement that begins at `start`.
 
@@ -262,6 +297,37 @@ def test_the_coverage_layer_is_configured_from_the_manifest():
         'the coverage layer is not built from the validated manifest zoom')
     assert not re.search(r'COVERAGE_Z\s*=\s*\d', page), (
         'the render zoom is hardcoded in the page again')
+
+
+def test_the_coverage_layer_refreshes_for_a_stationary_viewer():
+    """A viewer who does not touch the map must still see new coverage.
+
+    Leaflet requests a tile only when it CREATES the element, and
+    `errorTileUrl` makes a miss a permanently transparent tile that is never
+    retried. Without an explicit `redraw()` on every poll the mosaic freezes at
+    page load for anyone sitting still -- which is what watching a survey line
+    run looks like -- and it shipped that way. The position and track layers
+    re-render each poll; this pins that the tile layer does too.
+    """
+    page = _code(_page())
+    sites = list(re.finditer(r'coverageLayer\s*\.redraw\s*\(\s*\)', page))
+    assert sites, (
+        'nothing on the page ever calls coverageLayer.redraw(): ground '
+        'surveyed after page load will never appear for a stationary viewer')
+    start, end = _function_span(page, 'pollCoverage')
+    body = page[start:end]
+    if any(start <= site.start() < end for site in sites):
+        return
+    # Reached through a helper: the helper must be called from the poll.
+    holders = [name for name in re.findall(r'function\s+(\w+)\s*\(', page)
+               if any(_function_span(page, name)[0] <= site.start()
+                      < _function_span(page, name)[1] for site in sites)]
+    assert holders, (
+        'coverageLayer.redraw() is not inside any function -- it cannot run '
+        'on the poll')
+    assert any(re.search(r'\b' + name + r'\s*\(', body) for name in holders), (
+        'coverageLayer.redraw() lives in {} but nothing in pollCoverage() '
+        'calls it, so the tile layer is never refreshed'.format(holders))
 
 
 def test_the_manifest_is_validated_before_it_configures_the_layer():
