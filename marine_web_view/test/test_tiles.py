@@ -137,3 +137,40 @@ def test_time_to_nanoseconds_orders_versions():
     assert (tiles.time_to_nanoseconds(_Stamp(5, 0))
             > tiles.time_to_nanoseconds(_Stamp(4, 999999999)))
     assert tiles.time_to_nanoseconds(_Stamp(0, 0)) == 0
+
+
+def test_a_band_decodes_from_every_buffer_type_a_message_can_carry():
+    """The decoder consumes the message buffer instead of copying it.
+
+    `bytes(data)` duplicated the whole band -- ~1.8 MB per 960x960 uint16
+    tile -- on the executor thread for every best-effort message. rclpy hands
+    `uint8[]` over as `array.array` or `bytes` depending on the path, and a
+    test may build one as a `bytearray`, so all three have to decode
+    identically; a plain list has no buffer protocol and must still work
+    through the fallback rather than raising.
+    """
+    import array
+
+    packed = _pack(tiles.INT16, [100, -200, 300, 400])
+    expected = [1.0, -2.0, 3.0, 4.0]
+    for data in (bytes(packed), bytearray(packed),
+                 array.array('B', packed), list(packed)):
+        out = tiles.decode_band(tiles.INT16, data, 4, 1, 0.01, 0.0,
+                                nodata=-32768)
+        assert [round(float(v), 6) for v in out[0]] == expected, (
+            'decoding differs for {}'.format(type(data).__name__))
+
+
+def test_the_decoder_does_not_write_through_to_the_message_buffer():
+    """Decoding from a writable view must not modify the caller's band.
+
+    Dropping the defensive `bytes()` copy means `raw` can alias the message's
+    own memory. Nothing in the decoder mutates it today; this pins that, so a
+    future in-place optimisation cannot quietly corrupt a message another
+    subscriber is still holding.
+    """
+    data = bytearray(_pack(tiles.INT16, [-32768, 500, 600, 700]))
+    original = bytes(data)
+    tiles.decode_band(tiles.INT16, data, 4, 1, 0.01, 0.0, nodata=-32768)
+    assert bytes(data) == original, (
+        'decode_band wrote through to the message buffer')

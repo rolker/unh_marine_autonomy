@@ -83,7 +83,20 @@ def decode_band(dtype, data, width, height, scale, offset, nodata):
             'band data is {} bytes, expected {} for a {}x{} window of {}'
             .format(len(data), expected, width, height, element))
 
-    raw = numpy.frombuffer(bytes(data), dtype=element).reshape(height, width)
+    # Consume the message buffer directly. `bytes(data)` copies the whole
+    # band before numpy ever looks at it -- about 1.8 MB per 960x960 uint16
+    # tile, on the executor thread, for every message on a best-effort topic.
+    # Nothing below mutates `raw` (every operation on it allocates a new
+    # array), so it does not matter whether the view is writable; what matters
+    # is that the ROS message owns the memory for the whole of this call and
+    # `raw` is never returned. `memoryview` refuses a buffer numpy could not
+    # have read anyway, so a sequence type without the buffer protocol falls
+    # back to the copy rather than becoming a new failure mode.
+    try:
+        buffer = memoryview(data)
+    except TypeError:
+        buffer = bytes(data)
+    raw = numpy.frombuffer(buffer, dtype=element).reshape(height, width)
 
     # Compare the sentinel in RAW units, before dequantization -- but only if
     # it is representable in this element type. Casting an out-of-range
