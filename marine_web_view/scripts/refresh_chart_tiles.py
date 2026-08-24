@@ -64,6 +64,7 @@ pure-computation entry points (and the package's tests) work without it.
 
 import argparse
 import concurrent.futures
+import fcntl
 import hashlib
 import json
 import math
@@ -85,6 +86,23 @@ BUCKET = 'unh-ccom-p11-live'
 # raises it without a code change if a run ever proves too slow. This has
 # nothing to do with --rate, which governs politeness toward CCOM's server.
 DEFAULT_CONCURRENCY = 10
+
+# WALL-CLOCK BOUNDS. The `aws s3` shell-outs this script replaced were capped
+# at the process level -- subprocess.run(timeout=...) killed them -- and those
+# caps are restored here, because there is nothing else standing between a
+# stuck S3 endpoint and a cron run that overlaps the next one. Overlap is a
+# real harm, not a tidiness point: two runs double the request rate against
+# CCOM's server (see POLITENESS above) and interleave writes into the same
+# --workdir.
+#
+# A single request is bounded by ATTEMPTS * (CONNECT_TIMEOUT + read_timeout);
+# s3_client() derives read_timeout from the ceiling it is handed so the
+# arithmetic cannot drift from the number beside it.
+CONNECT_TIMEOUT = 10
+REQUEST_ATTEMPTS = 3            # 1 try + 2 retries, for SlowDown on a big fan-out
+MANIFEST_READ_SECONDS = 60      # was: subprocess timeout on `aws s3 cp ... -`
+MANIFEST_WRITE_SECONDS = 120    # was: subprocess timeout on `aws s3 cp mf ...`
+SYNC_DEADLINE_SECONDS = 3600    # was: subprocess timeout on `aws s3 sync`
 
 # Tiles are immutable for the life of a compilation, so cache them hard: a
 # viewer that already holds one should not ask again for a week. Kept as a
@@ -308,8 +326,9 @@ def fetch_tile(endpoint, z, x, y, timeout):
     return http_get(endpoint + '?' + urllib.parse.urlencode(params), timeout=timeout)
 
 
-def s3_client(profile):
-    """Build an S3 client for `profile`.
+def s3_client(profile, max_seconds=MANIFEST_WRITE_SECONDS,
+              attempts=REQUEST_ATTEMPTS):
+    """Build an S3 client for `profile`, bounded at `max_seconds` per request.
 
     boto3 is imported HERE and not at module scope so that everything above --
     the ramp, the rendering rule, the tile maths, and the sync helpers below
@@ -326,10 +345,52 @@ def s3_client(profile):
 
     # Retries: botocore's own exponential backoff for throttling and 5xx.
     # A few thousand PUTs against one prefix is exactly where SlowDown shows
-    # up, and the CLI shell-out this replaces got its retries the same way.
+    # up. Unlike the renderer nodes -- which retry on their next tick and so
+    # ask botocore for a single attempt -- a cron run gets no second chance
+    # for hours, and one failed PUT withholds the whole manifest. So retries
+    # stay on, and the budget is sized instead: botocore counts max_attempts
+    # as TOTAL attempts and retries connect and read timeouts alike, so the
+    # worst case for one request is attempts * (connect + read). read_timeout
+    # is solved from the ceiling rather than written beside it, so the two
+    # cannot drift apart.
+    read_timeout = float(max_seconds) / attempts - CONNECT_TIMEOUT
+    if read_timeout <= 0:
+        raise ValueError(
+            '{} s over {} attempts leaves no read budget past the {} s '
+            'connect timeout'.format(max_seconds, attempts, CONNECT_TIMEOUT))
     return boto3.Session(profile_name=profile).client(
-        's3', config=Config(retries={'mode': 'standard', 'max_attempts': 5},
-                            connect_timeout=10, read_timeout=60))
+        's3', config=Config(
+            retries={'mode': 'standard', 'max_attempts': attempts},
+            connect_timeout=CONNECT_TIMEOUT, read_timeout=read_timeout))
+
+
+def acquire_run_lock(workdir, name):
+    """Take the exclusive run lock for `name`, or return None if held.
+
+    A lockfile IS warranted here, not just belt and braces: this script is
+    driven by cron, one run takes the better part of an hour at the default
+    --rate, and an overrunning run that meets the next one doubles the
+    request rate against CCOM's server -- the one thing this script's
+    docstring says to ask before doing -- while both runs write the same
+    tiles into the same --workdir.
+
+    Per --name, because that is the unit that shares a workdir subtree and an
+    S3 prefix; two different layers are a deliberate operator choice and can
+    legitimately run together.
+
+    The returned handle must stay referenced for the life of the run: closing
+    it (or letting it be garbage collected) releases the lock. flock is
+    released by the kernel when the process exits, so a killed run does not
+    strand it.
+    """
+    os.makedirs(workdir, exist_ok=True)
+    handle = open(os.path.join(workdir, '.{}.lock'.format(name)), 'w')
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
 
 
 def load_manifest(client):
@@ -414,7 +475,8 @@ def local_files(local_dir):
 
 
 def sync_dir(client, local_dir, bucket, prefix, extra_args,
-             concurrency=DEFAULT_CONCURRENCY, log=print):
+             concurrency=DEFAULT_CONCURRENCY, log=print,
+             deadline_seconds=SYNC_DEADLINE_SECONDS):
     """Upload `local_dir` to `bucket`/`prefix`; return (sent, skipped, failed).
 
     Upload-only, like the `aws s3 sync` it replaces: no --delete flag was ever
@@ -435,6 +497,12 @@ def sync_dir(client, local_dir, bucket, prefix, extra_args,
     always 'now' and `aws s3 sync`'s size+mtime rule re-uploaded all ~5,839
     objects every run. Content hashing is the first comparison here that
     actually skips anything.
+
+    `deadline_seconds` is an aggregate wall-clock bound on the whole fan-out,
+    restoring what `subprocess.run(timeout=3600)` used to enforce on the
+    shell-out. Jobs that have not started by the deadline fail rather than
+    run, which withholds the manifest and leaves the next run to finish the
+    job -- far better than a cron run that overlaps its successor.
     """
     remote = remote_etags(client, bucket, prefix)
     pending = []
@@ -451,8 +519,17 @@ def sync_dir(client, local_dir, bucket, prefix, extra_args,
     if not pending:
         return sent, skipped, failed
 
+    deadline = time.monotonic() + float(deadline_seconds)
+
     def _upload(job):
         key, path = job
+        if time.monotonic() > deadline:
+            # Counted as a failure, deliberately: main() withholds the
+            # manifest on any failure, so an abandoned run does not get
+            # recorded as current.
+            raise TimeoutError(
+                'sync deadline of {:g} s exceeded before {}'.format(
+                    float(deadline_seconds), key))
         with open(path, 'rb') as handle:
             body = handle.read()
         # put_object, NOT upload_file: a single-part PUT is what makes the
@@ -532,13 +609,26 @@ def main():
         print('\ndry run: no requests to CCOM, no uploads.')
         return 0
 
+    # Before a single request to CCOM: an overrunning previous run is the
+    # case this exists for, and probing the folder first would already have
+    # doubled the request rate.
+    lock = acquire_run_lock(a.workdir, a.name)
+    if lock is None:
+        print('another run for {!r} holds {}/.{}.lock -- exiting so the two '
+              'do not both crawl CCOM.'.format(a.name, a.workdir, a.name),
+              file=sys.stderr)
+        return 0
+
     print('\nselecting a service that actually has data over the target area:')
     service, endpoint = pick_service(a.layer, tuple(a.bbox), a.timeout,
                                      a.blank_bytes)
     print(f'service: {service}\nendpoint: {endpoint}')
 
-    client = s3_client(a.profile)
-    man = load_manifest(client)
+    # Two clients, because the three operations had three different
+    # process-level caps under the CLI and each is restored on its own.
+    client = s3_client(a.profile, MANIFEST_WRITE_SECONDS)
+    man = load_manifest(s3_client(a.profile, MANIFEST_READ_SECONDS,
+                                  attempts=2))
     prev = man.get(a.name, {})
     age_d = (time.time() - prev.get('rendered_at', 0)) / 86400
     rule_hash = hashlib.sha256(chart_rule().encode()).hexdigest()[:12]

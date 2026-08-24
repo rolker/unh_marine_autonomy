@@ -304,3 +304,103 @@ def test_an_unreadable_manifest_reads_as_empty(tmp_path):
             raise RuntimeError('NoSuchKey')
 
     assert script.load_manifest(_Broken()) == {}
+
+
+def test_a_sync_past_its_deadline_stops_instead_of_overrunning(tmp_path):
+    """`aws s3 sync` was capped at 3600 s by subprocess.run; restore that.
+
+    An unbounded cron run overlaps its successor, and two runs double the
+    request rate against CCOM's server. Abandoned objects count as failures
+    so main() withholds the manifest and the next run finishes the job.
+    """
+    script = _load_script()
+    outdir = str(tmp_path / 'bathy4m')
+    for index in range(3):
+        _write(outdir, '10/1/{}.png'.format(index), b'tile-%d' % index)
+
+    client = _FakeS3()
+    sent, skipped, failed = script.sync_dir(
+        client, outdir, 'unh-ccom-p11-live', 'tiles/bathy4m/',
+        _tile_args(script), log=lambda *a: None, deadline_seconds=-1)
+
+    assert (sent, skipped, failed) == (0, 0, 3), (
+        'the aggregate deadline did not stop the fan-out')
+    assert client.puts == [], 'an object was PUT after the deadline'
+    assert script.SYNC_DEADLINE_SECONDS == 3600, (
+        'the default aggregate deadline no longer matches the cap the '
+        'subprocess shell-out enforced')
+
+
+def test_a_second_run_for_the_same_name_is_locked_out(tmp_path):
+    """Cron re-entry is the case: one run takes most of an hour.
+
+    Two overlapping runs double the request rate against CCOM and interleave
+    writes into the same --workdir.
+    """
+    script = _load_script()
+    workdir = str(tmp_path / 'p11-tiles')
+
+    first = script.acquire_run_lock(workdir, 'bathy4m')
+    assert first is not None
+    assert script.acquire_run_lock(workdir, 'bathy4m') is None, (
+        'a second concurrent run was allowed to start')
+    # A different --name is a deliberate operator choice and may run.
+    other = script.acquire_run_lock(workdir, 'bathy8m')
+    assert other is not None
+    other.close()
+
+    first.close()
+    assert script.acquire_run_lock(workdir, 'bathy4m') is not None, (
+        'the lock outlived the run that held it')
+
+
+def test_one_s3_request_stays_under_the_cap_the_shell_out_enforced(
+        tmp_path, monkeypatch):
+    """Restore the three process-level caps `subprocess.run` used to enforce.
+
+    botocore counts max_attempts as TOTAL attempts and retries connect and
+    read timeouts alike, so the worst case for one request is
+    attempts * (connect + read). The client is built from the ceiling rather
+    than the other way round; this pins that the arithmetic actually lands on
+    the old numbers.
+    """
+    import sys
+    import types
+
+    script = _load_script()
+    built = []
+
+    class _Config:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class _Session:
+        def __init__(self, profile_name=None):
+            self.profile_name = profile_name
+
+        def client(self, service, config=None):
+            built.append((self.profile_name, config.kwargs))
+            return object()
+
+    boto3_mod = types.ModuleType('boto3')
+    boto3_mod.Session = _Session
+    botocore = types.ModuleType('botocore')
+    config_mod = types.ModuleType('botocore.config')
+    config_mod.Config = _Config
+    monkeypatch.setitem(sys.modules, 'boto3', boto3_mod)
+    monkeypatch.setitem(sys.modules, 'botocore', botocore)
+    monkeypatch.setitem(sys.modules, 'botocore.config', config_mod)
+
+    for ceiling, attempts in ((script.MANIFEST_WRITE_SECONDS, 3),
+                              (script.MANIFEST_READ_SECONDS, 2)):
+        script.s3_client('ccom-jhc', ceiling, attempts=attempts)
+        profile, kwargs = built[-1]
+        assert profile == 'ccom-jhc'
+        worst_case = (kwargs['retries']['max_attempts']
+                      * (kwargs['connect_timeout'] + kwargs['read_timeout']))
+        assert worst_case == ceiling, (
+            'one request can take {} s against a {} s cap'.format(
+                worst_case, ceiling))
+
+    assert (script.MANIFEST_WRITE_SECONDS, script.MANIFEST_READ_SECONDS) == (
+        120, 60), 'the caps no longer match the subprocess timeouts they replace'
