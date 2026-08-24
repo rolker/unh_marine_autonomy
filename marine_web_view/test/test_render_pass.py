@@ -87,14 +87,15 @@ class _Pass:
         self.covered = covered
         self.raise_on_sample = False
         self.sim_clock_seconds = 1_700_000_000.0
+        self.datum_available = True
 
     def get_logger(self):
         """Return the collecting logger."""
         return self._logger
 
     def _update_datum_offset(self):
-        """Pretend the chart-datum offset is always available."""
-        return True
+        """Report whether a chart-datum offset is held, on demand."""
+        return self.datum_available
 
     def _sample_tile(self, x, y):
         """Return a covered or empty sample, or blow up on demand."""
@@ -329,3 +330,31 @@ def test_the_manifest_is_a_heartbeat_even_with_nothing_to_render():
     assert len(node.meta) == 1
     node._render_dirty()
     assert len(node.meta) == 2
+
+
+def test_a_pass_without_the_chart_datum_publishes_nothing_but_says_so():
+    """Colouring from an unreferenced height is wrong and looks plausible.
+
+    The band carries z in the map frame -- ellipsoidal, -36 to -57 m over the
+    Piscataqua -- so without the offset every cell saturates the 0-40 m ramp
+    and the whole survey paints the deepest colour. The pass must publish no
+    tile, keep the work for next time, and say what it is waiting for: a
+    silent no-op reads as "nothing new to render".
+    """
+    node = _Pass()
+    node.datum_available = False
+    node._dirty.add((10, 20))
+    node._render_dirty()
+
+    assert not node.uploads, 'a tile was coloured without a chart-datum offset'
+    assert node._dirty == {(10, 20)}, (
+        'the dirty set was consumed by a pass that rendered nothing')
+    assert node._rendered == 0
+    assert [m['status'] for m in node.meta] == ['waiting_for_chart_datum'], (
+        'the page cannot tell a waiting renderer from an idle one')
+
+    # And the held work is rendered as soon as the offset arrives.
+    node.datum_available = True
+    node._render_dirty()
+    assert [key for key, _ in node.uploads] == ['live/coverage/15/10/20.png']
+    assert node.meta[-1]['status'] == 'ok'
