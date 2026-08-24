@@ -134,9 +134,16 @@ class S3Uploader:
     dependency swap, and nothing in the issue asks for that.
 - **Timeouts**: `connect_timeout`/`read_timeout` replace the CLI's
   process-level `timeout=20`/`timeout=30`. `state_renderer` passes
-  `read_timeout=15` and `coverage_renderer` `read_timeout=25`, so one PUT is
-  bounded at `connect + read` = **20 s** and **30 s** respectively — exactly
-  the old ceilings. A `botocore.exceptions.ReadTimeoutError` /
+  `read_timeout=15` and `coverage_renderer` `read_timeout=25`.
+  **CORRECTED in round 3 — the claim that followed here was wrong twice.**
+  This plan said one PUT is "bounded at `connect + read` = 20 s / 30 s,
+  exactly the old ceilings". It is not: urllib3 applies `connect_timeout`
+  PER ADDRESS returned by `getaddrinfo`, and the S3 endpoint resolves to
+  eight A records on this host, so the real worst case was ~55 s / ~65 s.
+  Round 1 had already been wrong by 4x (SDK retry). **No per-PUT ceiling is
+  claimed anywhere any more**; see "Round 3 restructure" below for what
+  replaced the guarantee. The timeouts remain, doing only the job they can
+  actually do: stopping one dead connection from occupying a worker forever. A `botocore.exceptions.ReadTimeoutError` /
   `ConnectTimeoutError` (both `BotoCoreError` subclasses) is the typed
   equivalent of today's `subprocess.TimeoutExpired`.
 - **Retry/backoff — `max_attempts: 1` in the nodes** (corrected in round 1
@@ -247,13 +254,18 @@ This is the one place a naive rewrite regresses badly, so spelling it out:
     A metadata-only path that avoids the ~hour of CCOM requests a re-render
     costs (a re-upload-from-workdir mode, or a `head_object` per key) is an
     explicit follow-up, named in the docstring.
-- **Wall-clock bounds and re-entry** (added in round 1 of review): the CLI
-  shell-outs were capped at the process level — 3600 s on the sync, 120 s on
-  the manifest put, 60 s on the manifest read — and nothing replaced them.
-  `s3_client(profile, max_seconds, attempts)` now derives `read_timeout`
-  from the ceiling it is handed, so `attempts * (connect + read)` lands on
-  the old cap and cannot drift from the number beside it; `main()` builds
-  one client per cap. Retries stay ON here, unlike the nodes: a cron run
+- **Wall-clock bounds and re-entry** (added in round 1 of review; the
+  per-request half **CORRECTED in round 3**): the CLI shell-outs were capped
+  at the process level — 3600 s on the sync, 120 s on the manifest put, 60 s
+  on the manifest read — and nothing replaced them. Round 2 restored them by
+  deriving `read_timeout` from a ceiling `s3_client` was handed, so that
+  `attempts * (connect + read)` landed on the old cap. **That ceiling does
+  not exist** (same per-address `connect_timeout` reason as §1), so round 3
+  removed the derivation rather than re-solving it: `s3_client` takes plain
+  `attempts` / `read_timeout`, one client serves the whole run, and what
+  actually bounds things is structural — the aggregate `deadline_seconds` on
+  the fan-out, and the run lock on overlap. Retries stay ON here, unlike the
+  nodes: a cron run
   gets no second chance for hours and one failed PUT withholds the whole
   manifest. `sync_dir` takes an aggregate `deadline_seconds` (3600) after
   which unstarted jobs fail rather than run. `acquire_run_lock()` takes a
@@ -361,11 +373,77 @@ This is the one place a naive rewrite regresses badly, so spelling it out:
 - Existing `test_tile_ingest.py::test_an_unusable_bucket_is_rejected_rather_than_retried`
   needs no change (tests `_is_usable_bucket` directly, independent of
   transport) — only its docstring's "30 s-capped subprocess" wording.
+- **Round 3 adds** (see "Round 3 restructure"): tests of the upload
+  worker's structure rather than of any timeout arithmetic — submitting
+  behind a stalled PUT returns immediately, twenty offers behind a stall cost
+  one send, the pending map cannot exceed its slot cap, `stop()` returns with
+  a request in flight, a scheduled render pass stops on the stop event, a
+  flush past its deadline issues no request at all (manifest PUT included),
+  and `stop()` does not wait out a wedged upload. Plus the wiring the round-2
+  review found unbound: a new `test/test_node_upload_wiring.py` runs both
+  real constructors against a recording transport, and `main()` — which had
+  no test at all — is now bound for `--force` pass-through, the per-`--name`
+  lock, and the held-lock short-circuit.
 - **Mutation-checked**: 19 mutations were applied one at a time and the suite
   re-run with bytecode caching disabled; all 19 failed a test, including "skip
   a changed tile", "trust every ETag", "serial uploads", each of the four
   cache policies, and each failure counter. Recorded in the progress.md
   `## Implementation` entry.
+
+## Round 3 restructure (operator decision, after the round-2 review)
+
+Two rounds tried to guarantee an exact per-upload time ceiling and both were
+wrong. The operator's decision was to **stop depending on a fixed ceiling and
+change the structure instead**. What that means concretely:
+
+1. **`state_renderer` no longer uploads on the executor thread.** A new
+   `AsyncUploader` in `s3_upload.py` runs PUTs on one background thread and
+   keeps only the newest payload per key. Bounded two ways: one slot per key,
+   replaced rather than queued (both objects are complete snapshots — the
+   latest fix, and the track rebuilt from the whole window — so a superseded
+   payload carries nothing the next one lacks, while a queue would grow for
+   as long as the endpoint was slow and then publish a march of stale
+   positions), and a hard `max_slots` cap that makes the bound independent of
+   the caller. **One worker for both keys, deliberately**: per-key slots make
+   the only ordering that matters free, and a stall is a property of the
+   endpoint rather than of the object, so a second thread would stall with
+   the first and only add a second shutdown path. `stop()` is bounded and the
+   worker is a daemon thread, so shutdown cannot hang.
+   - Acceptance is not publication: both ticks now compare against what the
+     worker **confirmed**, so a failed upload is offered again next tick —
+     the same retry contract `_put`'s return value used to carry.
+2. **`coverage_renderer`'s render pass takes an abort predicate.** Round 2's
+   `deadline` was honoured only when one was passed, and a scheduled pass
+   passed none — so a scheduled pass was as long as the endpoint made it and
+   never noticed the stop event. Every pass now consults a predicate before
+   every upload: the stop event for a scheduled pass, a wall-clock deadline
+   for the shutdown flush. The manifest PUT that used to follow the loop
+   unconditionally is inside the budget too. The 45 s join (sized against the
+   non-existent ceiling) becomes a short `WORKER_JOIN_SECONDS = 10`; the
+   flush is skipped only when the worker is genuinely inside a request, which
+   is a warning rather than a hang.
+3. **Every comment asserting a specific per-PUT ceiling is deleted or
+   rewritten**, in `s3_upload.py`, both nodes, `refresh_chart_tiles.py`'s
+   constants block and `s3_client`, and the two tests that pinned the
+   arithmetic. A number that has been wrong twice is not load-bearing a third
+   time.
+4. **The shared manifest is a locked read-modify-write.** `tiles/
+   manifest.json` is one object describing every `--name` while the run lock
+   is per `--name`, so two names running together erased each other's entry
+   — costing the loser a full ~5,839-tile re-crawl of CCOM. It is now
+   re-read inside a lock, touching only its own key, staged through a
+   per-name local file. Local lock, so one host; two hosts would need a
+   conditional PUT (stated, not pretended).
+5. **The run lock moved out of `/tmp`.** `$XDG_RUNTIME_DIR/p11-tiles` (or
+   `~/.cache/p11-tiles`), created `0700`, ownership and group/other-write
+   checked before use, `O_NOFOLLOW` on the file. The lock records its
+   holder's pid and start time: an ordinary overlap still exits 0, but a
+   holder older than `LOCK_STALE_SECONDS` (6 h) exits non-zero so a wedged
+   lock stops reading as success forever.
+6. **README** documents the operator-visible consequences: what happens when
+   S3 is slow in each node, `--force` as the only remedy for a cache-policy
+   change, the lock's location and its two exit codes, the aggregate sync
+   deadline and what it does not cover, and the shared manifest.
 
 ## Files to Change
 
