@@ -180,7 +180,7 @@ the catalog's back.
 |---|---|---|
 | `coverage_namespace` | `/ben/sensors/mbes/cube_bathymetry` | where the coverage triple lives |
 | `band` | `depth` | which `VisualizationBand` to render |
-| `zoom` | `15` | slippy zoom; higher means more tiles and more PUTs per dirty GGGS tile |
+| `zoom` | `15` | slippy zoom, 0-22; higher means more tiles and more PUTs per dirty GGGS tile. Anything outside the range falls back to 15 with a warning -- a negative zoom would otherwise kill the node on the first tile |
 | `render_interval` | `20.0` | seconds between render passes |
 | `request_interval` | `5.0` | seconds between `TileRequest` publications |
 | `bucket` / `prefix` | `unh-ccom-p11-live` / `live/coverage` | |

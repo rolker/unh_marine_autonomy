@@ -199,6 +199,31 @@ def test_the_edge_limit_is_the_stated_one():
     assert node._tiles
 
 
+def test_an_unusable_zoom_falls_back_to_the_default():
+    """The zoom parameter is a shift width, and shift widths bite.
+
+    A negative zoom raises `ValueError: negative shift count` inside
+    `_mark_dirty`, which is uncontained in the tile callback -- the node dies
+    on the first tile it receives. Too large is quieter and no better: every
+    grid trips MAX_DIRTY_TILES_PER_GRID and nothing is ever rendered.
+    """
+    for bad in (-1, coverage_renderer.MAX_SLIPPY_ZOOM + 1, 2 ** 40,
+                'fifteen', None):
+        assert coverage_renderer.sane_zoom(bad) == (
+            coverage_renderer.DEFAULT_ZOOM, False), bad
+    for good in (0, 15, coverage_renderer.MAX_SLIPPY_ZOOM):
+        assert coverage_renderer.sane_zoom(good) == (good, True)
+    # The failure mode the fallback exists to prevent.
+    node = _Ingest(zoom=-1)
+    try:
+        node._mark_dirty((10, 17801, 13988))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('a negative zoom no longer raises -- has '
+                             '_mark_dirty changed? the guard may be moot')
+
+
 def test_a_coarse_grid_does_not_enumerate_the_planet():
     """A level-0 grid is ~1.6e7 slippy tiles at zoom 15 -- refuse it."""
     node = _Ingest()

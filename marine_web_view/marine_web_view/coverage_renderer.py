@@ -136,6 +136,27 @@ MAX_TILE_BYTES = 256 * 1024 * 1024
 # orders of magnitude while making the insane one a logged rejection.
 MAX_DIRTY_TILES_PER_GRID = 4096
 
+# Slippy zoom is a shift width, and the parameter carrying it is external
+# input. A negative zoom raises "negative shift count" deep inside _mark_dirty
+# -- uncontained in the subscription callback, so the node dies on the first
+# tile it receives -- and an absurdly large one silently renders nothing,
+# because every grid then trips MAX_DIRTY_TILES_PER_GRID. 22 is the deepest
+# level the page's layers offer (maxZoom: 22 in web/index.html).
+DEFAULT_ZOOM = 15
+MAX_SLIPPY_ZOOM = 22
+
+
+def sane_zoom(zoom):
+    """Return `(zoom, True)`, or `(DEFAULT_ZOOM, False)` if it is unusable."""
+    try:
+        zoom = int(zoom)
+    except (TypeError, ValueError):
+        return DEFAULT_ZOOM, False
+    if 0 <= zoom <= MAX_SLIPPY_ZOOM:
+        return zoom, True
+    return DEFAULT_ZOOM, False
+
+
 # One fully transparent 256x256 PNG, used to un-publish a slippy tile whose
 # coverage has been pruned. Built once: it is a couple of hundred bytes.
 _EMPTY_PNG = None
@@ -198,7 +219,7 @@ class CoverageRenderer(Node):
         self.declare_parameter('coverage_namespace',
                                '/ben/sensors/mbes/cube_bathymetry')
         self.declare_parameter('band', 'depth')
-        self.declare_parameter('zoom', 15)
+        self.declare_parameter('zoom', DEFAULT_ZOOM)
         self.declare_parameter('bucket', 'unh-ccom-p11-live')
         self.declare_parameter('prefix', 'live/coverage')
         self.declare_parameter('profile', 'p11-renderer')
@@ -217,7 +238,12 @@ class CoverageRenderer(Node):
                                DEFAULT_TIDE_INVALIDATE_THRESHOLD)
 
         self.band_name = self._param('band')
-        self.zoom = int(self._param('zoom'))
+        self.zoom, zoom_ok = sane_zoom(self._param('zoom'))
+        if not zoom_ok:
+            self.get_logger().warn(
+                'zoom {} is not a usable slippy level (0-{}); rendering at '
+                '{} instead'.format(self._param('zoom'), MAX_SLIPPY_ZOOM,
+                                    self.zoom))
         self.bucket = self._param('bucket')
         self.prefix = _safe_prefix(str(self._param('prefix')))
         self.profile = self._param('profile')
