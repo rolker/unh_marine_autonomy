@@ -11,27 +11,45 @@ so it is indifferent to viewer count.
 Part of [#333](https://github.com/rolker/unh_marine_autonomy/issues/333); this
 package is [#341](https://github.com/rolker/unh_marine_autonomy/issues/341).
 
-## Runtime prerequisite: the AWS CLI
+## AWS credentials
 
-Both nodes upload by shelling out to `aws s3 cp`, so the **AWS CLI v2 must be
-installed and a profile configured** on any host that publishes to the bucket.
-It is not a package dependency and cannot be: the `awscli` rosdep key resolves
-to an apt package with no installation candidate on Ubuntu noble, so declaring
-it aborts the build at `rosdep install` — and the CLI in use is the userland
-v2 installer, which apt could not provide anyway. Install it per
-[AWS's instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
-and check with `aws --version`.
+Uploads go through `boto3`, declared as `python3-boto3` in `package.xml`, so
+`rosdep install` satisfies the package's own dependency — no separate CLI
+install ([#351](https://github.com/rolker/unh_marine_autonomy/issues/351)).
+A host that publishes to the bucket still needs **credentials**: the `profile`
+parameter names an entry in `~/.aws/credentials`. `coverage_renderer` treats an
+empty `profile` as "use boto3's default chain", which is how an EC2 instance
+role is picked up with no key on disk; `state_renderer` passes its `profile`
+through unchanged, so blanking it there fails loudly rather than quietly
+borrowing whatever the host carries.
 
-Nothing else needs it. With `dry_run:=true` both nodes write to the local
-filesystem and never call `aws` at all, which is how the tests and the
-simulator workflow run.
+With `dry_run:=true` both nodes write to the local filesystem and reach for no
+credentials at all — no client is constructed — which is how the tests and
+the simulator workflow run.
 
-This is a workaround, not the intended end state: the package depends on a
-program it cannot declare, so `rosdep install` on a fresh host yields a
-renderer that looks satisfied and fails on the first upload. Tracked as
-[#351](https://github.com/rolker/unh_marine_autonomy/issues/351) — move the
-upload path to `boto3`, whose rosdep key does resolve on noble, and this
-section goes away.
+### What happens when S3 is slow
+
+There is no per-upload time ceiling to quote, and nothing here is built on
+one: `connect_timeout` is applied per DNS address and the S3 endpoint resolves
+to several, so a single PUT has no useful worst case. Both nodes are arranged
+so that does not matter.
+
+- **`state_renderer` never uploads on the thread that receives position
+  fixes.** Payloads go to a background worker that keeps only the **newest**
+  object per key. While the endpoint is slow, superseded positions are
+  dropped rather than queued — the artifact is a snapshot of the present, so
+  the operator sees the current position as soon as an upload gets through,
+  not a march of stale ones. Fixes keep being recorded throughout, so the
+  track has no hole. On shutdown the worker is given a few seconds and then
+  abandoned; at a 1 s cadence the unsent last position is worth less than a
+  clean exit.
+- **`coverage_renderer` checks for a stop before every tile it uploads**, so
+  Ctrl-C takes effect without waiting for an upload already in flight. It
+  then flushes whatever is still dirty under a 30 s deadline (a coverage tile
+  is *not* superseded by the next one — drop it and that patch of seabed is
+  missing until its grid changes again). If the render thread is genuinely
+  inside a request when the stop arrives, the flush is skipped and logged:
+  `render thread still inside a request after 10 s`.
 
 ## Node: `state_renderer`
 
@@ -212,8 +230,8 @@ the catalog's back.
 | `zoom` | `15` | slippy zoom, 0-22; higher means more tiles and more PUTs per dirty GGGS tile. Anything outside the range falls back to 15 with a warning -- a negative zoom would otherwise kill the node on the first tile |
 | `render_interval` | `20.0` | seconds between render passes; must be positive and at most a day, or it falls back to 20 s with a warning (`create_timer` rejects a non-positive period) |
 | `request_interval` | `5.0` | seconds between `TileRequest` publications; validated the same way, falling back to 5 s |
-| `bucket` / `prefix` | `unh-ccom-p11-live` / `live/coverage` | an empty or malformed `bucket` **refuses to start** when `dry_run` is false: every upload would be a 30 s-capped subprocess in a retry loop that never drains, and defaulting instead would publish a survey's coverage somewhere nobody asked for |
-| `profile` | `p11-renderer` | scoped to `s3:PutObject` on `live/*`. Empty means "use the default credential chain" — the `--profile` flag is omitted rather than passed empty |
+| `bucket` / `prefix` | `unh-ccom-p11-live` / `live/coverage` | an empty or malformed `bucket` **refuses to start** when `dry_run` is false: every upload would be a doomed S3 PUT in a retry loop that never drains, and defaulting instead would publish a survey's coverage somewhere nobody asked for |
+| `profile` | `p11-renderer` | scoped to `s3:PutObject` on `live/*`. Empty means "use the default credential chain" — boto3 is handed no profile at all rather than an empty one |
 | `cache_control` | `20` | `max-age` stamped on each **tile**; matched to `render_interval` so a viewer does not hold a tile past its replacement. `meta.json` is deliberately not covered by it — see [The manifest](#the-manifest) |
 | `cache_budget_bytes` | `536870912` | resident tile-cache ceiling (512 MiB); `0` disables the bound |
 | `max_requests_per_message` | `256` | tiles asked for per `TileRequest`; the rest wait for the next interval |
@@ -359,6 +377,11 @@ heartbeat:
   manifest at all.
 
 - `status` says what the pass actually did. `ok` is a normal render;
+  `truncated_render` means the pass ran out of budget — the stop event on a
+  scheduled pass, the flush deadline on the way out — so some tiles it had
+  published are in the bucket while the rest stayed dirty; the manifest is
+  published anyway, because it is what tells the page to re-request the tiles
+  that *did* land, and on the shutdown flush there is no later pass to do it;
   `waiting_for_chart_datum` means no offset has been read yet and nothing was
   coloured; `stale_chart_datum` means the transform the offset came
   from is more than `DATUM_STALE_SECONDS` (60 s) old and `chart_datum_age`
@@ -505,3 +528,59 @@ rate-limits, and refuses to publish a partial pyramid. See
 Its `RAMP` / `MAX_DEPTH` / `STEP` must stay in sync with `web/index.html`; the
 rule is hashed into `tiles/manifest.json` so a change forces a re-render, and
 `test/test_ramp_sync.py` fails if the Python and JS copies ever diverge.
+
+Uploads compare each local tile's MD5 against the S3 object's ETag and skip
+only genuine matches — a re-render into the same `--name` prefix after a ramp
+change is caught even when the new PNG happens to be the same size. `--rate`
+limits requests to CCOM; `--concurrency` (default 10) is the separate S3
+upload fan-out. Beyond the stdlib it needs only `boto3`, and nothing from
+`marine_web_view`, so it runs from cron without the ROS overlay sourced.
+
+### Operating it from cron
+
+- **`--force` is the only way a cache-policy change reaches an unchanged
+  tile.** The MD5/ETag comparison above cannot see `Cache-Control`, and S3's
+  listing does not report it, so editing `TILE_EXTRA_ARGS` otherwise reaches
+  only tiles whose pixels also moved and leaves the prefix on a permanently
+  mixed policy. `--force` skips the comparison and re-PUTs everything (it
+  also re-renders regardless of `--max-age-days`, so budget the full crawl).
+- **One run per `--name` at a time.** The run lock is taken before the first
+  request to CCOM, because two overlapping runs double the request rate
+  against their server. It lives in `$XDG_RUNTIME_DIR/p11-tiles/<name>.lock`,
+  or `~/.cache/p11-tiles/<name>.lock` for a cron job with no session —
+  deliberately **not** in `--workdir`, which defaults under world-writable
+  `/tmp` and is also the directory whose contents get PUT to the public
+  prefix. Different `--name`s may run together.
+- **A locked-out run exits 0 and says so on stderr** (so cron mail does not
+  cry wolf on an ordinary overlap), *unless* the holder has been there longer
+  than six hours — a full crawl is well under an hour, so that is a wedged
+  run, and it exits **1** so it stops reading as success forever. The message
+  names the holding pid: **clear it by killing that process**, which is what
+  releases the lock — the kernel drops a `flock` when the holder exits. Do
+  **not** delete the lock file: `flock` is held on the *inode*, not on the
+  name, so unlinking it releases nothing and the next run simply creates a
+  fresh inode and acquires immediately — two crawls of CCOM's server at once,
+  the one thing the lock exists to prevent. The pid line is written just
+  *after* the lock is taken, so a reader that catches that gap sees the
+  previous run's line instead; if the named pid is not running, the holder is
+  someone else and `fuser <lockfile>` (or `lsof`) names it. A lock file whose
+  holder has genuinely exited is not held at all — the next run takes it
+  without a word, which is why "the file is still there" is never the
+  diagnosis.
+- **The upload fan-out has a 3600 s aggregate deadline.** Uploads that have
+  not started by then are counted as failures, which withholds the manifest,
+  so the run reports failure and the next one redoes the upload. The clock
+  starts after the crawl and the MD5 pass, and a request already in flight
+  can overrun it — the run lock, not this deadline, is what keeps the next
+  cron run out.
+- **`tiles/manifest.json` is shared by every `--name`.** It is re-read and
+  merged under a lock at the end of a run, so two names running together no
+  longer erase each other's entry (which cost the loser a full ~5,839-tile
+  re-crawl). That read is strict, unlike the one at the top of a run: a GET
+  that *fails* is not a manifest that is *empty*, and merging into an empty
+  one would erase the other names just as thoroughly as the race did — so the
+  run fails loudly instead, leaving the published manifest untouched — which
+  costs *this* name a re-crawl next run, and is the cheaper of the two
+  losses. The merged JSON is PUT from memory; nothing is
+  staged through `--workdir`. That lock is local to the host; publishing this
+  prefix from two hosts at once is not supported.

@@ -44,6 +44,13 @@ compares it against a manifest stored beside the tiles. No change and not stale
 
 POLITENESS: this hits Paul Johnson's server a few thousand times. Default rate
 is deliberately gentle and concurrency is 1. Talk to him before raising either.
+(--concurrency governs the S3 UPLOAD only; the fetch loop stays serial and
+rate-limited.)
+
+DEPENDENCIES: stdlib plus boto3, and NOTHING from marine_web_view -- this runs
+from cron without the ROS overlay sourced, so it must not need install/
+setup.bash on sys.path. boto3 is imported lazily inside s3_client() so the
+pure-computation entry points (and the package's tests) work without it.
 
   Estimate only (no requests to CCOM, no uploads):
       ./refresh_chart_tiles.py --dry-run
@@ -56,12 +63,14 @@ is deliberately gentle and concurrency is 1. Talk to him before raising either.
 """
 
 import argparse
+import concurrent.futures
+import fcntl
 import hashlib
 import json
 import math
 import os
 import re
-import subprocess
+import stat
 import sys
 import time
 import urllib.error
@@ -71,6 +80,49 @@ import urllib.request
 CCOM = 'https://gis.ccom.unh.edu/server/rest/services'
 FOLDER = 'WGOM-LI-SNE'          # hyphens -- the folder the CCOM viewer uses
 BUCKET = 'unh-ccom-p11-live'
+
+# S3 upload fan-out. 10 matches the AWS CLI's own default, which is the
+# concurrency this pyramid has actually been published at -- parity at the
+# cutover is worth more than a guess at a faster number, and --concurrency
+# raises it without a code change if a run ever proves too slow. This has
+# nothing to do with --rate, which governs politeness toward CCOM's server.
+DEFAULT_CONCURRENCY = 10
+
+# WALL-CLOCK BOUNDS.
+#
+# What overlap actually costs: two runs double the request rate against CCOM's
+# server (see POLITENESS above) and interleave writes into the same --workdir.
+# THE RUN LOCK is what prevents that -- not any of the numbers below. An
+# earlier round of this change claimed a per-request ceiling of
+# ATTEMPTS * (CONNECT_TIMEOUT + read_timeout) and sized read_timeout by
+# solving it; that ceiling does not exist. urllib3 applies connect_timeout
+# PER ADDRESS returned by getaddrinfo, and the S3 endpoint resolves to
+# several A records (eight, measured), so the real worst case is that many
+# connect timeouts per attempt. The arithmetic is gone rather than corrected:
+# a number that has been wrong twice should not be load-bearing a third time.
+#
+# So the timeouts below do one job -- stop a dead connection from occupying a
+# worker forever -- and the aggregate SYNC_DEADLINE_SECONDS is the real bound
+# on the fan-out, checked before each upload starts. A run can still overrun
+# it by the one request already in flight; the lock, not the deadline, is
+# what keeps the next cron run out.
+CONNECT_TIMEOUT = 10
+READ_TIMEOUT = 30
+REQUEST_ATTEMPTS = 3            # 1 try + 2 retries, for SlowDown on a big fan-out
+SYNC_DEADLINE_SECONDS = 3600    # was: subprocess timeout on `aws s3 sync`
+
+# A held lock older than this is not an overrunning run, it is a wedged one:
+# a full crawl at the default --rate is well under an hour. Past it the
+# script says so and exits NON-zero, so a lock that stops every run forever
+# is visible in cron mail as a failure rather than as a silent success.
+LOCK_STALE_SECONDS = 6 * 3600
+
+# Tiles are immutable for the life of a compilation, so cache them hard: a
+# viewer that already holds one should not ask again for a week. Kept as a
+# module constant so test/test_chart_tile_sync.py can pin the values the
+# upload actually uses, rather than a copy of them.
+TILE_EXTRA_ARGS = {'ContentType': 'image/png',
+                   'CacheControl': 'public,max-age=604800'}   # 7 days
 
 # Piscataqua approaches + Isles of Shoals.
 DEFAULT_BBOX = (-70.90, 42.92, -70.50, 43.15)     # W, S, E, N
@@ -287,17 +339,451 @@ def fetch_tile(endpoint, z, x, y, timeout):
     return http_get(endpoint + '?' + urllib.parse.urlencode(params), timeout=timeout)
 
 
-def load_manifest(profile):
+def s3_client(profile, attempts=REQUEST_ATTEMPTS,
+              read_timeout=READ_TIMEOUT):
+    """Build an S3 client for `profile`.
+
+    boto3 is imported HERE and not at module scope so that everything above --
+    the ramp, the rendering rule, the tile maths, and the sync helpers below
+    when handed a client -- stays importable on a host with no AWS SDK. That is
+    what lets --dry-run and the package's tests run without boto3, and it keeps
+    this script's stdlib-only-plus-boto3 property honest.
+
+    `profile` is passed through as given: cron runs this with an explicit
+    admin profile, and None falls through to the default credential chain
+    (an EC2 instance role, or a plain ~/.aws/credentials).
+
+    Retries: botocore's own exponential backoff for throttling and 5xx. A few
+    thousand PUTs against one prefix is exactly where SlowDown shows up.
+    Unlike the renderer nodes -- which retry on their next tick and so ask
+    botocore for a single attempt -- a cron run gets no second chance for
+    hours, and one failed PUT withholds the whole manifest. So retries stay
+    on. The timeouts are NOT a per-request wall-clock ceiling and no code
+    here treats them as one (see the constants above); one client serves the
+    whole run, because the three different process-level caps they replaced
+    were bounding something that is now bounded structurally instead.
+    """
+    import boto3
+    from botocore.config import Config
+
+    if not (float(read_timeout) > 0 and float(attempts) >= 1):
+        raise ValueError(
+            'attempts must be >= 1 and read_timeout > 0, not {} and {}'
+            .format(attempts, read_timeout))
+    return boto3.Session(profile_name=profile).client(
+        's3', config=Config(
+            retries={'mode': 'standard', 'max_attempts': attempts},
+            connect_timeout=CONNECT_TIMEOUT, read_timeout=read_timeout))
+
+
+class RunLockHeld(RuntimeError):
+    """Raised when another run already holds the lock for this --name."""
+
+    def __init__(self, path, holder, age):
+        """Record the lock `path` and, if readable, who holds it."""
+        super().__init__('{} is held{}'.format(
+            path, '' if holder is None else ' by pid {}'.format(holder)))
+        self.path = path
+        self.holder = holder
+        self.age = age
+
+
+def _lock_opener(path, flags):
+    """Open a lock file without following a symlink, mode 0600.
+
+    O_NOFOLLOW so a symlink planted where the lock file belongs is an error
+    rather than a silent truncation of whatever it points at (demonstrated on
+    the old /tmp location). `flags` is ignored deliberately: the caller's
+    'w' would carry O_TRUNC, and truncating a lock file before knowing
+    whether the flock succeeds destroys the holder record the failure path
+    reads.
+    """
+    return os.open(path, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+
+
+def lock_dir():
+    """Return the directory the run locks live in, owned by this user.
+
+    NOT --workdir. That defaults under /tmp, which is a world-writable tree
+    this script does not own: `makedirs(exist_ok=True)` accepts a directory
+    somebody else made, `open(..., 'w')` follows a symlink planted in it and
+    truncates whatever it points at, and a squatted lock file would stop
+    every run for good. The same tree is also `outdir`, so anything that
+    lands in it is PUT to the public tiles/ prefix under an admin profile.
+    A lock belongs somewhere only this user can write.
+
+    $XDG_RUNTIME_DIR when there is one (per-user, 0700, cleaned at logout);
+    ~/.cache otherwise, which is where a cron job without a session lands.
+    """
+    base = os.environ.get('XDG_RUNTIME_DIR')
+    path = (os.path.join(base, 'p11-tiles') if base
+            else os.path.join(os.path.expanduser('~'), '.cache', 'p11-tiles'))
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    # lstat, not stat: a symlink here is exactly the substitution being
+    # refused, and stat would follow it and report the target.
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode):
+        raise RuntimeError('{} is not a directory'.format(path))
+    if info.st_uid != os.geteuid():
+        raise RuntimeError(
+            '{} is owned by uid {}, not by this user'.format(
+                path, info.st_uid))
+    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise RuntimeError(
+            '{} is group- or world-writable ({:o}); refusing to keep a run '
+            'lock there'.format(path, stat.S_IMODE(info.st_mode)))
+    return path
+
+
+def acquire_run_lock(name, directory=None):
+    """Take the exclusive run lock for `name`; raise RunLockHeld if taken.
+
+    A lockfile IS warranted here, not just belt and braces: this script is
+    driven by cron, one run takes the better part of an hour at the default
+    --rate, and an overrunning run that meets the next one doubles the
+    request rate against CCOM's server -- the one thing this script's
+    docstring says to ask before doing -- while both runs write the same
+    tiles into the same --workdir. It is also the only thing bounding
+    overlap: no per-request timeout does (see the constants above).
+
+    Per --name, because that is the unit that shares a workdir subtree and an
+    S3 prefix; two different layers are a deliberate operator choice and can
+    legitimately run together.
+
+    O_NOFOLLOW so a symlink where the lock file should be is an error rather
+    than a truncation of its target, and 0600 so the file this run creates is
+    no more open than the directory holding it.
+
+    The handle carries this run's pid and start time so a HELD lock can say
+    who holds it and for how long -- the difference between an overrunning
+    run (normal) and a wedged one that would otherwise stop every future run
+    silently. The handle must stay referenced for the life of the run:
+    closing it releases the lock. flock is released by the kernel when the
+    process exits, so a killed run does not strand it.
+    """
+    directory = lock_dir() if directory is None else directory
+    path = os.path.join(directory, '{}.lock'.format(name))
+    handle = open(path, 'w', opener=_lock_opener)
     try:
-        out = subprocess.run(
-            ['aws', 's3', 'cp', f's3://{BUCKET}/tiles/manifest.json', '-',
-             '--profile', profile],
-            capture_output=True, timeout=60)
-        if out.returncode == 0:
-            return json.loads(out.stdout)
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        holder, age = _lock_holder(path)
+        raise RunLockHeld(path, holder, age)
+    handle.truncate(0)
+    handle.write('{} {}\n'.format(os.getpid(), int(time.time())))
+    handle.flush()
+    return handle
+
+
+def _lock_holder(path):
+    """Return (pid, age_seconds) of the run holding `path`, or (None, None).
+
+    Best effort by design: the lock is held whatever this reports, and a
+    holder that wrote nothing must not turn a normal overlap into a crash.
+    """
+    try:
+        with open(path) as handle:
+            pid, started = handle.read().split()[:2]
+        return int(pid), max(0.0, time.time() - int(started))
+    except (OSError, ValueError, IndexError):
+        return None, None
+
+
+MISSING_KEY_CODES = ('NoSuchKey', 'NoSuchBucket', 'NotFound', '404')
+
+
+def _is_missing_object(exc):
+    """Return True if `exc` says the object is not there (vs. unreadable).
+
+    Read off the S3 error code the same way `describe_error` does in
+    marine_web_view/s3_upload.py, so nothing here has to import botocore --
+    the module-scope rule this script keeps so it stays importable without
+    the SDK. Anything else -- a timeout, AccessDenied, a 500, a truncated
+    body -- is NOT "there is no manifest yet".
+    """
+    response = getattr(exc, 'response', None)
+    if not isinstance(response, dict):
+        return False
+    code = (response.get('Error') or {}).get('Code')
+    return str(code) in MISSING_KEY_CODES
+
+
+def _describe_error(exc):
+    """One-line description of an S3/transport failure for cron mail.
+
+    The S3 error code is the useful half (`AccessDenied`, `SlowDown`) and it
+    lives in `exc.response`, not in `str(exc)` alone. Read off the same way
+    `_is_missing_object` does, so this file still imports without botocore.
+    """
+    response = getattr(exc, 'response', None)
+    code = None
+    if isinstance(response, dict):
+        code = (response.get('Error') or {}).get('Code')
+    if code:
+        return '{} ({}): {}'.format(type(exc).__name__, code, exc)
+    return '{}: {}'.format(type(exc).__name__, exc)
+
+
+def load_manifest(client, strict=False):
+    """Return the tile manifest, or {} if it cannot be read.
+
+    Blanket except by default, deliberately: at the top of a run a missing
+    manifest is the first-run case and an unreadable one is handled
+    identically -- re-render. Nothing there should stop the script before it
+    has even chosen a service.
+
+    `strict` is for the read-modify-write in `update_manifest`, where the two
+    are NOT the same. Merging this run's entry into a `{}` that really meant
+    "the GET failed" PUTs a manifest holding one --name and erases every
+    other, which is the lost update the lock exists to prevent and costs the
+    erased name a full ~5,839-tile re-crawl of CCOM. So a strict read
+    distinguishes a genuinely absent (or absently-bucketed) manifest from one
+    it could not read, and raises on the latter: this run's entry is worth
+    less than every other name's. Malformed JSON raises too -- overwriting it
+    would destroy the only copy of what the other names published.
+    """
+    try:
+        body = client.get_object(Bucket=BUCKET, Key='tiles/manifest.json')
+    except Exception as exc:
+        if strict and not _is_missing_object(exc):
+            raise
+        return {}
+    try:
+        man = json.loads(body['Body'].read())
     except Exception:
-        pass
-    return {}
+        if strict:
+            raise
+        return {}
+    if not isinstance(man, dict):
+        if strict:
+            raise RuntimeError(
+                'tiles/manifest.json holds {}, not an object of --name '
+                'entries'.format(type(man).__name__))
+        return {}
+    return man
+
+
+def save_manifest(client, payload):
+    """Upload the manifest `payload` bytes with no-cache.
+
+    Bytes, not a path: an earlier round staged the JSON to a file under
+    --workdir and re-read it here, which put the object destined for the
+    public tiles/ prefix through a world-writable directory this script does
+    not own (see `lock_dir`) between writing it and PUTting it.
+    """
+    client.put_object(Bucket=BUCKET, Key='tiles/manifest.json',
+                      Body=payload,
+                      ContentType='application/json',
+                      CacheControl='no-cache')
+
+
+def update_manifest(client, name, entry, wait_seconds=120.0,
+                    directory=None):
+    """Merge `entry` into the shared manifest as one locked read-modify-write.
+
+    `tiles/manifest.json` is ONE object describing every --name, and the run
+    lock is per --name, so two names running together -- which the run lock
+    deliberately permits -- used to race: each read the whole dict at the top
+    of its run, and each wrote the whole dict back at the end, so whichever
+    finished second erased the other's entry. The cost of losing one is not
+    an inconsistency to reconcile later: the next cron run reads "never
+    rendered" and re-crawls CCOM for the entire pyramid, ~5,839 tiles.
+
+    So the manifest is re-read INSIDE the lock rather than reused from the
+    top of the run, and only this run's key is touched. The read is STRICT
+    (see `load_manifest`): a GET that fails inside the lock must not be
+    merged into as if the manifest were empty, or this run PUTs its own entry
+    alone and erases every other name -- the same lost update, from one
+    transient error instead of a race. The merged JSON goes straight to S3
+    from memory; there is no staging file under --workdir, which is the
+    world-writable tree `lock_dir` refuses to keep a lock in and the same
+    tree whose contents are PUT to the public prefix.
+
+    The lock is local, so this closes the race between runs on one host --
+    which is the deployment: one cron host writes this prefix. Two hosts
+    would need a conditional PUT (If-Match on the manifest's ETag); noted
+    rather than pretended.
+    """
+    directory = lock_dir() if directory is None else directory
+    path = os.path.join(directory, 'manifest.lock')
+    handle = open(path, 'w', opener=_lock_opener)
+    try:
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        'the manifest lock at {} stayed held for {:g} s'
+                        .format(path, wait_seconds))
+                time.sleep(0.2)
+        man = load_manifest(client, strict=True)
+        man[name] = entry
+        save_manifest(client, json.dumps(man, indent=1).encode())
+        return man
+    finally:
+        handle.close()
+
+
+def file_md5(path, chunk=1 << 20):
+    """Hex MD5 of a file's bytes.
+
+    A content fingerprint compared against S3's ETag, not a security digest --
+    which is exactly what `usedforsecurity=False` declares. Without it a
+    FIPS-enforcing OpenSSL build raises `ValueError` here and aborts the whole
+    chart refresh over a comparison that only ever decides whether a tile is
+    already up to date.
+    """
+    digest = hashlib.md5(usedforsecurity=False)
+    with open(path, 'rb') as handle:
+        for block in iter(lambda: handle.read(chunk), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def remote_etags(client, bucket, prefix):
+    """Map every key already under `prefix` to its unquoted ETag.
+
+    One paginated list instead of a head_object per file: ~5,800 tiles would
+    otherwise be ~5,800 extra round trips before a single byte is uploaded.
+    """
+    found = {}
+    paginator = client.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get('Contents') or []:
+            # S3 returns the ETag quoted -- '"d41d8..."'.
+            found[obj['Key']] = str(obj.get('ETag', '')).strip('"')
+    return found
+
+
+def is_content_hash(etag):
+    """Return True if `etag` can be compared against a local file's MD5.
+
+    An S3 ETag equals the object's MD5 only for a SINGLE-PART, non-KMS upload.
+    A multipart upload's ETag is '<md5-of-part-md5s>-<partcount>', which this
+    rejects on the trailing '-<n>'. THIS SCRIPT ONLY EVER USES put_object, so
+    everything it writes is single-part by construction -- but the bucket may
+    still hold objects put there by `aws s3 sync` (which switches to multipart
+    above 8 MB) or by hand, so the shape is checked rather than assumed. If a
+    future change introduces multipart uploads here, this rule stops holding
+    and the comparison must change with it.
+
+    Objects encrypted with SSE-KMS also carry a non-MD5 ETag that is NOT
+    distinguishable by shape. That direction fails safe: a mismatch means
+    upload, so a KMS-encrypted bucket loses the skip optimisation but never
+    serves a stale tile.
+    """
+    return len(etag) == 32 and all(c in '0123456789abcdef' for c in etag)
+
+
+def local_files(local_dir):
+    """Sorted (key suffix, absolute path) for every file under `local_dir`."""
+    found = []
+    for root, _dirs, names in os.walk(local_dir):
+        for name in names:
+            full = os.path.join(root, name)
+            rel = os.path.relpath(full, local_dir).replace(os.sep, '/')
+            found.append((rel, full))
+    return sorted(found)
+
+
+def sync_dir(client, local_dir, bucket, prefix, extra_args,
+             concurrency=DEFAULT_CONCURRENCY, log=print, force=False,
+             deadline_seconds=SYNC_DEADLINE_SECONDS):
+    """Upload `local_dir` to `bucket`/`prefix`; return (sent, skipped, failed).
+
+    Upload-only, like the `aws s3 sync` it replaces: no --delete flag was ever
+    passed, so nothing here deletes.
+
+    WHAT COUNTS AS ALREADY UPLOADED -- by CONTENT HASH, not size. The tile
+    prefix is FIXED (--name, default 'bathy4m'), not versioned per
+    compilation, and main() deliberately re-renders into that same prefix when
+    the colour ramp changes (the rule_hash check). A recoloured PNG of
+    identical byte size is entirely plausible, and a size-only comparison
+    would silently skip it -- leaving stale colours served until the next rule
+    change or a --force. So the local MD5 is compared against the object's
+    ETag, and anything that differs, is absent, or has an ETag that cannot be
+    compared (see is_content_hash) is uploaded.
+
+    BETTER ON SKIPPING, WORSE ON METADATA than the `aws s3 sync` it replaces
+    -- not strictly better. Better on skipping: the fetch loop rewrites every
+    local tile it renders, so local mtimes are always 'now' and sync's
+    size+mtime rule re-uploaded all ~5,839 objects every run, where content
+    hashing genuinely skips the unchanged ones. Worse on metadata:
+    `list_objects_v2` returns no CacheControl or ContentType, so a comparison
+    on bytes alone cannot see that an object's cache policy is stale. Change
+    TILE_EXTRA_ARGS and the new policy reaches only tiles whose pixels also
+    changed, leaving the prefix on a permanently mixed policy.
+
+    `force` is the remedy available today: it skips the comparison entirely
+    and re-PUTs everything, which is the only way a TILE_EXTRA_ARGS change
+    reaches unchanged tiles. `--force` passes it, so a re-render after a
+    policy change does propagate. Propagating a metadata-only change WITHOUT
+    a full re-render (~an hour of requests against CCOM for pixels that did
+    not move) would need a re-upload-from-workdir mode, or a head_object per
+    key; that is a follow-up, not something this function silently does.
+
+    `deadline_seconds` is an aggregate wall-clock bound on the whole fan-out,
+    restoring what `subprocess.run(timeout=3600)` used to enforce on the
+    shell-out. Jobs that have not started by the deadline fail rather than
+    run, which withholds the manifest and leaves the next run to finish the
+    job -- far better than a cron run that overlaps its successor.
+    """
+    remote = {} if force else remote_etags(client, bucket, prefix)
+    pending = []
+    skipped = 0
+    for rel, path in local_files(local_dir):
+        key = prefix + rel
+        etag = remote.get(key)
+        if etag and is_content_hash(etag) and etag == file_md5(path):
+            skipped += 1
+            continue
+        pending.append((key, path))
+
+    sent = failed = 0
+    if not pending:
+        return sent, skipped, failed
+
+    deadline = time.monotonic() + float(deadline_seconds)
+
+    def _upload(job):
+        key, path = job
+        if time.monotonic() > deadline:
+            # Counted as a failure, deliberately: main() withholds the
+            # manifest on any failure, so an abandoned run does not get
+            # recorded as current.
+            raise TimeoutError(
+                'sync deadline of {:g} s exceeded before {}'.format(
+                    float(deadline_seconds), key))
+        with open(path, 'rb') as handle:
+            body = handle.read()
+        # put_object, NOT upload_file: a single-part PUT is what makes the
+        # ETag == MD5 rule above hold for everything this script writes.
+        # Tiles are 256x256 PNGs (tens of kB), far under the 5 GB PUT limit.
+        client.put_object(Bucket=bucket, Key=key, Body=body, **extra_args)
+
+    # Threads, because boto3 clients are documented safe for concurrent calls
+    # and ~5,839 serial PUTs at S3 round-trip latency is a quarter hour.
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(1, int(concurrency))) as pool:
+        futures = {pool.submit(_upload, job): job for job in pending}
+        done = 0
+        for future in concurrent.futures.as_completed(futures):
+            done += 1
+            try:
+                future.result()
+                sent += 1
+            except Exception as exc:
+                failed += 1
+                if failed <= 10:
+                    log('  ! {}: {}'.format(futures[future][0], exc))
+            if done % 500 == 0 or done == len(pending):
+                log('  {}/{} uploaded={} skipped(unchanged)={} failed={}'
+                    .format(done, len(pending), sent, skipped, failed))
+    return sent, skipped, failed
 
 
 def main():
@@ -319,10 +805,17 @@ def main():
                     help='AWS profile. NOTE: p11-renderer is scoped to live/* '
                          'only and cannot write tiles/ -- use an admin profile '
                          'or extend the policy.')
+    ap.add_argument('--concurrency', type=int, default=DEFAULT_CONCURRENCY,
+                    help='parallel S3 uploads (default %(default)s, matching '
+                         'the AWS CLI; does NOT affect the request rate to '
+                         'CCOM, see --rate)')
     ap.add_argument('--workdir', default='/tmp/p11-tiles')
     ap.add_argument('--timeout', type=float, default=60)
     ap.add_argument('--dry-run', action='store_true')
-    ap.add_argument('--force', action='store_true')
+    ap.add_argument('--force', action='store_true',
+                    help='re-render regardless of age, and re-upload every '
+                         'tile rather than skipping unchanged bytes (the way '
+                         'to propagate a TILE_EXTRA_ARGS cache-policy change)')
     a = ap.parse_args()
 
     # --name becomes both a local directory under --workdir and an S3 key prefix
@@ -347,13 +840,40 @@ def main():
         print('\ndry run: no requests to CCOM, no uploads.')
         return 0
 
+    # Before a single request to CCOM: an overrunning previous run is the
+    # case this exists for, and probing the folder first would already have
+    # doubled the request rate.
+    try:
+        lock = acquire_run_lock(a.name)
+    except RunLockHeld as held:
+        wedged = held.age is not None and held.age > LOCK_STALE_SECONDS
+        print('another run for {!r} holds {}{} -- {}'.format(
+            a.name, held.path,
+            '' if held.holder is None else ' (pid {}, {:.1f} h)'.format(
+                held.holder, (held.age or 0) / 3600.0),
+            'it is wedged: no run can proceed until it is cleared.' if wedged
+            else 'exiting so the two do not both crawl CCOM.'),
+            file=sys.stderr)
+        # Exit 0 for an ordinary overlap -- that is the lock working, and a
+        # nightly failure mail for it would train the operator to ignore
+        # them. Non-zero once the holder is too old to be a real run, so a
+        # lock that stops every future run is not indistinguishable from
+        # success forever.
+        return 1 if wedged else 0
+    # Also keeps the handle referenced for the life of the run: closing it
+    # releases the lock, and nothing else below mentions it.
+    print('run lock: {}'.format(lock.name))
+
     print('\nselecting a service that actually has data over the target area:')
     service, endpoint = pick_service(a.layer, tuple(a.bbox), a.timeout,
                                      a.blank_bytes)
     print(f'service: {service}\nendpoint: {endpoint}')
 
-    man = load_manifest(a.profile)
-    prev = man.get(a.name, {})
+    # One client for the whole run: the three different process-level caps
+    # the CLI shell-outs carried were bounding overlap, and the run lock
+    # above bounds that now (see the WALL-CLOCK BOUNDS constants).
+    client = s3_client(a.profile)
+    prev = load_manifest(client).get(a.name, {})
     age_d = (time.time() - prev.get('rendered_at', 0)) / 86400
     rule_hash = hashlib.sha256(chart_rule().encode()).hexdigest()[:12]
     if prev.get('rule_hash') not in (None, rule_hash):
@@ -403,32 +923,46 @@ def main():
               f'NOT publishing a partial pyramid.', file=sys.stderr)
         return 1
 
-    # Tiles are immutable for the life of a compilation, so cache them hard.
     print('\nuploading...')
-    up = subprocess.run(
-        ['aws', 's3', 'sync', outdir, f's3://{BUCKET}/tiles/{a.name}/',
-         '--profile', a.profile, '--only-show-errors',
-         '--content-type', 'image/png',
-         '--cache-control', 'public,max-age=604800'],   # 7 days
-        timeout=3600)
-    if up.returncode != 0:
+    try:
+        sent, unchanged, up_failed = sync_dir(
+            client, outdir, BUCKET, f'tiles/{a.name}/', TILE_EXTRA_ARGS,
+            concurrency=a.concurrency, force=a.force)
+    except Exception as e:
+        # The listing that opens sync_dir (`remote_etags`) is the one call in
+        # here that can raise outright -- an AccessDenied or a transient list
+        # failure, arriving AFTER the ~1 h crawl. Exit status and the withheld
+        # manifest are already right; what a bare traceback gets wrong is the
+        # cron mail, where every other failure in this script is one line.
+        print(f'upload failed: {_describe_error(e)}', file=sys.stderr)
+        return 1
+    print(f'uploaded {sent}, unchanged {unchanged}, failed {up_failed}')
+    if up_failed:
+        # All-or-nothing, as `aws s3 sync` was: the manifest is what tells the
+        # next run 'this pyramid is current', so publishing it over a partial
+        # upload would strand the missing tiles until the next rule change.
         print('upload failed', file=sys.stderr)
         return 1
 
-    man[a.name] = {'service': service, 'endpoint': endpoint,
-                   'rule_hash': rule_hash, 'max_depth': MAX_DEPTH,
-                   'step': STEP, 'ramp_points': len(RAMP),
-                   'bbox': a.bbox, 'zmin': a.zmin, 'zmax': a.zmax,
-                   'tiles': written, 'blank': skipped,
-                   'rendered_at': time.time(),
-                   'rendered_iso': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
-    mf = os.path.join(a.workdir, 'manifest.json')
-    with open(mf, 'w') as f:
-        json.dump(man, f, indent=1)
-    subprocess.run(['aws', 's3', 'cp', mf, f's3://{BUCKET}/tiles/manifest.json',
-                    '--profile', a.profile, '--content-type', 'application/json',
-                    '--cache-control', 'no-cache', '--only-show-errors'],
-                   timeout=120)
+    entry = {'service': service, 'endpoint': endpoint,
+             'rule_hash': rule_hash, 'max_depth': MAX_DEPTH,
+             'step': STEP, 'ramp_points': len(RAMP),
+             'bbox': a.bbox, 'zmin': a.zmin, 'zmax': a.zmax,
+             'tiles': written, 'blank': skipped,
+             'rendered_at': time.time(),
+             'rendered_iso': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+    # Re-read and merge under a lock rather than rewriting the dict this run
+    # read an hour ago: another --name may have published in the meantime,
+    # and dropping its entry costs it a full re-crawl of CCOM.
+    try:
+        update_manifest(client, a.name, entry)
+    except Exception as e:
+        # A lock we never won, or a strict read that failed: the tiles ARE
+        # uploaded, but the manifest does not say so, so the next run redoes
+        # the comparison and republishes. Same one-line report as every other
+        # failure path rather than a traceback in the cron mail.
+        print(f'manifest not published: {_describe_error(e)}', file=sys.stderr)
+        return 1
     print(f'done: {written} tiles ({skipped} blank skipped, {failed} failed)')
     return 0
 

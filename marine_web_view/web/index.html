@@ -520,14 +520,23 @@ function refreshCoverage() {
 }
 
 function coverageText(meta, age) {
+  // Age is decided FIRST, and prefixed to whatever else there is to say. A
+  // non-ok status must never shadow "this renderer is gone": a pass aborted
+  // mid-flush publishes `truncated_render`, which since this change is the
+  // ordinary last word of a run, so returning on the status alone left a
+  // renderer that then exited reading `truncated render` forever, with no
+  // age at all. Only the layer opacity said it was dead.
+  const stale = age > COVERAGE_DEAD_S
+    ? 'stale \u2014 ' + age.toFixed(0) + ' s' : '';
   if (meta.status !== 'ok') {
     // `stale_chart_datum` carries how long the tide offset has been frozen;
     // the status word alone does not say whether that is one pass or an hour.
     const datumAge = Number.isFinite(meta.chart_datum_age)
       ? ' \u2014 ' + meta.chart_datum_age.toFixed(0) + ' s' : '';
-    return String(meta.status).replace(/_/g, ' ') + datumAge;
+    const status = String(meta.status).replace(/_/g, ' ') + datumAge;
+    return stale ? stale + ' \u00b7 ' + status : status;
   }
-  if (age > COVERAGE_DEAD_S) return 'stale \u2014 ' + age.toFixed(0) + ' s';
+  if (stale) return stale;
   return meta.published_tiles + ' tiles \u00b7 z' + meta.zoom;
 }
 

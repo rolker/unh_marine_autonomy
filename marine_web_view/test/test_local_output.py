@@ -114,3 +114,30 @@ def test_a_traversing_key_is_refused(tmp_path):
     assert not node._write_local(b'payload', '../escaped.png')
     assert not (tmp_path / 'escaped.png').exists()
     assert node._logger.lines
+
+
+class _Exploding:
+    """An uploader that fails the test if anything touches it."""
+
+    def put(self, *args, **kwargs):
+        """Never legal on a dry run."""
+        raise AssertionError(
+            'a dry run reached the S3 transport: local_dir output must need '
+            'no AWS access at all')
+
+
+def test_a_dry_run_never_reaches_the_s3_transport(tmp_path):
+    """`dry_run` and `local_dir` are documented as needing no AWS access.
+
+    The gate lives in `_publish`, ahead of the transport call, and the node
+    does not even construct a client on a dry run. If the gate moved or an
+    unconditional client appeared, a simulator host with no credentials would
+    start failing at construction or per object.
+    """
+    node = _Writer(str(tmp_path))
+    node._uploader = _Exploding()
+    node.bucket = 'unh-ccom-p11-live'
+    node.cache_control = 20
+    assert CoverageRenderer._publish(
+        node, b'payload', 'live/coverage/15/1/2.png')
+    assert (tmp_path / 'live' / 'coverage' / '15' / '1' / '2.png').exists()

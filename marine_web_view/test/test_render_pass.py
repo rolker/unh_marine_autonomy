@@ -46,6 +46,7 @@ from marine_web_view import coverage_renderer
 from marine_web_view.coverage_renderer import colour_table
 from marine_web_view.coverage_renderer import CoverageRenderer
 from marine_web_view.coverage_renderer import empty_png
+from marine_web_view.s3_upload import S3Uploader
 
 import numpy
 
@@ -73,6 +74,7 @@ class _Pass:
         self.prefix = 'live/coverage'
         self._colours = colour_table()
         self._lock = threading.Lock()
+        self._stop = threading.Event()
         self._dirty = set()
         self._tiles = {}
         self._published = set()
@@ -429,24 +431,80 @@ def test_a_pass_without_the_chart_datum_publishes_nothing_but_says_so():
 
 
 def test_the_shutdown_flush_is_bounded():
-    """The carefully bounded 45 s join must not be followed by an open pass.
+    """A flush past its deadline issues no requests at all.
 
-    A flush is one 30 s-capped upload per dirty tile. Against a large mosaic
-    and a failing endpoint that is hours, with the operator's Ctrl-C already
-    spent. Past the deadline the remainder goes back in the dirty set rather
-    than being rendered.
+    A flush is one upload per dirty tile and a single upload has no exact
+    ceiling (see `_boto3_client`), so against a large mosaic and a wedged
+    endpoint an unbounded flush is hours -- with the operator's Ctrl-C
+    already spent. Past the deadline the remainder goes back in the dirty
+    set, and nothing is published at all -- not even the manifest, because a
+    pass that rendered no tile has nothing to announce, whether it aborted
+    at the top or ran out of budget before the first upload. (A pass
+    truncated part way through DOES publish its manifest; see
+    `test_a_stop_part_way_through_a_pass_returns_the_rest`.)
     """
     node = _Pass()
     node._dirty.update((x, 0) for x in range(5))
-    node._render_dirty(deadline=time.monotonic() - 1.0)
+    node._render_dirty(lambda: True)
     assert not node.uploads, 'a pass past its deadline still uploaded'
+    assert not node.meta, 'the manifest PUT ran outside the flush budget'
     assert len(node._dirty) == 5, 'the unrendered tiles were dropped'
-    assert node.meta, 'the manifest is still published for the pass'
 
     # A deadline that has not passed does not truncate anything.
-    node._render_dirty(deadline=time.monotonic() + 60.0)
+    deadline = time.monotonic() + 60.0
+    node._render_dirty(lambda: time.monotonic() >= deadline)
     assert len(node.uploads) == 5
     assert not node._dirty
+    assert node.meta, 'a completed pass still publishes its manifest'
+
+
+def test_a_scheduled_pass_stops_on_the_stop_event():
+    """The bound every scheduled pass used to lack.
+
+    `_render_pending` honoured a deadline only when one was passed, and a
+    scheduled pass passes none -- so a pass was as long as the endpoint made
+    it, and `stop()`'s join could not win. The check is now on every path,
+    and for a scheduled pass the predicate is the stop event.
+    """
+    node = _Pass()
+    node._dirty.update((x, 0) for x in range(5))
+    node._stop.set()
+    node._render_dirty()                 # the scheduled-pass default
+    assert not node.uploads, 'a stopped pass kept uploading tiles'
+    assert not node.meta, 'a stopped pass still published a manifest'
+    assert len(node._dirty) == 5, 'the unrendered tiles were dropped'
+
+
+def test_a_stop_part_way_through_a_pass_returns_the_rest():
+    """Mid-pass: the tiles already rendered stand, the rest stay dirty."""
+    node = _Pass()
+    node._dirty.update((x, 0) for x in range(5))
+    rendered = []
+    original = node._publish
+
+    def _publish(payload, key, **kwargs):
+        rendered.append(key)
+        if len(rendered) == 2:
+            node._stop.set()             # a Ctrl-C lands here
+        return original(payload, key, **kwargs)
+
+    node._publish = _publish
+    node._render_dirty()
+    assert len(node.uploads) == 2, node.uploads
+    assert len(node._dirty) == 3, node._dirty
+    assert any('stopped with 3 tile(s) left' in line
+               for line in node._logger.lines), node._logger.lines
+    # And the manifest IS published, saying what happened. The page refreshes
+    # its coverage layer only when `rendered_tiles` moves, so without this PUT
+    # the two tiles that did land are in the bucket and invisible -- and on
+    # the shutdown flush, which is where a truncated pass is likeliest, there
+    # is no later pass to announce them.
+    assert node.meta, (
+        'tiles were published and never announced; the page refreshes on '
+        'rendered_tiles, so a viewer never requests them')
+    assert node.meta[-1]['status'] == 'truncated_render', (
+        'a truncated pass reported as a completed render')
+    assert node.meta[-1]['rendered_tiles'] == 2, node.meta[-1]
 
 
 def test_a_second_interrupt_during_shutdown_does_not_skip_cleanup():
@@ -578,23 +636,37 @@ def test_the_manifest_max_age_never_exceeds_the_tiles():
     )
 
 
-def test_the_upload_stamps_the_max_age_it_is_given():
-    """The per-object max-age has to reach the aws CLI to mean anything.
+class _RecordingClient:
+    """Stand in for a boto3 S3 client, recording every put_object kwarg."""
 
-    `_publish` builds the `--cache-control` flag, so a `max_age` argument the
-    command line ignores is a comment, not a cache policy.
+    def __init__(self, error=None):
+        self.calls = []
+        self.error = error
+
+    def put_object(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return {}
+
+
+def test_the_upload_stamps_the_whole_object_shape_it_is_given():
+    """Everything `_publish` is told has to reach the S3 call to mean anything.
+
+    `_publish` is the only place the bucket, key, body, content type and cache
+    policy are assembled, so an argument the PUT drops is a comment, not a
+    policy. The max-age halves are the load-bearing pair -- the manifest's
+    whole job is to be current and the tiles' is to be cached -- but asserting
+    only that one field would leave the rest of the call unbound.
     """
-    calls = []
+    client = _RecordingClient()
 
-    class _Result:
-        returncode = 0
-        stderr = b''
-
-    class _Uploader:
+    class _Node:
         dry_run = False
         bucket = 'unh-ccom-p11-live'
         profile = ''
         cache_control = 60
+        _uploader = S3Uploader('unh-ccom-p11-live', client=client)
 
         def _note_failure(self):
             raise AssertionError('the upload should not have failed')
@@ -602,25 +674,144 @@ def test_the_upload_stamps_the_max_age_it_is_given():
         def get_logger(self):
             return _Logger()
 
-    def _run(command, **kwargs):
-        calls.append(command)
-        return _Result()
+    assert CoverageRenderer._publish(
+        _Node(), b'{}', 'live/coverage/meta.json',
+        content_type='application/json', max_age=5)
+    assert CoverageRenderer._publish(
+        _Node(), b'png', 'live/coverage/1/2/3.png')
 
-    original = coverage_renderer.subprocess.run
-    coverage_renderer.subprocess.run = _run
+    assert len(client.calls) == 2
+    manifest, tile = client.calls
+    assert manifest == {
+        'Bucket': 'unh-ccom-p11-live',
+        'Key': 'live/coverage/meta.json',
+        'Body': b'{}',
+        'ContentType': 'application/json',
+        'CacheControl': 'max-age=5',
+    }, 'the manifest was uploaded as {}'.format(manifest)
+    assert tile == {
+        'Bucket': 'unh-ccom-p11-live',
+        'Key': 'live/coverage/1/2/3.png',
+        'Body': b'png',
+        'ContentType': 'image/png',
+        'CacheControl': 'max-age=60',
+    }, 'the tile was uploaded as {}'.format(tile)
+
+
+def test_a_failed_upload_is_counted_and_not_raised():
+    """An exception out of `_publish` stops the render thread for good.
+
+    The render worker has no exception handling around its publishes, so a
+    transport error has to come back as False-plus-a-counted-failure the way
+    the CLI's nonzero exit code did, not as a raise.
+    """
+    client = _RecordingClient(error=RuntimeError('AccessDenied'))
+    counted = []
+
+    class _Node:
+        dry_run = False
+        bucket = 'unh-ccom-p11-live'
+        profile = ''
+        cache_control = 60
+        _uploader = S3Uploader('unh-ccom-p11-live', client=client)
+
+        def _note_failure(self):
+            counted.append(1)
+
+        def get_logger(self):
+            return _Logger()
+
+    assert CoverageRenderer._publish(
+        _Node(), b'png', 'live/coverage/1/2/3.png') is False
+    assert counted == [1], (
+        'a failed upload must increment the failure counter, got {}'.format(
+            counted))
+
+
+def test_stop_does_not_wait_out_a_wedged_upload(monkeypatch):
+    """Shutdown is bounded by the join, not by the endpoint answering.
+
+    The join used to be 45 s, chosen to be "longer than one upload" against
+    a per-PUT ceiling that does not exist -- so two stalled tiles blew it and
+    took the early return that skips the final flush. The worker now checks
+    the stop event between tiles, so the join only has to cover the request
+    it is already inside; losing that race costs a warning and a skipped
+    flush, never a hang, because the worker is a daemon thread.
+    """
+    monkeypatch.setattr(coverage_renderer, 'WORKER_JOIN_SECONDS', 0.3)
+    node = _Threaded()
+    released = threading.Event()
+    entered = threading.Event()
+    original = node._publish
+
+    def _wedged(payload, key, **kwargs):
+        entered.set()
+        released.wait(10.0)
+        return original(payload, key, **kwargs)
+
+    node._publish = _wedged
+    node._dirty.add((10, 20))
+    node._wake_renderer()
     try:
-        CoverageRenderer._publish(
-            _Uploader(), b'{}', 'live/coverage/meta.json',
-            content_type='application/json', max_age=5)
-        CoverageRenderer._publish(_Uploader(), b'png', 'live/coverage/1/2/3.png')
+        assert entered.wait(5.0), 'the worker never started an upload'
+        start = time.monotonic()
+        node.stop()
+        elapsed = time.monotonic() - start
+        assert elapsed < 3.0, (
+            'stop() took {:.1f} s with an upload wedged'.format(elapsed))
+        assert any('still inside a request' in line
+                   for line in node._logger.lines), node._logger.lines
     finally:
-        coverage_renderer.subprocess.run = original
+        released.set()
 
-    assert len(calls) == 2
-    manifest, tile = calls
-    assert 'max-age=5' in manifest, (
-        'the manifest was uploaded as {}: the requested max-age never '
-        'reached the CLI'.format(manifest))
-    assert 'max-age=60' in tile, (
-        'the tile was uploaded as {}: the default max-age must remain the '
-        'configured cache_control'.format(tile))
+
+def test_the_shutdown_budget_is_small_enough_to_be_a_shutdown():
+    """Both halves of the bound are shipped values, so pin them.
+
+    Worst case is WORKER_JOIN_SECONDS + SHUTDOWN_FLUSH_SECONDS plus the one
+    request already in flight. An operator's Ctrl-C has to mean something.
+    """
+    assert coverage_renderer.WORKER_JOIN_SECONDS == 10.0
+    assert coverage_renderer.SHUTDOWN_FLUSH_SECONDS == 30.0
+
+
+def test_an_abort_before_the_first_tile_announces_nothing():
+    """`truncated_render` over a pass that PUT nothing is a false report.
+
+    The abort check at the top of `_render_dirty` is not the only way a pass
+    can render nothing: the budget can go in `_update_datum_offset()`, or run
+    out on `_render_pending`'s first check. Both used to publish
+    `truncated_render` with the PREVIOUS pass's counts -- replacing an
+    accurate manifest with a worse one, and, on the page, retiring a live
+    readout in favour of a status word about a pass that did nothing.
+    """
+    node = _Pass()
+    node._dirty.update((x, 0) for x in range(3))
+
+    # Aborts only once _render_pending asks, i.e. after the datum update and
+    # before the first tile -- the case the top-of-function check misses.
+    calls = []
+
+    def _abort():
+        calls.append(True)
+        return len(calls) > 1
+
+    node._render_dirty(_abort)
+    assert not node.uploads, 'a pass past its budget still uploaded a tile'
+    assert not node.meta, (
+        'a pass that rendered nothing published a truncated_render manifest')
+    assert len(node._dirty) == 3, 'the unrendered tiles were dropped'
+
+    # A pass that DID publish before aborting still announces, unchanged.
+    node = _Pass()
+    node._dirty.update((x, 0) for x in range(3))
+    calls = []
+
+    def _abort_after_one():
+        calls.append(True)
+        return len(calls) > 2
+
+    node._render_dirty(_abort_after_one)
+    assert len(node.uploads) == 1, node.uploads
+    assert node.meta and node.meta[-1]['status'] == 'truncated_render', (
+        'tiles were PUT and never announced')

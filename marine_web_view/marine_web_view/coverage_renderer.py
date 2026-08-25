@@ -61,7 +61,6 @@ are referenced through TF before they are coloured -- see _update_datum_offset.
 import io
 import json
 import os
-import subprocess
 import tempfile
 import threading
 import time
@@ -75,6 +74,8 @@ from marine_web_view import gggs
 from marine_web_view import tiles as tile_util
 from marine_web_view.reconciler import is_valid_index
 from marine_web_view.reconciler import TileCatalogReconciler
+from marine_web_view.s3_upload import describe_error
+from marine_web_view.s3_upload import S3Uploader
 
 import numpy
 
@@ -146,14 +147,30 @@ DEFAULT_ZOOM = 15
 DEFAULT_PREFIX = 'live/coverage'
 MAX_SLIPPY_ZOOM = 22
 
-# How long the shutdown flush may run. The 45 s join above it exists so that a
-# stop cannot hang on an in-flight upload; following it with an unbounded pass
-# gives exactly that back -- a pass is one 30 s-capped upload per dirty tile,
-# and a large mosaic with a failing S3 endpoint would sit there for hours with
-# the operator's Ctrl-C already spent. Whatever does not fit inside the
-# deadline is lost, which is precisely what would have been lost with no flush
-# at all.
+# How long the shutdown flush may run. `WORKER_JOIN_SECONDS` below exists so a
+# stop cannot hang waiting on the render thread; following it with an unbounded
+# pass would give exactly that back. A pass is one upload per dirty tile, and
+# NO per-upload ceiling exists -- see `_boto3_client` in s3_upload, and do not
+# write one here: two earlier rounds of this change put a specific number in
+# this comment and both were wrong. A large mosaic against a failing S3
+# endpoint would otherwise sit here for hours with the operator's Ctrl-C
+# already spent. This deadline is what bounds it, and it is checked before
+# every upload. Whatever does not fit is lost, which is precisely what would
+# have been lost with no flush at all.
 SHUTDOWN_FLUSH_SECONDS = 30.0
+
+# How long the render thread waits for a response that has stopped arriving.
+# Not a per-PUT ceiling (see `_boto3_client`); its job is to stop one dead
+# connection holding the render thread forever.
+UPLOAD_READ_TIMEOUT = 25
+
+# How long `stop()` waits for the render thread to notice the stop event. The
+# thread checks it between tiles, so what this has to cover is the request it
+# is already inside PLUS the manifest PUT an aborted pass issues on its way
+# out (`truncated_render` -- see `_render_dirty`), which is one more unbudgeted
+# single request. It is a daemon thread, so losing the race costs a warning
+# and a skipped flush, never a hang.
+WORKER_JOIN_SECONDS = 10.0
 
 # How old the transform the chart-datum offset came from may get before the
 # manifest says so. Age OF THE DATA -- see `_transform_seconds` and
@@ -361,8 +378,9 @@ class CoverageRenderer(Node):
             self.prefix = DEFAULT_PREFIX
         # An empty profile is not an error: it means "use the default
         # credential chain", which is what a machine with an instance role or
-        # a plain ~/.aws/credentials wants. Passing `--profile ''` instead
-        # fails every upload. Omit the flag entirely in that case.
+        # a plain ~/.aws/credentials wants. Handing boto3 an empty profile
+        # name instead fails every upload, so it is coalesced to None where
+        # the uploader is built (below).
         self.profile = str(self._param('profile')).strip()
         self.dry_run = bool(self._param('dry_run'))
         if not self.dry_run and not _is_usable_bucket(self.bucket):
@@ -371,7 +389,7 @@ class CoverageRenderer(Node):
             # is not recoverable by falling back to a default: that would
             # quietly publish a survey's coverage somewhere nobody asked for.
             # It is also not survivable, because every upload becomes a
-            # 30 s-capped subprocess inside a retry loop that never drains.
+            # doomed S3 PUT inside a retry loop that never drains.
             # Refuse to start, loudly, while an operator is still watching.
             raise ValueError(
                 "bucket {!r} is not a usable S3 bucket name; set 'bucket', "
@@ -433,6 +451,27 @@ class CoverageRenderer(Node):
                     self.tide_invalidate_threshold,
                     DEFAULT_TIDE_INVALIDATE_THRESHOLD))
             self.tide_invalidate_threshold = DEFAULT_TIDE_INVALIDATE_THRESHOLD
+
+        # Not on a dry run: writing under local_dir needs no AWS access at
+        # all, and constructing a client would go looking for credentials a
+        # simulator host has no reason to carry. `or None` is deliberate and
+        # preserves this node's long-standing behaviour: an empty profile
+        # means "use the default credential chain" -- an EC2 instance role or
+        # a plain ~/.aws/credentials -- which is what the 'no AWS profile
+        # configured' info line above announces. Passing '' instead would
+        # fail every upload: boto3.Session would look for a profile
+        # literally named ''.
+        # state_renderer deliberately does NOT coalesce; see its own comment.
+        # read_timeout caps the render thread's wait on a response that has
+        # stopped arriving. It is NOT a per-PUT ceiling -- no exact one
+        # exists to quote, see _boto3_client -- and nothing in this node's
+        # shutdown is sized against it: the render pass checks an abort
+        # predicate BETWEEN tiles, so a stop takes effect without waiting on
+        # an upload already in flight.
+        self._uploader = (None if self.dry_run else
+                          S3Uploader(self.bucket,
+                                     profile=self.profile or None,
+                                     read_timeout=UPLOAD_READ_TIMEOUT))
 
         self._reconciler = TileCatalogReconciler()
         self._tiles = {}          # index -> full-tile float array
@@ -994,7 +1033,10 @@ class CoverageRenderer(Node):
             if self._stop.is_set():
                 return
             try:
-                self._render_dirty()
+                # A scheduled pass aborts on the stop event. That is what
+                # makes `stop()`'s join winnable by construction rather than
+                # by hoping the upload of the tile in flight returns.
+                self._render_dirty(self._stop.is_set)
             except Exception as error:
                 # The per-tile containment is inside _render_dirty; this is
                 # the backstop that keeps the thread itself alive.
@@ -1009,25 +1051,47 @@ class CoverageRenderer(Node):
         Without a final pass the tiles rendered since the last one are simply
         lost, which at the default cadence is up to 20 s of the end of a
         survey line -- the part an operator is most likely to be looking for.
+        Unlike the position artifacts state_renderer publishes, a coverage
+        tile is not a snapshot that the next one supersedes: drop it and that
+        patch of seabed is simply missing until its grid changes again.
+
+        Bounded BY CONSTRUCTION, without appealing to how long one PUT takes
+        (there is no exact answer -- see `_boto3_client`). The worker checks
+        the stop event between tiles, so the join wins unless it is inside a
+        request; the flush stops at a wall-clock deadline it checks between
+        tiles too; and neither waits on the other. Worst case is
+        WORKER_JOIN_SECONDS + SHUTDOWN_FLUSH_SECONDS, plus the manifest PUT
+        every pass ends with (truncated or not -- see `_render_dirty`), plus
+        whatever single request was already in flight when the stop arrived.
+        Neither of those last two is budgeted; both are single PUTs.
         """
         if self._stop.is_set():
             return
         self._stop.set()
         self._wake.set()
         try:
-            # Generously longer than one upload timeout: the worker may be
-            # inside an `aws s3 cp` when the stop arrives.
-            self._worker.join(timeout=45.0)
+            self._worker.join(timeout=WORKER_JOIN_SECONDS)
             if self._worker.is_alive():
-                self.get_logger().warn('render thread did not stop in time')
+                # It is inside a request. The flush cannot run concurrently
+                # with a live pass -- `_published` and `_rendered` are the
+                # render thread's -- so it is skipped, and the tiles stay
+                # unpublished. That is the honest outcome of a wedged
+                # endpoint, and it costs a warning, not a hang: the worker
+                # is a daemon thread.
+                self.get_logger().warn(
+                    'render thread still inside a request after {:g} s; '
+                    'skipping the final flush'.format(WORKER_JOIN_SECONDS))
                 return
             if self._dirty:
                 self.get_logger().info(
                     'flushing {} dirty tile(s) before exit '
                     '(up to {:g} s)'.format(
                         len(self._dirty), SHUTDOWN_FLUSH_SECONDS))
-                self._render_dirty(
-                    deadline=time.monotonic() + SHUTDOWN_FLUSH_SECONDS)
+                deadline = time.monotonic() + SHUTDOWN_FLUSH_SECONDS
+                # The flush deliberately does NOT abort on `self._stop` --
+                # it is set, that is why we are here. Its bound is the
+                # deadline, checked on exactly the same path.
+                self._render_dirty(lambda: time.monotonic() >= deadline)
         except KeyboardInterrupt:
             # An impatient second Ctrl-C lands in the join or in the flush.
             # This is called from `main()`'s `finally`, so letting it out
@@ -1130,20 +1194,51 @@ class CoverageRenderer(Node):
                       content_type='application/json',
                       max_age=self.meta_cache_control)
 
-    def _render_dirty(self, deadline=None):
+    def _render_dirty(self, abort=None):
         """Run one render pass and publish the manifest for it.
 
-        `deadline` is a `time.monotonic()` value past which the pass stops and
-        returns what it has not done to the dirty set. Only the shutdown flush
-        sets one; a scheduled pass runs to completion.
+        `abort` is a predicate the pass consults before every upload it
+        issues; when it returns True the pass stops and hands whatever it has
+        not done back to the dirty set. There is ALWAYS one -- a scheduled
+        pass defaults to the stop event, the shutdown flush passes a
+        wall-clock deadline -- because a pass with no way to stop is a pass
+        whose length is set by the S3 endpoint. An earlier round made the
+        check conditional on a `deadline` argument that only the flush
+        passed, which left every scheduled pass unbounded and unstoppable.
         """
+        if abort is None:
+            abort = self._stop.is_set
+        if abort():
+            return
         if not self._update_datum_offset():
             # Without the offset every depth would be coloured from an
             # unreferenced ellipsoidal height -- wrong, and wrong in a way
             # that looks plausible. Leave the tiles dirty and try next pass.
             self._publish_meta('waiting_for_chart_datum')
             return
-        self._render_pending(deadline)
+        published_before = self._rendered
+        self._render_pending(abort)
+        if abort():
+            if self._rendered == published_before:
+                # Nothing was PUT this pass -- the budget went in
+                # `_update_datum_offset` or ran out before the first tile.
+                # There is nothing to announce, and announcing anyway would
+                # replace a manifest that is still accurate with a
+                # `truncated_render` whose counts are the previous pass's.
+                # Same outcome as the abort at the top of this function.
+                return
+            # Out of budget, with tiles already PUT. The manifest is what
+            # ANNOUNCES them: the page refreshes its layer only when
+            # `rendered_tiles` moves (see index.html's pollCoverage), so
+            # skipping this PUT means the tiles this pass did publish are
+            # invisible until some later pass moves the counter -- and on the
+            # shutdown flush, where truncation is likeliest, there is no later
+            # pass. That is the exact loss the flush exists to prevent.
+            # The manifest can say what happened rather than overclaim: the
+            # `status` field is carried for precisely this, and the page
+            # renders it verbatim.
+            self._publish_meta('truncated_render')
+            return
         # After the pass, so the counts the page shows are this pass's.
         age = self._datum_age()
         if age is not None and age > DATUM_STALE_SECONDS:
@@ -1160,12 +1255,13 @@ class CoverageRenderer(Node):
         else:
             self._publish_meta('ok')
 
-    def _render_pending(self, deadline=None):
+    def _render_pending(self, abort):
         """Render and publish every slippy tile marked dirty.
 
-        Stops early if `deadline` (a `time.monotonic()` value) passes, putting
-        the untouched remainder back in the dirty set. See
-        SHUTDOWN_FLUSH_SECONDS.
+        Stops early when `abort()` returns True, putting the untouched
+        remainder back in the dirty set. Checked before EVERY tile, on every
+        path: that is what bounds a pass without depending on how long a
+        single upload takes. See `_render_dirty` and SHUTDOWN_FLUSH_SECONDS.
         """
         datum_z = self._datum_offset or 0.0
         with self._lock:
@@ -1177,10 +1273,10 @@ class CoverageRenderer(Node):
         published = 0
         retry = set()
         for position, (x, y) in enumerate(pending):
-            if deadline is not None and time.monotonic() >= deadline:
+            if abort():
                 retry.update(pending[position:])
                 self.get_logger().warn(
-                    'render deadline reached with {} tile(s) left'.format(
+                    'render pass stopped with {} tile(s) left'.format(
                         len(pending) - position))
                 break
             try:
@@ -1270,24 +1366,12 @@ class CoverageRenderer(Node):
 
         if max_age is None:
             max_age = self.cache_control
-        command = [
-            'aws', 's3', 'cp', '-', 's3://{}/{}'.format(self.bucket, key),
-            '--content-type', content_type,
-            '--cache-control', 'max-age={}'.format(max_age),
-        ]
-        if self.profile:
-            command += ['--profile', self.profile]
-        try:
-            result = subprocess.run(command, input=payload,
-                                    capture_output=True, timeout=30)
-        except subprocess.TimeoutExpired:
-            self._note_failure()
-            self.get_logger().error('upload of {} timed out'.format(key))
-            return False
-        if result.returncode != 0:
+        ok, exc = self._uploader.put(
+            payload, key, content_type, 'max-age={}'.format(max_age))
+        if not ok:
             self._note_failure()
             self.get_logger().error('upload of {} failed: {}'.format(
-                key, result.stderr.decode().strip()[:200]))
+                key, describe_error(exc)))
             return False
         return True
 

@@ -52,11 +52,13 @@ from collections import deque
 import json
 import math
 import os
-import subprocess
 import time
 
 from geographic_msgs.msg import GeoPointStamped
 from marine_interfaces.msg import PlatformList
+from marine_web_view.s3_upload import AsyncUploader
+from marine_web_view.s3_upload import describe_error
+from marine_web_view.s3_upload import S3Uploader
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
@@ -76,6 +78,17 @@ from sensor_msgs.msg import NavSatFix
 # so the whole retained history renders however far back track_seconds keeps it
 # -- a finite ceiling here would silently drop everything older than it, so a
 # track_seconds larger than the ceiling would never fully render.
+# How long the UPLOAD WORKER waits for a response that has stopped arriving.
+# Not a per-PUT ceiling and not a bound on anything the executor thread does
+# -- see `_boto3_client`, and the construction of `_sender` below. Its only
+# job is to stop one dead connection from occupying the worker forever, so a
+# later position can be sent.
+UPLOAD_READ_TIMEOUT = 15
+
+# How long `stop()` waits for the worker to finish the PUT it is inside. It
+# is a daemon thread, so an unwinnable join costs a warning, not a hang.
+UPLOAD_STOP_SECONDS = 5.0
+
 TRACK_BANDS = (
     (120.0, 0.0),           # last 2 min: full resolution
     (900.0, 3.0),           # to 15 min: gentle
@@ -226,6 +239,31 @@ class StateRenderer(Node):
         # rebuilt several times a second inside the subscriber callback.
         self._history = deque()
         self._track_stamp = None
+
+        # Not on a dry run: writing to local_path needs no AWS access at all,
+        # and constructing a client would go looking for a profile that a
+        # simulator host has no reason to have. `self.profile` is passed
+        # through UNCOALESCED -- this node has always required a profile, and
+        # an operator who blanks it should still fail loudly rather than
+        # silently pick up whatever credentials the host happens to carry.
+        # (coverage_renderer deliberately differs: see its own construction.)
+        #
+        # UPLOADS DO NOT RUN ON THIS THREAD. _tick and _track_tick are timer
+        # callbacks on rclpy.spin's single-threaded executor, the same thread
+        # _on_fix runs on, so a PUT issued here stops position fixes being
+        # recorded for as long as it takes -- and they are not replayed, so
+        # the track keeps a permanent hole for the stall. No timeout value
+        # makes that acceptable and no exact one exists to choose (see
+        # _boto3_client): the payloads go to an AsyncUploader instead, which
+        # keeps only the newest object per key. read_timeout still caps the
+        # WORKER's wait on a response that has stopped arriving; it is not a
+        # bound on anything the executor thread does.
+        self._uploader = (None if self.dry_run else
+                          S3Uploader(self.bucket, profile=self.profile,
+                                     read_timeout=UPLOAD_READ_TIMEOUT))
+        self._sender = (None if self.dry_run else
+                        AsyncUploader(self._uploader,
+                                      log_error=self._log_upload_failure))
 
         self.fix_type = (GeoPointStamped if self.msg_type == 'geopoint'
                          else NavSatFix)
@@ -419,11 +457,16 @@ class StateRenderer(Node):
         }, separators=(',', ':'))
 
     def _track_tick(self):
-        """Publish the track if it has grown since the last publication."""
+        """Publish the track if it has grown since the last publication.
+
+        Compared against what actually LANDED, not against what was handed to
+        the uploader: an accepted payload is not a published one, and a track
+        whose upload failed has to be offered again on the next tick.
+        """
         if not self._history:
             return
         stamp = self._history[-1][0]
-        if stamp == self._track_stamp:
+        if stamp == self._sent_stamp(self.track_key):
             return
         payload = self._track_geojson(stamp)
         if payload is None:
@@ -431,8 +474,8 @@ class StateRenderer(Node):
         if self.dry_run:
             self._write_atomic(self.track_local_path, payload)
             self._track_stamp = stamp
-        elif self._put(payload, self.track_key, self.track_interval):
-            self._track_stamp = stamp
+        else:
+            self._queue(payload, self.track_key, self.track_interval, stamp)
 
     def _tick(self):
         """Write the current state if it has changed since the last write."""
@@ -446,7 +489,7 @@ class StateRenderer(Node):
         # to report that nothing changed, and masking nothing, because the
         # page derives staleness from the stamp.
         stamp = self._fix_stamp()
-        if stamp == self._last_sent_stamp:
+        if stamp == self._sent_stamp(self.key):
             self._skipped += 1
             self.get_logger().warn(
                 'position unchanged for {} ticks -- not uploading'.format(
@@ -485,53 +528,123 @@ class StateRenderer(Node):
         self._writes += 1
 
     def _upload(self, payload, stamp):
-        """Upload the position artifact."""
-        if self._put(payload, self.key, self.interval):
-            self._last_sent_stamp = stamp
-            self._writes += 1
+        """Hand the position artifact to the upload worker."""
+        self._queue(payload, self.key, self.interval, stamp)
 
-    def _put(self, payload, key, max_age):
-        """Write one object to S3; return True on success.
+    def _sent_stamp(self, key):
+        """Return the stamp of the artifact last CONFIRMED written.
+
+        On a dry run that is the last atomic write; otherwise it is the last
+        PUT the worker actually completed. Both are "what a viewer can see",
+        which is what the change detection in the two ticks is asking about.
+        """
+        if self.dry_run:
+            return (self._last_sent_stamp if key == self.key
+                    else self._track_stamp)
+        return self._sender.confirmed(key)
+
+    def _queue(self, payload, key, max_age, stamp):
+        """Offer one object to the upload worker; never touches the network.
+
+        Returns True if it was accepted. Latest-wins: a payload still pending
+        for this key is REPLACED, so a slow endpoint costs superseded
+        positions rather than a growing backlog of stale ones (see
+        AsyncUploader). Nothing here can block the executor thread, so a
+        stalled upload no longer stops fixes being recorded.
 
         Cache-Control drives CloudFront freshness. Invalidation is deliberately
         not used: it is billed per path beyond a small monthly allowance, which
         at any real update rate would dwarf every other cost.
         """
-        command = [
-            'aws', 's3', 'cp', '-',
-            's3://{}/{}'.format(self.bucket, key),
-            '--content-type', 'application/geo+json',
-            '--cache-control', 'max-age={}'.format(max(1, int(max_age))),
-            '--profile', self.profile,
-        ]
-        try:
-            result = subprocess.run(command, input=payload.encode(),
-                                    capture_output=True, timeout=20)
-        except subprocess.TimeoutExpired:
-            self._failures += 1
-            self.get_logger().error('upload of {} timed out'.format(key))
-            return False
-        if result.returncode != 0:
-            self._failures += 1
-            self.get_logger().error('upload of {} failed: {}'.format(
-                key, result.stderr.decode().strip()[:300]))
-            return False
-        return True
+        accepted = self._sender.submit(
+            payload.encode(), key, 'application/geo+json',
+            'max-age={}'.format(max(1, int(max_age))), tag=stamp)
+        if not accepted:
+            # Two reasons, and they are not the same news. A dead worker is
+            # the one that has to reach the operator: nothing published from
+            # here on will ever be sent, so the map is frozen at whatever it
+            # last showed, and this is the only place that says so every tick.
+            # The other is a bound reasoned wrongly -- this node publishes two
+            # keys and the worker has four slots.
+            reason = self._sender.dead()
+            if reason is not None:
+                self.get_logger().error(
+                    'upload worker is dead ({}); {} and everything else this '
+                    'node publishes is no longer reaching S3'.format(
+                        reason, key), throttle_duration_sec=30.0)
+            else:
+                self.get_logger().error(
+                    'upload worker refused {}: more keys in flight than slots'
+                    .format(key), throttle_duration_sec=30.0)
+        return accepted
+
+    def upload_counts(self):
+        """Return (writes, failures) across the local and S3 paths."""
+        if self._sender is None:
+            return self._writes, self._failures
+        writes, failures, _ = self._sender.counts()
+        return self._writes + writes, self._failures + failures
+
+    def stop(self):
+        """Stop the upload worker. Bounded, and never raises.
+
+        Called from `main()`'s `finally`, so it must not be the reason
+        `destroy_node()` is skipped.
+        """
+        if self._sender is None:
+            return
+        if not self._sender.stop(timeout=UPLOAD_STOP_SECONDS):
+            reason = self._sender.dead()
+            if reason is not None:
+                # It was not slow, it was gone -- possibly for most of the
+                # run. The counts printed just below cannot show that on
+                # their own, and this is the last chance to say it.
+                self.get_logger().error(
+                    'upload worker died before shutdown ({}); anything '
+                    'published after that never reached S3'.format(reason))
+            else:
+                self.get_logger().warn(
+                    'upload worker still inside a request after {:g} s; '
+                    'abandoning it'.format(UPLOAD_STOP_SECONDS))
+
+    def _log_upload_failure(self, key, exc):
+        """Report one failed PUT. CALLED ON THE UPLOAD WORKER THREAD.
+
+        A failure is counted (by the worker) and logged, never raised: the
+        next tick offers the object again, because `confirmed` still reports
+        the older stamp. Same behaviour the CLI shell-out this replaced had.
+
+        Throttled to match `_queue`/`stop`: the failure that actually happens
+        on a first deployment is a persistent one (`AccessDenied` on a
+        prefix-scoped IAM policy, `NoSuchBucket` on a typo), and it recurs
+        every tick. Unthrottled that is one ERROR per second for the length
+        of the run, which buries every other line in the log.
+        """
+        self.get_logger().error('upload of {} failed: {}'.format(
+            key, describe_error(exc)), throttle_duration_sec=30.0)
 
 
 def main(args=None):
     """Spin the state renderer until interrupted."""
     rclpy.init(args=args)
-    node = StateRenderer()
+    node = None
     try:
+        # Construction inside the try: the constructor now builds the S3
+        # client, so a bad profile or region (ProfileNotFound, NoRegionError)
+        # or a missing SDK would otherwise skip the finally entirely and
+        # leave rclpy initialised.
+        node = StateRenderer()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        node.get_logger().info(
-            'stopping: {} writes, {} failures, {} unchanged'.format(
-                node._writes, node._failures, node._skipped))
-        node.destroy_node()
+        if node is not None:
+            node.stop()
+            writes, failures = node.upload_counts()
+            node.get_logger().info(
+                'stopping: {} writes, {} failures, {} unchanged'.format(
+                    writes, failures, node._skipped))
+            node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 

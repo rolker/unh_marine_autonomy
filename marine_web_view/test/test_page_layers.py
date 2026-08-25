@@ -606,6 +606,28 @@ def test_a_stale_manifest_degrades_the_coverage_layer():
         'opacity')
 
 
+def test_a_non_ok_status_does_not_hide_the_renderer_age():
+    """`truncated render` forever is what a dead renderer used to read as.
+
+    `coverageText` returned on any non-ok status before it ever looked at
+    the age, and a pass aborted mid-flush publishes `truncated_render` --
+    the ordinary last word of a run. So a renderer that then exited kept the
+    readout at a status word with no age, and only the layer opacity said it
+    was gone. The age branch has to be decided before the status branch
+    returns.
+    """
+    page = _code(_page())
+    body = re.search(r'function coverageText\(([^)]*)\)\s*\{(.*?)\n\}',
+                     page, re.S)
+    assert body, 'coverageText is no longer recognisable in the page'
+    text = body.group(2)
+    dead = text.index('COVERAGE_DEAD_S')
+    status = text.index("meta.status !== 'ok'")
+    assert dead < status, (
+        'the status branch returns before the age is consulted; a dead '
+        'renderer reads as its last status word with no age')
+
+
 def test_a_dead_renderer_is_reported_rather_than_hidden():
     """Every missing tile is painted transparent, total failure included."""
     page = _page()
