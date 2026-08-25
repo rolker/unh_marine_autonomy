@@ -156,7 +156,8 @@ def _write(directory, relative, payload):
 
 def _etag(payload):
     """Return the quoted MD5 S3 gives a single-part upload of payload."""
-    return '"{}"'.format(hashlib.md5(payload).hexdigest())
+    return '"{}"'.format(
+        hashlib.md5(payload, usedforsecurity=False).hexdigest())
 
 
 def test_an_unchanged_tile_is_skipped(tmp_path):
@@ -237,7 +238,9 @@ def test_a_multipart_etag_is_never_trusted_as_a_content_hash(tmp_path):
     outdir = str(tmp_path / 'bathy4m')
     _write(outdir, '10/1/1.png', b'body')
     client = _FakeS3({'tiles/bathy4m/10/1/1.png':
-                      '"{}-2"'.format(hashlib.md5(b'body').hexdigest())})
+                      '"{}-2"'.format(
+                          hashlib.md5(b'body',
+                                      usedforsecurity=False).hexdigest())})
     sent, skipped, failed = script.sync_dir(
         client, outdir, 'unh-ccom-p11-live', 'tiles/bathy4m/', _tile_args(script),
         log=lambda *a: None)

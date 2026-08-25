@@ -615,9 +615,13 @@ def update_manifest(client, name, entry, wait_seconds=120.0,
 def file_md5(path, chunk=1 << 20):
     """Hex MD5 of a file's bytes.
 
-    A content fingerprint compared against S3's ETag, not a security digest.
+    A content fingerprint compared against S3's ETag, not a security digest --
+    which is exactly what `usedforsecurity=False` declares. Without it a
+    FIPS-enforcing OpenSSL build raises `ValueError` here and aborts the whole
+    chart refresh over a comparison that only ever decides whether a tile is
+    already up to date.
     """
-    digest = hashlib.md5()
+    digest = hashlib.md5(usedforsecurity=False)
     with open(path, 'rb') as handle:
         for block in iter(lambda: handle.read(chunk), b''):
             digest.update(block)
