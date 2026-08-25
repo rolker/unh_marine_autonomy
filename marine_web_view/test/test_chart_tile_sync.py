@@ -720,7 +720,8 @@ def test_the_client_config_is_what_reaches_botocore(tmp_path, monkeypatch):
             script.s3_client('ccom-jhc', **bad)
 
 
-def _run_main(script, monkeypatch, tmp_path, argv, held=None):
+def _run_main(script, monkeypatch, tmp_path, argv, held=None,
+              sync=None, manifest=None):
     """Run `main()` over stubbed CCOM and S3, returning what it wired up.
 
     `main()` had no test at all, which is how six mutations at its call sites
@@ -753,8 +754,8 @@ def _run_main(script, monkeypatch, tmp_path, argv, held=None):
 
     monkeypatch.setattr(script, 'lock_dir', _lock_dir)
     monkeypatch.setattr(script, 'acquire_run_lock', _acquire)
-    monkeypatch.setattr(script, 'sync_dir', _sync)
-    monkeypatch.setattr(script, 'update_manifest', _update)
+    monkeypatch.setattr(script, 'sync_dir', sync or _sync)
+    monkeypatch.setattr(script, 'update_manifest', manifest or _update)
     monkeypatch.setattr(script, 's3_client', lambda *a, **k: object())
     monkeypatch.setattr(script, 'load_manifest', lambda client: {})
     monkeypatch.setattr(
@@ -865,3 +866,53 @@ def test_the_wedged_lock_threshold_is_longer_than_a_real_run():
     """
     script = _load_script()
     assert script.LOCK_STALE_SECONDS == 6 * 3600
+
+
+def _boom(message='AccessDenied'):
+    """Return a raiser carrying an S3-shaped error response."""
+    def _raise(*args, **kwargs):
+        exc = RuntimeError('the call failed')
+        exc.response = {'Error': {'Code': message}}
+        raise exc
+    return _raise
+
+
+def test_a_failed_listing_reports_one_line_not_a_traceback(
+        tmp_path, monkeypatch, capsys):
+    """The listing raises AFTER the ~1 h crawl; cron mails what it prints.
+
+    Every other failure in `main()` is `print(..., file=sys.stderr)` plus
+    `return 1`. `sync_dir`'s opening `remote_etags` was the exception: an
+    `AccessDenied` or a transient list failure came out as a traceback, which
+    is what the operator's cron mail then contains.
+    """
+    script = _load_script()
+    argv = _MAIN_ARGV + ['--workdir', str(tmp_path / 'work')]
+
+    seen = _run_main(script, monkeypatch, tmp_path, argv,
+                     sync=_boom('AccessDenied'))
+    assert seen['exit'] == 1
+    err = capsys.readouterr().err
+    assert 'upload failed' in err and 'AccessDenied' in err, err
+    assert 'Traceback' not in err, err
+    assert not seen['manifest'], (
+        'the manifest must stay withheld when the upload never ran')
+
+
+def test_a_failed_manifest_publish_reports_one_line_not_a_traceback(
+        tmp_path, monkeypatch, capsys):
+    """A lock never won, or a strict read that failed, ends the run the same way.
+
+    The tiles are uploaded by then and the manifest simply does not say so;
+    the next run redoes the comparison. Exit status was already non-zero --
+    what was wrong was the traceback where every sibling path prints a line.
+    """
+    script = _load_script()
+    argv = _MAIN_ARGV + ['--workdir', str(tmp_path / 'work')]
+
+    seen = _run_main(script, monkeypatch, tmp_path, argv,
+                     manifest=_boom('SlowDown'))
+    assert seen['exit'] == 1
+    err = capsys.readouterr().err
+    assert 'manifest not published' in err and 'SlowDown' in err, err
+    assert 'Traceback' not in err, err

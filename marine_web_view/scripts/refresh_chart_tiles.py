@@ -509,6 +509,22 @@ def _is_missing_object(exc):
     return str(code) in MISSING_KEY_CODES
 
 
+def _describe_error(exc):
+    """One-line description of an S3/transport failure for cron mail.
+
+    The S3 error code is the useful half (`AccessDenied`, `SlowDown`) and it
+    lives in `exc.response`, not in `str(exc)` alone. Read off the same way
+    `_is_missing_object` does, so this file still imports without botocore.
+    """
+    response = getattr(exc, 'response', None)
+    code = None
+    if isinstance(response, dict):
+        code = (response.get('Error') or {}).get('Code')
+    if code:
+        return '{} ({}): {}'.format(type(exc).__name__, code, exc)
+    return '{}: {}'.format(type(exc).__name__, exc)
+
+
 def load_manifest(client, strict=False):
     """Return the tile manifest, or {} if it cannot be read.
 
@@ -908,9 +924,18 @@ def main():
         return 1
 
     print('\nuploading...')
-    sent, unchanged, up_failed = sync_dir(
-        client, outdir, BUCKET, f'tiles/{a.name}/', TILE_EXTRA_ARGS,
-        concurrency=a.concurrency, force=a.force)
+    try:
+        sent, unchanged, up_failed = sync_dir(
+            client, outdir, BUCKET, f'tiles/{a.name}/', TILE_EXTRA_ARGS,
+            concurrency=a.concurrency, force=a.force)
+    except Exception as e:
+        # The listing that opens sync_dir (`remote_etags`) is the one call in
+        # here that can raise outright -- an AccessDenied or a transient list
+        # failure, arriving AFTER the ~1 h crawl. Exit status and the withheld
+        # manifest are already right; what a bare traceback gets wrong is the
+        # cron mail, where every other failure in this script is one line.
+        print(f'upload failed: {_describe_error(e)}', file=sys.stderr)
+        return 1
     print(f'uploaded {sent}, unchanged {unchanged}, failed {up_failed}')
     if up_failed:
         # All-or-nothing, as `aws s3 sync` was: the manifest is what tells the
@@ -929,7 +954,15 @@ def main():
     # Re-read and merge under a lock rather than rewriting the dict this run
     # read an hour ago: another --name may have published in the meantime,
     # and dropping its entry costs it a full re-crawl of CCOM.
-    update_manifest(client, a.name, entry)
+    try:
+        update_manifest(client, a.name, entry)
+    except Exception as e:
+        # A lock we never won, or a strict read that failed: the tiles ARE
+        # uploaded, but the manifest does not say so, so the next run redoes
+        # the comparison and republishes. Same one-line report as every other
+        # failure path rather than a traceback in the cron mail.
+        print(f'manifest not published: {_describe_error(e)}', file=sys.stderr)
+        return 1
     print(f'done: {written} tiles ({skipped} blank skipped, {failed} failed)')
     return 0
 
