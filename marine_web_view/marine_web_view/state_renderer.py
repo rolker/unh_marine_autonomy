@@ -613,9 +613,15 @@ class StateRenderer(Node):
         A failure is counted (by the worker) and logged, never raised: the
         next tick offers the object again, because `confirmed` still reports
         the older stamp. Same behaviour the CLI shell-out this replaced had.
+
+        Throttled to match `_queue`/`stop`: the failure that actually happens
+        on a first deployment is a persistent one (`AccessDenied` on a
+        prefix-scoped IAM policy, `NoSuchBucket` on a typo), and it recurs
+        every tick. Unthrottled that is one ERROR per second for the length
+        of the run, which buries every other line in the log.
         """
         self.get_logger().error('upload of {} failed: {}'.format(
-            key, describe_error(exc)))
+            key, describe_error(exc)), throttle_duration_sec=30.0)
 
 
 def main(args=None):
