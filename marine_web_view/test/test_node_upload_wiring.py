@@ -307,3 +307,32 @@ def test_a_dead_upload_worker_reaches_the_operator(live_node):
         assert any('died' in line for line in logged), logged
     finally:
         node.destroy_node()
+
+
+def test_a_failed_state_renderer_constructor_still_shuts_rclpy_down(
+        monkeypatch):
+    """The constructor now builds the S3 client, so it can raise.
+
+    `profile` and `region` come from the launch file, and a typo in either
+    raises `ProfileNotFound`/`NoRegionError` out of `_boto3_client` -- from
+    `__init__`, where the client is now built. Constructing outside the
+    `try` would skip the `finally` and leave the rclpy context initialised,
+    so the process exits with a live context and no `shutdown()`. The
+    coverage renderer already guards this; both nodes must.
+    """
+    shutdowns = []
+    monkeypatch.setattr(state_renderer.rclpy, 'init',
+                        lambda args=None: None)
+    monkeypatch.setattr(state_renderer.rclpy, 'ok', lambda: True)
+    monkeypatch.setattr(state_renderer.rclpy, 'shutdown',
+                        lambda: shutdowns.append(True))
+
+    def _explode():
+        raise RuntimeError('ProfileNotFound: p11-rendrer')
+
+    monkeypatch.setattr(state_renderer, 'StateRenderer', _explode)
+
+    with pytest.raises(RuntimeError):
+        state_renderer.main()
+    assert shutdowns == [True], (
+        'the rclpy context was left initialised by a constructor failure')

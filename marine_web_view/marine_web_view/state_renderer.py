@@ -621,18 +621,24 @@ class StateRenderer(Node):
 def main(args=None):
     """Spin the state renderer until interrupted."""
     rclpy.init(args=args)
-    node = StateRenderer()
+    node = None
     try:
+        # Construction inside the try: the constructor now builds the S3
+        # client, so a bad profile or region (ProfileNotFound, NoRegionError)
+        # or a missing SDK would otherwise skip the finally entirely and
+        # leave rclpy initialised.
+        node = StateRenderer()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        node.stop()
-        writes, failures = node.upload_counts()
-        node.get_logger().info(
-            'stopping: {} writes, {} failures, {} unchanged'.format(
-                writes, failures, node._skipped))
-        node.destroy_node()
+        if node is not None:
+            node.stop()
+            writes, failures = node.upload_counts()
+            node.get_logger().info(
+                'stopping: {} writes, {} failures, {} unchanged'.format(
+                    writes, failures, node._skipped))
+            node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 
