@@ -165,9 +165,11 @@ SHUTDOWN_FLUSH_SECONDS = 30.0
 UPLOAD_READ_TIMEOUT = 25
 
 # How long `stop()` waits for the render thread to notice the stop event. The
-# thread checks it between tiles, so this only has to cover the request it is
-# already inside -- and it is a daemon thread, so losing the race costs a
-# warning and a skipped flush, never a hang.
+# thread checks it between tiles, so what this has to cover is the request it
+# is already inside PLUS the manifest PUT an aborted pass issues on its way
+# out (`truncated_render` -- see `_render_dirty`), which is one more unbudgeted
+# single request. It is a daemon thread, so losing the race costs a warning
+# and a skipped flush, never a hang.
 WORKER_JOIN_SECONDS = 10.0
 
 # How old the transform the chart-datum offset came from may get before the
