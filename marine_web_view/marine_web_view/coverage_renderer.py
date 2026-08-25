@@ -1216,8 +1216,17 @@ class CoverageRenderer(Node):
             # that looks plausible. Leave the tiles dirty and try next pass.
             self._publish_meta('waiting_for_chart_datum')
             return
+        published_before = self._rendered
         self._render_pending(abort)
         if abort():
+            if self._rendered == published_before:
+                # Nothing was PUT this pass -- the budget went in
+                # `_update_datum_offset` or ran out before the first tile.
+                # There is nothing to announce, and announcing anyway would
+                # replace a manifest that is still accurate with a
+                # `truncated_render` whose counts are the previous pass's.
+                # Same outcome as the abort at the top of this function.
+                return
             # Out of budget, with tiles already PUT. The manifest is what
             # ANNOUNCES them: the page refreshes its layer only when
             # `rendered_tiles` moves (see index.html's pollCoverage), so

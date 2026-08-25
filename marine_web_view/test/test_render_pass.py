@@ -438,8 +438,9 @@ def test_the_shutdown_flush_is_bounded():
     endpoint an unbounded flush is hours -- with the operator's Ctrl-C
     already spent. Past the deadline the remainder goes back in the dirty
     set, and nothing is published at all -- not even the manifest, because a
-    pass that aborted before it rendered anything has nothing to announce.
-    (A pass truncated part way through DOES publish its manifest; see
+    pass that rendered no tile has nothing to announce, whether it aborted
+    at the top or ran out of budget before the first upload. (A pass
+    truncated part way through DOES publish its manifest; see
     `test_a_stop_part_way_through_a_pass_returns_the_rest`.)
     """
     node = _Pass()
@@ -772,3 +773,45 @@ def test_the_shutdown_budget_is_small_enough_to_be_a_shutdown():
     """
     assert coverage_renderer.WORKER_JOIN_SECONDS == 10.0
     assert coverage_renderer.SHUTDOWN_FLUSH_SECONDS == 30.0
+
+
+def test_an_abort_before_the_first_tile_announces_nothing():
+    """`truncated_render` over a pass that PUT nothing is a false report.
+
+    The abort check at the top of `_render_dirty` is not the only way a pass
+    can render nothing: the budget can go in `_update_datum_offset()`, or run
+    out on `_render_pending`'s first check. Both used to publish
+    `truncated_render` with the PREVIOUS pass's counts -- replacing an
+    accurate manifest with a worse one, and, on the page, retiring a live
+    readout in favour of a status word about a pass that did nothing.
+    """
+    node = _Pass()
+    node._dirty.update((x, 0) for x in range(3))
+
+    # Aborts only once _render_pending asks, i.e. after the datum update and
+    # before the first tile -- the case the top-of-function check misses.
+    calls = []
+
+    def _abort():
+        calls.append(True)
+        return len(calls) > 1
+
+    node._render_dirty(_abort)
+    assert not node.uploads, 'a pass past its budget still uploaded a tile'
+    assert not node.meta, (
+        'a pass that rendered nothing published a truncated_render manifest')
+    assert len(node._dirty) == 3, 'the unrendered tiles were dropped'
+
+    # A pass that DID publish before aborting still announces, unchanged.
+    node = _Pass()
+    node._dirty.update((x, 0) for x in range(3))
+    calls = []
+
+    def _abort_after_one():
+        calls.append(True)
+        return len(calls) > 2
+
+    node._render_dirty(_abort_after_one)
+    assert len(node.uploads) == 1, node.uploads
+    assert node.meta and node.meta[-1]['status'] == 'truncated_render', (
+        'tiles were PUT and never announced')
