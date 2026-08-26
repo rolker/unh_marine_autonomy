@@ -1,0 +1,538 @@
+#!/usr/bin/env python3
+
+# Copyright 2026 Roland Arsenault
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+#    * Redistributions of source code must retain the above copyright
+#      notice, this list of conditions and the following disclaimer.
+#
+#    * Redistributions in binary form must reproduce the above copyright
+#      notice, this list of conditions and the following disclaimer in the
+#      documentation and/or other materials provided with the distribution.
+#
+#    * Neither the name of the Roland Arsenault nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+"""Render tracked AIS contacts to static GeoJSON for the public web view.
+
+Third renderer in this package, and deliberately the same shape as the other
+two: the same bucket/key/profile/dry_run/local_path/interval surface, the same
+AsyncUploader upload path, the same "publish only when something changed" tick.
+The public page shows BizzyBoat surrounded by nothing; this puts the traffic
+around it on the map.
+
+Source is `marine_ais_msgs/AISContact` on `/ais/contacts`, published on the
+ROC desktop ashore by the nmea_relay -> ais_parser -> ais_contact_tracker
+chain. The tracker republishes the whole accumulated contact on every position
+report, so the newest message per MMSI is the whole truth about that contact
+and there is no out-of-order history to reconcile (unlike state_renderer's
+track).
+
+Everything a viewer sees is one object: one FeatureCollection for all
+contacts, written when the set or its contents change. An idle river with the
+boat on the trailer costs zero S3 PUTs.
+
+Two things this node has to get right that are invisible in a good run:
+
+* **A contact with no position.** ais_parser writes NaN lat/lon when a
+  position report carries none, the tracker copies the pose and publishes it
+  anyway, and `json.dumps` emits a bare `NaN` token that `JSON.parse` rejects
+  outright -- so ONE such contact would break the AIS layer for every viewer.
+  Those contacts are dropped here, and `allow_nan=False` sits behind that as a
+  backstop so a future path that reintroduces it fails loudly in this process
+  rather than silently on everyone's page.
+* **"No heading" versus "heading due east."** An unreported AIS true heading
+  leaves an identity (or null) quaternion behind, which reads as a perfectly
+  good yaw of zero -- due east in ENU. The tracker records what was actually
+  reported in the yaw covariance, so that is what is tested here, the same way
+  ais_layer.cpp does for the costmap.
+
+See rolker/unh_marine_autonomy#357.
+"""
+
+import json
+import math
+import time
+
+from marine_ais_msgs.msg import AISContact
+
+from marine_web_view.renderer_common import compass_degrees
+from marine_web_view.renderer_common import heading_from_quaternion
+from marine_web_view.renderer_common import write_atomic
+from marine_web_view.s3_upload import AsyncUploader
+from marine_web_view.s3_upload import describe_error
+from marine_web_view.s3_upload import S3Uploader
+
+import rclpy
+from rclpy.node import Node
+
+# Same reasoning, same value as state_renderer's: not a per-PUT ceiling, just
+# what stops one dead connection from occupying the upload worker forever.
+UPLOAD_READ_TIMEOUT = 15
+
+# How long `stop()` waits for the worker to finish the PUT it is inside. A
+# daemon thread, so an unwinnable join costs a warning, not a hang.
+UPLOAD_STOP_SECONDS = 5.0
+
+# Index of the yaw (rotation about UP) variance in the row-major 6x6
+# covariance AISContact carries. 5 * 6 + 5.
+COV_YAW = 35
+
+# Variance at or above which the yaw covariance is read as "no heading was
+# reported". A decade below the tracker's `unknown_variance` stand-in (1e6),
+# exactly as ais_layer.cpp's own threshold is, and for the same reason: the
+# sentinel must still read as unknown if the two configurations drift, and no
+# real AIS heading variance comes anywhere near this.
+DEFAULT_HEADING_VARIANCE_THRESHOLD = 1.0e5
+
+# One knot in metres per second.
+KNOT = 0.514444
+
+# Below this speed the reported course is not recoverable. ais_parser encodes
+# course over ground as the DIRECTION of the velocity vector (linear.x/y), so
+# at a speed of zero both components are zero and the course is gone -- and
+# atan2(0, 0) is 0.0, which would be published as a confident "heading east".
+MIN_COURSE_SPEED = 0.01
+
+
+def _clean(text):
+    """Return a display string, or None if AIS said "not available".
+
+    ITU-R M.1371 pads the name and call sign fields with '@'. Depending on the
+    decoder those arrive either stripped to empty or still padded, and both
+    mean the same thing: nothing has been received yet. The page renders None
+    as "static info pending", which is a true statement about a contact seen
+    by position report only.
+    """
+    if not text:
+        return None
+    cleaned = str(text).replace('@', ' ').strip()
+    return cleaned or None
+
+
+def vessel_dimensions(static_info):
+    """Return the hull block the page's hullShape() already understands.
+
+    AIS reports four reference dimensions -- A/B/C/D, distance from the
+    reported position to bow, stern, port and starboard. The page draws a hull
+    from a length/width plus the offset of the reference point from the hull
+    centre, which is the form marine_interfaces/PlatformList uses and which
+    `hullShape()` is already written against. Converting here rather than
+    sending AISContact.footprint means the page draws AIS contacts through the
+    exact same, already-tested function it draws BizzyBoat with, instead of a
+    second copy of the rotate-and-translate maths that turns a body-frame
+    polygon into map coordinates.
+
+    A = B = C = D = 0 is the standard's "dimensions not available", and it
+    falls out of this as an all-zero block -- which `hullShape()` already
+    handles by drawing its triangle or circle instead of a hull.
+    """
+    bow = float(static_info.reference_to_bow_distance)
+    stern = float(static_info.reference_to_stern_distance)
+    port = float(static_info.reference_to_port_distance)
+    starboard = float(static_info.reference_to_starboard_distance)
+    length = bow + stern
+    width = port + starboard
+    # hullShape() computes toBow = length / 2 - reference_x, so the offset
+    # that reproduces A is (B - A) / 2; likewise (D - C) / 2 across the beam.
+    return {
+        'length': length,
+        'width': width,
+        'reference_x': (stern - bow) / 2.0,
+        'reference_y': (starboard - port) / 2.0,
+    }
+
+
+def heading_degrees(contact, variance_threshold):
+    """Return the reported true heading in degrees, or None if none was.
+
+    The quaternion alone cannot answer this: an unreported heading leaves
+    either the identity quaternion (yaw 0, due east in ENU) or the null
+    quaternion behind, and the first is indistinguishable from a vessel
+    genuinely heading east. ais_contact_tracker folds "was a heading
+    reported" into the yaw covariance, and that is what ais_layer.cpp tests
+    (ais_layer.cpp:548-551); this mirrors it.
+    """
+    variance = contact.covariance[COV_YAW]
+    if not (math.isfinite(variance) and 0.0 < variance < variance_threshold):
+        return None
+    q = contact.pose.orientation
+    # The null quaternion ais_parser writes for an absent heading is not a
+    # rotation at all, and normalising it is a division by zero.
+    if q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w < 1e-6:
+        return None
+    heading = heading_from_quaternion(q)
+    return heading if math.isfinite(heading) else None
+
+
+def speed_and_course(contact):
+    """Return (speed in knots, course in degrees true), either may be None.
+
+    ais_parser writes NaN into the velocity when the report carried no SOG or
+    COG, so an absent velocity is missing rather than merely uncertain. It
+    also encodes course as the direction of that vector, which means a
+    stationary contact has no recoverable course -- reporting one anyway
+    would publish `atan2(0, 0)`, i.e. a confident due east.
+    """
+    east = contact.twist.twist.linear.x
+    north = contact.twist.twist.linear.y
+    if not (math.isfinite(east) and math.isfinite(north)):
+        return None, None
+    speed = math.hypot(east, north)
+    course = (None if speed < MIN_COURSE_SPEED
+              else round(compass_degrees(math.atan2(north, east)), 1))
+    return round(speed / KNOT, 1), course
+
+
+class AisRenderer(Node):
+    """Publish tracked AIS contacts as one GeoJSON artifact."""
+
+    def __init__(self):
+        """Declare parameters, subscribe to contacts, start the timer."""
+        super().__init__('ais_renderer')
+
+        self.declare_parameter('contacts_topic', '/ais/contacts')
+        self.declare_parameter('bucket', 'unh-ccom-p11-live')
+        self.declare_parameter('key', 'live/ais.geojson')
+        self.declare_parameter('profile', 'p11-renderer')
+        # AIS contacts do not need the position topic's 1 Hz, and every tick
+        # that publishes is an S3 PUT (see the README's Cost section).
+        self.declare_parameter('interval', 10.0)
+        self.declare_parameter('dry_run', False)
+        self.declare_parameter('local_path', '/tmp/ais.geojson')
+        # Generous on purpose. A shore receiver cannot tell a contact that
+        # left from one that dropped below VHF range, and on a human-facing
+        # display a marker flapping out and back on every reporting gap is
+        # worse than a slightly stale one. Deliberately well above ais_layer's
+        # own 90-180 s class-A/B costmap timeouts, which protect motion
+        # planning and must react fast to a contact going stale.
+        self.declare_parameter('contact_timeout', 600.0)
+        self.declare_parameter('heading_variance_threshold',
+                               DEFAULT_HEADING_VARIANCE_THRESHOLD)
+
+        self.contacts_topic = self._param('contacts_topic')
+        self.bucket = self._param('bucket')
+        self.key = self._param('key')
+        self.profile = self._param('profile')
+        self.interval = float(self._param('interval'))
+        self.dry_run = bool(self._param('dry_run'))
+        self.local_path = self._param('local_path')
+        self.contact_timeout = float(self._param('contact_timeout'))
+        self.heading_variance_threshold = float(
+            self._param('heading_variance_threshold'))
+
+        self._contacts = {}
+        self._writes = 0
+        self._failures = 0
+        self._skipped = 0
+        self._last_written = None
+        # MMSIs already reported as position-less. A shore receiver hears a
+        # silent AIS beacon every few seconds for as long as it is switched
+        # on, so an unthrottled line here is a log nobody can read.
+        self._positionless = set()
+
+        # Same gate, same reasoning as the other two renderers: a dry run
+        # writes to local_path and needs no AWS access at all, so no client is
+        # built. `profile` is passed through UNCOALESCED, as state_renderer
+        # does -- an operator who blanks it should fail loudly rather than
+        # silently pick up whatever credentials the host carries.
+        #
+        # UPLOADS DO NOT RUN ON THIS THREAD: the payload goes to an
+        # AsyncUploader, so a slow S3 endpoint cannot stop contact messages
+        # being recorded.
+        self._uploader = (None if self.dry_run else
+                          S3Uploader(self.bucket, profile=self.profile,
+                                     read_timeout=UPLOAD_READ_TIMEOUT))
+        self._sender = (None if self.dry_run else
+                        AsyncUploader(self._uploader,
+                                      log_error=self._log_upload_failure))
+
+        self.create_subscription(
+            AISContact, self.contacts_topic, self._on_contact, 10)
+        self.create_timer(self.interval, self._tick)
+
+        target = (self.local_path if self.dry_run
+                  else 's3://{}/{}'.format(self.bucket, self.key))
+        self.get_logger().info(
+            '{} -> {} every {}s, dropping contacts unheard for {:g}s{}'.format(
+                self.contacts_topic, target, self.interval,
+                self.contact_timeout,
+                ' (dry run)' if self.dry_run else ''))
+
+    def _param(self, name):
+        """Return a declared parameter's value."""
+        return self.get_parameter(name).value
+
+    def _now(self):
+        """Return the current time in seconds, on the header stamps' clock."""
+        return self.get_clock().now().nanoseconds * 1e-9
+
+    def _on_contact(self, msg):
+        """Record the newest report for one MMSI.
+
+        Newest wins by construction: the tracker republishes the whole
+        accumulated contact -- position report plus whatever static and voyage
+        data it has seen -- on every position report, so the latest message is
+        the complete state of that contact.
+
+        A contact with no usable position is refused here rather than filtered
+        at render time, so nothing that cannot be drawn is ever held.
+        """
+        position = msg.pose.position
+        if not (math.isfinite(position.latitude) and
+                math.isfinite(position.longitude)):
+            if msg.id not in self._positionless:
+                self._positionless.add(msg.id)
+                self.get_logger().info(
+                    'MMSI {} reports no position; not shown on the map '
+                    '(logged once per contact)'.format(msg.id))
+            return
+        self._positionless.discard(msg.id)
+        self._contacts[msg.id] = msg
+
+    def _stamp(self, contact):
+        """Return one contact's header stamp in seconds."""
+        stamp = contact.header.stamp
+        return stamp.sec + stamp.nanosec * 1e-9
+
+    def _expire(self, now):
+        """Drop contacts unheard from for longer than contact_timeout.
+
+        Pruned from the dict, not merely excluded from the snapshot: memory
+        stays bounded over a long shore watch, and an MMSI that ages out and
+        later reappears is simply a fresh entry with no stale state behind it.
+        """
+        expired = [mmsi for mmsi, contact in self._contacts.items()
+                   if now - self._stamp(contact) > self.contact_timeout]
+        for mmsi in expired:
+            del self._contacts[mmsi]
+        return expired
+
+    def _features(self):
+        """Return one GeoJSON Feature per held contact, ordered by MMSI.
+
+        Ordered so that the change detection in `_tick` compares like with
+        like: dict order follows arrival, so an unordered list would look
+        different on every tick that merely re-heard a contact.
+        """
+        features = []
+        for mmsi in sorted(self._contacts):
+            contact = self._contacts[mmsi]
+            position = contact.pose.position
+            stamp = self._stamp(contact)
+            speed, course = speed_and_course(contact)
+            features.append({
+                'type': 'Feature',
+                # GeoJSON orders coordinates [LONGITUDE, LATITUDE], the
+                # reverse of Leaflet's L.marker([lat, lng]).
+                'geometry': {
+                    'type': 'Point',
+                    'coordinates': [round(position.longitude, 6),
+                                    round(position.latitude, 6)],
+                },
+                'properties': {
+                    'role': 'ais',
+                    'mmsi': int(mmsi),
+                    # None until a type 5 or 24 message has been heard: a
+                    # contact known by position alone is the ordinary case
+                    # for the first minutes after it comes into range.
+                    'name': _clean(contact.static_info.name),
+                    'callsign': _clean(contact.static_info.callsign),
+                    'ship_and_cargo_type': int(
+                        contact.static_info.ship_and_cargo_type),
+                    'navigational_status': int(
+                        contact.navigational_status.status),
+                    'speed_knots': speed,
+                    'course_deg': course,
+                    'heading_deg': heading_degrees(
+                        contact, self.heading_variance_threshold),
+                    'stamp': stamp,
+                    'stamp_iso': time.strftime('%Y-%m-%dT%H:%M:%SZ',
+                                               time.gmtime(stamp)),
+                    'vessel': vessel_dimensions(contact.static_info),
+                },
+            })
+        return features
+
+    def _geojson(self, features):
+        """Return the FeatureCollection payload for `features`.
+
+        `allow_nan=False` is the backstop behind the position check in
+        `_on_contact`: a NaN anywhere in this object would be serialised as a
+        bare `NaN` token, which `JSON.parse` rejects -- so one bad contact
+        would blank the AIS layer for every viewer. Failing here instead
+        breaks one upload, in a process with a log, rather than the page.
+        """
+        return json.dumps({
+            'type': 'FeatureCollection',
+            'features': features,
+            'properties': {
+                'role': 'ais',
+                'contacts': len(features),
+                # When this artifact was last REBUILT, which is when the
+                # contacts last changed -- not every tick. Publishing on an
+                # unchanged set would pay an S3 PUT to say nothing happened
+                # (see the README's Cost section), so an unchanging
+                # `generated` means "nothing has changed since", not
+                # necessarily "the renderer is alive". Contact age comes from
+                # each feature's own `stamp`.
+                'generated': time.strftime('%Y-%m-%dT%H:%M:%SZ',
+                                           time.gmtime()),
+            },
+        }, separators=(',', ':'), allow_nan=False)
+
+    def _tick(self):
+        """Publish the contact set if it has changed since the last write."""
+        now = self._now()
+        expired = self._expire(now)
+        if expired:
+            self.get_logger().info(
+                'dropping {} contact(s) unheard for {:g}s: {}'.format(
+                    len(expired), self.contact_timeout,
+                    ', '.join(str(mmsi) for mmsi in sorted(expired))))
+
+        features = self._features()
+        # The signature is the features themselves, so any property a viewer
+        # can see moving the map -- a position, a speed, a name that has just
+        # arrived -- publishes, and nothing else does. Compared against what
+        # actually LANDED, not against what was handed to the uploader: an
+        # accepted payload is not a published one.
+        signature = json.dumps(features, separators=(',', ':'),
+                               allow_nan=False, sort_keys=True)
+        if signature == self._written_signature():
+            self._skipped += 1
+            self.get_logger().info(
+                '{} contact(s) unchanged for {} ticks -- not uploading'.format(
+                    len(features), self._skipped),
+                throttle_duration_sec=60.0)
+            return
+        if self._skipped:
+            self.get_logger().info(
+                'contacts changed after {} idle ticks'.format(self._skipped))
+            self._skipped = 0
+
+        payload = self._geojson(features)
+        if self.dry_run:
+            write_atomic(self.local_path, payload)
+            self._last_written = signature
+            self._writes += 1
+        else:
+            self._queue(payload, signature)
+
+    def _written_signature(self):
+        """Return the signature of the artifact last CONFIRMED written.
+
+        On a dry run that is the last atomic write; otherwise the last PUT the
+        worker actually completed. Both are "what a viewer can see", which is
+        what the change detection is asking about.
+        """
+        if self.dry_run:
+            return self._last_written
+        return self._sender.confirmed(self.key)
+
+    def _queue(self, payload, signature):
+        """Offer the artifact to the upload worker; never touches the network.
+
+        Latest-wins per key (see AsyncUploader), so a slow endpoint costs
+        superseded snapshots rather than a growing backlog of stale ones.
+        Cache-Control drives CloudFront freshness; invalidation is
+        deliberately not used, being billed per path.
+        """
+        accepted = self._sender.submit(
+            payload.encode(), self.key, 'application/geo+json',
+            'max-age={}'.format(max(1, int(self.interval))), tag=signature)
+        if not accepted:
+            reason = self._sender.dead()
+            if reason is not None:
+                self.get_logger().error(
+                    'upload worker is dead ({}); {} is no longer reaching '
+                    'S3, so the AIS layer is frozen at whatever it last '
+                    'showed'.format(reason, self.key),
+                    throttle_duration_sec=30.0)
+            else:
+                self.get_logger().error(
+                    'upload worker refused {}: more keys in flight than slots'
+                    .format(self.key), throttle_duration_sec=30.0)
+        return accepted
+
+    def upload_counts(self):
+        """Return (writes, failures) across the local and S3 paths."""
+        if self._sender is None:
+            return self._writes, self._failures
+        writes, failures, _ = self._sender.counts()
+        return self._writes + writes, self._failures + failures
+
+    def stop(self):
+        """Stop the upload worker. Bounded, and never raises.
+
+        Called from `main()`'s `finally`, so it must not be the reason
+        `destroy_node()` is skipped.
+        """
+        if self._sender is None:
+            return
+        if not self._sender.stop(timeout=UPLOAD_STOP_SECONDS):
+            reason = self._sender.dead()
+            if reason is not None:
+                self.get_logger().error(
+                    'upload worker died before shutdown ({}); anything '
+                    'published after that never reached S3'.format(reason))
+            else:
+                self.get_logger().warn(
+                    'upload worker still inside a request after {:g} s; '
+                    'abandoning it'.format(UPLOAD_STOP_SECONDS))
+
+    def _log_upload_failure(self, key, exc):
+        """Report one failed PUT. CALLED ON THE UPLOAD WORKER THREAD.
+
+        Counted and logged, never raised: the next tick offers the snapshot
+        again, because `confirmed` still reports the older signature.
+        Throttled for the same reason state_renderer's is -- the failure that
+        actually happens on a first deployment is a persistent one and it
+        recurs every tick.
+        """
+        self.get_logger().error('upload of {} failed: {}'.format(
+            key, describe_error(exc)), throttle_duration_sec=30.0)
+
+
+def main(args=None):
+    """Spin the AIS renderer until interrupted."""
+    rclpy.init(args=args)
+    node = None
+    try:
+        # Construction inside the try: the constructor builds the S3 client,
+        # so a bad profile or region (ProfileNotFound, NoRegionError) or a
+        # missing SDK would otherwise skip the finally entirely and leave
+        # rclpy initialised.
+        node = AisRenderer()
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if node is not None:
+            node.stop()
+            writes, failures = node.upload_counts()
+            node.get_logger().info(
+                'stopping: {} writes, {} failures, {} unchanged'.format(
+                    writes, failures, node._skipped))
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
