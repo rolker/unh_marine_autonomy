@@ -114,3 +114,116 @@ scope/non-goals/decision list.
 - [ ] (suggestion) ADR-0004 is triggered-and-satisfied, not untriggered: D5 names AIS among the observations that project up into `marine_interfaces/Contact`, and `marine_contacts` already ships `export_contacts_geojson`. No AIS→Contact projector exists in this repo (verified by grep), so subscribing to `AISContact` directly is the right call — but record it as triggered with that reason rather than "No" — `plan.md:186-192`
 - [ ] (suggestion) Repo PRINCIPLES.md "Simulation-First Validation": verification is unit tests plus a live pandy pass. Name a replayable input (a `ros2 bag` of `/ais/contacts`, or `ais_parser` fed a recorded NMEA log) so expiry and the page can be exercised without waiting for live traffic — `plan.md:210-220`
 - [ ] (suggestion) Nothing distinguishes "no AIS traffic" from "ais_renderer is dead": per-contact `stamp`s age contacts but not the artifact. A top-level `generated` in the FeatureCollection properties (`state_renderer` puts one on every feature) would let the page say so, matching `test_a_dead_renderer_is_reported_rather_than_hidden`'s intent — `plan.md:44-52`
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-26 02:35 +0000
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-357/plan.md` at `17d1f39` (including its
+binding `## Plan Review response`)
+**Branch**: feature/issue-357, `da8934e..43e02f1` (5 commits, not pushed)
+
+### Actions
+
+Five atomic commits, each leaving the package's own suite green:
+
+- `da8934e` **refactor: share the compass conversion and the atomic write.**
+  The operator's scope call. `renderer_common.py` now holds `compass_degrees`,
+  `yaw_from_quaternion`, `heading_from_quaternion` and `write_atomic`;
+  `state_renderer` imports them. A move, not a rewrite — no behaviour changed
+  and `state_renderer`'s existing tests were not touched. New
+  `test_renderer_common.py` pins the DIRECTION of the conversion (the four
+  cardinal points, where a sign flip is unambiguous) and that the temp file is
+  a sibling of its target, neither of which any existing test bound.
+- `48e5c4d` **feat: `ais_renderer`.** Subscribes `marine_ais_msgs/AISContact`
+  on `/ais/contacts`, publishes one `FeatureCollection` for all contacts on the
+  same `bucket`/`key`/`profile`/`dry_run`/`local_path`/`interval` surface and
+  the same `AsyncUploader` path as the two sibling renderers, gated on the
+  contact set actually changing. Plus `setup.py` console_scripts,
+  `package.xml` `<depend>marine_ais_msgs</depend>`, the `marine_ais` entry in
+  `dependencies.repos` (with its now-stale header comment rewritten), a
+  20-test `test_ais_renderer.py`, and the dry-run and upload-wiring guards
+  extended to the third node rather than left enumerating two.
+- `3790fb5` **feat: launch file + README.** Every node parameter exposed,
+  forwarded and documented in a table; `ais_renderer` added to
+  `test_launch_params.py`'s `PAIRS`. README gains the node section, the expiry
+  rationale, the two invisible-in-a-good-run failure modes, and a `## Cost`
+  rewrite covering three PUT streams plus the per-viewer GET stream.
+- `0402d09` **feat: the page.** `L.layerGroup` of per-MMSI hulls from
+  `live/ais.geojson` on its own 10 s poll, drawn through the *same*
+  `hullShape()` the vessel uses, rebuilt on `zoomend` as `drawBoat` is, with an
+  **AIS traffic** checkbox that hides the group rather than stopping the poll,
+  and a per-contact popup built from text nodes (names arrive over the air).
+- `43e02f1` **docs: replayable inputs** — a bag of `/ais/contacts`, or a
+  recorded NMEA log through `ais_parser`.
+
+Every item of the Plan Review response landed:
+
+- **NaN positions.** Contacts with a non-finite lat/lon are refused in
+  `_on_contact` (so nothing undrawable is ever held), logged **once per MMSI**
+  with the record cleared if the contact later reports a position, and
+  `json.dumps(..., allow_nan=False)` sits behind that as a backstop. Four tests
+  cover it, including that no bare `NaN` token reaches the artifact.
+- **`setup.py`.** Entry point added; verified installed as
+  `install/marine_web_view/lib/marine_web_view/ais_renderer` and resolved by
+  the launch file in a real run (below).
+- **`test_page_layers.py` extended, not marked.** `L.layerGroup` added to
+  `_VECTOR_CONSTRUCTIONS`, and `test_every_vector_layer_reaches_the_map` now
+  accepts `.addTo(<group>)` — but only for a group that itself reaches the map
+  on the same terms as any other layer, which `_mapped_layer_groups` and a
+  guard-the-guard test enforce, so an orphaned group cannot launder its
+  contents. A third test pins that the page's own AIS hulls actually take that
+  route, so the broadened rule stays tethered to something.
+- **Shared helper extracted** (above), plus the adopted suggestions: `zoomend`
+  redraw, `heading_variance_threshold` as its own node parameter/launch
+  argument/README row, the `## Cost` rewrite, the `dependencies.repos` header,
+  and a top-level `generated` — documented honestly as "when the artifact was
+  last rebuilt", since the change gate means it is not a liveness signal.
+
+### Verification
+
+- `colcon test --packages-select marine_web_view` from this worktree's
+  `core_ws`, after `colcon build`: **239 tests, 0 errors, 0 failures, 0
+  skipped**. `marine_ais_msgs` had to be built first (`colcon build
+  --packages-select marine_ais_msgs`) — nothing in the workspace had it built.
+- The package's own `test_flake8`, `test_pep257` and `test_copyright` are part
+  of that run and are green.
+- **The extended page guard still bites.** Four mutations run individually
+  against `test_page_layers.py`, each restored afterwards: orphaning the AIS
+  layer group, removing `.addTo(aisLayer)` from the hulls, orphaning the trail
+  polyline, and orphaning the boat's own hull polygon. All four fail the guard
+  (the second fails two tests). Restored, 17 pass.
+- `node --check` on the page's inline script: clean. `shipTypeText`/
+  `NAV_STATUS` exercised directly under node for the code paths a popup takes.
+- **End-to-end over a real ROS topic** (domain 101): launched
+  `ais_renderer_launch.py dry_run:=true interval:=1.0`, published one
+  `AISContact` with `ros2 topic pub`, and read the artifact back. The launch
+  file resolved `executable='ais_renderer'`; the contact rendered with
+  `heading_deg: null` (null quaternion plus the unknown-variance sentinel),
+  `speed_knots`/`course_deg` `null` (NaN twist), and A=20/B=8/C=D=4 converting
+  to `length 28, reference_x -6` — which puts `length/2 - reference_x` back on
+  A=20, i.e. the form `hullShape()` takes. The change gate logged "unchanged
+  for 1 ticks -- not uploading" while idle and "contacts changed after 3 idle
+  ticks" when the contact arrived.
+
+### Not verified here
+
+- **The end-to-end run on pandy against the live shore feed.** Needs that host
+  and a live receiver; expected to remain unverified at this stage. What that
+  pass still has to settle: the `contact_timeout` (600 s) and `interval`
+  (10 s) defaults against observed Piscataqua traffic density — both are this
+  plan's judgment calls, not values pinned by the issue.
+- **The page in a browser.** There is no JS test runner in this package, so
+  the AIS layer is bound by the textual guards in `test_page_layers.py` and by
+  a `node --check` of the script — not by anything that renders a hull. The
+  popup's DOM construction in particular has never been executed.
+- **The real S3 path.** Every upload test uses a recording stand-in for
+  `S3Uploader`; no PUT has been made against the bucket, and the `p11-renderer`
+  profile's `live/*` scope has not been exercised for `live/ais.geojson`.
+
+### Next step
+
+Review the diff (`/review-code --issue 357`), then the pandy pass: run
+`ais_renderer_launch.py` beside `ais_contact_tracker`, watch the artifact and
+the page against live traffic, and confirm or revise the two timing defaults.
