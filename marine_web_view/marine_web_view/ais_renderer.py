@@ -167,10 +167,12 @@ MIN_COURSE_SPEED = 0.01
 # include the bidi overrides (U+202A-E, U+2066-9) and the zero-width joiners.
 # Those do not merely render badly: they REORDER neighbouring text, so a name
 # can be dressed to read in the popup as something other than what it is. Cs
-# is an unpaired surrogate, which json.dumps will happily emit and a strict
-# parser will reject -- the same class of failure as the bare NaN token, and
-# the artifact is one object for every viewer. Zl/Zp are the line and
-# paragraph separators.
+# is an unpaired surrogate: NOT the bare-NaN class of failure, because
+# `json.dumps` defaults to ensure_ascii=True and escapes it to \ud800, which
+# encodes cleanly and which JSON.parse accepts. It is dropped for the smaller
+# reasons -- it is not a character, it renders as a replacement glyph, and it
+# is one `ensure_ascii=False` away from a UnicodeEncodeError that would take
+# out the whole artifact. Zl/Zp are the line and paragraph separators.
 _UNPRINTABLE = frozenset(('Cc', 'Cf', 'Cs', 'Zl', 'Zp'))
 
 
@@ -186,8 +188,8 @@ def _clean(text):
     Names and call signs arrive over the air from anyone with a transmitter.
     The page already builds its popup out of text nodes, so this is not about
     markup -- it is that six-bit ASCII cannot carry a control or a bidi
-    override but the decoder in front of this can hand one over anyway, and
-    neither the page nor a strict JSON parser is the right place to find out.
+    override but the decoder in front of this can hand one over anyway, and a
+    public popup is not the right place to find out.
     Unprintables become spaces rather than vanishing, so nothing is silently
     glued into a different word, and runs of whitespace collapse.
     """

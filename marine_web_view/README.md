@@ -151,8 +151,11 @@ heard — the ordinary case for the first minutes after a contact comes into
 range, and what the page renders as *static info pending*. Both are scrubbed
 of control and bidi characters before they are published: the popup is built
 from text nodes so markup is already closed off, but a bidi override reorders
-the text around it, and an unpaired surrogate makes the whole object
-unparseable for every viewer at once.
+the text around it, so a name can be dressed to read as something other than
+what was transmitted. Unpaired surrogates go with them, for the smaller
+reason — they are not characters, they render as replacement glyphs, and they
+are one `ensure_ascii=False` away from a `UnicodeEncodeError` on the whole
+artifact.
 
 Uploads happen only when the contact set or its contents change — and a
 contact's `stamp` counts as its contents, because the page reads that stamp as

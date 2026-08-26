@@ -365,9 +365,12 @@ def test_a_name_cannot_carry_control_or_bidi_characters_to_the_popup(node):
     but six-bit ASCII cannot carry a bidi override and the decoder in front of
     this can hand one over anyway. Those characters REORDER what follows them,
     so a name can be dressed to read in a public popup as something other than
-    what was transmitted. An unpaired surrogate is the other half: json.dumps
-    emits it and a strict parser rejects the whole object, which is the bare
-    NaN failure again -- one contact, every viewer.
+    what was transmitted. An unpaired surrogate goes too, for the smaller
+    reason: it is not a character, it renders as a replacement glyph, and it
+    is one `ensure_ascii=False` away from a UnicodeEncodeError on the whole
+    artifact. It is NOT the bare-NaN failure -- `json.dumps` defaults to
+    ensure_ascii=True, which escapes it into plain ASCII that encodes cleanly
+    and that JSON.parse accepts.
     """
     assert ais_renderer._clean('TUG\u202eARTHUR') == 'TUG ARTHUR'
     assert ais_renderer._clean('TUG\x00\x07ARTHUR') == 'TUG ARTHUR'
