@@ -71,3 +71,46 @@ issue: 357
 ### Open questions
 - [ ] Prune `ais_renderer`'s in-memory contact dict on expiry (plan does), or retain indefinitely and only exclude from the published snapshot?
 - [ ] `contact_timeout` (600s) and `interval` (10s) defaults are judgment calls — sanity-check against observed Piscataqua AIS traffic during the pandy end-to-end verification pass.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-08-26 02:14 +0000
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-357/plan.md` at `75f2097`
+**PR**: PR-less (`--issue 357`, fresh-context sub-agent in the issue-357 layer worktree)
+**Verdict**: changes-requested
+
+Independent: the `## Plan Authored` entry above carries the same agent name but a
+different model (Claude Sonnet) and was written in a separate dispatch; this
+review is a fresh-context sub-agent, not the author re-reading their own work, so
+no self-review annotation is applied.
+
+Note: `gh` is unauthenticated in this worktree, so issue #357's body could not be
+fetched. Issue alignment was assessed against the `## Issue Review` entry above
+(scope assessment, actions, recommendations), which quotes the issue's own
+scope/non-goals/decision list.
+
+| Dimension | Verdict | Notes |
+|---|---|---|
+| Scope | Good | 11 listed files (12 with `setup.py`), one node + launch + page layer + doc/test consequences. Upper edge of a single PR but coherent and matched to the existing two-renderer pattern. |
+| Issue alignment | Good | Every decision the issue forced (expiry, cadence, geometry, popup content) is resolved with rationale, including a reasoned departure from the `review-issue` `footprint` recommendation. Both `review-issue` action items are picked up. |
+| File targeting | Concern | `setup.py` console_scripts entry is missing — the launch file cannot resolve `executable='ais_renderer'` without it. |
+| Consequences | Needs work | `setup.py`, the README `## Cost` section, and `dependencies.repos`'s own scoping comment are consequences not in the table. |
+| Documentation & instruction impact | Good | Section present and non-silent; instruction candidates explicitly "None — <reason>", correctly framed as a candidate decision rather than an auto-applied edit. |
+| Principle alignment | Needs work | "Test what breaks": the NaN-position case is unhandled and the `test_page_layers.py` claim is wrong. "Improve incrementally": a third copy of the REP-103 heading conversion is planned without saying so. |
+| ADR compliance | Needs work | ADR-0004 D5 names AIS as an observation that projects up into `marine_interfaces/Contact`; the table declares no ADR triggered. |
+| ROS conventions | Good | Mirrors `state_renderer`'s parameter surface, launch shape, BSD-3 header, and REP-103 heading handling; heading-availability test correctly follows `ais_layer.cpp:548-552` rather than the quaternion. |
+
+### Findings
+- [ ] (must-fix) `setup.py` console_scripts entry for `ais_renderer` missing from the Files to Change table — `ais_renderer_launch.py` cannot resolve `executable='ais_renderer'` without it (`setup.py:57-62`) — `plan.md:160-172`
+- [ ] (must-fix) NaN positions unhandled: `ais_parser.py:145-146` writes `math.nan` lat/lon when a position report carries none, `ais_contact_tracker` copies the pose and publishes anyway, and `json.dumps` emits a bare `NaN` token that `JSON.parse` rejects — one such contact breaks the whole AIS layer for every viewer. Add an explicit "drop contacts without a finite lat/lon" rule (plus `allow_nan=False` as a backstop) — `plan.md:44-52`
+- [ ] (must-fix) `test_every_vector_layer_reaches_the_map` does NOT apply unchanged: it requires each `L.polygon(...)` site to contain `.addTo(map)` in its own statement, or to be bound by an immediately-preceding `const NAME =` whose name later appears as `NAME.addTo(map)`. Per-MMSI hulls added to an `L.layerGroup` satisfy neither, so the plan as written turns a currently-green guard red; `L.layerGroup` is also absent from `_VECTOR_CONSTRUCTIONS`, leaving the group itself unguarded. The `test_page_layers.py` edit must extend the guard, not just add a marker string — `plan.md:98-103`
+- [ ] (suggestion) AIS hulls must redraw on `zoomend` as `drawBoat` does (`index.html:732`) — `hullShape()` is zoom-dependent, so rebuilding only on the 10 s poll leaves wrong-sized hulls for up to `AIS_MS` after a zoom — `plan.md:84-90`
+- [ ] (suggestion) Say whether the ENU-yaw→compass conversion (`state_renderer._heading_deg`), the matching course-from-twist conversion (`ais_parser.py:206-209` builds the twist as `cos/sin(radians(90 - cog))`), and `_write_atomic` are extracted to a shared module or re-implemented — a third private copy of the REP-103 conversion is the exact drift class this package's guards exist for — `plan.md:57-70`
+- [ ] (suggestion) The heading-known test needs its own threshold parameter: `ais_layer.cpp:548-551` compares `covariance[35]` against `unknown_variance_threshold_`, while `unknown_variance` is a *tracker* parameter (default 1e6) invisible to the renderer. A new node parameter means a launch arg and a README table row (`test_launch_params.py`) — implied but not listed — `plan.md:63-67`
+- [ ] (suggestion) README `## Cost` (`README.md:107-126`) is the package's stated S3 spend model and now gains a second PUT stream plus a per-viewer GET stream; the plan updates the README only for a node section and parameter table — `plan.md:111-116`
+- [ ] (suggestion) `dependencies.repos`'s header says "Scoped to the #228 marine_nav gap"; adding `marine_ais` (url `https://github.com/rolker/marine_ais.git`, version `jazzy`, per `config/repos/core.repos:6-9`) makes that comment stale — update it in the same edit — `plan.md:106-110`
+- [ ] (suggestion) ADR-0004 is triggered-and-satisfied, not untriggered: D5 names AIS among the observations that project up into `marine_interfaces/Contact`, and `marine_contacts` already ships `export_contacts_geojson`. No AIS→Contact projector exists in this repo (verified by grep), so subscribing to `AISContact` directly is the right call — but record it as triggered with that reason rather than "No" — `plan.md:186-192`
+- [ ] (suggestion) Repo PRINCIPLES.md "Simulation-First Validation": verification is unit tests plus a live pandy pass. Name a replayable input (a `ros2 bag` of `/ais/contacts`, or `ais_parser` fed a recorded NMEA log) so expiry and the page can be exercised without waiting for live traffic — `plan.md:210-220`
+- [ ] (suggestion) Nothing distinguishes "no AIS traffic" from "ais_renderer is dead": per-contact `stamp`s age contacts but not the artifact. A top-level `generated` in the FeatureCollection properties (`state_renderer` puts one on every feature) would let the page say so, matching `test_a_dead_renderer_is_reported_rather_than_hidden`'s intent — `plan.md:44-52`
