@@ -419,6 +419,57 @@ def test_the_pages_own_ais_hulls_are_reached_through_a_mapped_group():
         'are gone, and the group case above now guards nothing')
 
 
+def test_a_dead_ais_renderer_does_not_read_as_a_quiet_river():
+    """The AIS layer's only liveness signal is each contact's own stamp.
+
+    The collection's `generated` cannot serve as one: the renderer republishes
+    only when the contacts change, so on a quiet river it legitimately stops
+    moving. S3 goes on serving the last object with a 200 whatever happens
+    upstream, so a renderer that died an hour ago -- or a receiver that lost
+    its antenna -- leaves a confident fleet of hulls on the river forever, and
+    nothing on the page contradicts them. The fade and the readout are what
+    make "nothing is being received" different from "nothing is out there".
+    """
+    page = _code(_page())
+    assert 'AIS_STALE_S' in page, (
+        'no staleness threshold for AIS contacts: a contact that stopped '
+        'reporting is drawn exactly like one reporting now')
+    assert 'AIS_STALE_OPACITY' in page, (
+        'the AIS hulls have no degraded opacity, so a dead renderer presents '
+        "as live traffic -- the coverage layer's own failure mode")
+    assert re.search(r'aisStale\(', page), 'no contact-age test on the page'
+    assert re.search(r'dim\s*\?\s*AIS_STALE_OPACITY', page), (
+        'the hull opacity is not driven by the contact age')
+    assert re.search(r'Number\.isFinite\(\s*p\.stamp\s*\)', page), (
+        'the contact stamp is not checked for finiteness; a missing stamp '
+        'makes the age NaN, every age comparison false, and a dead renderer '
+        'reads as alive forever -- the manifest saneStamp() lesson')
+    assert re.search(r'catch[^{]*\{[^}]*aisAlive\s*=\s*false', page, re.S), (
+        'an unreachable AIS artifact leaves the hulls at full opacity')
+    assert re.search(r'if\s*\(\s*!r\.ok\s*\)\s*throw', page), (
+        'pollAis returns quietly on a non-ok response, so a 403 or a 500 is '
+        'indistinguishable from an empty river')
+
+
+def test_the_ais_readout_cannot_be_shadowed_by_a_contact_count():
+    """A contact count is a healthy-sounding way to report a dead renderer.
+
+    Same shape as coverageText's own bug: the age has to be decided before
+    anything cheerful is returned, or a stale fleet reads as live traffic
+    with a count to prove it.
+    """
+    page = _code(_page())
+    assert re.search(r'id="ais-age"', _page()), 'no AIS readout on the page'
+    body = re.search(r'function aisText\(\)\s*\{(.*?)\n\}', page, re.S)
+    assert body, 'aisText is no longer recognisable in the page'
+    text = body.group(1)
+    assert "'offline'" in text, (
+        'an unreachable artifact is not reported, so it reads as calm water')
+    assert 'stale' in text, 'the readout has no stale wording'
+    assert text.rindex('AIS_STALE_S') > text.index('contacts'), (
+        'the count is returned before the age is consulted')
+
+
 def test_the_coverage_layer_is_configured_from_the_manifest():
     """The page must not hardcode the zoom the renderer writes.
 

@@ -151,8 +151,11 @@ Uploads happen only when the contact set or its contents change, so an idle
 river with the boat on the trailer costs nothing. `generated` in the
 collection's properties is therefore when the artifact was last **rebuilt**,
 not the last tick: an unchanging value means "nothing has changed since", not
-necessarily "the renderer is alive". Contact age comes from each feature's own
-`stamp`.
+necessarily "the renderer is alive". Liveness comes from each feature's own
+`stamp` instead — the page fades a contact unheard for more than 5 minutes and
+reports the freshest contact's age in the readout, so a dead renderer (or a
+receiver that lost its antenna) is visibly different from a quiet river rather
+than a confident fleet of hulls that never moves again.
 
 ### Expiry
 
@@ -307,7 +310,17 @@ triangle/circle/hull rule the vessel has. The **AIS** checkbox in the readout
 hides and shows the group; the poll continues either way, so toggling costs
 nothing and re-showing is instant. Each contact carries a popup: name (or
 *static info pending* until a type 5 or 24 message has been heard), MMSI, call
-sign, ship and cargo type, navigational status, speed, course and heading.
+sign, ship and cargo type, navigational status, speed, course, heading, and
+how long ago it was last heard.
+
+**Staleness.** S3 serves the last AIS artifact with a cheerful `200` no matter
+what happened upstream, so the page has to decide liveness for itself. It does
+so from each contact's own `stamp`: past `AIS_STALE_S` (300 s — ITU reporting
+intervals top out at 3 minutes, so five is not "between reports") the hull is
+drawn faded, and the **AIS** readout leads with *stale* and the freshest
+contact's age. An artifact that cannot be fetched at all — missing, forbidden,
+5xx — reads as *offline* and fades everything, rather than passing for an empty
+river.
 
 Notes that are easy to get wrong and are commented at the point of use:
 
