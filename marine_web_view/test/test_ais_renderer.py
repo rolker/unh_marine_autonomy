@@ -540,6 +540,18 @@ def test_an_ignored_mmsi_is_never_published(tmp_path):
         rclpy.shutdown()
 
 
+def test_the_published_heading_is_rounded_like_its_neighbours():
+    """Speed and course are rounded to 1 dp; heading was not.
+
+    AIS transmits heading in whole degrees and the popup prints it to zero
+    decimal places, so the extra digits are quaternion arithmetic, published
+    to every viewer.
+    """
+    heading = heading_degrees(_contact(heading_deg=127.0), UNKNOWN_VARIANCE)
+    assert heading == round(heading, 1)
+    assert len(repr(heading).split('.')[1]) <= 1
+
+
 def test_a_name_cannot_be_any_length_the_transmitter_likes():
     """`Static.msg` declares name and callsign as UNBOUNDED ROS strings.
 

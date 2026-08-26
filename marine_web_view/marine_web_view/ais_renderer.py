@@ -375,7 +375,11 @@ def heading_degrees(contact, variance_threshold):
     if q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w < 1e-6:
         return None
     heading = heading_from_quaternion(q)
-    return heading if math.isfinite(heading) else None
+    # Rounded like `speed_knots` and `course_deg` beside it, and for the same
+    # reason: AIS transmits heading in whole degrees, the popup prints it to
+    # zero decimal places, and full float precision would put seventeen
+    # digits of quaternion arithmetic into an object every viewer downloads.
+    return round(heading, 1) if math.isfinite(heading) else None
 
 
 def speed_and_course(contact):
