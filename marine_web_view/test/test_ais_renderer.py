@@ -71,10 +71,12 @@ UNKNOWN_VARIANCE = 1.0e6                    # the tracker's "not reported"
 
 def _contact(mmsi=366000001, latitude=43.08, longitude=-70.75, stamp=1000.0,
              heading_deg=None, sog_knots=None, cog_deg=None, name='',
-             callsign='', dimensions=None, nav_status=0, ship_type=0):
+             callsign='', dimensions=None, nav_status=0, ship_type=0,
+             message_id=1):
     """Return an AISContact shaped the way ais_contact_tracker publishes one."""
     contact = AISContact()
     contact.id = mmsi
+    contact.position_message_id = message_id
     contact.header.stamp.sec = int(stamp)
     contact.header.stamp.nanosec = int(round((stamp - int(stamp)) * 1e9))
     contact.pose.position.latitude = latitude
@@ -475,6 +477,34 @@ def test_the_filter_is_the_two_categories_the_operator_named(node):
     assert excluded_from_public(_contact(ship_type=55)) is not None
     assert excluded_from_public(_contact()) is None
     assert excluded_from_public(_contact(nav_status=1)) is None
+
+
+def test_a_sar_aircraft_is_withheld_on_the_only_identifier_it_carries():
+    """The responder the ship-and-cargo-type test cannot see.
+
+    AIS message 9 carries no navigational status -- ais_parser defaults it to
+    15 -- and an aircraft never sends a type 5 or 24 static report, so
+    `ship_and_cargo_type` stays 0 for its whole life. Both of the other two
+    branches read as an ordinary vessel; the message id is the only thing
+    that says otherwise, which is why ais_layer.cpp switches on it too.
+    """
+    assert ais_renderer.SAR_AIRCRAFT_MESSAGE_ID == 9
+    aircraft = _contact(message_id=9, nav_status=15, ship_type=0)
+    assert excluded_from_public(aircraft) is not None
+    assert 'aircraft' in excluded_from_public(aircraft)
+    # The status an aircraft's absent-status default shares with every other
+    # contact that has not declared one must not withhold the whole river.
+    assert excluded_from_public(_contact(nav_status=15)) is None
+    # Class B (18/19) and class A (1/2/3) position reports stay published.
+    for ordinary in (1, 2, 3, 18, 19, 27):
+        assert excluded_from_public(_contact(message_id=ordinary)) is None
+
+
+def test_a_withheld_aircraft_is_never_held_in_memory(node):
+    """The filter runs in `_on_contact`, so nothing withheld is ever stored."""
+    node.get_logger().info = lambda message, **kwargs: None
+    node._on_contact(_contact(mmsi=111222333, message_id=9))
+    assert node._contacts == {}
 
 
 def test_a_replay_against_the_wrong_clock_announces_itself(node):

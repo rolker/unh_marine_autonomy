@@ -65,9 +65,10 @@ Three things this node has to get right that are invisible in a good run:
   good yaw of zero -- due east in ENU. The tracker records what was actually
   reported in the yaw covariance, so that is what is tested here, the same way
   ais_layer.cpp does for the costmap.
-* **Who is not on the map.** Distress beacons and SAR/law-enforcement contacts
-  are dropped HERE rather than hidden on the page, so those positions never
-  reach S3 at all. See `excluded_from_public` and the README.
+* **Who is not on the map.** Distress beacons and SAR/law-enforcement
+  contacts -- aircraft included -- are dropped HERE rather than hidden on the
+  page, so those positions never reach S3 at all. See `excluded_from_public`
+  and the README.
 
 See rolker/unh_marine_autonomy#357.
 """
@@ -118,6 +119,15 @@ DISTRESS_NAV_STATUS = 14
 # Ship-and-cargo types 51 (search and rescue) and 55 (law enforcement). The
 # page's own SPECIAL_TYPE table names them; this is the same two codes.
 RESPONDER_SHIP_TYPES = frozenset((51, 55))
+
+# ITU-R M.1371 message 9, the SAR aircraft position report. A SAR aircraft is
+# a responder, and it is the one responder the ship-and-cargo-type test above
+# CANNOT catch: message 9 carries no navigational status (ais_parser defaults
+# it to 15) and an aircraft never sends a type 5 or 24 static report, so
+# `ship_and_cargo_type` stays 0 forever -- the standard says the field is "not
+# applicable to SAR aircraft". The message id is the only identifier there is,
+# which is why ais_layer.cpp switches on this same field.
+SAR_AIRCRAFT_MESSAGE_ID = 9
 
 # Ceiling on each of the once-per-MMSI log records below. MMSI is an
 # unauthenticated uint32 field on the air, so a set keyed on it is only as
@@ -207,11 +217,19 @@ def excluded_from_public(contact):
     A responder's own position is withheld for the neighbouring reason: it
     reveals where a response is happening, and by inference what it is
     responding to, at the moment it is happening.
+
+    Each category is tested on the identifier the standard actually gives it,
+    not on the field that is most convenient. A SAR aircraft in particular
+    carries neither of the first two: message 9 has no navigational status
+    and an aircraft sends no static report, so its message id is the whole of
+    its identity.
     """
     if contact.navigational_status.status == DISTRESS_NAV_STATUS:
         return 'distress (AIS-SART / MOB / EPIRB)'
     if contact.static_info.ship_and_cargo_type in RESPONDER_SHIP_TYPES:
         return 'search and rescue / law enforcement'
+    if contact.position_message_id == SAR_AIRCRAFT_MESSAGE_ID:
+        return 'SAR aircraft (AIS message 9)'
     return None
 
 
