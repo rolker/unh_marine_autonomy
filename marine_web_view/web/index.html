@@ -812,7 +812,7 @@ async function pollTrack() {
 // they inherit its zoom-dependent triangle/circle/hull rule -- and its
 // "circle when the heading is unknown" case, which for AIS is the common one:
 // most small craft never transmit a true heading at all.
-const aisLayer = L.layerGroup().addTo(map);
+const aisLayer = L.layerGroup();
 let aisFeatures = [];
 // Whether the last poll actually reached the artifact. Distinct from contact
 // age: an unreachable artifact and a stale one both mean "do not trust the
@@ -1006,10 +1006,18 @@ async function pollAis() {
 
 // The toggle hides the GROUP, not the poll: unchecking costs nothing extra and
 // re-checking is instant, with no wait for the next fetch.
-$('ais').addEventListener('change', () => {
+//
+// Visibility is read from the checkbox AT USE TIME rather than assumed from
+// the markup, the way `follow` reads $('follow').checked. Browsers restore
+// checkbox state across a soft reload but not the JavaScript that ran off it,
+// so a box the viewer had unchecked comes back unchecked with the layer
+// showing -- a control that says the opposite of what the map is doing.
+function syncAisLayer() {
   if ($('ais').checked) map.addLayer(aisLayer);
   else map.removeLayer(aisLayer);
-});
+}
+$('ais').addEventListener('change', syncAisLayer);
+syncAisLayer();
 
 async function poll() {
   try {

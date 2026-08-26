@@ -346,8 +346,10 @@ def test_every_vector_layer_reaches_the_map():
     """Every vector-layer construction must reach the map.
 
     Three ways count, and only three: in its own statement, later through the
-    name it is bound to (a layer built now and added on a state change is
-    legitimate), or into a layer group that itself reaches the map.
+    name it is bound to -- by `.addTo(map)` or the `map.addLayer(name)`
+    spelling a layer whose visibility follows a checkbox has to use, since it
+    is the only one with a `removeLayer` counterpart -- or into a layer group
+    that itself reaches the map.
 
     The group case is not a loosening. Per-MMSI AIS hulls are rebuilt on every
     poll and on every zoom, so they are neither named nor individually added;
@@ -376,7 +378,9 @@ def test_every_vector_layer_reaches_the_map():
             'the map, nor to a layer group that is, nor bound to a name -- '
             'it cannot appear'.format(start))
         name = bound.group(1)
-        assert re.search(r'\b' + name + r'\s*\.addTo\s*\(\s*map\s*\)', page), (
+        assert (re.search(r'\b' + name + r'\s*\.addTo\s*\(\s*map\s*\)', page)
+                or re.search(r'map\s*\.addLayer\s*\(\s*' + name + r'\s*\)',
+                             page)), (
             '{} is constructed but never added to the map -- it will not '
             'appear, silently'.format(name))
 
@@ -539,6 +543,29 @@ def test_one_malformed_ais_feature_cannot_break_the_whole_layer():
     assert re.search(r'Array\.isArray\(\s*features\s*\)', poll.group(1)), (
         'pollAis stores whatever `features` the artifact carried without '
         'checking it is a list')
+
+
+def test_the_ais_toggle_survives_a_soft_reload():
+    """A restored checkbox must not disagree with the map.
+
+    Browsers restore checkbox state across a soft reload, but not the
+    JavaScript that ran off it. Adding the layer unconditionally and reading
+    the box only in its `change` handler therefore brings an unchecked box
+    back with the traffic showing -- a control saying the opposite of what
+    the map is doing. `follow` avoids this by reading its checkbox at use
+    time; so must this.
+    """
+    page = _code(_page())
+    assert not re.search(r'aisLayer\s*=\s*L\.layerGroup\(\)\.addTo', page), (
+        'the AIS layer is added to the map unconditionally, so a restored '
+        'unchecked box comes back with the layer visible')
+    assert re.search(r"\$\('ais'\)\.checked", page), (
+        'the AIS checkbox state is never read')
+    assert re.search(r"addEventListener\('change',\s*syncAisLayer\)", page), (
+        'the toggle no longer goes through the same function the initial '
+        'sync uses, so the two can drift')
+    assert re.search(r'^syncAisLayer\(\);', page, re.M), (
+        'the layer is never synced to the checkbox at startup')
 
 
 def test_the_coverage_layer_is_configured_from_the_manifest():
