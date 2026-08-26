@@ -312,6 +312,13 @@ class AisRenderer(Node):
         # own 90-180 s class-A/B costmap timeouts, which protect motion
         # planning and must react fast to a contact going stale.
         self.declare_parameter('contact_timeout', 600.0)
+        # A ceiling on how many contacts are held and published at once.
+        # PUT COUNT is contact-independent -- one object per interval either
+        # way -- but object SIZE and the per-viewer CDN egress that follows it
+        # are not, and MMSI is an unauthenticated uint32 on the air. Well
+        # above what a shore receiver on the Piscataqua hears; reaching it
+        # means an unusually busy watch, or traffic nobody transmitted.
+        self.declare_parameter('max_contacts', 500)
         self.declare_parameter('heading_variance_threshold',
                                DEFAULT_HEADING_VARIANCE_THRESHOLD)
 
@@ -323,6 +330,7 @@ class AisRenderer(Node):
         self.dry_run = bool(self._param('dry_run'))
         self.local_path = self._param('local_path')
         self.contact_timeout = float(self._param('contact_timeout'))
+        self.max_contacts = max(1, int(self._param('max_contacts')))
         self.heading_variance_threshold = float(
             self._param('heading_variance_threshold'))
 
@@ -419,7 +427,30 @@ class AisRenderer(Node):
             return
         self._positionless.pop(msg.id, None)
         self._warn_if_already_expired(msg)
+        if (msg.id not in self._contacts
+                and len(self._contacts) >= self.max_contacts):
+            self._evict_oldest(msg.id)
         self._contacts[msg.id] = msg
+
+    def _evict_oldest(self, incoming):
+        """Make room for a new MMSI at the ceiling; drop the oldest contact.
+
+        The one closest to expiring anyway, so the ceiling costs the least
+        interesting contact rather than an arbitrary one. Loud, and not
+        throttled to silence: past this point the artifact is a TRUNCATED
+        picture of the river, and a page that quietly shows some of the
+        traffic is worse than one that shows all of it or says it cannot.
+        """
+        oldest = min(self._contacts,
+                     key=lambda mmsi: self._stamp(self._contacts[mmsi]))
+        del self._contacts[oldest]
+        self.get_logger().warn(
+            'at the max_contacts ceiling ({}); dropped MMSI {}, the oldest, '
+            'to make room for MMSI {}. The published artifact is now a '
+            'truncated picture of the traffic -- raise max_contacts if the '
+            'river is genuinely this busy.'.format(
+                self.max_contacts, oldest, incoming),
+            throttle_duration_sec=60.0)
 
     def _warn_if_already_expired(self, contact):
         """Say so, once, if a contact arrives already past the timeout.

@@ -134,6 +134,7 @@ and there is no out-of-order history to reconcile.
 | `dry_run` | `false` | Write to `local_path` instead of S3 |
 | `local_path` | `/tmp/ais.geojson` | Point it into `web/live/` to preview the layer |
 | `contact_timeout` | `600.0` | Drop a contact unheard from for this long, from the snapshot **and** from memory |
+| `max_contacts` | `500` | Ceiling on contacts held at once — bounds object size and CDN egress, which the PUT count does not |
 | `heading_variance_threshold` | `1.0e5` | Yaw variance at or above which no true heading was reported |
 
 ### Output
@@ -176,6 +177,15 @@ a contact that departed from one that dropped below VHF range. An expired
 contact is pruned from memory, not merely filtered out of the snapshot, so an
 MMSI that ages out and later reappears is a fresh entry with no stale state
 behind it.
+
+`max_contacts` is the other ceiling, and it bounds a different cost. The PUT
+count does not scale with contact count — one object per `interval` either way
+— but the object's **size** does, and so does the per-viewer CDN egress that
+follows it, over an MMSI keyspace that is an unauthenticated `uint32` on the
+air. At the ceiling a new MMSI evicts the oldest contact held, which is the one
+closest to expiring anyway, and says so in the log: past that point the
+artifact is a truncated picture of the river, and that is worth knowing. The
+default is well above what a shore receiver on the Piscataqua hears.
 
 ### Who is not on the map
 

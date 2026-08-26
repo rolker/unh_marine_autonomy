@@ -73,6 +73,11 @@ def generate_launch_description():
                                           'this long. Generous on purpose: a '
                                           'shore receiver cannot tell a '
                                           'departure from a loss of range.'),
+        DeclareLaunchArgument('max_contacts', default_value='500',
+                              description='Ceiling on contacts held and '
+                                          'published at once. Bounds object '
+                                          'size and CDN egress, which the '
+                                          'PUT count does not.'),
         DeclareLaunchArgument('heading_variance_threshold',
                               default_value='100000.0',
                               description='Yaw variance at or above which no '
@@ -95,6 +100,7 @@ def generate_launch_description():
             'dry_run': LaunchConfiguration('dry_run'),
             'local_path': LaunchConfiguration('local_path'),
             'contact_timeout': LaunchConfiguration('contact_timeout'),
+            'max_contacts': LaunchConfiguration('max_contacts'),
             'heading_variance_threshold': LaunchConfiguration(
                 'heading_variance_threshold'),
         }],

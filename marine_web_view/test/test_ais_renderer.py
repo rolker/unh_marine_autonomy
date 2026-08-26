@@ -297,6 +297,43 @@ def test_an_at_padded_name_is_not_a_name():
     assert ais_renderer._clean('TUG ARTHUR@@@@@@@@@') == 'TUG ARTHUR'
 
 
+def test_the_held_contact_set_has_a_ceiling(node):
+    """PUT count is contact-independent; object size and CDN egress are not.
+
+    `contact_timeout` bounds the set in TIME, which is no bound at all against
+    a burst: MMSI is an unauthenticated uint32 on the air, and every distinct
+    one heard inside the timeout is another feature in an object every viewer
+    downloads.
+    """
+    node.get_logger().warn = lambda message, **kwargs: None
+    node.max_contacts = 3
+    for mmsi, stamp in ((1, 950.0), (2, 960.0), (3, 970.0)):
+        node._on_contact(_contact(mmsi=mmsi, stamp=stamp))
+    node._on_contact(_contact(mmsi=4, stamp=980.0))
+    assert sorted(node._contacts) == [2, 3, 4], (
+        'the ceiling did not evict the contact closest to expiring')
+    # A contact already held is an update, not an arrival: it must not evict.
+    node._on_contact(_contact(mmsi=2, stamp=990.0))
+    assert sorted(node._contacts) == [2, 3, 4]
+    assert len(_published(node)['features']) == 3
+
+
+def test_a_truncated_artifact_says_so(node):
+    """A page quietly showing some of the traffic is the bad failure."""
+    warnings = []
+    node.get_logger().warn = lambda message, **kwargs: warnings.append(message)
+    node.max_contacts = 1
+    node._on_contact(_contact(mmsi=1, stamp=1000.0))
+    node._on_contact(_contact(mmsi=2, stamp=1000.0))
+    assert warnings and 'max_contacts' in warnings[0], warnings
+
+
+def test_the_contact_ceiling_is_a_parameter(node):
+    """Not a constant: what a busy receiver hears is a local question."""
+    assert node.get_parameter('max_contacts').value == 500
+    assert node.max_contacts == 500
+
+
 def test_the_once_per_mmsi_log_records_are_bounded(node):
     """`_expire` bounds the contacts; nothing bounded the log records.
 
