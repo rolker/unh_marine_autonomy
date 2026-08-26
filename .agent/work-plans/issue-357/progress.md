@@ -227,3 +227,38 @@ Every item of the Plan Review response landed:
 Review the diff (`/review-code --issue 357`), then the pandy pass: run
 `ais_renderer_launch.py` beside `ais_contact_tracker`, watch the artifact and
 the page against live traffic, and confirm or revise the two timing defaults.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-26 02:43 +0000
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-357 at `de4ffe5`
+**Mode**: pre-push
+**Depth**: Deep (reason: 2265 lines / 17 files, plus the in-diff plan.md project-repo trigger)
+**Must-fix**: 3 | **Suggestions**: 6
+**Round**: 1 | **Ship**: continue — a verified correctness defect (replay expiry) plus an unrecorded public-republication decision; not a mechanical-fix-only round
+
+Specialists: Static Analysis (run — ament_flake8/pep257/copyright clean; `colcon test` 239 tests, 0 failures),
+Governance, Plan Drift, Claude Adversarial x2 (Lens A + Lens B). Copilot and Local Adversarial off (default).
+
+### Findings
+- [ ] (must-fix) Expiry compares header stamps against the node's own wall clock, so the bag-replay workflow this diff documents drops every contact on the first tick (reproduced against the real node: 24h-old stamp -> `contacts: 0`); no `use_sim_time` in the launch file, no `--clock` in the README recipe — `marine_web_view/marine_web_view/ais_renderer.py:313-324`
+- [ ] (must-fix) The AIS layer has no staleness signal: `stamp`/`stamp_iso`/`generated` are uploaded but read nowhere, so a dead renderer is visually identical to a quiet river indefinitely; README claims "Contact age comes from each feature's own `stamp`" — cross-confirmed by both adversarial lenses — `marine_web_view/web/index.html:829-860`
+- [ ] (must-fix) Distress (`NAV_STATUS[14]` AIS-SART/MOB/EPIRB) and SAR/law-enforcement (types 51/55) contacts are republished to a public CDN-fronted page with no filter and no recorded decision — fix may be one recorded line rather than code — `marine_web_view/web/index.html:802-816`
+- [ ] (suggestion) `stamp`/`stamp_iso` sit inside the change-detection signature but render nowhere, so nearly every tick that heard anything pays a PUT; the "nothing else does" docstring claim is not what happens, and the unchanged-set test uses a frozen stamp — `marine_web_view/marine_web_view/ais_renderer.py:409-416`
+- [ ] (suggestion) `_positionless` is the one collection with no ceiling, while `_expire` advertises bounded memory over a long shore watch — cross-confirmed by both lenses — `marine_web_view/marine_web_view/ais_renderer.py:247`
+- [ ] (suggestion) `_tick` has no exception containment, so a raise terminates the node rather than "breaking one upload, in a process with a log"; most reachable trigger is an OSError from a dry-run `local_path` whose directory is missing — `marine_web_view/marine_web_view/ais_renderer.py:399-436`
+- [ ] (suggestion) `_clean` strips the ITU `@` pad but not control/bidi characters, which still reach the public popup (DOM injection itself is correctly closed off) — `marine_web_view/marine_web_view/ais_renderer.py:113-125`
+- [ ] (suggestion) `_contacts` has no size cap over an unauthenticated uint32 MMSI keyspace; PUT count is contact-independent as documented, but object size and per-viewer CDN egress are not — `marine_web_view/marine_web_view/ais_renderer.py:306`
+- [ ] (suggestion) `drawAis()` clears and rebuilds every poll and every zoomend, destroying an open contact popup within 10 s; the plan specified add/update/remove by MMSI — `marine_web_view/web/index.html:852-860`
+
+### Checked and refuted
+- A Lens A finding claimed the toggle handler's `map.addLayer(aisLayer)` lets an orphaned layer group pass the new guard. Mutation-tested: orphaning the group fails `test_every_vector_layer_reaches_the_map` ("aisLayer is constructed but never added to the map"). The `L.layerGroup` construction site is itself in `_VECTOR_CONSTRUCTIONS` and held to the `name.addTo(map)` rule. Not a finding.
+
+### Plan adherence
+No drift. All 11 planned files plus `setup.py`, `renderer_common.py`, `test_renderer_common.py` (the operator's recorded scope call). Every item of the binding `## Plan Review response` landed. One deviation: the plan described per-MMSI page diffing; the implementation rebuilds (Suggestion above). The plan's two open questions (`contact_timeout` 600 s, `interval` 10 s vs. observed Piscataqua density) remain open and are honestly recorded as unverified.
+
+### Next step
+Verdict is changes-requested, so the host dispatches `address-findings` against this entry, then re-dispatches `review-code`. The diff is not pushed until a pre-push review comes back approved.
