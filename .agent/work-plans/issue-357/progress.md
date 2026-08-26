@@ -385,3 +385,60 @@ comes back approved. The pandy pass the previous entry called for is still
 outstanding: run `ais_renderer_launch.py` beside `ais_contact_tracker` against
 live traffic and confirm or revise `contact_timeout` (600 s), `interval`
 (10 s) and the two new ceilings (`max_contacts` 500, `AIS_STALE_S` 300).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-26 03:23 +0000
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-357 at `aa76967`
+**Mode**: pre-push
+**Depth**: Deep (reason: 3175 lines / 17 files, public-facing artifact with a privacy filter)
+**Must-fix**: 2 | **Suggestions**: 11
+**Round**: 2 | **Ship**: recommended — must-fix fell 3 -> 2, both are precise mechanical additions to one function (`excluded_from_public`), not design questions; fix them and ship rather than paying another full round
+
+Specialists: Static Analysis (run — ament_flake8/pep257/copyright clean inside `pytest test/`, **259 passed**;
+`xmllint` package.xml OK, `dependencies.repos` parses, `node --check` on the page script OK),
+Governance, Plan Drift, Claude Adversarial x2 (Lens A + Lens B). Copilot and Local Adversarial off (default).
+No `.agents/review-context.yaml` in this repo — review proceeded on `.agents/README.md` plus the upstream `marine_ais` sources.
+
+Both must-fixes are gaps in the same operator-mandated withholding filter, and both were reproduced against the
+real node rather than read off the page.
+
+### Findings
+- [ ] (must-fix) SAR **aircraft** are published: AIS message 9 carries no navigational status (`ais_parser.py:216-219` defaults it to 15) and never gets a type 5/24 static report, so `ship_and_cargo_type` stays 0 and neither branch fires. Reproduced: `excluded_from_public(position_message_id=9, status=15, type=0)` -> `None`. The tracker already forwards the identifier (`position_message_id`), and `ais_layer.cpp:224` switches on that exact field for SAR aircraft. The README's own table promises this category is withheld — `marine_web_view/marine_web_view/ais_renderer.py:211-215`
+- [ ] (must-fix) A distress beacon that is not transmitting navigational status 14 reaches the artifact: `NavigationalStatus.msg` itself records status 15 as "also used by AIS-SART, MOB-AIS and EPIRB-AIS under test", and the definitive identifier is the reserved MMSI range (970 SART / 972 MOB / 974 EPIRB), which the filter never looks at. Reproduced: `excluded_from_public(id=970123456, status=15)` -> `None`. Cross-confirmed by both adversarial lenses. (A conformant *active* SART does set 14, so this is defence in depth — but it is the one filter whose failure mode the operator named as a person in the water on a public CDN.) While there, `DISTRESS_NAV_STATUS = 14` can be `NavigationalStatus.NAVIGATIONAL_STATUS_SART_MOB_EPIRB` — `marine_web_view/marine_web_view/ais_renderer.py:116,211`
+- [ ] (suggestion) `pollAis`'s `catch` calls `drawAis()` — the very function that can throw, since `const [lon, lat] = f.geometry.coordinates` is unguarded while `p.mmsi == null` one line later is guarded. One malformed feature throws twice, escapes as an unhandled rejection, and then throws on every zoom (`drawAis` is bound to `zoomend`), permanently breaking the layer instead of degrading it. Cross-confirmed by both lenses — `marine_web_view/web/index.html:941,991`
+- [ ] (suggestion) `vessel_dimensions` mishandles ITU's "reference point not available, dimensions are" encoding (A=C=0, B!=0, D!=0, spelled out in `Static.msg`): (0,100,0,20) yields `reference_x=50`, so `hullShape()` computes `toBow=0, toStern=100` and draws a 100 m vessel entirely aft of its reported position. Note it mirrors upstream `calculatePolygon` faithfully, so centring the hull here diverges from the tracker — worth a recorded decision either way — `marine_web_view/marine_web_view/ais_renderer.py:218-246`
+- [ ] (suggestion) No own-ship / operator ignore list. `ais_layer`, the sibling consumer of the same topic, carries `ignore_mmsis` whose documented first purpose is own ship (`ais_layer.cpp:438-442`); if the shore receiver hears BizzyBoat's own transponder the public page draws a second, grey, up-to-10 s-lagged hull on the live one. No `ignore_mmsis` is configured for BizzyBoat anywhere today so this may be moot — but it is also the only lever an operator has to withhold a vessel the two categories miss — `marine_web_view/marine_web_view/ais_renderer.py:190`
+- [ ] (suggestion) `test_the_ais_readout_cannot_be_shadowed_by_a_contact_count` does not pin what it claims: `text.index('contacts')` matches the literal `'no contacts'` on the early-return line (verified — offset 50 against `rindex('AIS_STALE_S')` 493), so the ordering assertion only requires `AIS_STALE_S` to appear after the function's first line, which it always will — `marine_web_view/test/test_page_layers.py:469`
+- [ ] (suggestion) The unpaired-surrogate rationale is false: `json.dumps` defaults to `ensure_ascii=True`, so `'TUG\ud800'` serialises to `"TUG\ud800"`, encodes cleanly, and `JSON.parse` accepts it — it is *not* "the same class of failure as the bare NaN token". Keep the scrub, correct the claim in both places — `marine_web_view/marine_web_view/ais_renderer.py:141`, `marine_web_view/test/test_ais_renderer.py:365`
+- [ ] (suggestion) `aisLayer` is added to the map unconditionally and the checkbox is read only in its `change` handler; browsers restore checkbox state across a soft reload, so an unchecked box comes back with the layer visible. `follow` avoids this by reading `$('follow').checked` at use time (`index.html:776`) — `marine_web_view/web/index.html:815,997`
+- [ ] (suggestion) `interval` reaches `create_timer` unvalidated on the parameter the launch file itself labels "the cost lever"; `coverage_renderer.sane_interval()` already exists for exactly this, and this diff just created `renderer_common.py` as the home for such helpers. (`state_renderer` shares the gap — a pre-existing pattern, not a regression) — `marine_web_view/marine_web_view/ais_renderer.py:373`
+- [ ] (suggestion) `_clean` has no length cap. `Static.msg` declares `string name`/`callsign` unbounded, `max_contacts` explicitly bounds contact *count* and not per-field size, and the result lands in the object every viewer downloads and in the popup title — `marine_web_view/marine_web_view/ais_renderer.py:148`
+- [ ] (suggestion) `heading_deg` is emitted at full float precision while `speed_knots` and `course_deg` on either side are deliberately rounded to 1 dp — `marine_web_view/marine_web_view/ais_renderer.py:537`
+- [ ] (suggestion) The zero-contact case has no liveness signal at all: when the last contact expires the renderer publishes one empty collection and, by design, never publishes again, so `aisText()` returns `'no contacts'` from a frozen artifact forever. `test_a_dead_ais_renderer_does_not_read_as_a_quiet_river` names exactly that case; narrow the claim or say so in the README — `marine_web_view/web/index.html:872`
+- [ ] (suggestion) Doc consequence of the third caller: `AsyncUploader.submit`'s docstring still says "`tag` is an opaque value -- the two callers pass the fix stamp". There are now three, and the third passes a JSON signature, not a stamp — `marine_web_view/marine_web_view/s3_upload.py:231`
+- [ ] (suggestion) The README's replay recipe points `local_path` into `web/live/` to preview the layer, but the page's staleness test is `Date.now()/1000 - stamp`, so every contact from a bag recorded earlier renders faded with "stale". Correct behaviour, surprising workflow — one README line — `marine_web_view/README.md` (Running)
+
+### Checked and refuted
+- Lens B rated the missing own-ship ignore list must-fix on the grounds that BizzyBoat's transponder would be drawn twice. No `ignore_mmsis` is configured for BizzyBoat anywhere in the workspace — not even on `ais_layer`, which would suffer the worse version of the same problem — and nothing confirms the boat transmits AIS at all. Downgraded to suggestion.
+- Lens B rated partial-construction uploader leakage a finding (`AsyncUploader` is started before `create_subscription`/`create_timer`, so a constructor raise skips `main`'s `node.stop()`). The thread is a daemon and `main` is the only production constructor, so the process exits regardless. Not carried.
+- The popup was re-checked for injection independently of the last round: it is built entirely from `textContent`/`createTextNode` and handed to `bindPopup`/`setContent` as an `HTMLElement`, with no HTML-string path. Clean. `json.dumps(ensure_ascii=True)` also rules out U+2028/U+2029 and `</script>` concerns.
+- Leaflet's `bindPopup` reuses an existing `Popup` and calls `setContent` rather than tearing it down, so the `isPopupOpen()` branch in `drawAis` is belt-and-braces rather than the fix for a live bug. The code is correct either way; only the comment overstates it. Not carried as a finding.
+
+### Governance
+- **Standards Compliance** (project) — **Concern**: the ITU identifiers for the two withheld categories (message 9 for SAR aircraft, the reserved 970/972/974 MMSI ranges) are not used. This is exactly the two must-fixes.
+- **Human control and transparency** — Pass. Staleness and offline are surfaced rather than hidden, each exclusion is logged once per MMSI, and the popup distinguishes "position but no name".
+- **A change includes its consequences** — Pass. `package.xml`, `dependencies.repos`, `setup.py`, README (node section, Cost, Running, page section), and all four hand-maintained guards (`PAIRS`, layer markers, dry-run gate, upload wiring) landed together. One residual: the `s3_upload.py` docstring above.
+- **Test what breaks** — Pass, with one Watch: the readout-shadowing assertion is vacuous (suggestion above). Everything else is genuinely pinned, including a mutation guard for the layer-group extension.
+- **Capture decisions, not just implementations** — Pass. The withholding policy is in the README, the function docstring and this timeline in the operator's own terms.
+- **Simulation-First / Iterative, Validated Evolution** — **Watch**, unchanged from round 1: the bag-replay path is now documented and pinned, but the live pandy pass is still outstanding and `contact_timeout` (600 s), `interval` (10 s), `max_contacts` (500) and `AIS_STALE_S` (300 s) remain unverified judgement calls.
+- **ADRs** — none of 0001–0013 governs a read-only AIS display layer. ADR-0004 remains triggered-and-satisfied as the plan recorded it: no AIS→`marine_interfaces/Contact` projector exists, so subscribing to `AISContact` directly is right.
+
+### Plan adherence
+No drift. Every file in the plan's table plus `setup.py`, `renderer_common.py` and `test_renderer_common.py` (the operator's recorded scope call). The one round-1 deviation — the page rebuilding rather than diffing by MMSI — is now closed. The plan's two open questions remain open and are still honestly recorded as unverified.
+
+### Next step
+Verdict is changes-requested, so the host dispatches `address-findings` against this entry. Ship is **recommended** once the two must-fixes land: both are additions to `excluded_from_public` with obvious corrections, and the suggestions can be applied or tracked rather than blocking. The diff is not pushed until a pre-push review comes back approved.
