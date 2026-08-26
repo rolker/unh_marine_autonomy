@@ -228,10 +228,11 @@ class AsyncUploader:
     def submit(self, payload, key, content_type, cache_control, tag=None):
         """Queue `payload` for `key`, replacing any pending one; never blocks.
 
-        Returns True if it was accepted. `tag` is an opaque value -- the two
-        callers pass the fix stamp -- reported by `confirmed` once this
-        payload is actually on the wire, which is how a caller tells a
-        successful upload from an accepted one.
+        Returns True if it was accepted. `tag` is an opaque value, reported by
+        `confirmed` once this payload is actually on the wire, which is how a
+        caller tells a successful upload from an accepted one. Genuinely
+        opaque: two callers pass a fix stamp and the third an entire JSON
+        signature of the payload -- nothing here reads either.
 
         A dead worker refuses everything: accepting a payload no thread will
         ever send is how a frozen map reads as healthy. The refusal is counted
