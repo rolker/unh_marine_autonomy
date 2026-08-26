@@ -402,6 +402,59 @@ ros2 launch marine_simulation sim_robot_launch.py \
     namespace:=ben platform:=bizzy enable_bridge:=false
 ```
 
+
+### All three at once, live
+
+`web_view_launch.py` brings up all three renderers against one platform and
+publishes to S3. It exists for the deployment where they share a machine — one
+operator station on the live bridge link — and its `platform` argument
+re-points every namespace and frame the per-node files default to BEN:
+
+```bash
+# BizzyBoat, live, to the bucket. This is the whole command.
+ros2 launch marine_web_view web_view_launch.py
+
+# Another boat, or a partial bring-up when the receiver is ashore.
+ros2 launch marine_web_view web_view_launch.py platform:=ben
+ros2 launch marine_web_view web_view_launch.py enable_ais:=false
+```
+
+| Argument | Default | Notes |
+|---|---|---|
+| `platform` | `bizzy` | Drives the five derived values below; each stays individually overridable |
+| `platform_name` | `platform` | Must equal `PlatformList.platform_namespace` or `.name` — see below |
+| `platforms_topic` | `/marine/platforms` | Global, so not derived from `platform` |
+| `contacts_topic` | `/<platform>/ais/contacts` | BizzyBoat carries its own receiver; see below |
+| `coverage_namespace` | `/<platform>/sensors/m3/cube_bathymetry` | |
+| `map_frame` / `chart_datum_frame` | `<platform>/map`, `<platform>/chart_datum` | |
+| `bucket` / `profile` | `unh-ccom-p11-live` / `p11-renderer` | Shared by all three |
+| `dry_run` | `false` | The live run is the point; exposed to exercise the wiring without spending PUTs |
+| `enable_state` / `enable_coverage` / `enable_ais` | `true` | |
+
+Each `key` and `local_path` stays the owning renderer's own — the includes are
+scoped, because the three files declare overlapping argument names and launch
+does not overwrite a configuration that is already set. Unscoped, the AIS
+renderer inherits `state_renderer`'s `key` and PUTs its contacts over
+`live/position.geojson`.
+
+**`platform_name` is the one that fails silently.** `state_renderer` adopts a
+platform only on a name match, and unmatched it neither subscribes to that
+platform's nav topics nor replaces the fallback hull — which is BEN's
+4.25 × 1.70 m, against BizzyBoat's 2.40 × 0.90 m as `PlatformList` reports it.
+The result is an oversized hull sitting still, with nothing logged as wrong.
+Deriving it from `platform` is what keeps it from being a thing to remember.
+
+**The AIS topic is namespaced here.** The shore-station arrangement the
+`ais_renderer` section describes puts contacts on a global `/ais/contacts`;
+BizzyBoat carries its own receiver and publishes `/bizzy/ais/contacts`. When
+the ROC desktop runs the renderer instead, pass `enable_ais:=false` here and
+launch `ais_renderer_launch.py` there on its own default.
+
+**Coverage needs the boat up.** The ADR-0008 triple is request/response — the
+renderer publishes `TileRequest` and waits for a live producer — and it is
+recorded in no bag, so off-boat it renders nothing however long it runs.
+`enable_coverage:=false` is the honest setting then.
+
 ## `web/index.html`
 
 Single-page Leaflet view. Layers, bottom to top: Esri World Imagery, CCOM/JHC
