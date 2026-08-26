@@ -104,6 +104,89 @@ ROS uses ENU (REP-103), so yaw is counter-clockwise from **east** while a
 compass heading is clockwise from **north**: `heading = 90 - yaw`. Verified in
 simulation against course made good.
 
+## Node: `ais_renderer`
+
+Renders the AIS traffic around the vessel to one static GeoJSON object, so the
+public page shows BizzyBoat in context rather than alone on empty water.
+
+### Subscribed topics
+
+| Topic | Type | Purpose |
+|---|---|---|
+| `/ais/contacts` | `marine_ais_msgs/msg/AISContact` | Tracked contacts, one message per position report |
+
+Published ashore, on the ROC desktop, by the `nmea_relay` →  `ais_parser` →
+`ais_contact_tracker` chain — the receiver is a shore station, not the boat.
+`ais_contact_tracker` republishes the *whole* accumulated contact (position
+report plus whatever static and voyage data it has seen) on every position
+report, so the newest message per MMSI is the complete state of that contact
+and there is no out-of-order history to reconcile.
+
+### Parameters
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `contacts_topic` | `/ais/contacts` | The tracker publishes at the global namespace, not under the operator namespace |
+| `interval` | `10.0` | Seconds between uploads — see Cost. AIS does not need the position topic's 1 Hz |
+| `bucket` / `key` | `unh-ccom-p11-live` / `live/ais.geojson` | |
+| `profile` | `p11-renderer` | AWS profile; scoped to `s3:PutObject` on `live/*` |
+| `dry_run` | `false` | Write to `local_path` instead of S3 |
+| `local_path` | `/tmp/ais.geojson` | Point it into `web/live/` to preview the layer |
+| `contact_timeout` | `600.0` | Drop a contact unheard from for this long, from the snapshot **and** from memory |
+| `heading_variance_threshold` | `1.0e5` | Yaw variance at or above which no true heading was reported |
+
+### Output
+
+One GeoJSON `FeatureCollection` for **all** contacts, not one object each. Per
+contact: `mmsi`, `name`, `callsign`, `ship_and_cargo_type`,
+`navigational_status`, `speed_knots`, `course_deg`, `heading_deg`, `stamp`,
+`stamp_iso`, and the same `vessel` block `state_renderer` publishes, so the
+page draws AIS contacts through the identical `hullShape()` it draws BizzyBoat
+with. `name` and `callsign` are `null` until a type 5 or 24 message has been
+heard — the ordinary case for the first minutes after a contact comes into
+range, and what the page renders as *static info pending*.
+
+Uploads happen only when the contact set or its contents change, so an idle
+river with the boat on the trailer costs nothing. `generated` in the
+collection's properties is therefore when the artifact was last **rebuilt**,
+not the last tick: an unchanging value means "nothing has changed since", not
+necessarily "the renderer is alive". Contact age comes from each feature's own
+`stamp`.
+
+### Expiry
+
+`contact_timeout` defaults to 10 minutes — deliberately generous, and well
+above `ais_layer`'s own 90–180 s class-A/B costmap timeouts. Those protect
+motion planning and must react fast to a contact going stale; this is a
+human-facing display, where a marker flapping out and back on every reporting
+gap is worse than a slightly stale one, and a shore receiver cannot distinguish
+a contact that departed from one that dropped below VHF range. An expired
+contact is pruned from memory, not merely filtered out of the snapshot, so an
+MMSI that ages out and later reappears is a fresh entry with no stale state
+behind it.
+
+### Two things that are invisible in a good run
+
+**A contact with no position.** `ais_parser` writes NaN lat/lon when a position
+report carries none, and the tracker copies the pose and publishes it anyway.
+`json.dumps` renders that as a bare `NaN` token, which `JSON.parse` rejects
+outright — so one silent beacon would blank the AIS layer for **every** viewer,
+not degrade one marker. Such contacts are dropped (logged once per MMSI, not
+per message) and `allow_nan=False` sits behind that as a backstop.
+
+**"No heading" versus "heading due east."** An unreported AIS true heading
+leaves an identity or null quaternion behind, and the identity is a perfectly
+valid yaw of zero — due east in ENU. `ais_contact_tracker` records what was
+actually reported in the yaw covariance, so that is what is tested here, the
+same way `ais_layer.cpp` does for the costmap. `heading_variance_threshold` is
+a decade below the tracker's `unknown_variance` sentinel (1e5 against 1e6) so
+the sentinel still reads as unknown if the two configurations drift.
+
+`course_deg` is `null` for a stationary contact: `ais_parser` encodes course
+over ground as the *direction* of the velocity vector, so at a speed of zero
+the course is not recoverable and reporting `atan2(0, 0)` would publish a
+confident due east.
+
 ## Cost
 
 S3 PUTs are billed per request regardless of object size, so the **upload
@@ -119,6 +202,23 @@ fix and uploads on a timer.
 Those are **ceilings for 24/7 operation**. The node uploads only when the fix
 stamp has advanced, so an idle or disconnected vessel costs nothing: a 40-hour
 survey week at 1 Hz is roughly 144k PUTs, about $0.72.
+
+There are now three PUT streams against the same bucket, each with its own
+interval and its own "only on new data" gate: `state_renderer`'s position and
+track, `coverage_renderer`'s tiles and manifest, and `ais_renderer`'s contact
+snapshot. AIS is the cheapest of the three by construction — one object at
+`interval` (10 s → ~260k PUTs/month, ~$1.30 as a 24/7 ceiling), and only when
+the contacts actually changed. Its cost does **not** scale with contact count:
+one busy river and one empty one cost the same number of PUTs.
+
+GETs are the other side, and they scale with **viewers**, not with the
+renderers. Each open page fetches the position once a second, the track every
+30 s, the coverage manifest every poll and the AIS snapshot every 10 s. That is
+what `Cache-Control: max-age` bounds: the CDN answers most of it from the edge,
+so origin GETs stay a function of the interval rather than of how many people
+are watching. AIS adds ~6 origin GETs/minute at the edge worst case, on the
+order of cents a month — the reason the page polls it on its own slower timer
+rather than on the 1 Hz position tick.
 
 Freshness comes from `Cache-Control: max-age` on the object — per object,
 not one value for the bucket: the tiles carry `cache_control` and the liveness
@@ -139,6 +239,18 @@ ros2 launch marine_web_view state_renderer_launch.py dry_run:=true \
 ros2 launch marine_web_view state_renderer_launch.py platform_name:=ben
 ```
 
+The AIS renderer runs where the AIS receiver is — ashore, on the ROC desktop,
+alongside `ais_contact_tracker`:
+
+```bash
+# Local, no AWS.
+ros2 launch marine_web_view ais_renderer_launch.py dry_run:=true \
+    local_path:=/path/to/web/live/ais.geojson
+
+# Against S3
+ros2 launch marine_web_view ais_renderer_launch.py
+```
+
 Against the simulator:
 
 ```bash
@@ -153,6 +265,15 @@ bathymetry rendered as fixed-scale depth colours, hillshade, live sonar
 coverage, then the vessel track and hull. The vessel is drawn with CAMP's
 geometry — triangle while metres-per-pixel exceeds `max(length, width) / 10`,
 hull outline below that, circle when heading is unknown.
+
+AIS contacts are drawn on top, in their own layer group, from
+`live/ais.geojson` on a slower poll of its own — through the *same*
+`hullShape()`, so they inherit the identical zoom-dependent
+triangle/circle/hull rule the vessel has. The **AIS** checkbox in the readout
+hides and shows the group; the poll continues either way, so toggling costs
+nothing and re-showing is instant. Each contact carries a popup: name (or
+*static info pending* until a type 5 or 24 message has been heard), MMSI, call
+sign, ship and cargo type, navigational status, speed, course and heading.
 
 Notes that are easy to get wrong and are commented at the point of use:
 

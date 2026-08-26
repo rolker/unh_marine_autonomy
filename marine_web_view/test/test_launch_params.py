@@ -50,6 +50,7 @@ PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PAIRS = (
     ('state_renderer.py', 'state_renderer_launch.py'),
     ('coverage_renderer.py', 'coverage_renderer_launch.py'),
+    ('ais_renderer.py', 'ais_renderer_launch.py'),
 )
 
 
