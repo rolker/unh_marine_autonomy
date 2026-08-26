@@ -17,7 +17,7 @@ issue: 357
 - [ ] `package.xml` will need a new `<depend>marine_ais_msgs</depend>` (or the specific message package), and — per `dependencies.repos`'s own stated scope ("add entries here only as concrete CI source-dep gaps surface") — a `marine_ais` entry belongs in `dependencies.repos` alongside `unh_marine_navigation`. `marine_ais` is already in `config/repos/core.repos` for local dev, but that manifest isn't what CI's `vcs import` resolves against, so this is a real, currently-unlisted gap the plan should account for.
 - [ ] Extend `marine_web_view/README.md` with an `ais_renderer` section (subscribed topics, parameters, S3 keys) matching the existing `state_renderer`/`coverage_renderer` documentation pattern, per the "package parameters/topics → docs" consequence.
 
-## Findings
+### Findings
 
 ### Scope Assessment
 
