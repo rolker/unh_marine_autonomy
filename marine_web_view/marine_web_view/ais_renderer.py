@@ -180,6 +180,17 @@ MIN_COURSE_SPEED = 0.01
 # out the whole artifact. Zl/Zp are the line and paragraph separators.
 _UNPRINTABLE = frozenset(('Cc', 'Cf', 'Cs', 'Zl', 'Zp'))
 
+# Ceiling on a published name or call sign. ITU gives the name 20 six-bit
+# characters, plus up to 14 more for an aid-to-navigation extension, and the
+# call sign 7; `Static.msg` declares both as UNBOUNDED ROS strings, so the
+# length that actually arrives is whatever the decoder in front of this hands
+# over -- from a transmitter nobody authenticates. `max_contacts` bounds the
+# contact COUNT and says nothing about per-field size, and this text lands in
+# the object every viewer downloads and in a popup title with no wrapping.
+# 40 leaves headroom over the longest legitimate name; anything past it is
+# not a name.
+MAX_TEXT_CHARS = 40
+
 
 def _clean(text):
     """Return a display string, or None if AIS said "not available".
@@ -196,14 +207,22 @@ def _clean(text):
     override but the decoder in front of this can hand one over anyway, and a
     public popup is not the right place to find out.
     Unprintables become spaces rather than vanishing, so nothing is silently
-    glued into a different word, and runs of whitespace collapse.
+    glued into a different word, and runs of whitespace collapse. The result
+    is capped at MAX_TEXT_CHARS: the ROS strings behind these are unbounded
+    and `max_contacts` bounds only the contact count, so without this one
+    transmitter decides how large the object every viewer downloads is.
     """
     if not text:
         return None
     scrubbed = ''.join(
         ' ' if unicodedata.category(char) in _UNPRINTABLE else char
         for char in str(text).replace('@', ' '))
-    return ' '.join(scrubbed.split()) or None
+    collapsed = ' '.join(scrubbed.split())
+    if len(collapsed) > MAX_TEXT_CHARS:
+        # Marked, not silently shortened: a truncated name read off a public
+        # page should not look like the whole name.
+        collapsed = collapsed[:MAX_TEXT_CHARS].rstrip() + '\u2026'
+    return collapsed or None
 
 
 def _remember(seen, mmsi):

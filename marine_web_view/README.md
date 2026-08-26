@@ -155,7 +155,10 @@ the text around it, so a name can be dressed to read as something other than
 what was transmitted. Unpaired surrogates go with them, for the smaller
 reason — they are not characters, they render as replacement glyphs, and they
 are one `ensure_ascii=False` away from a `UnicodeEncodeError` on the whole
-artifact.
+artifact. Both are also capped at 40 characters: `Static.msg` declares them as
+unbounded ROS strings, `max_contacts` bounds the contact *count* and not
+per-field size, and the text lands in the object every viewer downloads. A
+truncated name is marked with an ellipsis rather than quietly shortened.
 
 Uploads happen only when the contact set or its contents change — and a
 contact's `stamp` counts as its contents, because the page reads that stamp as

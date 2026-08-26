@@ -540,6 +540,23 @@ def test_an_ignored_mmsi_is_never_published(tmp_path):
         rclpy.shutdown()
 
 
+def test_a_name_cannot_be_any_length_the_transmitter_likes():
+    """`Static.msg` declares name and callsign as UNBOUNDED ROS strings.
+
+    `max_contacts` bounds the contact COUNT and says nothing about per-field
+    size, so without a cap one transmitter decides how big the object every
+    viewer downloads is -- and what lands in a popup title that does not
+    wrap. Truncation is marked, so a shortened name does not read as whole.
+    """
+    cap = ais_renderer.MAX_TEXT_CHARS
+    cleaned = ais_renderer._clean('A' * (cap * 10))
+    assert len(cleaned) == cap + 1          # the cap plus the ellipsis
+    assert cleaned.endswith('\u2026')
+    # A name that fits is untouched, ellipsis included.
+    assert ais_renderer._clean('TUG ARTHUR') == 'TUG ARTHUR'
+    assert '\u2026' not in ais_renderer._clean('B' * cap)
+
+
 def test_an_unusable_interval_does_not_take_the_renderer_down(tmp_path):
     """`create_timer` raises on a non-positive period, from the constructor.
 
