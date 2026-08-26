@@ -251,6 +251,22 @@ ros2 launch marine_web_view ais_renderer_launch.py dry_run:=true \
 ros2 launch marine_web_view ais_renderer_launch.py
 ```
 
+Waiting for a ship to come up the river is not a test. Both replayable inputs
+work and neither needs the receiver:
+
+```bash
+# A recording of the tracker's own output, which is what the node subscribes to.
+ros2 bag record /ais/contacts        # once, while the receiver is up
+ros2 bag play <bag>                  # thereafter, against a dry-run renderer
+
+# Or from further upstream, which also exercises the decode: replay a recorded
+# NMEA log into ais_parser and let ais_contact_tracker build the contacts.
+```
+
+Expiry is the one behaviour a short replay will not show on its own — drop
+`contact_timeout` to a few seconds to watch contacts age out, or read
+`test_ais_renderer.py`, which pins it against a fixed clock.
+
 Against the simulator:
 
 ```bash
