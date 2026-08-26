@@ -271,9 +271,44 @@ _VECTOR_CONSTRUCTIONS = (
     r'\bL\.polygon\s*\(',
     r'\bL\.circleMarker\s*\(',
     r'\bL\.marker\s*\(',
+    # A group is a layer like any other, and an orphaned one takes every
+    # vector inside it off the map with it. It was NOT in this tuple when the
+    # AIS layer was built through it, so the group holding every AIS contact
+    # would have gone unguarded by the very test written to catch exactly
+    # that -- the same way `new L.TileLayer(` escaped the tile-layer check.
+    r'\bL\.layerGroup\s*\(',
 )
 
 _VECTOR_BINDING = r'(?:const|let|var)\s+(\w+)\s*=\s*$'
+
+_LAYER_GROUP = r'(?:const|let|var)\s+(\w+)\s*=\s*L\.layerGroup\s*\('
+
+
+def _mapped_layer_groups(page):
+    """Return the names of the page's layer groups that reach the map.
+
+    Call it on `_code(page)`. A vector added to one of these is on the map
+    transitively, which is how per-MMSI AIS hulls get there: they are built
+    and destroyed on every poll, so they cannot each carry an `.addTo(map)`,
+    and they are never bound to a name of their own.
+
+    Only groups that themselves reach the map are returned. A group that is
+    built and orphaned must not launder the layers inside it into looking
+    added -- that would be the #341 failure with one more level of
+    indirection.
+    """
+    names = []
+    for match in re.finditer(_LAYER_GROUP, page):
+        name = match.group(1)
+        statement = _statement(page, match.start())
+        added = (
+            '.addTo(map)' in statement
+            or re.search(r'\b' + name + r'\s*\.addTo\s*\(\s*map\s*\)', page)
+            or re.search(r'map\s*\.addLayer\s*\(\s*' + name + r'\s*\)',
+                         page))
+        if added:
+            names.append(name)
+    return names
 
 
 def test_the_refresh_does_not_redraw_a_hidden_layer():
@@ -310,9 +345,16 @@ def test_the_refresh_does_not_redraw_a_hidden_layer():
 def test_every_vector_layer_reaches_the_map():
     """Every vector-layer construction must reach the map.
 
-    Either in its own statement, or later through the name it is bound to --
-    a layer built now and added on a state change is legitimate, so the name
-    is followed rather than requiring addTo at the construction site.
+    Three ways count, and only three: in its own statement, later through the
+    name it is bound to (a layer built now and added on a state change is
+    legitimate), or into a layer group that itself reaches the map.
+
+    The group case is not a loosening. Per-MMSI AIS hulls are rebuilt on every
+    poll and on every zoom, so they are neither named nor individually added;
+    what puts them on the map is membership of a group that is. The group is
+    checked in exactly the same way as any other layer -- which is why
+    `L.layerGroup` is in the construction tuple above rather than exempt from
+    it -- so an orphaned group fails here and takes its contents with it.
     """
     page = _code(_page())
     sites = [m.start() for m in
@@ -320,18 +362,61 @@ def test_every_vector_layer_reaches_the_map():
     assert len(sites) >= 2, (
         'expected at least the trail and the hull; found {} -- has the page '
         'been restructured?'.format(len(sites)))
+    groups = _mapped_layer_groups(page)
     for start in sites:
         statement = _statement(page, start)
         if '.addTo(map)' in statement:
             continue
+        if any('.addTo({})'.format(group) in statement.replace(' ', '')
+               for group in groups):
+            continue
         bound = re.search(_VECTOR_BINDING, page[:start])
         assert bound, (
             'the vector layer constructed at offset {} is neither added to '
-            'the map nor bound to a name -- it cannot appear'.format(start))
+            'the map, nor to a layer group that is, nor bound to a name -- '
+            'it cannot appear'.format(start))
         name = bound.group(1)
         assert re.search(r'\b' + name + r'\s*\.addTo\s*\(\s*map\s*\)', page), (
             '{} is constructed but never added to the map -- it will not '
             'appear, silently'.format(name))
+
+
+def test_a_layer_group_cannot_launder_an_orphaned_layer():
+    """Guard the guard the group case opens.
+
+    Accepting `.addTo(<group>)` is only safe while the group itself is held to
+    the same rule. If `_mapped_layer_groups` returned every group it found,
+    building one, never adding it, and filling it would satisfy the check
+    above while nothing at all appeared on the map.
+    """
+    orphan = 'const ghosts = L.layerGroup(); L.polygon([]).addTo(ghosts);'
+    assert _mapped_layer_groups(orphan) == [], (
+        'a layer group that never reaches the map was accepted as one that '
+        'does, which would launder every layer inside it')
+    for added in ('const seen = L.layerGroup().addTo(map);',
+                  'const seen = L.layerGroup();\nseen.addTo(map);',
+                  'const seen = L.layerGroup();\nmap.addLayer(seen);'):
+        assert _mapped_layer_groups(added) == ['seen'], added
+
+
+def test_the_pages_own_ais_hulls_are_reached_through_a_mapped_group():
+    """The construction the group case was added for must actually use it.
+
+    Without this the extension above is untethered: the page could stop
+    drawing AIS contacts entirely, or draw them into a group nothing shows,
+    and the broadened rule would have nothing to say about it.
+    """
+    page = _code(_page())
+    groups = _mapped_layer_groups(page)
+    assert groups, 'the page defines no layer group that reaches the map'
+    sites = [m.start() for m in re.finditer(r'\bL\.polygon\s*\(', page)]
+    into_groups = [start for start in sites
+                   if any('.addTo({})'.format(group) in
+                          _statement(page, start).replace(' ', '')
+                          for group in groups)]
+    assert into_groups, (
+        'no polygon is added to a mapped layer group: the per-MMSI AIS hulls '
+        'are gone, and the group case above now guards nothing')
 
 
 def test_the_coverage_layer_is_configured_from_the_manifest():
@@ -639,7 +724,7 @@ def test_a_dead_renderer_is_reported_rather_than_hidden():
 
 
 def test_expected_layers_are_present():
-    """The page must carry imagery, bathymetry, hillshade and coverage."""
+    """The page must carry every source the renderers publish."""
     page = _page()
     for marker, description in (
             ('World_Imagery', 'Esri imagery basemap'),
@@ -647,7 +732,8 @@ def test_expected_layers_are_present():
             ('new Relief', 'hillshade'),
             ('live/coverage/', 'live sonar coverage'),
             ('live/position.geojson', 'vessel position'),
-            ('live/track.geojson', 'vessel track')):
+            ('live/track.geojson', 'vessel track'),
+            ('live/ais.geojson', 'AIS contacts')):
         assert marker in page, '{} ({}) missing from the page'.format(
             description, marker)
 
