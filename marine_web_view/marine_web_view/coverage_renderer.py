@@ -505,7 +505,31 @@ class CoverageRenderer(Node):
 
         namespace = str(self._param('coverage_namespace')).rstrip('/')
         latched = QoSProfile(depth=1)
-        latched.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
+        # ------------------------------------------------------------------
+        # FIELD WORKAROUND 2026-08-26 -- NOT the intended QoS. REVERT to
+        # TRANSIENT_LOCAL once the relay is fixed.
+        #
+        # The producer publishes this catalog transient_local
+        # (cube_bathymetry_node.cpp:515, "transient_local for late joiners"),
+        # and TRANSIENT_LOCAL is the correct request. But udp_bridge
+        # republishes it VOLATILE on the operator side, and a TRANSIENT_LOCAL
+        # subscriber cannot match a VOLATILE publisher -- so this node
+        # received no catalog at all, never reconciled, and could only paint
+        # the handful of tiles pushed to it on coverage_tiles. CAMP hides the
+        # same break because it warm-loads a disk cache; this renderer is
+        # memory-only, so a restart left the page nearly empty.
+        #
+        # VOLATILE matches the relay and gets the survey back on the page.
+        # What it costs is late-join: with no latched sample, this node sees
+        # nothing until the producer's next periodic publish. That is ~6 s
+        # during an active survey (measured 5 catalog messages in 30 s), so
+        # the cost is small WHILE THE PRODUCER IS RUNNING -- and unbounded if
+        # it is not, which is exactly the case transient_local exists for.
+        #
+        # The real fix is in the relay: preserve the producer's durability
+        # instead of downgrading it. Tracked for wrap-up.
+        # ------------------------------------------------------------------
+        latched.durability = QoSDurabilityPolicy.VOLATILE
         latched.reliability = QoSReliabilityPolicy.RELIABLE
         # Depth 10, matching the producer (cube_bathymetry_node.cpp:513) and
         # CAMP's consumer. A deeper queue on a BEST_EFFORT topic does not make
