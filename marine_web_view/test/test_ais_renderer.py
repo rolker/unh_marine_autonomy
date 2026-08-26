@@ -178,6 +178,32 @@ def test_a_contact_that_regains_a_position_is_reported_again_if_it_is_lost(
     assert len([line for line in lines if 'MMSI 7' in line]) == 2, lines
 
 
+def test_a_failed_pass_costs_one_tick_not_the_node(node, tmp_path):
+    """A raise out of a timer callback unwinds spin() and the process exits.
+
+    The most reachable one is an OSError from the dry-run write: a
+    `local_path` whose directory does not exist, or a full disk. Losing the
+    renderer over a missing directory is not a trade anyone would pick on a
+    shore watch, and the artifact's own "breaks one upload, in a process with
+    a log" promise was only ever true of the payload.
+    """
+    errors = []
+    node.get_logger().error = lambda message, **kwargs: errors.append(message)
+    node.local_path = str(tmp_path / 'no-such-directory' / 'ais.geojson')
+    node._on_contact(_contact())
+    node._tick()                                   # must not raise
+    assert node._writes == 0 and node._failures == 1
+    assert errors and 'publish pass failed' in errors[0], errors
+    assert 'FileNotFoundError' in errors[0], (
+        'the log does not say what went wrong, so a contained failure is a '
+        'silent one')
+
+    # And the next pass still runs: the failure cost one tick, not the node.
+    node.local_path = str(tmp_path / 'ais.geojson')
+    node._tick()
+    assert node._writes == 1
+
+
 def test_the_serialiser_refuses_a_nan_that_slips_past_the_position_check(node):
     """`allow_nan=False` is the backstop, and it has to actually be set.
 

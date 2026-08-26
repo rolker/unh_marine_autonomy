@@ -518,6 +518,26 @@ class AisRenderer(Node):
         }, separators=(',', ':'), allow_nan=False)
 
     def _tick(self):
+        """Run one publish pass, and never take the node down doing it.
+
+        An exception out of a timer callback unwinds `rclpy.spin` and the
+        process exits. `_geojson`'s docstring promises that a bad payload
+        "breaks one upload, in a process with a log" -- that was only true of
+        the payload, and only because nothing else in the pass could raise.
+        The reachable one is an OSError from `write_atomic` on a dry run whose
+        `local_path` directory does not exist or has filled up, and losing the
+        renderer over a missing directory is not a trade anyone would pick on
+        a shore watch. Contained, counted, and reported.
+        """
+        try:
+            self._publish_pass()
+        except Exception as exc:
+            self._failures += 1
+            self.get_logger().error(
+                'publish pass failed, skipping this tick: {}: {}'.format(
+                    type(exc).__name__, exc), throttle_duration_sec=30.0)
+
+    def _publish_pass(self):
         """Publish the contact set if it has changed since the last write."""
         now = self._now()
         expired = self._expire(now)
