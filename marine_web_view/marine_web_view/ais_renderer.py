@@ -118,6 +118,13 @@ DISTRESS_NAV_STATUS = 14
 # page's own SPECIAL_TYPE table names them; this is the same two codes.
 RESPONDER_SHIP_TYPES = frozenset((51, 55))
 
+# Ceiling on each of the once-per-MMSI log records below. MMSI is an
+# unauthenticated uint32 field on the air, so a set keyed on it is only as
+# bounded as the traffic is honest -- and unlike `_contacts` these records
+# have no timeout pruning them. Far above any real receiver's contact count
+# over a shore watch: this is a runaway stop, not a working limit.
+MAX_REMEMBERED_MMSI = 10000
+
 # Below this speed the reported course is not recoverable. ais_parser encodes
 # course over ground as the DIRECTION of the velocity vector (linear.x/y), so
 # at a speed of zero both components are zero and the course is gone -- and
@@ -138,6 +145,23 @@ def _clean(text):
         return None
     cleaned = str(text).replace('@', ' ').strip()
     return cleaned or None
+
+
+def _remember(seen, mmsi):
+    """Note an MMSI as already reported; True if it had not been.
+
+    `seen` is a dict used as an insertion-ordered set, so the oldest record
+    can be evicted once there are MAX_REMEMBERED_MMSI of them. What eviction
+    costs is one repeated log line for a contact not seen in thousands of
+    contacts, which is the right thing to lose: the alternative is a set that
+    grows for the life of the node on input nobody authenticates.
+    """
+    if mmsi in seen:
+        return False
+    seen[mmsi] = None
+    if len(seen) > MAX_REMEMBERED_MMSI:
+        del seen[next(iter(seen))]
+    return True
 
 
 def excluded_from_public(contact):
@@ -284,17 +308,18 @@ class AisRenderer(Node):
         self._failures = 0
         self._skipped = 0
         self._last_written = None
-        # MMSIs already reported as position-less. A shore receiver hears a
-        # silent AIS beacon every few seconds for as long as it is switched
-        # on, so an unthrottled line here is a log nobody can read.
-        self._positionless = set()
+        # MMSIs already reported as position-less, capped by `_remember`. A
+        # shore receiver hears a silent AIS beacon every few seconds for as
+        # long as it is switched on, so an unthrottled line here is a log
+        # nobody can read -- and an unbounded record of who has been logged
+        # is a leak with a transmitter on the other end of it.
+        self._positionless = {}
         # One warning, ever, for the clock mismatch below: if it is wrong it
         # is wrong for every contact in the bag.
         self._clock_warned = False
-        # MMSIs already reported as withheld, throttled for the same reason
-        # `_positionless` is: a contact transmits for as long as it is in
-        # range, and a line per report is a log nobody can read.
-        self._withheld = set()
+        # MMSIs already reported as withheld, throttled and capped for the
+        # same reasons `_positionless` is.
+        self._withheld = {}
 
         # Same gate, same reasoning as the other two renderers: a dry run
         # writes to local_path and needs no AWS access at all, so no client is
@@ -351,9 +376,8 @@ class AisRenderer(Node):
             # distress, or have its type resolve to 51/55 from a later type 5
             # message, long after it was first heard and published.
             self._contacts.pop(msg.id, None)
-            self._positionless.discard(msg.id)
-            if msg.id not in self._withheld:
-                self._withheld.add(msg.id)
+            self._positionless.pop(msg.id, None)
+            if _remember(self._withheld, msg.id):
                 # A withheld contact must not be indistinguishable from one
                 # that was never heard: a quiet page has to be tellable from
                 # a filtering one, and only this log can do that.
@@ -361,17 +385,16 @@ class AisRenderer(Node):
                     'MMSI {} withheld from the public artifact -- {} '
                     '(logged once per contact)'.format(msg.id, reason))
             return
-        self._withheld.discard(msg.id)
+        self._withheld.pop(msg.id, None)
         position = msg.pose.position
         if not (math.isfinite(position.latitude) and
                 math.isfinite(position.longitude)):
-            if msg.id not in self._positionless:
-                self._positionless.add(msg.id)
+            if _remember(self._positionless, msg.id):
                 self.get_logger().info(
                     'MMSI {} reports no position; not shown on the map '
                     '(logged once per contact)'.format(msg.id))
             return
-        self._positionless.discard(msg.id)
+        self._positionless.pop(msg.id, None)
         self._warn_if_already_expired(msg)
         self._contacts[msg.id] = msg
 

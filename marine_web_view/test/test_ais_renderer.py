@@ -271,6 +271,27 @@ def test_an_at_padded_name_is_not_a_name():
     assert ais_renderer._clean('TUG ARTHUR@@@@@@@@@') == 'TUG ARTHUR'
 
 
+def test_the_once_per_mmsi_log_records_are_bounded(node):
+    """`_expire` bounds the contacts; nothing bounded the log records.
+
+    MMSI is an unauthenticated uint32 on the air and these two sets have no
+    timeout pruning them, so on the shore watch `_expire`'s docstring
+    advertises they are what grows instead.
+    """
+    node.get_logger().info = lambda message, **kwargs: None
+    cap = ais_renderer.MAX_REMEMBERED_MMSI
+    for mmsi in range(cap + 500):
+        node._on_contact(_contact(mmsi=mmsi, latitude=math.nan,
+                                  longitude=math.nan))
+        node._on_contact(_contact(mmsi=mmsi + 10 ** 6, nav_status=14))
+    assert len(node._positionless) == cap
+    assert len(node._withheld) == cap
+    # The cap evicts the OLDEST record, so what a flood costs is a repeated
+    # log line for a contact nobody has heard in thousands of contacts.
+    assert 0 not in node._positionless
+    assert cap + 499 in node._positionless
+
+
 def test_a_contact_unheard_for_the_timeout_is_dropped_and_forgotten(node):
     """Expiry is pruning, not filtering: memory is bounded on a long watch."""
     node._on_contact(_contact(mmsi=1, stamp=1000.0))
