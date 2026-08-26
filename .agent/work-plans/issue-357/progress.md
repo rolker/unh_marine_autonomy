@@ -58,3 +58,16 @@ issue: 357
 ---
 **Authored-By**: `Claude Code Agent`
 **Model**: `Claude Sonnet`
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-08-26 02:09 +0000
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-357/plan.md` at `75f2097`
+**Branch**: feature/issue-357 at `75f2097`
+**Phases**: single
+
+### Open questions
+- [ ] Prune `ais_renderer`'s in-memory contact dict on expiry (plan does), or retain indefinitely and only exclude from the published snapshot?
+- [ ] `contact_timeout` (600s) and `interval` (10s) defaults are judgment calls — sanity-check against observed Piscataqua AIS traffic during the pandy end-to-end verification pass.
