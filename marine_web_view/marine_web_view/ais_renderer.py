@@ -44,8 +44,12 @@ and there is no out-of-order history to reconcile (unlike state_renderer's
 track).
 
 Everything a viewer sees is one object: one FeatureCollection for all
-contacts, written when the set or its contents change. An idle river with the
-boat on the trailer costs zero S3 PUTs.
+contacts, written when the set or its contents change -- and a contact's
+`stamp` is part of "its contents", because the page reads that stamp as the
+AIS layer's only liveness signal. So an empty river costs zero S3 PUTs, while
+one contact reporting on it costs up to one PUT per `interval`: the
+documented ceiling, and the price of a page that can tell a dead renderer
+from calm water.
 
 Three things this node has to get right that are invisible in a good run:
 
@@ -483,8 +487,8 @@ class AisRenderer(Node):
                 # unchanged set would pay an S3 PUT to say nothing happened
                 # (see the README's Cost section), so an unchanging
                 # `generated` means "nothing has changed since", not
-                # necessarily "the renderer is alive". Contact age comes from
-                # each feature's own `stamp`.
+                # necessarily "the renderer is alive". Liveness is each
+                # feature's own `stamp`, which the page fades on.
                 'generated': time.strftime('%Y-%m-%dT%H:%M:%SZ',
                                            time.gmtime()),
             },
@@ -502,10 +506,20 @@ class AisRenderer(Node):
 
         features = self._features()
         # The signature is the features themselves, so any property a viewer
-        # can see moving the map -- a position, a speed, a name that has just
-        # arrived -- publishes, and nothing else does. Compared against what
-        # actually LANDED, not against what was handed to the uploader: an
-        # accepted payload is not a published one.
+        # can see -- a position, a speed, a name that has just arrived --
+        # publishes, and nothing else does.
+        #
+        # `stamp` IS such a property, deliberately: the page has no other
+        # liveness signal (`generated` legitimately stops moving on a quiet
+        # river) so it fades a contact whose stamp stops advancing. Leaving
+        # the stamp out of this signature would therefore fade every live
+        # contact that happens to be holding station. The cost is that a
+        # contact merely re-heard still republishes -- one PUT per interval
+        # while anything at all is in range, which is exactly the ceiling the
+        # README's Cost section quotes. Hearing NOTHING is still free.
+        #
+        # Compared against what actually LANDED, not against what was handed
+        # to the uploader: an accepted payload is not a published one.
         signature = json.dumps(features, separators=(',', ':'),
                                allow_nan=False, sort_keys=True)
         if signature == self._written_signature():

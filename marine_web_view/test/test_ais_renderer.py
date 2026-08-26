@@ -201,7 +201,14 @@ def test_every_contact_is_one_object(node):
 
 
 def test_an_unchanged_contact_set_costs_no_write(node):
-    """S3 PUTs bill per request; an idle river must cost nothing."""
+    """S3 PUTs bill per request; an EMPTY river must cost nothing.
+
+    "Unchanged" here means the identical report re-delivered, stamp included
+    -- which is what a bag replay or a duplicated message looks like, not what
+    a live receiver produces. A contact genuinely re-heard carries a new stamp
+    and does publish; that is the next test, and the two together are the
+    whole cost model.
+    """
     node._on_contact(_contact())
     node._tick()
     assert node._writes == 1
@@ -215,6 +222,34 @@ def test_an_unchanged_contact_set_costs_no_write(node):
     node._tick()
     assert node._writes == 2, 'a moved contact was not published'
     assert node._skipped == 0
+
+
+def test_a_contact_re_heard_publishes_its_new_stamp(node):
+    """The stamp is in the change signature on purpose, and it has to be.
+
+    The page has no other liveness signal -- the collection's `generated`
+    legitimately stops moving on a quiet river -- so it fades a contact whose
+    stamp stops advancing. Drop the stamp from the signature to save the PUT
+    and a vessel holding station fades out while it is still reporting
+    perfectly well, which is the failure the fade exists to report.
+    """
+    node._on_contact(_contact(stamp=1000.0))
+    node._tick()
+    assert node._writes == 1
+    node._on_contact(_contact(stamp=1010.0))   # same vessel, same place
+    node._tick()
+    assert node._writes == 2, (
+        'a contact re-heard 10 s later did not republish: its stamp stops '
+        'advancing on the page and the layer fades a live contact out')
+    assert _published(node)['features'][0]['properties']['stamp'] == 1010.0
+
+
+def test_an_empty_river_costs_nothing_at_all(node):
+    """The floor of the cost model: nothing heard, nothing uploaded."""
+    for _ in range(10):
+        node._tick()
+    assert node._writes <= 1, (
+        'an empty contact set was uploaded more than once')
 
 
 def test_a_newly_arrived_name_publishes(node):

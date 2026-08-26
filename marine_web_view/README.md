@@ -148,8 +148,11 @@ with. `name` and `callsign` are `null` until a type 5 or 24 message has been
 heard — the ordinary case for the first minutes after a contact comes into
 range, and what the page renders as *static info pending*.
 
-Uploads happen only when the contact set or its contents change, so an idle
-river with the boat on the trailer costs nothing. `generated` in the
+Uploads happen only when the contact set or its contents change — and a
+contact's `stamp` counts as its contents, because the page reads that stamp as
+the layer's liveness signal (see below). So an **empty** river costs nothing,
+while a river with anything at all on it costs up to one PUT per `interval`,
+which is the ceiling the Cost section quotes. `generated` in the
 collection's properties is therefore when the artifact was last **rebuilt**,
 not the last tick: an unchanging value means "nothing has changed since", not
 necessarily "the renderer is alive". Liveness comes from each feature's own
@@ -244,7 +247,11 @@ track, `coverage_renderer`'s tiles and manifest, and `ais_renderer`'s contact
 snapshot. AIS is the cheapest of the three by construction — one object at
 `interval` (10 s → ~260k PUTs/month, ~$1.30 as a 24/7 ceiling), and only when
 the contacts actually changed. Its cost does **not** scale with contact count:
-one busy river and one empty one cost the same number of PUTs.
+a busy river and a river with one vessel on it cost the same number of PUTs,
+and a river with nothing on it costs none. What it *does* scale with is
+whether anything is being heard at all, because a contact re-heard carries a
+new `stamp` and the page needs that stamp to advance to know the renderer is
+alive — the ceiling above is the price of that.
 
 GETs are the other side, and they scale with **viewers**, not with the
 renderers. Each open page fetches the position once a second, the track every
