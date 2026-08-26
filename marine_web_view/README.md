@@ -424,7 +424,7 @@ ros2 launch marine_web_view web_view_launch.py enable_ais:=false
 | `platform` | `bizzy` | Drives the five derived values below; each stays individually overridable |
 | `platform_name` | `platform` | Must equal `PlatformList.platform_namespace` or `.name` — see below |
 | `platforms_topic` | `/marine/platforms` | Global, so not derived from `platform` |
-| `contacts_topic` | `/<platform>/ais/contacts` | BizzyBoat carries its own receiver; see below |
+| `contacts_topic` | `/ais/contacts` | Global, not derived — the station receives AIS itself; see below |
 | `coverage_namespace` | `/<platform>/sensors/m3/cube_bathymetry` | |
 | `map_frame` / `chart_datum_frame` | `<platform>/map`, `<platform>/chart_datum` | |
 | `bucket` / `profile` | `unh-ccom-p11-live` / `p11-renderer` | Shared by all three |
@@ -444,11 +444,14 @@ platform's nav topics nor replaces the fallback hull — which is BEN's
 The result is an oversized hull sitting still, with nothing logged as wrong.
 Deriving it from `platform` is what keeps it from being a thing to remember.
 
-**The AIS topic is namespaced here.** The shore-station arrangement the
-`ais_renderer` section describes puts contacts on a global `/ais/contacts`;
-BizzyBoat carries its own receiver and publishes `/bizzy/ais/contacts`. When
-the ROC desktop runs the renderer instead, pass `enable_ais:=false` here and
-launch `ais_renderer_launch.py` there on its own default.
+**The AIS topic is not derived from `platform`.** Both arrangements are
+real: the operator station runs its own `nmea_relay` → `ais_parser` →
+`ais_contact_tracker` chain on the global `/ais/contacts`, while a boat
+carrying its own receiver publishes under its namespace — BizzyBoat's recorded
+bags carry `/bizzy/ais/contacts`. This file is for the station, so the global
+topic is the default; pass `contacts_topic:=/<platform>/ais/contacts` to read
+a boat-side receiver instead. When the ROC desktop runs the renderer, pass
+`enable_ais:=false` here and launch `ais_renderer_launch.py` there.
 
 **Coverage needs the boat up.** The ADR-0008 triple is request/response — the
 renderer publishes `TileRequest` and waits for a live producer — and it is

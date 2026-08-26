@@ -152,11 +152,12 @@ def generate_launch_description():
             description='PlatformList topic. Global, not under the platform '
                         'namespace, so it is not derived from platform.'),
         DeclareLaunchArgument(
-            'contacts_topic',
-            default_value=['/', platform, '/ais/contacts'],
-            description='AISContact topic. BizzyBoat carries its own '
-                        'receiver, so this is namespaced -- unlike the shore '
-                        'station README default.'),
+            'contacts_topic', default_value='/ais/contacts',
+            description='AISContact topic. Global, NOT derived from '
+                        'platform: this file is for the operator station, '
+                        'and the station receives AIS itself. Pass '
+                        '/<platform>/ais/contacts to read a boat-side '
+                        'receiver instead.'),
         DeclareLaunchArgument(
             'coverage_namespace',
             default_value=['/', platform, '/sensors/m3/cube_bathymetry'],
