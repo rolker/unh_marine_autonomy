@@ -44,6 +44,7 @@ executor, not the guard.
 import threading
 
 from marine_web_view import coverage_renderer
+from marine_web_view import renderer_common
 from marine_web_view.coverage_renderer import CoverageRenderer
 from marine_web_view.reconciler import TileCatalogReconciler
 
@@ -529,10 +530,10 @@ def test_nothing_pending_publishes_nothing():
 def test_an_unusable_interval_falls_back_to_the_default():
     """Timer periods are parameters, and rclpy rejects a non-positive one."""
     for bad in (0, -1, 0.0, float('nan'), float('inf'), 'soon', None,
-                coverage_renderer.MAX_INTERVAL_SECONDS + 1):
-        assert coverage_renderer.sane_interval(bad, 20.0) == (20.0, False), bad
-    for good in (0.1, 5.0, 20, coverage_renderer.MAX_INTERVAL_SECONDS):
-        assert coverage_renderer.sane_interval(good, 20.0) == (
+                renderer_common.MAX_INTERVAL_SECONDS + 1):
+        assert renderer_common.sane_interval(bad, 20.0) == (20.0, False), bad
+    for good in (0.1, 5.0, 20, renderer_common.MAX_INTERVAL_SECONDS):
+        assert renderer_common.sane_interval(good, 20.0) == (
             float(good), True), good
 
 

@@ -118,10 +118,12 @@
     <dt>Heading</dt><dd id="hdg">—</dd>
     <dt>Fix age</dt><dd id="age">—</dd>
     <dt>Coverage</dt><dd id="cov">—</dd>
+    <dt>AIS</dt><dd id="ais-age">—</dd>
   </dl>
   <div id="status"><span id="dot"></span><span id="msg">connecting…</span></div>
   <div id="details">
   <label><input type="checkbox" id="follow" checked> follow boat</label>
+  <label><input type="checkbox" id="ais" checked> AIS traffic</label>
   <div id="legend"><h2>Depth</h2></div>
   <div id="credit">
     Operated by the Center for Coastal and Ocean Mapping / Joint Hydrographic
@@ -149,6 +151,29 @@ const POLL_MS   = 1000;    // renderer writes the point at 1 Hz
 // The track is a separate, larger object on a slower cadence: old track does
 // not change, so re-fetching it at the position rate would be waste.
 const TRACK_MS  = 30000;   // renderer writes the track every 30 s
+// AIS is a third artifact on a third cadence. Surrounding traffic does not
+// need the 1 Hz the boat's own position does, and the renderer writes it only
+// when the contact set actually changes, so polling it faster would fetch the
+// same object again -- once per viewer, which is the side of the bill that
+// scales with how many people are watching.
+const AIS_SRC   = 'live/ais.geojson';
+const AIS_MS    = 10000;   // renderer writes the contacts every 10 s
+// The AIS layer's ONLY liveness signal is each contact's own `stamp` -- the
+// time the shore receiver heard it. The collection's `generated` cannot serve:
+// the renderer republishes only when the contacts change, so on a quiet river
+// it legitimately stops moving, and a renderer that died an hour ago then
+// looks identical to one watching calm water. S3 keeps serving the last
+// object with a cheerful 200 either way.
+//
+// 300 s because ITU-R M.1371 reporting intervals top out at 3 minutes (an
+// anchored class A, a slow class B), so a contact unheard for five is not
+// merely between reports -- it is gone, or nothing is being received at all.
+// The renderer drops it entirely at its own contact_timeout, 600 s by default.
+const AIS_STALE_S = 300;
+// Faded, not removed, for the same reason the coverage layer fades: what was
+// last heard is still the best guess at where a vessel is, but it must not be
+// drawn with the same confidence as a contact reporting right now.
+const AIS_STALE_OPACITY = 0.25;
 const STALE_S = 20;   // amber past this
 const DEAD_S  = 60;   // red past this
 
@@ -780,6 +805,228 @@ async function pollTrack() {
   } catch (e) { /* leave the previous track up */ }
 }
 
+// AIS contacts -----------------------------------------------------------
+//
+// One layer group holding one hull per MMSI, rebuilt from the last snapshot.
+// The hulls come from the SAME hullShape() the vessel's own hull uses, so
+// they inherit its zoom-dependent triangle/circle/hull rule -- and its
+// "circle when the heading is unknown" case, which for AIS is the common one:
+// most small craft never transmit a true heading at all.
+const aisLayer = L.layerGroup();
+let aisFeatures = [];
+// Whether the last poll actually reached the artifact. Distinct from contact
+// age: an unreachable artifact and a stale one both mean "do not trust the
+// hulls on the map", and both have to reach the viewer.
+let aisAlive = true;
+
+// ITU-R M.1371 navigational status. Index is the code; 9, 10 and 13 are
+// reserved and read as their number rather than as a guess.
+const NAV_STATUS = [
+  'under way (engine)', 'at anchor', 'not under command',
+  'restricted manoeuvrability', 'constrained by draught', 'moored',
+  'aground', 'fishing', 'under way (sailing)', null, null,
+  'towing astern', 'pushing ahead or towing alongside', null,
+  'AIS-SART / MOB / EPIRB', null,
+];
+
+// The first digit of the type code is the class; 50-59 are named craft in
+// their own right. Deliberately coarse: the full table is two dimensions
+// wide and most of it is cargo-hazard detail nobody watching a river needs.
+const SHIP_TYPE = { 2:'wing in ground', 3:'vessel', 4:'high-speed craft',
+                    6:'passenger', 7:'cargo', 8:'tanker', 9:'other' };
+const SPECIAL_TYPE = { 50:'pilot vessel', 51:'search and rescue', 52:'tug',
+                       53:'port tender', 54:'anti-pollution',
+                       55:'law enforcement', 58:'medical transport' };
+
+function shipTypeText(code) {
+  if (!code) return null;                       // 0 = not available
+  if (SPECIAL_TYPE[code]) return SPECIAL_TYPE[code];
+  if (code === 36) return 'sailing vessel';
+  if (code === 37) return 'pleasure craft';
+  const name = SHIP_TYPE[Math.floor(code / 10)];
+  return name ? name + ' (' + code + ')' : 'type ' + code;
+}
+
+// A contact's age in seconds, or null when the stamp is unusable. Validated
+// rather than trusted, for the coverage manifest's reason: a missing or
+// non-numeric stamp makes `Date.now()/1000 - stamp` NaN, every
+// `age > AIS_STALE_S` comparison false, and a renderer that died hours ago
+// then reads as perfectly healthy -- defeating the one signal there is.
+function aisAge(p) {
+  return (typeof p.stamp === 'number' && Number.isFinite(p.stamp))
+    ? Date.now()/1000 - p.stamp : null;
+}
+
+// Whether a contact should be drawn as a guess rather than as a report. A
+// failed poll counts: what is on the map is then unverified too.
+function aisStale(p) {
+  const age = aisAge(p);
+  return !aisAlive || age === null || age > AIS_STALE_S;
+}
+
+// The AIS row of the readout. The FRESHEST contact is the liveness measure --
+// if the newest thing in the artifact is half an hour old then nothing is
+// being received, whatever the map is still showing. Age is decided first and
+// prefixed to the count, the way coverageText() does it, so "stale" can never
+// be shadowed by a healthy-sounding contact count.
+//
+// KNOWN LIMIT, and the honest place to record it: liveness rides on the
+// contacts, so with NO contacts there is nothing to ride on. When the last
+// one expires the renderer publishes one empty collection and, by design,
+// never publishes again, so 'no contacts' is what an empty river and a
+// renderer that died an hour later both read as. Only "offline" -- the
+// artifact itself unreachable -- is distinguishable in that state. See the
+// README's Output section.
+function aisText() {
+  if (!aisFeatures.length) return aisAlive ? 'no contacts' : 'offline';
+  const ages = aisFeatures.map(f => aisAge(f.properties || {}))
+                          .filter(age => age !== null);
+  const count = aisFeatures.length
+    + (aisFeatures.length === 1 ? ' contact' : ' contacts');
+  if (!ages.length) return count + ' \u00b7 age unknown';
+  const newest = Math.min.apply(null, ages);
+  const body = count + ' \u00b7 newest ' + newest.toFixed(0) + ' s';
+  return (!aisAlive || newest > AIS_STALE_S) ? 'stale \u2014 ' + body : body;
+}
+
+function aisPopup(p) {
+  // Built as TEXT nodes, not as an HTML string. Contact names and call signs
+  // arrive over the air from anyone with a transmitter and land in the
+  // popup; six-bit ASCII cannot carry a '<', but this page is not the place
+  // to bet a viewer's browser on that staying true through the decoder.
+  const box = document.createElement('div');
+  const title = document.createElement('b');
+  title.textContent = p.name ? p.name : 'MMSI ' + p.mmsi;
+  box.appendChild(title);
+
+  const rows = [];
+  // "Position but no name" is the ordinary state for the first minutes after
+  // a contact comes into range: it is reported, not left blank.
+  if (p.name) rows.push(['MMSI', String(p.mmsi)]);
+  else rows.push(['Name', 'static info pending']);
+  if (p.callsign) rows.push(['Call sign', p.callsign]);
+  const type = shipTypeText(p.ship_and_cargo_type);
+  if (type) rows.push(['Type', type]);
+  const status = NAV_STATUS[p.navigational_status];
+  if (status) rows.push(['Status', status]);
+  if (p.speed_knots != null) rows.push(['Speed', p.speed_knots.toFixed(1) + ' kn']);
+  if (p.course_deg != null) rows.push(['Course', p.course_deg.toFixed(0) + '\u00B0']);
+  if (p.heading_deg != null) rows.push(['Heading', p.heading_deg.toFixed(0) + '\u00B0']);
+  // Last, and always present: a hull on the map is a position from a moment
+  // in time, and on a public page nobody can tell which moment by looking.
+  const age = aisAge(p);
+  if (age !== null) {
+    rows.push(['Last report', age < 90 ? age.toFixed(0) + ' s ago'
+                                       : (age / 60).toFixed(0) + ' min ago']);
+  }
+
+  for (const row of rows) {
+    box.appendChild(document.createElement('br'));
+    box.appendChild(document.createTextNode(row[0] + ': ' + row[1]));
+  }
+  return box;
+}
+
+// Hulls held BY MMSI, so a redraw updates them instead of rebuilding the
+// group. clearLayers() on every 10 s poll and every zoomend closed whatever
+// popup a viewer had open, within ten seconds of them opening it -- which on
+// a public page does not read as a refresh, it reads as a broken map.
+const aisHulls = new Map();
+
+// Faded once the contact stops reporting. Without this a dead renderer -- or
+// a shore receiver that lost its antenna -- leaves a confident fleet of hulls
+// sitting on the river at full opacity for as long as the bucket keeps
+// serving the last object, which is forever.
+function aisStyle(dim) {
+  return { color:'#4A5A66', weight:1, fillColor:'#7E8C99',
+           opacity: dim ? AIS_STALE_OPACITY : 1,
+           fillOpacity: dim ? AIS_STALE_OPACITY : .75 };
+}
+
+// drawAis() MUST NOT THROW. It is bound to zoomend and it is what pollAis()
+// calls from its own catch, so an exception here does not degrade one contact
+// -- it escapes as an unhandled rejection and then throws again on every
+// zoom, leaving the layer permanently broken. Every field read out of the
+// artifact below is therefore validated, not trusted: the object is fetched
+// over the network and one malformed feature must cost that feature only.
+function drawAis() {
+  const seen = new Set();
+  for (const f of (Array.isArray(aisFeatures) ? aisFeatures : [])) {
+    const coords = ((f || {}).geometry || {}).coordinates;
+    if (!Array.isArray(coords)
+        || !Number.isFinite(coords[0]) || !Number.isFinite(coords[1])) {
+      continue;                        // no position: nothing to draw
+    }
+    const [lon, lat] = coords;
+    const p = f.properties || {};
+    if (p.mmsi == null) continue;      // no identity: nothing to update
+    seen.add(p.mmsi);
+    const shape = hullShape(lat, lon, p.heading_deg, p.vessel || {});
+    const style = aisStyle(aisStale(p));
+    const hull = aisHulls.get(p.mmsi);
+    if (hull) {
+      hull.setLatLngs(shape);
+      hull.setStyle(style);
+      // bindPopup TEARS DOWN an open popup, which is the whole bug. Update
+      // the open one in place instead -- the age row in it is live.
+      if (hull.isPopupOpen()) hull.getPopup().setContent(aisPopup(p));
+      else hull.bindPopup(aisPopup(p));
+    } else {
+      aisHulls.set(p.mmsi,
+                   L.polygon(shape, style).bindPopup(aisPopup(p))
+                    .addTo(aisLayer));
+    }
+  }
+  // Everything the artifact no longer carries: expired by the renderer,
+  // withheld, or out of range. Deleting from a Map while iterating it is
+  // defined behaviour.
+  for (const [mmsi, hull] of aisHulls) {
+    if (!seen.has(mmsi)) { aisLayer.removeLayer(hull); aisHulls.delete(mmsi); }
+  }
+  $('ais-age').textContent = aisText();
+}
+// hullShape() is zoom-dependent, so a hull drawn at the last poll is the
+// wrong size after a zoom. drawBoat is bound the same way, for the same
+// reason -- rebuilding only on the 10 s poll would leave every contact
+// wrong-sized for up to AIS_MS.
+map.on('zoomend', drawAis);
+
+async function pollAis() {
+  try {
+    const r = await fetch(AIS_SRC, { cache:'default' });
+    // Not a quiet `return`: before this the artifact being absent, forbidden
+    // or 500 was indistinguishable on the page from a river with nothing on
+    // it. "offline" is the honest reading of all three.
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const collection = await r.json();
+    const features = (collection || {}).features;
+    aisFeatures = Array.isArray(features) ? features : [];
+    aisAlive = true;
+    drawAis();
+  } catch (e) {
+    // Leave the contacts on the map -- the last known positions are still the
+    // best there is -- but stop presenting them as current. Silence here is
+    // what made an unreachable artifact look like an empty river.
+    aisAlive = false;
+    drawAis();
+  }
+}
+
+// The toggle hides the GROUP, not the poll: unchecking costs nothing extra and
+// re-checking is instant, with no wait for the next fetch.
+//
+// Visibility is read from the checkbox AT USE TIME rather than assumed from
+// the markup, the way `follow` reads $('follow').checked. Browsers restore
+// checkbox state across a soft reload but not the JavaScript that ran off it,
+// so a box the viewer had unchecked comes back unchecked with the layer
+// showing -- a control that says the opposite of what the map is doing.
+function syncAisLayer() {
+  if ($('ais').checked) map.addLayer(aisLayer);
+  else map.removeLayer(aisLayer);
+}
+$('ais').addEventListener('change', syncAisLayer);
+syncAisLayer();
+
 async function poll() {
   try {
     const r = await fetch(SRC, { cache:'default' });   // no cache-buster: let
@@ -791,9 +1038,11 @@ async function poll() {
 poll();
 pollTrack();
 pollCoverage();
+pollAis();
 setInterval(poll, POLL_MS);
 setInterval(pollTrack, TRACK_MS);
 setInterval(pollCoverage, COVERAGE_MS);
+setInterval(pollAis, AIS_MS);
 setInterval(updateAge, 1000);
 
 // Start collapsed on a phone: the map is the point, the readout is secondary.
@@ -811,7 +1060,7 @@ toggle.addEventListener('click', () => setCollapsed(!hud.classList.contains('col
 // after a few minutes -- so a tab returned to can be well behind. Refresh
 // immediately on becoming visible rather than waiting for the next tick.
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) { poll(); pollTrack(); }
+  if (!document.hidden) { poll(); pollTrack(); pollAis(); }
 });
 </script>
 </body>

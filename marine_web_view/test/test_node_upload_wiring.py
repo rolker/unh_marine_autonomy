@@ -28,7 +28,7 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-"""Bind the UPLOAD WIRING in both nodes, not just the helpers it calls.
+"""Bind the UPLOAD WIRING in the nodes, not just the helpers it calls.
 
 A review round found seven mutations surviving a green suite, every one of
 them at a call site: the numbers each node hands the transport, and which
@@ -51,6 +51,7 @@ os.environ['ROS_AUTOMATIC_DISCOVERY_RANGE'] = 'OFF'
 import threading                                        # noqa: E402
 import time                                             # noqa: E402
 
+from marine_web_view import ais_renderer                # noqa: E402
 from marine_web_view import coverage_renderer           # noqa: E402
 from marine_web_view import state_renderer              # noqa: E402
 from marine_web_view.s3_upload import AsyncUploader     # noqa: E402
@@ -100,6 +101,7 @@ def live_node(monkeypatch, request):
     """Start rclpy with dry_run OFF and the transport replaced."""
     uploader = getattr(request, 'param', _Recorder)
     _Recorder.instances = []
+    monkeypatch.setattr(ais_renderer, 'S3Uploader', uploader)
     monkeypatch.setattr(coverage_renderer, 'S3Uploader', uploader)
     monkeypatch.setattr(state_renderer, 'S3Uploader', uploader)
     rclpy.init(args=[
@@ -135,6 +137,85 @@ def test_state_renderer_uploads_through_the_worker_not_the_executor(
     finally:
         node.stop()
         node.destroy_node()
+
+
+def test_ais_renderer_uploads_through_the_worker_not_the_executor(live_node):
+    """Same wiring, same mutation, third call site.
+
+    Wiring the transport straight back in compiles and passes every helper
+    test; the only symptom is that a slow S3 endpoint stops AIS contacts
+    being recorded for as long as the PUT takes.
+    """
+    node = ais_renderer.AisRenderer()
+    try:
+        assert isinstance(node._sender, AsyncUploader), (
+            'ais_renderer no longer publishes through the upload worker')
+        assert live_node[0].read_timeout == ais_renderer.UPLOAD_READ_TIMEOUT
+        assert live_node[0].read_timeout == 15, (
+            'the worker read timeout changed; it is the only thing stopping '
+            'one dead connection from occupying the worker forever')
+        assert live_node[0].profile == 'p11-renderer', (
+            'the profile no longer reaches the transport uncoalesced')
+    finally:
+        node.stop()
+        node.destroy_node()
+
+
+def test_an_unconfirmed_ais_upload_is_offered_again_on_the_next_tick(
+        live_node):
+    """Acceptance is not publication, on the contact-set change check too.
+
+    ais_renderer skips a tick whose contact set matches what LANDED. Comparing
+    against what was merely accepted would drop a snapshot permanently on one
+    failed PUT: the contacts have not changed since, so nothing would ever
+    offer it again and the page would sit on the previous set indefinitely.
+    """
+    node = ais_renderer.AisRenderer()
+    try:
+        sent = []
+
+        class _Failing:
+            """A worker stand-in that never confirms anything."""
+
+            def submit(self, payload, key, content_type, cache, tag=None):
+                """Accept everything, confirm nothing."""
+                sent.append(key)
+                return True
+
+            def confirmed(self, key):
+                """Report that nothing has ever landed."""
+                return None
+
+            def stop(self, timeout=None):
+                """Stop cleanly, like the real worker."""
+                return True
+
+        node._sender = _Failing()
+        node._on_contact(_ais_contact())
+        node._tick()
+        node._tick()
+        assert sent == ['live/ais.geojson'] * 2, sent
+        assert node._skipped == 0, (
+            'an unpublished contact set was counted as unchanged')
+    finally:
+        node.stop()
+        node.destroy_node()
+
+
+def _ais_contact():
+    """Return one minimally-populated AISContact with a usable position."""
+    from marine_ais_msgs.msg import AISContact
+    contact = AISContact()
+    contact.id = 366000001
+    contact.header.stamp.sec = int(time.time())
+    contact.pose.position.latitude = 43.08
+    contact.pose.position.longitude = -70.75
+    contact.twist.twist.linear.x = float('nan')
+    contact.twist.twist.linear.y = float('nan')
+    covariance = [0.0] * 36
+    covariance[35] = 1.0e6
+    contact.covariance = covariance
+    return contact
 
 
 def test_coverage_renderer_passes_its_own_read_timeout(live_node):

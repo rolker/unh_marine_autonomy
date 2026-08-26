@@ -17,6 +17,10 @@
   <depend>marine_interfaces</depend>
   <depend>sensor_msgs</depend>
   <depend>geographic_msgs</depend>
+  <!-- ais_renderer subscribes to marine_ais_msgs/AISContact, published
+       ashore by the nmea_relay -> ais_parser -> ais_contact_tracker
+       chain. Source dep for CI: see dependencies.repos. -->
+  <depend>marine_ais_msgs</depend>
   <!-- coverage_renderer reads the chart-datum offset (the tide) from TF. -->
   <depend>tf2_ros</depend>
   <!-- Runtime deps of coverage_renderer: numpy for band decode and

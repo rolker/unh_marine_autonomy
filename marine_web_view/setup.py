@@ -60,6 +60,7 @@ setup(
         'console_scripts': [
             'state_renderer = marine_web_view.state_renderer:main',
             'coverage_renderer = marine_web_view.coverage_renderer:main',
+            'ais_renderer = marine_web_view.ais_renderer:main',
         ],
     },
 )

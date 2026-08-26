@@ -30,9 +30,9 @@
 
 """Pin the promise that a dry run needs no AWS access at all.
 
-Both nodes gate their uploader construction on `dry_run`, three docstrings
+Every node gates their uploader construction on `dry_run`, their own docstrings
 and the README say so, and the simulator workflow plus this whole test suite
-depend on it -- yet the gate could be deleted from BOTH nodes without failing
+depend on it -- yet the gate could be deleted from ALL of them without failing
 anything. This module is that gate's only test.
 
 It is the one place here that builds the real ROS nodes, because the gate
@@ -46,6 +46,7 @@ import os
 os.environ['ROS_DOMAIN_ID'] = '101'
 os.environ['ROS_AUTOMATIC_DISCOVERY_RANGE'] = 'OFF'
 
+from marine_web_view import ais_renderer                # noqa: E402
 from marine_web_view import coverage_renderer           # noqa: E402
 from marine_web_view import state_renderer              # noqa: E402
 
@@ -67,6 +68,7 @@ class _Detonator:
 @pytest.fixture
 def dry_run_node(tmp_path, monkeypatch):
     """Start rclpy with dry_run overridden, and no uploader available."""
+    monkeypatch.setattr(ais_renderer, 'S3Uploader', _Detonator)
     monkeypatch.setattr(coverage_renderer, 'S3Uploader', _Detonator)
     monkeypatch.setattr(state_renderer, 'S3Uploader', _Detonator)
     rclpy.init(args=[
@@ -105,4 +107,20 @@ def test_state_renderer_builds_no_client_on_a_dry_run(dry_run_node):
         assert node._uploader is None, (
             'the dry-run gate no longer keeps the uploader unbuilt')
     finally:
+        node.destroy_node()
+
+
+def test_ais_renderer_builds_no_client_on_a_dry_run(dry_run_node):
+    """The third renderer, and the one whose gate is newest.
+
+    It does not coalesce an empty profile either (state_renderer's rule, not
+    coverage_renderer's), so without the gate a credential-free host raises
+    ProfileNotFound out of `__init__` and the node never starts at all.
+    """
+    node = ais_renderer.AisRenderer()
+    try:
+        assert node._uploader is None, (
+            'the dry-run gate no longer keeps the uploader unbuilt')
+    finally:
+        node.stop()
         node.destroy_node()

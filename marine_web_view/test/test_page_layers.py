@@ -271,9 +271,44 @@ _VECTOR_CONSTRUCTIONS = (
     r'\bL\.polygon\s*\(',
     r'\bL\.circleMarker\s*\(',
     r'\bL\.marker\s*\(',
+    # A group is a layer like any other, and an orphaned one takes every
+    # vector inside it off the map with it. It was NOT in this tuple when the
+    # AIS layer was built through it, so the group holding every AIS contact
+    # would have gone unguarded by the very test written to catch exactly
+    # that -- the same way `new L.TileLayer(` escaped the tile-layer check.
+    r'\bL\.layerGroup\s*\(',
 )
 
 _VECTOR_BINDING = r'(?:const|let|var)\s+(\w+)\s*=\s*$'
+
+_LAYER_GROUP = r'(?:const|let|var)\s+(\w+)\s*=\s*L\.layerGroup\s*\('
+
+
+def _mapped_layer_groups(page):
+    """Return the names of the page's layer groups that reach the map.
+
+    Call it on `_code(page)`. A vector added to one of these is on the map
+    transitively, which is how per-MMSI AIS hulls get there: they are built
+    and destroyed on every poll, so they cannot each carry an `.addTo(map)`,
+    and they are never bound to a name of their own.
+
+    Only groups that themselves reach the map are returned. A group that is
+    built and orphaned must not launder the layers inside it into looking
+    added -- that would be the #341 failure with one more level of
+    indirection.
+    """
+    names = []
+    for match in re.finditer(_LAYER_GROUP, page):
+        name = match.group(1)
+        statement = _statement(page, match.start())
+        added = (
+            '.addTo(map)' in statement
+            or re.search(r'\b' + name + r'\s*\.addTo\s*\(\s*map\s*\)', page)
+            or re.search(r'map\s*\.addLayer\s*\(\s*' + name + r'\s*\)',
+                         page))
+        if added:
+            names.append(name)
+    return names
 
 
 def test_the_refresh_does_not_redraw_a_hidden_layer():
@@ -310,9 +345,18 @@ def test_the_refresh_does_not_redraw_a_hidden_layer():
 def test_every_vector_layer_reaches_the_map():
     """Every vector-layer construction must reach the map.
 
-    Either in its own statement, or later through the name it is bound to --
-    a layer built now and added on a state change is legitimate, so the name
-    is followed rather than requiring addTo at the construction site.
+    Three ways count, and only three: in its own statement, later through the
+    name it is bound to -- by `.addTo(map)` or the `map.addLayer(name)`
+    spelling a layer whose visibility follows a checkbox has to use, since it
+    is the only one with a `removeLayer` counterpart -- or into a layer group
+    that itself reaches the map.
+
+    The group case is not a loosening. Per-MMSI AIS hulls are rebuilt on every
+    poll and on every zoom, so they are neither named nor individually added;
+    what puts them on the map is membership of a group that is. The group is
+    checked in exactly the same way as any other layer -- which is why
+    `L.layerGroup` is in the construction tuple above rather than exempt from
+    it -- so an orphaned group fails here and takes its contents with it.
     """
     page = _code(_page())
     sites = [m.start() for m in
@@ -320,18 +364,213 @@ def test_every_vector_layer_reaches_the_map():
     assert len(sites) >= 2, (
         'expected at least the trail and the hull; found {} -- has the page '
         'been restructured?'.format(len(sites)))
+    groups = _mapped_layer_groups(page)
     for start in sites:
         statement = _statement(page, start)
         if '.addTo(map)' in statement:
             continue
+        if any('.addTo({})'.format(group) in statement.replace(' ', '')
+               for group in groups):
+            continue
         bound = re.search(_VECTOR_BINDING, page[:start])
         assert bound, (
             'the vector layer constructed at offset {} is neither added to '
-            'the map nor bound to a name -- it cannot appear'.format(start))
+            'the map, nor to a layer group that is, nor bound to a name -- '
+            'it cannot appear'.format(start))
         name = bound.group(1)
-        assert re.search(r'\b' + name + r'\s*\.addTo\s*\(\s*map\s*\)', page), (
+        assert (re.search(r'\b' + name + r'\s*\.addTo\s*\(\s*map\s*\)', page)
+                or re.search(r'map\s*\.addLayer\s*\(\s*' + name + r'\s*\)',
+                             page)), (
             '{} is constructed but never added to the map -- it will not '
             'appear, silently'.format(name))
+
+
+def test_a_layer_group_cannot_launder_an_orphaned_layer():
+    """Guard the guard the group case opens.
+
+    Accepting `.addTo(<group>)` is only safe while the group itself is held to
+    the same rule. If `_mapped_layer_groups` returned every group it found,
+    building one, never adding it, and filling it would satisfy the check
+    above while nothing at all appeared on the map.
+    """
+    orphan = 'const ghosts = L.layerGroup(); L.polygon([]).addTo(ghosts);'
+    assert _mapped_layer_groups(orphan) == [], (
+        'a layer group that never reaches the map was accepted as one that '
+        'does, which would launder every layer inside it')
+    for added in ('const seen = L.layerGroup().addTo(map);',
+                  'const seen = L.layerGroup();\nseen.addTo(map);',
+                  'const seen = L.layerGroup();\nmap.addLayer(seen);'):
+        assert _mapped_layer_groups(added) == ['seen'], added
+
+
+def test_the_pages_own_ais_hulls_are_reached_through_a_mapped_group():
+    """The construction the group case was added for must actually use it.
+
+    Without this the extension above is untethered: the page could stop
+    drawing AIS contacts entirely, or draw them into a group nothing shows,
+    and the broadened rule would have nothing to say about it.
+    """
+    page = _code(_page())
+    groups = _mapped_layer_groups(page)
+    assert groups, 'the page defines no layer group that reaches the map'
+    sites = [m.start() for m in re.finditer(r'\bL\.polygon\s*\(', page)]
+    into_groups = [start for start in sites
+                   if any('.addTo({})'.format(group) in
+                          _statement(page, start).replace(' ', '')
+                          for group in groups)]
+    assert into_groups, (
+        'no polygon is added to a mapped layer group: the per-MMSI AIS hulls '
+        'are gone, and the group case above now guards nothing')
+
+
+def test_a_dead_ais_renderer_does_not_read_as_a_quiet_river():
+    """The AIS layer's only liveness signal is each contact's own stamp.
+
+    The collection's `generated` cannot serve as one: the renderer republishes
+    only when the contacts change, so on a quiet river it legitimately stops
+    moving. S3 goes on serving the last object with a 200 whatever happens
+    upstream, so a renderer that died an hour ago -- or a receiver that lost
+    its antenna -- leaves a confident fleet of hulls on the river forever, and
+    nothing on the page contradicts them. The fade and the readout are what
+    make "nothing is being received" different from "nothing is out there".
+
+    Narrowly: this holds while contacts are HELD. Liveness rides on their
+    stamps, so once the last one expires the artifact is empty and the two
+    readings collapse back into one 'no contacts' -- recorded on the page
+    beside aisText() and in the README rather than pretended away here.
+    """
+    page = _code(_page())
+    assert 'AIS_STALE_S' in page, (
+        'no staleness threshold for AIS contacts: a contact that stopped '
+        'reporting is drawn exactly like one reporting now')
+    assert 'AIS_STALE_OPACITY' in page, (
+        'the AIS hulls have no degraded opacity, so a dead renderer presents '
+        "as live traffic -- the coverage layer's own failure mode")
+    assert re.search(r'aisStale\(', page), 'no contact-age test on the page'
+    assert re.search(r'dim\s*\?\s*AIS_STALE_OPACITY', page), (
+        'the hull opacity is not driven by the contact age')
+    assert re.search(r'Number\.isFinite\(\s*p\.stamp\s*\)', page), (
+        'the contact stamp is not checked for finiteness; a missing stamp '
+        'makes the age NaN, every age comparison false, and a dead renderer '
+        'reads as alive forever -- the manifest saneStamp() lesson')
+    assert re.search(r'catch[^{]*\{[^}]*aisAlive\s*=\s*false', page, re.S), (
+        'an unreachable AIS artifact leaves the hulls at full opacity')
+    assert re.search(r'if\s*\(\s*!r\.ok\s*\)\s*throw', page), (
+        'pollAis returns quietly on a non-ok response, so a 403 or a 500 is '
+        'indistinguishable from an empty river')
+
+
+def test_the_ais_readout_cannot_be_shadowed_by_a_contact_count():
+    """A contact count is a healthy-sounding way to report a dead renderer.
+
+    Same shape as coverageText's own bug: the age has to be decided before
+    anything cheerful is returned, or a stale fleet reads as live traffic
+    with a count to prove it.
+    """
+    page = _code(_page())
+    assert re.search(r'id="ais-age"', _page()), 'no AIS readout on the page'
+    body = re.search(r'function aisText\(\)\s*\{(.*?)\n\}', page, re.S)
+    assert body, 'aisText is no longer recognisable in the page'
+    text = body.group(1)
+    assert "'offline'" in text, (
+        'an unreachable artifact is not reported, so it reads as calm water')
+    assert 'stale' in text, 'the readout has no stale wording'
+    # Not an ordering test on the word "contacts": that matches the literal
+    # 'no contacts' on the early-return line, which is before everything and
+    # so asserts nothing. The claim is about the COUNT -- every path that
+    # returns one has to carry an age qualifier with it.
+    returns = re.findall(r'return\s+([^;]+);', text)
+    assert returns, 'aisText returns nothing this guard can see'
+    counted = [line for line in returns
+               if 'count' in line or 'body' in line]
+    assert counted, (
+        'aisText no longer returns a contact count -- this guard would pass '
+        'vacuously; update it rather than removing it')
+    for line in counted:
+        assert 'AIS_STALE_S' in line or 'age unknown' in line, (
+            'a contact count is returned without the age being consulted, '
+            'so a stale fleet reads as live traffic with a count to prove '
+            'it: {!r}'.format(line))
+
+
+def test_the_ais_layer_updates_by_mmsi_rather_than_rebuilding():
+    """A popup must survive the poll that happens while it is open.
+
+    drawAis ran on the 10 s poll AND on every zoomend, and it began by
+    clearing the group -- so a viewer who opened a contact popup lost it
+    within ten seconds, or the instant they zoomed in to read it. On a public
+    page that does not read as a refresh, it reads as a broken map. Add,
+    update and remove by MMSI is what the plan specified.
+    """
+    page = _code(_page())
+    body = re.search(r'function drawAis\(\)\s*\{(.*?)\n\}', page, re.S)
+    assert body, 'drawAis is no longer recognisable in the page'
+    text = body.group(1)
+    assert 'clearLayers' not in text, (
+        'drawAis still rebuilds the whole group, so every poll and every '
+        'zoom destroys an open contact popup')
+    assert 'setLatLngs' in text, (
+        'an existing hull is not moved in place, so it is being replaced')
+    assert 'isPopupOpen' in text, (
+        'bindPopup tears down an open popup; the open case has to be '
+        'updated in place instead')
+    assert re.search(r'removeLayer\(\s*hull\s*\)', text), (
+        'a contact the artifact no longer carries is never removed, so an '
+        'expired or withheld contact stays on the map forever')
+
+
+def test_one_malformed_ais_feature_cannot_break_the_whole_layer():
+    """The redraw is what pollAis's own catch calls, so it must not throw.
+
+    `const [lon, lat] = f.geometry.coordinates` on an artifact fetched over
+    the network is a bet that every feature is well formed. Lose it once and
+    drawAis throws inside pollAis's try, throws AGAIN inside the catch that
+    was supposed to degrade it, escapes as an unhandled rejection -- and then
+    throws on every zoomend for the rest of the session, because drawAis is
+    bound to zoomend. One bad feature must cost that feature only.
+    """
+    page = _code(_page())
+    body = re.search(r'function drawAis\(\)\s*\{(.*?)\n\}', page, re.S)
+    assert body, 'drawAis is no longer recognisable in the page'
+    text = body.group(1)
+    assert 'f.geometry.coordinates' not in text, (
+        'drawAis destructures the coordinates without checking them, so one '
+        'malformed feature throws out of the function pollAis calls to '
+        'recover')
+    assert re.search(r'Number\.isFinite\(\s*coords\[', text), (
+        'the coordinates are not checked for finiteness before they reach '
+        'hullShape')
+    assert re.search(r'Array\.isArray\(\s*aisFeatures', text), (
+        'a non-array `features` from the artifact makes the for-of throw')
+    poll = re.search(r'async function pollAis\(\)\s*\{(.*?)\n\}',
+                     page, re.S)
+    assert poll, 'pollAis is no longer recognisable in the page'
+    assert re.search(r'Array\.isArray\(\s*features\s*\)', poll.group(1)), (
+        'pollAis stores whatever `features` the artifact carried without '
+        'checking it is a list')
+
+
+def test_the_ais_toggle_survives_a_soft_reload():
+    """A restored checkbox must not disagree with the map.
+
+    Browsers restore checkbox state across a soft reload, but not the
+    JavaScript that ran off it. Adding the layer unconditionally and reading
+    the box only in its `change` handler therefore brings an unchecked box
+    back with the traffic showing -- a control saying the opposite of what
+    the map is doing. `follow` avoids this by reading its checkbox at use
+    time; so must this.
+    """
+    page = _code(_page())
+    assert not re.search(r'aisLayer\s*=\s*L\.layerGroup\(\)\.addTo', page), (
+        'the AIS layer is added to the map unconditionally, so a restored '
+        'unchecked box comes back with the layer visible')
+    assert re.search(r"\$\('ais'\)\.checked", page), (
+        'the AIS checkbox state is never read')
+    assert re.search(r"addEventListener\('change',\s*syncAisLayer\)", page), (
+        'the toggle no longer goes through the same function the initial '
+        'sync uses, so the two can drift')
+    assert re.search(r'^syncAisLayer\(\);', page, re.M), (
+        'the layer is never synced to the checkbox at startup')
 
 
 def test_the_coverage_layer_is_configured_from_the_manifest():
@@ -639,7 +878,7 @@ def test_a_dead_renderer_is_reported_rather_than_hidden():
 
 
 def test_expected_layers_are_present():
-    """The page must carry imagery, bathymetry, hillshade and coverage."""
+    """The page must carry every source the renderers publish."""
     page = _page()
     for marker, description in (
             ('World_Imagery', 'Esri imagery basemap'),
@@ -647,7 +886,8 @@ def test_expected_layers_are_present():
             ('new Relief', 'hillshade'),
             ('live/coverage/', 'live sonar coverage'),
             ('live/position.geojson', 'vessel position'),
-            ('live/track.geojson', 'vessel track')):
+            ('live/track.geojson', 'vessel track'),
+            ('live/ais.geojson', 'AIS contacts')):
         assert marker in page, '{} ({}) missing from the page'.format(
             description, marker)
 

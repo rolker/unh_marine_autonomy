@@ -2,13 +2,22 @@
 # UPSTREAM_WORKSPACE convention): source repos a downstream `vcs import` needs
 # to resolve build deps that this monorepo references but does not vendor.
 #
-# Scoped to the #228 marine_nav gap — unh_marine_navigation provides
-# marine_nav_interfaces / marine_nav_tasks, depended on by mission_manager*,
-# mission_manager_interfaces, and marine_autonomy_integration_tests. This is
-# NOT an exhaustive list of every unreleased dep (config/repos/*.repos carry
-# the full development manifest, incl. branch-pinned forks); add entries here
-# only as concrete CI source-dep gaps surface.
+# Two gaps, both concrete:
+#
+# * #228 — unh_marine_navigation provides marine_nav_interfaces /
+#   marine_nav_tasks, depended on by mission_manager*,
+#   mission_manager_interfaces, and marine_autonomy_integration_tests.
+# * #357 — marine_ais provides marine_ais_msgs, depended on by
+#   marine_web_view (ais_renderer).
+#
+# This is NOT an exhaustive list of every unreleased dep (config/repos/*.repos
+# carry the full development manifest, incl. branch-pinned forks); add entries
+# here only as concrete CI source-dep gaps surface.
 repositories:
+  marine_ais:
+    type: git
+    url: https://github.com/rolker/marine_ais.git
+    version: jazzy
   unh_marine_navigation:
     type: git
     url: https://github.com/rolker/unh_marine_navigation.git
