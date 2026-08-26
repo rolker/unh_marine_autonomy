@@ -225,6 +225,62 @@ contacts instead of one.
   observed Piscataqua AIS traffic density during the pandy end-to-end
   verification pass before considering the defaults final.
 
+## Plan Review response
+
+Verdict was changes-requested (3 must-fix, 6 suggestions). Resolution, with the
+one scope call decided by the operator:
+
+**Must-fix:**
+
+1. **NaN positions** — `ais_parser.py:145-146` writes `math.nan` lat/lon when a
+   position report carries none, `ais_contact_tracker` copies the pose and
+   publishes it, and `json.dumps` emits a bare `NaN` token that `JSON.parse`
+   rejects: one such contact breaks the AIS layer for **every** viewer. The
+   renderer drops any contact whose lat/lon is not finite (logged once per MMSI,
+   not per message), and passes `allow_nan=False` as a backstop so a future path
+   fails loudly here rather than silently on the page. A unit test covers both.
+2. **`setup.py` console_scripts** — add the `ais_renderer` entry point; without
+   it `executable='ais_renderer'` does not resolve. Added to Files to Change.
+3. **`test_page_layers.py`** — `test_every_vector_layer_reaches_the_map` requires
+   each `L.polygon(...)` either to carry `.addTo(map)` in its own statement or to
+   be bound by an immediately-preceding `const NAME =` later seen as
+   `NAME.addTo(map)`. Per-MMSI hulls added to an `L.layerGroup` satisfy neither,
+   and `L.layerGroup` is absent from `_VECTOR_CONSTRUCTIONS`, so the group itself
+   would go unguarded. The guard is **extended** to recognise
+   layer-group membership and to cover `L.layerGroup`, rather than a marker
+   string being added to a guard that no longer applies.
+
+**Scope call — operator decision (2026-08-26): extract the shared helper.**
+The ENU-yaw→compass heading conversion would otherwise become its third private
+copy in this package (`state_renderer._heading_deg`, `ais_parser.py:206-209`'s
+matching course-from-twist construction, and now `ais_renderer`). It and
+`_write_atomic` move into a shared module that the renderers import. This edits
+`state_renderer`, which is working code, so its existing tests must stay green
+unchanged — the extraction is a move, not a rewrite, and no behaviour changes.
+This is the drift class the package's own guards exist for, which is why it is
+worth the wider diff.
+
+**Other suggestions, all adopted:**
+
+- AIS hulls redraw on `zoomend` as `drawBoat` does (`index.html:732`);
+  `hullShape()` is zoom-dependent, so rebuilding only on the 10 s poll would
+  leave wrong-sized hulls for up to `AIS_MS` after a zoom.
+- The heading-known test needs its own node parameter: `ais_layer.cpp:548-551`
+  compares `covariance[35]` against its own threshold, while `unknown_variance`
+  is a *tracker* parameter invisible to the renderer. That means a new parameter,
+  a launch argument, and a README table row (`test_launch_params.py` pins the
+  pairing).
+- README `## Cost` (`README.md:107-126`) gains the second PUT stream and the
+  per-viewer GET stream, not just a node section.
+- `dependencies.repos`'s header comment ("Scoped to the #228 marine_nav gap")
+  goes stale when `marine_ais` is added; updated in the same edit.
+- ADR-0004 recorded as **triggered and satisfied**, not untriggered: D5 names AIS
+  among the observations that project up into `marine_interfaces/Contact`, and
+  `marine_contacts` ships `export_contacts_geojson`. No AIS→Contact projector
+  exists in this repo, so subscribing to `AISContact` directly is right — but the
+  table records that reasoning rather than "No".
+
 ## Estimated Scope
 
-Single PR.
+Single PR. Wider than first estimated: the shared-helper extraction touches
+`state_renderer`, and the page-layer guard is extended rather than appended to.
