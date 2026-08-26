@@ -540,6 +540,33 @@ def test_an_ignored_mmsi_is_never_published(tmp_path):
         rclpy.shutdown()
 
 
+def test_an_unusable_interval_does_not_take_the_renderer_down(tmp_path):
+    """`create_timer` raises on a non-positive period, from the constructor.
+
+    And it raises after the upload worker has been started, from a
+    constructor whose caller then holds no node to stop -- so a typo on the
+    parameter the launch file labels "the cost lever" would cost the renderer
+    and leave a thread behind it. Fall back and say so instead.
+    """
+    rclpy.init(args=[
+        '--ros-args',
+        '-p', 'dry_run:=true',
+        '-p', 'local_path:={}/ais.geojson'.format(tmp_path),
+        '-p', 'interval:=0.0',
+    ])
+    renderer = None
+    try:
+        # Constructing at all is half the assertion: an unvalidated 0.0
+        # reaches create_timer and raises out of here.
+        renderer = ais_renderer.AisRenderer()
+        assert renderer.interval == ais_renderer.DEFAULT_INTERVAL
+    finally:
+        if renderer is not None:
+            renderer.stop()
+            renderer.destroy_node()
+        rclpy.shutdown()
+
+
 def test_the_ignore_list_is_empty_by_default(node):
     """Nothing is silently withheld by a parameter nobody set."""
     assert node.ignore_mmsis == frozenset()

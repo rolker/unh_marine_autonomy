@@ -30,7 +30,7 @@
 
 """Helpers shared by the renderers in this package.
 
-Two things live here, both because a second copy of either is a correctness
+Three things live here, each because a second copy would be a correctness
 risk rather than a mere duplication:
 
 * the ENU-yaw-to-compass conversion (REP-103). ROS measures yaw
@@ -44,10 +44,21 @@ risk rather than a mere duplication:
 * the atomic local write. The dry-run artifacts are served straight off disk
   by a plain `http.server` that a viewer polls, so a half-written file is a
   file a viewer parses.
+* the timer-period sanity check. `create_timer` raises on a non-positive
+  period, and it raises from a constructor that has already stood up an
+  upload worker -- so an operator typo on the parameter every renderer
+  documents as "the cost lever" takes the node down and leaves a thread
+  behind it. `coverage_renderer` grew this first and owned the only copy.
 """
 
 import math
 import os
+
+
+# Ceiling on a timer period. A day: long past any interval anybody means, and
+# short of the values that are really a typo (a millisecond count pasted into
+# a seconds field, say). Belongs with the check rather than with either node.
+MAX_INTERVAL_SECONDS = 86400.0
 
 
 def compass_degrees(yaw_radians):
@@ -93,3 +104,14 @@ def write_atomic(path, payload):
     with open(tmp, 'w') as handle:
         handle.write(payload)
     os.replace(tmp, path)
+
+
+def sane_interval(value, default):
+    """Return `(seconds, True)`, or `(default, False)` if unusable."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return default, False
+    if seconds > 0.0 and seconds <= MAX_INTERVAL_SECONDS:
+        return seconds, True
+    return default, False

@@ -74,6 +74,9 @@ from marine_web_view import gggs
 from marine_web_view import tiles as tile_util
 from marine_web_view.reconciler import is_valid_index
 from marine_web_view.reconciler import TileCatalogReconciler
+# Moved to renderer_common when ais_renderer needed the same check on the
+# same class of parameter; this is now one of three callers, not the owner.
+from marine_web_view.renderer_common import sane_interval
 from marine_web_view.s3_upload import describe_error
 from marine_web_view.s3_upload import S3Uploader
 
@@ -193,7 +196,6 @@ DATUM_STALE_SECONDS = 60.0
 # behind a failed start. Validate first, and stand the worker up last.
 DEFAULT_RENDER_INTERVAL = 20.0
 DEFAULT_REQUEST_INTERVAL = 5.0
-MAX_INTERVAL_SECONDS = 86400.0
 
 # The manifest gets a SHORTER max-age than the tiles it advertises. It is the
 # liveness signal, not payload: a few hundred bytes read once per poll, and
@@ -241,17 +243,6 @@ def _transform_seconds(transform):
     seconds = float(getattr(stamp, 'sec', 0)) + \
         float(getattr(stamp, 'nanosec', 0)) / 1e9
     return seconds if seconds > 0.0 else None
-
-
-def sane_interval(value, default):
-    """Return `(seconds, True)`, or `(default, False)` if unusable."""
-    try:
-        seconds = float(value)
-    except (TypeError, ValueError):
-        return default, False
-    if seconds > 0.0 and seconds <= MAX_INTERVAL_SECONDS:
-        return seconds, True
-    return default, False
 
 
 def sane_zoom(zoom):

@@ -83,6 +83,7 @@ from marine_ais_msgs.msg import NavigationalStatus
 
 from marine_web_view.renderer_common import compass_degrees
 from marine_web_view.renderer_common import heading_from_quaternion
+from marine_web_view.renderer_common import sane_interval
 from marine_web_view.renderer_common import write_atomic
 from marine_web_view.s3_upload import AsyncUploader
 from marine_web_view.s3_upload import describe_error
@@ -115,6 +116,10 @@ DEFAULT_HEADING_VARIANCE_THRESHOLD = 1.0e5
 
 # One knot in metres per second.
 KNOT = 0.514444
+
+# Seconds between uploads, and the fallback an unusable `interval` falls back
+# to. AIS does not need the position topic's 1 Hz.
+DEFAULT_INTERVAL = 10.0
 
 # ITU-R M.1371 navigational status 14: AIS-SART, MOB and EPIRB. A distress
 # beacon, which in the ordinary case is a person in the water. Taken from the
@@ -386,7 +391,7 @@ class AisRenderer(Node):
         self.declare_parameter('profile', 'p11-renderer')
         # AIS contacts do not need the position topic's 1 Hz, and every tick
         # that publishes is an S3 PUT (see the README's Cost section).
-        self.declare_parameter('interval', 10.0)
+        self.declare_parameter('interval', DEFAULT_INTERVAL)
         self.declare_parameter('dry_run', False)
         self.declare_parameter('local_path', '/tmp/ais.geojson')
         # Generous on purpose. A shore receiver cannot tell a contact that
@@ -427,7 +432,14 @@ class AisRenderer(Node):
         self.bucket = self._param('bucket')
         self.key = self._param('key')
         self.profile = self._param('profile')
-        self.interval = float(self._param('interval'))
+        # Validated, not merely cast: `create_timer` raises on a
+        # non-positive period, and it would raise HERE -- after the upload
+        # worker below has been stood up but before `main` holds a node to
+        # stop it. A typo on the parameter the launch file itself labels
+        # "the cost lever" would take the renderer down and leave a thread
+        # behind it. Same helper coverage_renderer validates its two with.
+        self.interval, interval_ok = sane_interval(
+            self._param('interval'), DEFAULT_INTERVAL)
         self.dry_run = bool(self._param('dry_run'))
         self.local_path = self._param('local_path')
         self.contact_timeout = float(self._param('contact_timeout'))
@@ -435,6 +447,11 @@ class AisRenderer(Node):
         self.heading_variance_threshold = float(
             self._param('heading_variance_threshold'))
         self.ignore_mmsis = _ignore_list(self._param('ignore_mmsis'))
+
+        if not interval_ok:
+            self.get_logger().warn(
+                'interval {} is not a usable period; using {:g} s'.format(
+                    self._param('interval'), self.interval))
 
         self._contacts = {}
         self._writes = 0

@@ -128,7 +128,7 @@ and there is no out-of-order history to reconcile.
 |---|---|---|
 | `use_sim_time` | `false` | The ROS builtin. **Required for bag replay** — see [Running](#running) |
 | `contacts_topic` | `/ais/contacts` | The tracker publishes at the global namespace, not under the operator namespace |
-| `interval` | `10.0` | Seconds between uploads — see Cost. AIS does not need the position topic's 1 Hz |
+| `interval` | `10.0` | Seconds between uploads — see Cost. AIS does not need the position topic's 1 Hz. Validated: an unusable period falls back to the default with a warning rather than taking the node down |
 | `bucket` / `key` | `unh-ccom-p11-live` / `live/ais.geojson` | |
 | `profile` | `p11-renderer` | AWS profile; scoped to `s3:PutObject` on `live/*` |
 | `dry_run` | `false` | Write to `local_path` instead of S3 |
