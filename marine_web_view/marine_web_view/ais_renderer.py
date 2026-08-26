@@ -79,6 +79,7 @@ import time
 import unicodedata
 
 from marine_ais_msgs.msg import AISContact
+from marine_ais_msgs.msg import NavigationalStatus
 
 from marine_web_view.renderer_common import compass_degrees
 from marine_web_view.renderer_common import heading_from_quaternion
@@ -113,8 +114,23 @@ DEFAULT_HEADING_VARIANCE_THRESHOLD = 1.0e5
 KNOT = 0.514444
 
 # ITU-R M.1371 navigational status 14: AIS-SART, MOB and EPIRB. A distress
-# beacon, which in the ordinary case is a person in the water.
-DISTRESS_NAV_STATUS = 14
+# beacon, which in the ordinary case is a person in the water. Taken from the
+# message rather than spelled as a literal, so the two cannot drift.
+DISTRESS_NAV_STATUS = NavigationalStatus.NAVIGATIONAL_STATUS_SART_MOB_EPIRB
+
+# The first three digits of the MMSIs ITU reserves for distress beacons: 970
+# AIS-SART, 972 MOB, 974 EPIRB. This is the DEFINITIVE identifier, and the
+# navigational status above is not: status 14 means "AIS-SART (active)", and
+# NavigationalStatus.msg records in its own comments that status 15 --
+# undefined, the default every silent contact carries -- is "also used by
+# AIS-SART, MOB-AIS and EPIRB-AIS under test". So a beacon that is switched on
+# but not yet transmitting 14 reaches the artifact on the status test alone.
+# Of every filter here this is the one whose failure mode the operator named
+# in person: somebody in the water, on a public CDN. Belt and braces.
+DISTRESS_MMSI_PREFIXES = frozenset((970, 972, 974))
+
+# Divisor that takes a 9-digit MMSI down to its first three digits.
+MMSI_PREFIX_DIVISOR = 1000000
 
 # Ship-and-cargo types 51 (search and rescue) and 55 (law enforcement). The
 # page's own SPECIAL_TYPE table names them; this is the same two codes.
@@ -219,13 +235,17 @@ def excluded_from_public(contact):
     responding to, at the moment it is happening.
 
     Each category is tested on the identifier the standard actually gives it,
-    not on the field that is most convenient. A SAR aircraft in particular
-    carries neither of the first two: message 9 has no navigational status
-    and an aircraft sends no static report, so its message id is the whole of
-    its identity.
+    not on the field that is most convenient. A distress beacon is identified
+    by its reserved MMSI range as well as by its navigational status, because
+    status 14 is "AIS-SART (ACTIVE)" and a beacon under test transmits the
+    same 15 every silent contact defaults to. A SAR aircraft carries neither
+    of those: message 9 has no navigational status and an aircraft sends no
+    static report, so its message id is the whole of its identity.
     """
     if contact.navigational_status.status == DISTRESS_NAV_STATUS:
         return 'distress (AIS-SART / MOB / EPIRB)'
+    if contact.id // MMSI_PREFIX_DIVISOR in DISTRESS_MMSI_PREFIXES:
+        return 'distress beacon MMSI range (970 / 972 / 974)'
     if contact.static_info.ship_and_cargo_type in RESPONDER_SHIP_TYPES:
         return 'search and rescue / law enforcement'
     if contact.position_message_id == SAR_AIRCRAFT_MESSAGE_ID:

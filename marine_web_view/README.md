@@ -195,11 +195,16 @@ reach S3 or the CDN at all:
 
 | Withheld | Code |
 |---|---|
-| Distress beacons | navigational status `14` — AIS-SART / MOB / EPIRB |
+| Distress beacons | navigational status `14` — AIS-SART / MOB / EPIRB — **and** the MMSI ranges ITU reserves for them: `970` SART, `972` MOB, `974` EPIRB |
 | Search and rescue, law enforcement | ship-and-cargo types `51` and `55`, **and** AIS message `9`, the SAR aircraft position report |
 
 Each is tested on the identifier the standard gives it rather than on the most
-convenient field. A SAR aircraft carries neither of the first two: message 9
+convenient field. Status `14` is *AIS-SART (active)*, and `NavigationalStatus`
+records in its own comments that status `15` — undefined, the default every
+contact that has not declared one carries — is "also used by AIS-SART, MOB-AIS
+and EPIRB-AIS under test," so the status alone would let a beacon that is
+switched on but not yet declaring reach the artifact. The reserved MMSI range
+holds either way. A SAR aircraft carries neither of the first two: message 9
 has no navigational status field at all, and an aircraft sends no type 5 or 24
 static report, so its `ship_and_cargo_type` stays `0` — "not applicable to SAR
 aircraft," in the standard's own words. The message id is the whole of its

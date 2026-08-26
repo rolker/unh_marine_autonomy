@@ -53,6 +53,7 @@ os.environ['ROS_DOMAIN_ID'] = '101'
 os.environ['ROS_AUTOMATIC_DISCOVERY_RANGE'] = 'OFF'
 
 from marine_ais_msgs.msg import AISContact       # noqa: E402
+from marine_ais_msgs.msg import NavigationalStatus  # noqa: E402
 
 from marine_web_view import ais_renderer         # noqa: E402
 from marine_web_view.ais_renderer import excluded_from_public  # noqa: E402
@@ -477,6 +478,31 @@ def test_the_filter_is_the_two_categories_the_operator_named(node):
     assert excluded_from_public(_contact(ship_type=55)) is not None
     assert excluded_from_public(_contact()) is None
     assert excluded_from_public(_contact(nav_status=1)) is None
+
+
+def test_a_distress_beacon_is_withheld_on_its_reserved_mmsi_range():
+    """Status 14 is not the whole of a beacon's identity.
+
+    Navigational status 14 is "AIS-SART (active)"; NavigationalStatus.msg
+    itself records that status 15 -- undefined, the default a silent contact
+    carries -- is "also used by AIS-SART, MOB-AIS and EPIRB-AIS under test".
+    ITU reserves 970/972/974 for exactly these beacons, and that is the
+    identifier that holds whether or not the beacon has declared.
+    """
+    assert set(ais_renderer.DISTRESS_MMSI_PREFIXES) == {970, 972, 974}
+    for prefix in (970, 972, 974):
+        beacon = _contact(mmsi=prefix * 1000000 + 123456, nav_status=15)
+        assert excluded_from_public(beacon) is not None, prefix
+    # An ordinary MMSI whose digits merely resemble one of the ranges must
+    # still be published: the prefix is the first three digits of nine.
+    assert excluded_from_public(_contact(mmsi=970123)) is None
+    assert excluded_from_public(_contact(mmsi=367970123)) is None
+
+
+def test_the_distress_status_is_taken_from_the_message_not_retyped():
+    """One definition of 14, so the filter cannot drift from the interface."""
+    assert (ais_renderer.DISTRESS_NAV_STATUS
+            == NavigationalStatus.NAVIGATIONAL_STATUS_SART_MOB_EPIRB)
 
 
 def test_a_sar_aircraft_is_withheld_on_the_only_identifier_it_carries():
