@@ -260,5 +260,31 @@ Governance, Plan Drift, Claude Adversarial x2 (Lens A + Lens B). Copilot and Loc
 ### Plan adherence
 No drift. All 11 planned files plus `setup.py`, `renderer_common.py`, `test_renderer_common.py` (the operator's recorded scope call). Every item of the binding `## Plan Review response` landed. One deviation: the plan described per-MMSI page diffing; the implementation rebuilds (Suggestion above). The plan's two open questions (`contact_timeout` 600 s, `interval` 10 s vs. observed Piscataqua density) remain open and are honestly recorded as unverified.
 
+### Operator decision (2026-08-26) — the distress/SAR must-fix
+
+Roland's call on the third must-fix, recorded here because `address-findings`
+reads this entry and the answer is a policy choice it must not make on its own:
+
+**Filter both, and record why.** Distress contacts (`NAV_STATUS[14]` —
+AIS-SART / MOB / EPIRB) **and** SAR / law-enforcement contacts (ship-and-cargo
+types 51 and 55) are dropped before they reach the public artifact — filtered in
+the **renderer**, not merely hidden on the page, so the excluded positions never
+reach S3 or the CDN at all.
+
+The reasoning belongs in the README next to the filter, in these terms: the page
+exists to show BizzyBoat in context, so it has no operational need for either
+category; AIS being public data elsewhere is not a reason for *this* page to
+rebroadcast a person in the water; and a filter that runs in the renderer is the
+only version of this that keeps the data off a CDN rather than one click away in
+a page source.
+
+Two things to get right while implementing it:
+
+- A contact excluded by the filter must not be silently indistinguishable from
+  one that was never heard — log the exclusion (once per MMSI, as with the
+  non-finite-position drop), so a quiet page can be told from a filtering one.
+- Test it. The filter is invisible in a good run, which is the same property
+  that made the NaN and staleness findings worth their must-fix rating.
+
 ### Next step
 Verdict is changes-requested, so the host dispatches `address-findings` against this entry, then re-dispatches `review-code`. The diff is not pushed until a pre-push review comes back approved.
