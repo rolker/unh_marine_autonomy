@@ -246,6 +246,38 @@ def test_a_contact_unheard_for_the_timeout_is_dropped_and_forgotten(node):
         'the node')
 
 
+def test_a_replay_against_the_wrong_clock_announces_itself(node):
+    """The silent failure the launch file's use_sim_time exists to prevent.
+
+    Contact age is a header stamp subtracted from THIS NODE's clock. Replay a
+    bag into a renderer left on the wall clock and every stamp is as old as
+    the recording, so the whole set expires on the first tick and the artifact
+    publishes `contacts: 0` -- no error, and a page that looks exactly like a
+    quiet river. A contact that is already stale on arrival cannot come from a
+    live receiver, so it is worth a word.
+    """
+    warnings = []
+    node.get_logger().warn = lambda message, **kwargs: warnings.append(message)
+    # _now() is pinned at 1000.0; a stamp from a bag recorded yesterday.
+    for _ in range(5):
+        node._on_contact(_contact(mmsi=1, stamp=1000.0 - 86400.0))
+    node._on_contact(_contact(mmsi=2, stamp=1000.0 - 86400.0))
+    assert len(warnings) == 1, warnings
+    assert 'use_sim_time' in warnings[0] and '--clock' in warnings[0], (
+        'the warning does not name the fix, so it is one more log line')
+    assert _published(node)['properties']['contacts'] == 0, (
+        'the reproduction itself changed; this test no longer covers it')
+
+
+def test_a_live_contact_is_not_mistaken_for_a_clock_problem(node):
+    """The warning must not fire on the ordinary case."""
+    warnings = []
+    node.get_logger().warn = lambda message, **kwargs: warnings.append(message)
+    node._on_contact(_contact(mmsi=1, stamp=1000.0))
+    node._on_contact(_contact(mmsi=2, stamp=1000.0 - 599.0))   # inside timeout
+    assert warnings == []
+
+
 def test_an_expired_contact_that_reappears_carries_no_stale_state(node):
     """A fresh entry, not a resurrection of the one that aged out."""
     node._on_contact(_contact(mmsi=1, stamp=100.0, name='OLD NAME'))

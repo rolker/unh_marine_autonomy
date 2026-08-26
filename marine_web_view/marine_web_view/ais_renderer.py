@@ -245,6 +245,9 @@ class AisRenderer(Node):
         # silent AIS beacon every few seconds for as long as it is switched
         # on, so an unthrottled line here is a log nobody can read.
         self._positionless = set()
+        # One warning, ever, for the clock mismatch below: if it is wrong it
+        # is wrong for every contact in the bag.
+        self._clock_warned = False
 
         # Same gate, same reasoning as the other two renderers: a dry run
         # writes to local_path and needs no AWS access at all, so no client is
@@ -303,7 +306,36 @@ class AisRenderer(Node):
                     '(logged once per contact)'.format(msg.id))
             return
         self._positionless.discard(msg.id)
+        self._warn_if_already_expired(msg)
         self._contacts[msg.id] = msg
+
+    def _warn_if_already_expired(self, contact):
+        """Say so, once, if a contact arrives already past the timeout.
+
+        This is the bag-replay mistake, made to announce itself. Contact age
+        is a header stamp -- written when the shore receiver heard the
+        contact -- subtracted from THIS NODE's clock, so a replay against a
+        renderer left on the wall clock is handed stamps as old as the
+        recording: `_expire` drops the whole set on the first tick and the
+        artifact publishes `contacts: 0`. Nothing raises and the page is
+        simply empty, which is indistinguishable from a quiet river.
+
+        A live receiver cannot produce this: a contact that is already stale
+        the moment it arrives means the two clocks disagree.
+        """
+        if self._clock_warned:
+            return
+        age = self._now() - self._stamp(contact)
+        if age <= self.contact_timeout:
+            return
+        self._clock_warned = True
+        self.get_logger().warn(
+            'MMSI {} arrived already {:g}s old, past contact_timeout ({:g}s), '
+            'so it expires on the very next tick. Replaying a bag? Play it '
+            'with --clock and run this node with use_sim_time:=true. '
+            'Otherwise this host and the receiver disagree about the time. '
+            '(logged once)'.format(contact.id, round(age),
+                                   self.contact_timeout))
 
     def _stamp(self, contact):
         """Return one contact's header stamp in seconds."""

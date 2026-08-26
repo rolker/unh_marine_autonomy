@@ -46,6 +46,11 @@ import re
 
 PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Parameters every ROS node has without declaring them. A launch file may
+# legitimately expose one, and there is no `declare_parameter` behind it to
+# match against -- re-declaring `use_sim_time` raises rather than working.
+ROS_BUILTIN_PARAMETERS = frozenset({'use_sim_time'})
+
 # node module -> launch file that is expected to expose it
 PAIRS = (
     ('state_renderer.py', 'state_renderer_launch.py'),
@@ -163,10 +168,37 @@ def test_launch_files_do_not_invent_parameters():
     for module, launch_file in PAIRS:
         declared = _node_parameters(module)
         exposed = _launch_arguments(launch_file)
-        extra = exposed - declared
+        extra = exposed - declared - ROS_BUILTIN_PARAMETERS
         assert not extra, (
             '{} exposes {} which {} does not declare'
             .format(launch_file, sorted(extra), module))
+
+
+def test_the_ais_renderer_can_be_run_against_a_bag():
+    """The documented way to exercise the AIS layer needs the clock.
+
+    `ais_renderer` measures every contact's age against its own clock while
+    the ages come from the header stamps the bag recorded. Left on the wall
+    clock, a replay hands it stamps as old as the recording, `contact_timeout`
+    expires all of them on the first tick, and the artifact reads
+    `contacts: 0` with nothing anywhere saying why. The launch file has to
+    expose `use_sim_time` and the recipe has to play the bag with `--clock`;
+    either half alone still fails.
+    """
+    launch_file = 'ais_renderer_launch.py'
+    assert 'use_sim_time' in _launch_arguments(launch_file), (
+        '{} does not expose use_sim_time, so a bag replay cannot be told to '
+        'follow the recorded clock'.format(launch_file))
+    assert 'use_sim_time' in _forwarded_parameters(launch_file), (
+        '{} declares use_sim_time but never passes it to the node'
+        .format(launch_file))
+    readme = _read('README.md')
+    assert 'ros2 bag play' in readme, 'the replay recipe is gone'
+    recipe = readme[readme.index('ros2 bag play'):]
+    recipe = recipe[:recipe.index('```')]
+    assert '--clock' in recipe, (
+        'the replay recipe plays the bag without --clock, so nothing ever '
+        'publishes /clock and use_sim_time has no time to follow')
 
 
 def test_nodes_declare_parameters_at_all():

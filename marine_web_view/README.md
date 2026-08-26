@@ -126,6 +126,7 @@ and there is no out-of-order history to reconcile.
 
 | Parameter | Default | Notes |
 |---|---|---|
+| `use_sim_time` | `false` | The ROS builtin. **Required for bag replay** — see [Running](#running) |
 | `contacts_topic` | `/ais/contacts` | The tracker publishes at the global namespace, not under the operator namespace |
 | `interval` | `10.0` | Seconds between uploads — see Cost. AIS does not need the position topic's 1 Hz |
 | `bucket` / `key` | `unh-ccom-p11-live` / `live/ais.geojson` | |
@@ -257,11 +258,28 @@ work and neither needs the receiver:
 ```bash
 # A recording of the tracker's own output, which is what the node subscribes to.
 ros2 bag record /ais/contacts        # once, while the receiver is up
-ros2 bag play <bag>                  # thereafter, against a dry-run renderer
+
+# Thereafter. --clock and use_sim_time are BOTH required, and the failure if
+# either is missing is silent -- see below.
+ros2 bag play <bag> --clock
+ros2 launch marine_web_view ais_renderer_launch.py dry_run:=true \
+    use_sim_time:=true local_path:=/path/to/web/live/ais.geojson
 
 # Or from further upstream, which also exercises the decode: replay a recorded
-# NMEA log into ais_parser and let ais_contact_tracker build the contacts.
+# NMEA log into ais_parser and let ais_contact_tracker build the contacts. The
+# same clock rule applies to every node in the chain.
 ```
+
+**Why the clock matters here.** Contact age is the difference between a
+contact's header stamp — recorded when the shore receiver heard it — and the
+node's own clock. Replay a bag into a renderer left on the wall clock and every
+stamp is as old as the recording, so `contact_timeout` expires the whole set on
+the first tick and the artifact publishes `contacts: 0`. Nothing errors; the
+page is simply empty. `ros2 bag play --clock` publishes the recorded time on
+`/clock` and `use_sim_time:=true` makes the renderer read it, which puts both
+sides of that subtraction back on the same clock. The node also warns, once,
+when it receives a contact that is already older than `contact_timeout` —
+that message is this mistake.
 
 Expiry is the one behaviour a short replay will not show on its own — drop
 `contact_timeout` to a few seconds to watch contacts age out, or read

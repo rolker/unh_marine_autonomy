@@ -43,6 +43,18 @@ def generate_launch_description():
     # test_launch_params.py pins. Names, defaults and order mirror
     # AisRenderer.__init__.
     args = [
+        # The ROS builtin, exposed here because this node measures contact age
+        # against its OWN clock while the ages themselves come from the
+        # header stamps a bag recorded. Replaying `ros2 bag play --clock`
+        # against a renderer left on the wall clock hands it stamps that are
+        # as old as the recording, so `contact_timeout` drops every contact on
+        # the first tick and the artifact reads `contacts: 0` -- with nothing
+        # on the page to say why. See the README's replay recipe.
+        DeclareLaunchArgument('use_sim_time', default_value='false',
+                              description='Take time from /clock. Required '
+                                          'when replaying a bag, or every '
+                                          'recorded contact expires '
+                                          'immediately.'),
         DeclareLaunchArgument('contacts_topic', default_value='/ais/contacts',
                               description='AISContact topic published by '
                                           'ais_contact_tracker.'),
@@ -74,6 +86,7 @@ def generate_launch_description():
         name='ais_renderer',
         output='screen',
         parameters=[{
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
             'contacts_topic': LaunchConfiguration('contacts_topic'),
             'interval': LaunchConfiguration('interval'),
             'bucket': LaunchConfiguration('bucket'),
