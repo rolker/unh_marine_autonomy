@@ -168,6 +168,24 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'chart_datum_frame', default_value=[platform, '/chart_datum'],
             description='Vertical reference to colour depths against.'),
+
+        # Deliberately BELOW coverage_renderer's own default, which equals its
+        # render_interval. At equality a redraw issued the moment new tiles
+        # land is answered from the browser's cache -- the tile it holds is
+        # still inside its max-age -- and CloudFront can serve an already-stale
+        # copy on top of that. The page only redraws when the manifest's tile
+        # counter advances, so the stale frame is not corrected 20 s later; it
+        # waits for the NEXT advance, which on a slow survey line is minutes.
+        # Reported from the boat as coverage that updates only on a manual
+        # browser refresh. Strictly less than render_interval means every
+        # next-pass redraw is guaranteed to miss cache. Costs some extra tile
+        # GETs; the manifest's own max-age is min(5, this) and is unaffected.
+        DeclareLaunchArgument(
+            'cache_control', default_value='10',
+            description='max-age stamped on each coverage tile. Keep it '
+                        'STRICTLY below render_interval or the display can '
+                        'sit on a cached tile until the next counter '
+                        'advance.'),
     ]
 
     renderers = [
@@ -182,6 +200,7 @@ def generate_launch_description():
             'coverage_namespace': LaunchConfiguration('coverage_namespace'),
             'map_frame': LaunchConfiguration('map_frame'),
             'chart_datum_frame': LaunchConfiguration('chart_datum_frame'),
+            'cache_control': LaunchConfiguration('cache_control'),
             'bucket': bucket,
             'profile': profile,
             'dry_run': dry_run,
