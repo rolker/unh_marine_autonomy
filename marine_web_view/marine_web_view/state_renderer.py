@@ -51,11 +51,12 @@ See rolker/unh_marine_autonomy#341 and #333.
 from collections import deque
 import json
 import math
-import os
 import time
 
 from geographic_msgs.msg import GeoPointStamped
 from marine_interfaces.msg import PlatformList
+from marine_web_view.renderer_common import heading_from_quaternion
+from marine_web_view.renderer_common import write_atomic
 from marine_web_view.s3_upload import AsyncUploader
 from marine_web_view.s3_upload import describe_error
 from marine_web_view.s3_upload import S3Uploader
@@ -372,16 +373,13 @@ class StateRenderer(Node):
     def _heading_deg(self):
         """Return compass heading in degrees true, or None without an IMU.
 
-        ROS uses ENU (REP-103), so yaw is measured counter-clockwise from EAST
-        while a compass heading is clockwise from NORTH -- hence 90 - yaw.
-        Verified in simulation against course made good.
+        The ENU-to-compass conversion itself is shared (renderer_common):
+        ais_renderer needs the same one, and a second, independently written
+        copy of it is a wrong-way hull with nothing failing.
         """
         if self._imu is None:
             return None
-        q = self._imu.orientation
-        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
-                         1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-        return (90.0 - math.degrees(yaw)) % 360.0
+        return heading_from_quaternion(self._imu.orientation)
 
     def _fix_stamp(self):
         """Return the current fix's stamp in seconds."""
@@ -472,7 +470,7 @@ class StateRenderer(Node):
         if payload is None:
             return
         if self.dry_run:
-            self._write_atomic(self.track_local_path, payload)
+            write_atomic(self.track_local_path, payload)
             self._track_stamp = stamp
         else:
             self._queue(payload, self.track_key, self.track_interval, stamp)
@@ -507,23 +505,9 @@ class StateRenderer(Node):
         else:
             self._upload(payload, stamp)
 
-    @staticmethod
-    def _write_atomic(path, payload):
-        """Write payload to path atomically via a same-dir temp + os.replace.
-
-        The dry-run artifacts are served straight off disk by a plain
-        http.server that a viewer polls, so a reader must never observe a
-        half-written file. os.replace is atomic within a filesystem, and the
-        temp file is a sibling of the target so the rename stays on it.
-        """
-        tmp = '{}.tmp.{}'.format(path, os.getpid())
-        with open(tmp, 'w') as handle:
-            handle.write(payload)
-        os.replace(tmp, path)
-
     def _write_local(self, payload, stamp):
         """Write the artifact to the local filesystem."""
-        self._write_atomic(self.local_path, payload)
+        write_atomic(self.local_path, payload)
         self._last_sent_stamp = stamp
         self._writes += 1
 
