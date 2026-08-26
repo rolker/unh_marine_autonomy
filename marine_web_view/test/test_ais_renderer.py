@@ -318,6 +318,30 @@ def test_the_once_per_mmsi_log_records_are_bounded(node):
     assert cap + 499 in node._positionless
 
 
+def test_a_name_cannot_carry_control_or_bidi_characters_to_the_popup(node):
+    """The name comes off the air from anyone with a transmitter.
+
+    The popup is built from text nodes, so markup is already closed off --
+    but six-bit ASCII cannot carry a bidi override and the decoder in front of
+    this can hand one over anyway. Those characters REORDER what follows them,
+    so a name can be dressed to read in a public popup as something other than
+    what was transmitted. An unpaired surrogate is the other half: json.dumps
+    emits it and a strict parser rejects the whole object, which is the bare
+    NaN failure again -- one contact, every viewer.
+    """
+    assert ais_renderer._clean('TUG\u202eARTHUR') == 'TUG ARTHUR'
+    assert ais_renderer._clean('TUG\x00\x07ARTHUR') == 'TUG ARTHUR'
+    assert ais_renderer._clean('\u200b\u200b\u200b') is None
+    assert ais_renderer._clean('TUG\ud800') == 'TUG'
+    # And an ordinary name is left exactly as it was.
+    assert ais_renderer._clean('TUG ARTHUR') == 'TUG ARTHUR'
+
+    node._on_contact(_contact(name='TUG\u202eARTHUR', callsign='WD\x01E1234'))
+    properties = _published(node)['features'][0]['properties']
+    assert properties['name'] == 'TUG ARTHUR'
+    assert properties['callsign'] == 'WD E1234'
+
+
 def test_a_contact_unheard_for_the_timeout_is_dropped_and_forgotten(node):
     """Expiry is pruning, not filtering: memory is bounded on a long watch."""
     node._on_contact(_contact(mmsi=1, stamp=1000.0))

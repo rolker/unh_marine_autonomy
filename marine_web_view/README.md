@@ -146,7 +146,11 @@ contact: `mmsi`, `name`, `callsign`, `ship_and_cargo_type`,
 page draws AIS contacts through the identical `hullShape()` it draws BizzyBoat
 with. `name` and `callsign` are `null` until a type 5 or 24 message has been
 heard — the ordinary case for the first minutes after a contact comes into
-range, and what the page renders as *static info pending*.
+range, and what the page renders as *static info pending*. Both are scrubbed
+of control and bidi characters before they are published: the popup is built
+from text nodes so markup is already closed off, but a bidi override reorders
+the text around it, and an unpaired surrogate makes the whole object
+unparseable for every viewer at once.
 
 Uploads happen only when the contact set or its contents change — and a
 contact's `stamp` counts as its contents, because the page reads that stamp as

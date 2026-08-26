@@ -75,6 +75,7 @@ See rolker/unh_marine_autonomy#357.
 import json
 import math
 import time
+import unicodedata
 
 from marine_ais_msgs.msg import AISContact
 
@@ -132,6 +133,18 @@ MAX_REMEMBERED_MMSI = 10000
 MIN_COURSE_SPEED = 0.01
 
 
+# Unicode general categories that must not survive into the public popup.
+# Cc/Cf are the C0 and C1 controls, DEL, and the format characters -- which
+# include the bidi overrides (U+202A-E, U+2066-9) and the zero-width joiners.
+# Those do not merely render badly: they REORDER neighbouring text, so a name
+# can be dressed to read in the popup as something other than what it is. Cs
+# is an unpaired surrogate, which json.dumps will happily emit and a strict
+# parser will reject -- the same class of failure as the bare NaN token, and
+# the artifact is one object for every viewer. Zl/Zp are the line and
+# paragraph separators.
+_UNPRINTABLE = frozenset(('Cc', 'Cf', 'Cs', 'Zl', 'Zp'))
+
+
 def _clean(text):
     """Return a display string, or None if AIS said "not available".
 
@@ -140,11 +153,21 @@ def _clean(text):
     mean the same thing: nothing has been received yet. The page renders None
     as "static info pending", which is a true statement about a contact seen
     by position report only.
+
+    Names and call signs arrive over the air from anyone with a transmitter.
+    The page already builds its popup out of text nodes, so this is not about
+    markup -- it is that six-bit ASCII cannot carry a control or a bidi
+    override but the decoder in front of this can hand one over anyway, and
+    neither the page nor a strict JSON parser is the right place to find out.
+    Unprintables become spaces rather than vanishing, so nothing is silently
+    glued into a different word, and runs of whitespace collapse.
     """
     if not text:
         return None
-    cleaned = str(text).replace('@', ' ').strip()
-    return cleaned or None
+    scrubbed = ''.join(
+        ' ' if unicodedata.category(char) in _UNPRINTABLE else char
+        for char in str(text).replace('@', ' '))
+    return ' '.join(scrubbed.split()) or None
 
 
 def _remember(seen, mmsi):
