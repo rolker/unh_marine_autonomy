@@ -88,6 +88,9 @@ from marine_web_view.s3_upload import AsyncUploader
 from marine_web_view.s3_upload import describe_error
 from marine_web_view.s3_upload import S3Uploader
 
+from rcl_interfaces.msg import ParameterDescriptor
+from rcl_interfaces.msg import ParameterType
+
 import rclpy
 from rclpy.node import Node
 
@@ -211,6 +214,25 @@ def _remember(seen, mmsi):
     if len(seen) > MAX_REMEMBERED_MMSI:
         del seen[next(iter(seen))]
     return True
+
+
+def _ignore_list(value):
+    """Return the configured MMSIs as a frozenset, or refuse loudly.
+
+    `ignore_mmsis` has to be declared with dynamic typing (see the
+    declaration), so this is where its type is actually enforced. A
+    misspelled list must not silently become an EMPTY ignore list: the
+    failure mode is a vessel the operator asked to withhold being published
+    anyway, which is the whole reason the parameter exists.
+    """
+    if not value:
+        return frozenset()
+    try:
+        return frozenset(int(mmsi) for mmsi in value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            'ignore_mmsis must be a list of integer MMSIs, e.g. '
+            '[366000001]; got {!r}'.format(value))
 
 
 def excluded_from_public(contact):
@@ -381,6 +403,23 @@ class AisRenderer(Node):
         self.declare_parameter('max_contacts', 500)
         self.declare_parameter('heading_variance_threshold',
                                DEFAULT_HEADING_VARIANCE_THRESHOLD)
+        # MMSIs never published, whatever they report. `ais_layer` carries the
+        # same parameter on the same topic and its documented first purpose is
+        # own ship: a shore receiver hears BizzyBoat's own transponder, and the
+        # public page would then draw a second, grey, up-to-`interval`-lagged
+        # hull beside the live one. It is also the only lever an operator has
+        # to withhold a vessel the two standing categories do not cover, and
+        # asking for one at the time is not a code change.
+        #
+        # `dynamic_typing` because an EMPTY list default carries no element
+        # type: rclpy infers BYTE_ARRAY from `[]` and then rejects the
+        # integer array an operator actually passes. The declared type below
+        # is documentation; `_ignore_list` is what enforces it, and it names
+        # the parameter when it refuses.
+        self.declare_parameter(
+            'ignore_mmsis', [],
+            ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER_ARRAY,
+                                dynamic_typing=True))
 
         self.contacts_topic = self._param('contacts_topic')
         self.bucket = self._param('bucket')
@@ -393,6 +432,7 @@ class AisRenderer(Node):
         self.max_contacts = max(1, int(self._param('max_contacts')))
         self.heading_variance_threshold = float(
             self._param('heading_variance_threshold'))
+        self.ignore_mmsis = _ignore_list(self._param('ignore_mmsis'))
 
         self._contacts = {}
         self._writes = 0
@@ -439,6 +479,10 @@ class AisRenderer(Node):
                 self.contacts_topic, target, self.interval,
                 self.contact_timeout,
                 ' (dry run)' if self.dry_run else ''))
+        if self.ignore_mmsis:
+            self.get_logger().info(
+                'never publishing MMSI {}'.format(
+                    ', '.join(str(mmsi) for mmsi in sorted(self.ignore_mmsis))))
 
     def _param(self, name):
         """Return a declared parameter's value."""
@@ -458,10 +502,15 @@ class AisRenderer(Node):
 
         A contact with no usable position is refused here rather than filtered
         at render time, so nothing that cannot be drawn is ever held. So is a
-        contact `excluded_from_public`: a withheld position must not be held
-        in memory waiting for a code path that publishes it.
+        contact `excluded_from_public` or one the operator listed in
+        `ignore_mmsis`: a withheld position must not be held in memory waiting
+        for a code path that publishes it. The standing policy lives in
+        `excluded_from_public`, which knows nothing of this node's
+        configuration; the operator's own list is applied here.
         """
         reason = excluded_from_public(msg)
+        if reason is None and msg.id in self.ignore_mmsis:
+            reason = 'listed in ignore_mmsis'
         if reason is not None:
             # Dropped from memory too, not merely refused: a vessel can hoist
             # distress, or have its type resolve to 51/55 from a later type 5

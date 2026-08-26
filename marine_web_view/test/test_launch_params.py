@@ -84,7 +84,9 @@ def _forwarded_parameters(launch_file):
     from the DeclareLaunchArgument list independently:
 
     * an explicit ``{'name': LaunchConfiguration('name'), ...}`` dict
-      (state_renderer), and
+      (state_renderer) -- optionally wrapped in ``ParameterValue(...)``, which
+      a non-scalar parameter needs to reach the node as its declared type
+      (ais_renderer's ``ignore_mmsis``), and
     * a ``names = (...)`` tuple fed to a comprehension (coverage_renderer).
 
     Checking only that an argument is *declared* misses the exact failure this
@@ -92,7 +94,8 @@ def _forwarded_parameters(launch_file):
     """
     text = _read('launch', launch_file)
     forwarded = set(re.findall(
-        r"'([a-z_0-9]+)'\s*:\s*LaunchConfiguration", text))
+        r"'([a-z_0-9]+)'\s*:\s*(?:ParameterValue\(\s*)?LaunchConfiguration",
+        text))
     if not forwarded:
         match = re.search(r'names\s*=\s*\(([^)]*)\)', text, re.S)
         assert match, (

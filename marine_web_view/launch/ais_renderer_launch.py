@@ -34,6 +34,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -83,6 +84,13 @@ def generate_launch_description():
                               description='Yaw variance at or above which no '
                                           'true heading was reported; a '
                                           'decade below the tracker sentinel.'),
+        DeclareLaunchArgument('ignore_mmsis', default_value='[]',
+                              description='MMSIs never published, whatever '
+                                          'they report. Own ship first: a '
+                                          'shore receiver also hears the '
+                                          'boat itself. Same parameter and '
+                                          'purpose as the one ais_layer '
+                                          'carries.'),
     ]
 
     node = Node(
@@ -103,6 +111,11 @@ def generate_launch_description():
             'max_contacts': LaunchConfiguration('max_contacts'),
             'heading_variance_threshold': LaunchConfiguration(
                 'heading_variance_threshold'),
+            # An INTEGER_ARRAY, so the substitution has to be typed: a bare
+            # LaunchConfiguration reaches the node as the STRING '[]' and the
+            # declared type rejects it at startup.
+            'ignore_mmsis': ParameterValue(
+                LaunchConfiguration('ignore_mmsis'), value_type=list),
         }],
     )
 

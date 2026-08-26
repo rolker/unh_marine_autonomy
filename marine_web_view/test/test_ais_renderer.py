@@ -505,6 +505,55 @@ def test_the_distress_status_is_taken_from_the_message_not_retyped():
             == NavigationalStatus.NAVIGATIONAL_STATUS_SART_MOB_EPIRB)
 
 
+def test_an_ignored_mmsi_is_never_published(tmp_path):
+    """The operator lever, and own ship is its first purpose.
+
+    `ais_layer` carries the same parameter on the same topic for the same
+    first reason: a shore receiver hears BizzyBoat own transponder, and
+    without the list the public page draws a second, grey, lagged hull beside
+    the live one. It is also the only way to withhold a vessel the two
+    standing categories do not cover, with no code change.
+    """
+    rclpy.init(args=[
+        '--ros-args',
+        '-p', 'dry_run:=true',
+        '-p', 'local_path:={}/ais.geojson'.format(tmp_path),
+        '-p', 'ignore_mmsis:=[366000001,338111222]',
+    ])
+    renderer = ais_renderer.AisRenderer()
+    renderer._now = lambda: 1000.0
+    try:
+        renderer.get_logger().info = lambda message, **kwargs: None
+        assert renderer.ignore_mmsis == frozenset((366000001, 338111222))
+        renderer._on_contact(_contact(mmsi=366000001))
+        renderer._on_contact(_contact(mmsi=338111222))
+        # Withheld from memory, not merely from the snapshot.
+        assert renderer._contacts == {}
+        renderer._on_contact(_contact(mmsi=367000009))
+        assert set(renderer._contacts) == {367000009}
+    finally:
+        renderer.stop()
+        renderer.destroy_node()
+        rclpy.shutdown()
+
+
+def test_the_ignore_list_is_empty_by_default(node):
+    """Nothing is silently withheld by a parameter nobody set."""
+    assert node.ignore_mmsis == frozenset()
+
+
+def test_a_malformed_ignore_list_refuses_rather_than_ignoring_nobody():
+    """The parameter is dynamically typed, so this is its type check.
+
+    Silently reading a misspelled list as "withhold nothing" publishes the
+    very vessel the operator asked to keep off the page.
+    """
+    with pytest.raises(ValueError, match='ignore_mmsis'):
+        ais_renderer._ignore_list(['not an mmsi'])
+    assert ais_renderer._ignore_list([]) == frozenset()
+    assert ais_renderer._ignore_list(None) == frozenset()
+
+
 def test_a_sar_aircraft_is_withheld_on_the_only_identifier_it_carries():
     """The responder the ship-and-cargo-type test cannot see.
 

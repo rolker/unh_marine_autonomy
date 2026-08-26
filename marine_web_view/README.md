@@ -136,6 +136,7 @@ and there is no out-of-order history to reconcile.
 | `contact_timeout` | `600.0` | Drop a contact unheard from for this long, from the snapshot **and** from memory |
 | `max_contacts` | `500` | Ceiling on contacts held at once — bounds object size and CDN egress, which the PUT count does not |
 | `heading_variance_threshold` | `1.0e5` | Yaw variance at or above which no true heading was reported |
+| `ignore_mmsis` | `[]` | MMSIs never published, whatever they report — own ship first; same parameter and purpose as `ais_layer`'s |
 
 ### Output
 
@@ -224,6 +225,14 @@ only version that keeps the data off a public network is the one that never
 uploads it. That also means a contact already published is *withdrawn* when it
 later declares distress or resolves to type 51/55 — the filter runs on every
 report, not only the first.
+
+`ignore_mmsis` is the third exclusion, and the only one an operator can set at
+the time. `ais_layer` — the sibling consumer of this same topic — carries the
+parameter for the same first purpose: a shore receiver hears BizzyBoat's *own*
+transponder, and without the list the public page draws a second, grey,
+up-to-`interval`-lagged hull beside the live one. It is also the only lever
+that can withhold a vessel the two standing categories do not cover, without a
+code change.
 
 Each exclusion is logged once per MMSI on the ROC desktop. A filtered page and
 an empty river produce byte-identical artifacts, and that log is the only thing
