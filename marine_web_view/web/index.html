@@ -919,21 +919,50 @@ function aisPopup(p) {
   return box;
 }
 
+// Hulls held BY MMSI, so a redraw updates them instead of rebuilding the
+// group. clearLayers() on every 10 s poll and every zoomend closed whatever
+// popup a viewer had open, within ten seconds of them opening it -- which on
+// a public page does not read as a refresh, it reads as a broken map.
+const aisHulls = new Map();
+
+// Faded once the contact stops reporting. Without this a dead renderer -- or
+// a shore receiver that lost its antenna -- leaves a confident fleet of hulls
+// sitting on the river at full opacity for as long as the bucket keeps
+// serving the last object, which is forever.
+function aisStyle(dim) {
+  return { color:'#4A5A66', weight:1, fillColor:'#7E8C99',
+           opacity: dim ? AIS_STALE_OPACITY : 1,
+           fillOpacity: dim ? AIS_STALE_OPACITY : .75 };
+}
+
 function drawAis() {
-  aisLayer.clearLayers();
+  const seen = new Set();
   for (const f of aisFeatures) {
     const [lon, lat] = f.geometry.coordinates;
     const p = f.properties || {};
-    // Faded once the contact stops reporting. Without this a dead renderer --
-    // or a shore receiver that lost its antenna -- leaves a confident fleet
-    // of hulls sitting on the river at full opacity for as long as the bucket
-    // keeps serving the last object, which is forever.
-    const dim = aisStale(p);
-    L.polygon(hullShape(lat, lon, p.heading_deg, p.vessel || {}),
-              { color:'#4A5A66', weight:1, fillColor:'#7E8C99',
-                opacity: dim ? AIS_STALE_OPACITY : 1,
-                fillOpacity: dim ? AIS_STALE_OPACITY : .75
-              }).bindPopup(aisPopup(p)).addTo(aisLayer);
+    if (p.mmsi == null) continue;      // no identity: nothing to update
+    seen.add(p.mmsi);
+    const shape = hullShape(lat, lon, p.heading_deg, p.vessel || {});
+    const style = aisStyle(aisStale(p));
+    const hull = aisHulls.get(p.mmsi);
+    if (hull) {
+      hull.setLatLngs(shape);
+      hull.setStyle(style);
+      // bindPopup TEARS DOWN an open popup, which is the whole bug. Update
+      // the open one in place instead -- the age row in it is live.
+      if (hull.isPopupOpen()) hull.getPopup().setContent(aisPopup(p));
+      else hull.bindPopup(aisPopup(p));
+    } else {
+      aisHulls.set(p.mmsi,
+                   L.polygon(shape, style).bindPopup(aisPopup(p))
+                    .addTo(aisLayer));
+    }
+  }
+  // Everything the artifact no longer carries: expired by the renderer,
+  // withheld, or out of range. Deleting from a Map while iterating it is
+  // defined behaviour.
+  for (const [mmsi, hull] of aisHulls) {
+    if (!seen.has(mmsi)) { aisLayer.removeLayer(hull); aisHulls.delete(mmsi); }
   }
   $('ais-age').textContent = aisText();
 }

@@ -360,7 +360,10 @@ AIS contacts are drawn on top, in their own layer group, from
 `hullShape()`, so they inherit the identical zoom-dependent
 triangle/circle/hull rule the vessel has. The **AIS** checkbox in the readout
 hides and shows the group; the poll continues either way, so toggling costs
-nothing and re-showing is instant. Each contact carries a popup: name (or
+nothing and re-showing is instant. Contacts are added, updated and removed by
+MMSI rather than rebuilt, so an open popup survives the poll — the layer
+redraws every 10 s and on every zoom, and rebuilding took the popup with it.
+Each contact carries a popup: name (or
 *static info pending* until a type 5 or 24 message has been heard), MMSI, call
 sign, ship and cargo type, navigational status, speed, course, heading, and
 how long ago it was last heard.

@@ -470,6 +470,32 @@ def test_the_ais_readout_cannot_be_shadowed_by_a_contact_count():
         'the count is returned before the age is consulted')
 
 
+def test_the_ais_layer_updates_by_mmsi_rather_than_rebuilding():
+    """A popup must survive the poll that happens while it is open.
+
+    drawAis ran on the 10 s poll AND on every zoomend, and it began by
+    clearing the group -- so a viewer who opened a contact popup lost it
+    within ten seconds, or the instant they zoomed in to read it. On a public
+    page that does not read as a refresh, it reads as a broken map. Add,
+    update and remove by MMSI is what the plan specified.
+    """
+    page = _code(_page())
+    body = re.search(r'function drawAis\(\)\s*\{(.*?)\n\}', page, re.S)
+    assert body, 'drawAis is no longer recognisable in the page'
+    text = body.group(1)
+    assert 'clearLayers' not in text, (
+        'drawAis still rebuilds the whole group, so every poll and every '
+        'zoom destroys an open contact popup')
+    assert 'setLatLngs' in text, (
+        'an existing hull is not moved in place, so it is being replaced')
+    assert 'isPopupOpen' in text, (
+        'bindPopup tears down an open popup; the open case has to be '
+        'updated in place instead')
+    assert re.search(r'removeLayer\(\s*hull\s*\)', text), (
+        'a contact the artifact no longer carries is never removed, so an '
+        'expired or withheld contact stays on the map forever')
+
+
 def test_the_coverage_layer_is_configured_from_the_manifest():
     """The page must not hardcode the zoom the renderer writes.
 
