@@ -269,11 +269,33 @@ def vessel_dimensions(static_info):
     A = B = C = D = 0 is the standard's "dimensions not available", and it
     falls out of this as an all-zero block -- which `hullShape()` already
     handles by drawing its triangle or circle instead of a hull.
+
+    A = C = 0 with B and D non-zero is a DIFFERENT encoding, spelled out in
+    Static.msg: "reference point of reported position not available, but
+    dimensions of ship are available". B is then the whole length and D the
+    whole beam, and nothing at all is known about where on that hull the
+    reported position sits. Read literally as offsets it says the position is
+    at the bow, and the page would draw the entire vessel astern of its own
+    marker -- a 100 m ship 100 m from where it is. Recorded decision (#357):
+    the hull is CENTRED on the position in this case, which is the honest
+    reading of "reference point not available" and the smallest-error
+    placement of a hull whose reference point is unknown. This is a
+    deliberate divergence from upstream `calculatePolygon`, which applies the
+    offsets unconditionally; the tracker's consumers are planners that own
+    their own margins, while this one is a picture a person reads.
     """
     bow = float(static_info.reference_to_bow_distance)
     stern = float(static_info.reference_to_stern_distance)
     port = float(static_info.reference_to_port_distance)
     starboard = float(static_info.reference_to_starboard_distance)
+    if bow == 0.0 and stern != 0.0 and port == 0.0 and starboard != 0.0:
+        # Dimensions without a reference point: B is the length, D the beam.
+        return {
+            'length': stern,
+            'width': starboard,
+            'reference_x': 0.0,
+            'reference_y': 0.0,
+        }
     length = bow + stern
     width = port + starboard
     # hullShape() computes toBow = length / 2 - reference_x, so the offset

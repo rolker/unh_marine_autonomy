@@ -229,6 +229,17 @@ Each exclusion is logged once per MMSI on the ROC desktop. A filtered page and
 an empty river produce byte-identical artifacts, and that log is the only thing
 that can tell them apart.
 
+**Dimensions without a reference point.** ITU has a third dimension encoding
+besides "known" and "not available": `A = C = 0` with `B` and `D` non-zero
+means the *dimensions* are known but the reported position's place on the hull
+is not. Taken literally as offsets that reads as "the position is at the bow,"
+and the page would draw the whole vessel astern of its own marker — a 100 m
+ship 100 m from where it is. The hull is **centred** on the position in that
+case instead. This is a deliberate divergence from the tracker's own
+`calculatePolygon`, which applies the offsets unconditionally: its consumers
+are planners that carry their own margins, this one is a picture a person
+reads.
+
 ### Two other things that are invisible in a good run
 
 **A contact with no position.** `ais_parser` writes NaN lat/lon when a position

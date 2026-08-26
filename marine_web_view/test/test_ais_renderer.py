@@ -606,6 +606,29 @@ def test_no_dimensions_reported_is_an_all_zero_hull():
                       'reference_x': 0.0, 'reference_y': 0.0}
 
 
+def test_dimensions_without_a_reference_point_centre_the_hull():
+    """Handle ITU's A = C = 0, B != 0, D != 0 encoding from Static.msg.
+
+    It means "reference point of reported position not available, but
+    dimensions of ship are available": B is the whole length, D the whole
+    beam, and where on that hull the position sits is unknown. Read as
+    offsets it says the position is at the bow, so hullShape() would compute
+    toBow = 0, toStern = 100 and draw a 100 m vessel entirely astern of its
+    own marker. Centred is the honest reading -- a deliberate divergence from
+    upstream calculatePolygon, recorded in vessel_dimensions' docstring.
+    """
+    vessel = vessel_dimensions(_contact(dimensions=(0, 100, 0, 20)).static_info)
+    assert vessel == {'length': 100.0, 'width': 20.0,
+                      'reference_x': 0.0, 'reference_y': 0.0}
+    # hullShape()'s own arithmetic: half the hull each side of the position.
+    assert vessel['length'] / 2 - vessel['reference_x'] == 50.0
+    assert vessel['length'] / 2 + vessel['reference_x'] == 50.0
+    # A genuine bow-mounted reference (A = 0, C != 0) is NOT this encoding
+    # and keeps its offsets: only A and C both zero mean "not available".
+    offset = vessel_dimensions(_contact(dimensions=(0, 100, 4, 6)).static_info)
+    assert offset['length'] / 2 - offset['reference_x'] == 0.0
+
+
 def test_an_unreported_heading_is_not_a_heading_of_due_east():
     """The quaternion cannot answer this; the yaw covariance can.
 
