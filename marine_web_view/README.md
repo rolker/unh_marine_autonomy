@@ -388,6 +388,13 @@ Expiry is the one behaviour a short replay will not show on its own — drop
 `contact_timeout` to a few seconds to watch contacts age out, or read
 `test_ais_renderer.py`, which pins it against a fixed clock.
 
+**Expect a faded replay.** Pointing `local_path` into `web/live/` previews the
+layer, but the *page* has no sim clock: it tests `Date.now()/1000 - stamp`, and
+the stamps in a bag are as old as the recording. So every contact from a bag
+recorded more than `AIS_STALE_S` (5 minutes) ago draws faded, with the readout
+saying *stale*. That is the page being right about wall-clock age, not the
+replay being broken — re-record if you need to see the live styling.
+
 Against the simulator:
 
 ```bash
