@@ -935,10 +935,21 @@ function aisStyle(dim) {
            fillOpacity: dim ? AIS_STALE_OPACITY : .75 };
 }
 
+// drawAis() MUST NOT THROW. It is bound to zoomend and it is what pollAis()
+// calls from its own catch, so an exception here does not degrade one contact
+// -- it escapes as an unhandled rejection and then throws again on every
+// zoom, leaving the layer permanently broken. Every field read out of the
+// artifact below is therefore validated, not trusted: the object is fetched
+// over the network and one malformed feature must cost that feature only.
 function drawAis() {
   const seen = new Set();
-  for (const f of aisFeatures) {
-    const [lon, lat] = f.geometry.coordinates;
+  for (const f of (Array.isArray(aisFeatures) ? aisFeatures : [])) {
+    const coords = ((f || {}).geometry || {}).coordinates;
+    if (!Array.isArray(coords)
+        || !Number.isFinite(coords[0]) || !Number.isFinite(coords[1])) {
+      continue;                        // no position: nothing to draw
+    }
+    const [lon, lat] = coords;
     const p = f.properties || {};
     if (p.mmsi == null) continue;      // no identity: nothing to update
     seen.add(p.mmsi);
@@ -980,7 +991,8 @@ async function pollAis() {
     // it. "offline" is the honest reading of all three.
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const collection = await r.json();
-    aisFeatures = collection.features || [];
+    const features = (collection || {}).features;
+    aisFeatures = Array.isArray(features) ? features : [];
     aisAlive = true;
     drawAis();
   } catch (e) {

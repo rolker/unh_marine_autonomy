@@ -496,6 +496,37 @@ def test_the_ais_layer_updates_by_mmsi_rather_than_rebuilding():
         'expired or withheld contact stays on the map forever')
 
 
+def test_one_malformed_ais_feature_cannot_break_the_whole_layer():
+    """The redraw is what pollAis's own catch calls, so it must not throw.
+
+    `const [lon, lat] = f.geometry.coordinates` on an artifact fetched over
+    the network is a bet that every feature is well formed. Lose it once and
+    drawAis throws inside pollAis's try, throws AGAIN inside the catch that
+    was supposed to degrade it, escapes as an unhandled rejection -- and then
+    throws on every zoomend for the rest of the session, because drawAis is
+    bound to zoomend. One bad feature must cost that feature only.
+    """
+    page = _code(_page())
+    body = re.search(r'function drawAis\(\)\s*\{(.*?)\n\}', page, re.S)
+    assert body, 'drawAis is no longer recognisable in the page'
+    text = body.group(1)
+    assert 'f.geometry.coordinates' not in text, (
+        'drawAis destructures the coordinates without checking them, so one '
+        'malformed feature throws out of the function pollAis calls to '
+        'recover')
+    assert re.search(r'Number\.isFinite\(\s*coords\[', text), (
+        'the coordinates are not checked for finiteness before they reach '
+        'hullShape')
+    assert re.search(r'Array\.isArray\(\s*aisFeatures', text), (
+        'a non-array `features` from the artifact makes the for-of throw')
+    poll = re.search(r'async function pollAis\(\)\s*\{(.*?)\n\}',
+                     page, re.S)
+    assert poll, 'pollAis is no longer recognisable in the page'
+    assert re.search(r'Array\.isArray\(\s*features\s*\)', poll.group(1)), (
+        'pollAis stores whatever `features` the artifact carried without '
+        'checking it is a list')
+
+
 def test_the_coverage_layer_is_configured_from_the_manifest():
     """The page must not hardcode the zoom the renderer writes.
 
