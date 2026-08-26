@@ -244,15 +244,15 @@ Specialists: Static Analysis (run — ament_flake8/pep257/copyright clean; `colc
 Governance, Plan Drift, Claude Adversarial x2 (Lens A + Lens B). Copilot and Local Adversarial off (default).
 
 ### Findings
-- [ ] (must-fix) Expiry compares header stamps against the node's own wall clock, so the bag-replay workflow this diff documents drops every contact on the first tick (reproduced against the real node: 24h-old stamp -> `contacts: 0`); no `use_sim_time` in the launch file, no `--clock` in the README recipe — `marine_web_view/marine_web_view/ais_renderer.py:313-324`
-- [ ] (must-fix) The AIS layer has no staleness signal: `stamp`/`stamp_iso`/`generated` are uploaded but read nowhere, so a dead renderer is visually identical to a quiet river indefinitely; README claims "Contact age comes from each feature's own `stamp`" — cross-confirmed by both adversarial lenses — `marine_web_view/web/index.html:829-860`
-- [ ] (must-fix) Distress (`NAV_STATUS[14]` AIS-SART/MOB/EPIRB) and SAR/law-enforcement (types 51/55) contacts are republished to a public CDN-fronted page with no filter and no recorded decision — fix may be one recorded line rather than code — `marine_web_view/web/index.html:802-816`
-- [ ] (suggestion) `stamp`/`stamp_iso` sit inside the change-detection signature but render nowhere, so nearly every tick that heard anything pays a PUT; the "nothing else does" docstring claim is not what happens, and the unchanged-set test uses a frozen stamp — `marine_web_view/marine_web_view/ais_renderer.py:409-416`
-- [ ] (suggestion) `_positionless` is the one collection with no ceiling, while `_expire` advertises bounded memory over a long shore watch — cross-confirmed by both lenses — `marine_web_view/marine_web_view/ais_renderer.py:247`
-- [ ] (suggestion) `_tick` has no exception containment, so a raise terminates the node rather than "breaking one upload, in a process with a log"; most reachable trigger is an OSError from a dry-run `local_path` whose directory is missing — `marine_web_view/marine_web_view/ais_renderer.py:399-436`
-- [ ] (suggestion) `_clean` strips the ITU `@` pad but not control/bidi characters, which still reach the public popup (DOM injection itself is correctly closed off) — `marine_web_view/marine_web_view/ais_renderer.py:113-125`
-- [ ] (suggestion) `_contacts` has no size cap over an unauthenticated uint32 MMSI keyspace; PUT count is contact-independent as documented, but object size and per-viewer CDN egress are not — `marine_web_view/marine_web_view/ais_renderer.py:306`
-- [ ] (suggestion) `drawAis()` clears and rebuilds every poll and every zoomend, destroying an open contact popup within 10 s; the plan specified add/update/remove by MMSI — `marine_web_view/web/index.html:852-860`
+- [x] (must-fix) Expiry compares header stamps against the node's own wall clock, so the bag-replay workflow this diff documents drops every contact on the first tick (reproduced against the real node: 24h-old stamp -> `contacts: 0`); no `use_sim_time` in the launch file, no `--clock` in the README recipe — `marine_web_view/marine_web_view/ais_renderer.py:313-324`
+- [x] (must-fix) The AIS layer has no staleness signal: `stamp`/`stamp_iso`/`generated` are uploaded but read nowhere, so a dead renderer is visually identical to a quiet river indefinitely; README claims "Contact age comes from each feature's own `stamp`" — cross-confirmed by both adversarial lenses — `marine_web_view/web/index.html:829-860`
+- [x] (must-fix) Distress (`NAV_STATUS[14]` AIS-SART/MOB/EPIRB) and SAR/law-enforcement (types 51/55) contacts are republished to a public CDN-fronted page with no filter and no recorded decision — fix may be one recorded line rather than code — `marine_web_view/web/index.html:802-816`
+- [x] (suggestion) `stamp`/`stamp_iso` sit inside the change-detection signature but render nowhere, so nearly every tick that heard anything pays a PUT; the "nothing else does" docstring claim is not what happens, and the unchanged-set test uses a frozen stamp — `marine_web_view/marine_web_view/ais_renderer.py:409-416`
+- [x] (suggestion) `_positionless` is the one collection with no ceiling, while `_expire` advertises bounded memory over a long shore watch — cross-confirmed by both lenses — `marine_web_view/marine_web_view/ais_renderer.py:247`
+- [x] (suggestion) `_tick` has no exception containment, so a raise terminates the node rather than "breaking one upload, in a process with a log"; most reachable trigger is an OSError from a dry-run `local_path` whose directory is missing — `marine_web_view/marine_web_view/ais_renderer.py:399-436`
+- [x] (suggestion) `_clean` strips the ITU `@` pad but not control/bidi characters, which still reach the public popup (DOM injection itself is correctly closed off) — `marine_web_view/marine_web_view/ais_renderer.py:113-125`
+- [x] (suggestion) `_contacts` has no size cap over an unauthenticated uint32 MMSI keyspace; PUT count is contact-independent as documented, but object size and per-viewer CDN egress are not — `marine_web_view/marine_web_view/ais_renderer.py:306`
+- [x] (suggestion) `drawAis()` clears and rebuilds every poll and every zoomend, destroying an open contact popup within 10 s; the plan specified add/update/remove by MMSI — `marine_web_view/web/index.html:852-860`
 
 ### Checked and refuted
 - A Lens A finding claimed the toggle handler's `map.addLayer(aisLayer)` lets an orphaned layer group pass the new guard. Mutation-tested: orphaning the group fails `test_every_vector_layer_reaches_the_map` ("aisLayer is constructed but never added to the map"). The `L.layerGroup` construction site is itself in `_VECTOR_CONSTRUCTIONS` and held to the `name.addTo(map)` rule. Not a finding.
@@ -288,3 +288,100 @@ Two things to get right while implementing it:
 
 ### Next step
 Verdict is changes-requested, so the host dispatches `address-findings` against this entry, then re-dispatches `review-code`. The diff is not pushed until a pre-push review comes back approved.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-26 03:12 +0000
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-357 at `bc61038`
+**Addressed**: `## Local Review (Pre-Push)` of 2026-08-26 02:43 +0000 (verdict changes-requested, branch at `de4ffe5`), together with the operator decision recorded under it
+**Commits**: `8beb124`, `1c21f39`, `2fd63ce`, `b91fb80`, `7c43821`, `88e8b1a`, `b88860c`, `5191e7c`, `bc61038`
+
+All nine open actions were fixed; none deferred. One fix per commit, each with
+the test that pins it. `pytest test/` in `marine_web_view`: **259 passed**
+(was 244 before this pass, 239 at review time), ament_flake8 / pep257 /
+copyright clean.
+
+### Actions
+- [x] (must-fix) Bag replay expired every contact — `launch/ais_renderer_launch.py:45`, `marine_web_view/ais_renderer.py:400`, `README.md` (`8beb124`)
+- [x] (must-fix) The AIS layer had no staleness signal — `web/index.html:161`, `web/index.html:850` (`1c21f39`)
+- [x] (must-fix) Distress and SAR/law-enforcement contacts were republished — `marine_web_view/ais_renderer.py:172` (`2fd63ce`)
+- [x] (suggestion) The stamp in the change signature, and what it costs — `marine_web_view/ais_renderer.py:470`, `README.md` (`b91fb80`)
+- [x] (suggestion) `_positionless` had no ceiling — `marine_web_view/ais_renderer.py:150` (`7c43821`)
+- [x] (suggestion) `_tick` had no exception containment — `marine_web_view/ais_renderer.py:452` (`88e8b1a`)
+- [x] (suggestion) `_clean` let control and bidi characters through — `marine_web_view/ais_renderer.py:146` (`b88860c`)
+- [x] (suggestion) `_contacts` had no size cap — `marine_web_view/ais_renderer.py:288` (`5191e7c`)
+- [x] (suggestion) `drawAis()` destroyed an open popup every poll — `web/index.html:917` (`bc61038`)
+
+### What each fix actually does
+
+**Replay (`8beb124`).** `use_sim_time` is exposed and forwarded by the launch
+file, the README recipe plays the bag with `--clock` and launches with
+`use_sim_time:=true`, and both halves are pinned by
+`test_the_ais_renderer_can_be_run_against_a_bag`. `test_launch_params.py`
+gained a `ROS_BUILTIN_PARAMETERS` exemption, without which exposing a builtin
+turns `test_launch_files_do_not_invent_parameters` red. The node also warns
+once, naming the fix, when it receives a contact already older than
+`contact_timeout` — the failure was silent, and now it announces itself.
+
+**Staleness (`1c21f39`).** Liveness comes from each contact's own `stamp`,
+validated for finiteness the way the coverage manifest's `saneStamp` is (a
+missing stamp otherwise makes every age comparison false and a dead renderer
+reads as healthy forever). Past `AIS_STALE_S` (300 s — ITU reporting intervals
+top out at 3 min) the hull is faded and an `AIS` readout row leads with
+*stale* and the freshest contact's age; the popup carries a "Last report" row.
+`pollAis` now throws on a non-ok response instead of returning quietly, so a
+404/403/5xx reads as *offline* rather than as an empty river.
+
+**Distress / SAR (`2fd63ce`).** Implemented exactly as the operator recorded
+it: filtered in the renderer, so the positions never reach S3 or the CDN.
+`excluded_from_public()` carries the reasoning in the operator's own terms;
+the README has a *Who is not on the map* section. Both requested properties
+are pinned — each exclusion is logged once per MMSI (a filtered page and an
+empty river produce byte-identical artifacts, and only the log tells them
+apart), and a contact already published is *withdrawn* when it later declares
+distress or resolves to type 51/55.
+
+**Signature (`b91fb80`).** The finding's premise — "the stamps render nowhere"
+— is retired by the staleness fix, so the stamp stays in the signature: drop
+it and a vessel holding station fades out while it is reporting perfectly
+well. What was corrected is the untrue claim around it. The docstrings and the
+README Cost section now say the real model — an *empty* river costs zero PUTs,
+a river with anything on it costs up to one per `interval`, which is the
+ceiling already quoted — and the frozen-stamp test now says what it covers,
+beside a new test that a contact re-heard *does* republish.
+
+**Ceilings (`7c43821`, `5191e7c`).** The once-per-MMSI log records are
+insertion-ordered dicts capped at `MAX_REMEMBERED_MMSI` (10000), evicting the
+oldest. The held contact set gained a `max_contacts` parameter (default 500,
+launch arg + README row, as `test_launch_params.py` requires); at the ceiling
+a new MMSI evicts the contact closest to expiring and logs loudly that the
+artifact is now truncated.
+
+**Containment (`88e8b1a`).** `_tick` is a try/except around `_publish_pass`;
+a failed pass is counted and reported and costs one tick, not the node. The
+reproduction in the test is the reachable one the review named — a dry-run
+`local_path` whose directory does not exist.
+
+**Scrubbing (`b88860c`).** `_clean` drops Unicode `Cc`/`Cf`/`Cs`/`Zl`/`Zp` to
+spaces and collapses whitespace. Cf is where the bidi overrides live (they
+reorder the text around them, so a name can be dressed to read as something
+else in a public popup); Cs is an unpaired surrogate, which `json.dumps` emits
+happily and a strict parser rejects — the bare-NaN failure again.
+
+**Per-MMSI diffing (`bc61038`).** `drawAis` adds, updates and removes by MMSI
+against an `aisHulls` map, as the plan specified. An open popup is updated in
+place (`bindPopup` tears one down) so it survives both the 10 s poll and a
+zoom.
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes).
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 357 --skill review-code
+
+The re-review reads the diff cold. Nothing is pushed until a pre-push review
+comes back approved. The pandy pass the previous entry called for is still
+outstanding: run `ais_renderer_launch.py` beside `ais_contact_tracker` against
+live traffic and confirm or revise `contact_timeout` (600 s), `interval`
+(10 s) and the two new ceilings (`max_contacts` 500, `AIS_STALE_S` 300).
