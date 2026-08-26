@@ -466,8 +466,22 @@ def test_the_ais_readout_cannot_be_shadowed_by_a_contact_count():
     assert "'offline'" in text, (
         'an unreachable artifact is not reported, so it reads as calm water')
     assert 'stale' in text, 'the readout has no stale wording'
-    assert text.rindex('AIS_STALE_S') > text.index('contacts'), (
-        'the count is returned before the age is consulted')
+    # Not an ordering test on the word "contacts": that matches the literal
+    # 'no contacts' on the early-return line, which is before everything and
+    # so asserts nothing. The claim is about the COUNT -- every path that
+    # returns one has to carry an age qualifier with it.
+    returns = re.findall(r'return\s+([^;]+);', text)
+    assert returns, 'aisText returns nothing this guard can see'
+    counted = [line for line in returns
+               if 'count' in line or 'body' in line]
+    assert counted, (
+        'aisText no longer returns a contact count -- this guard would pass '
+        'vacuously; update it rather than removing it')
+    for line in counted:
+        assert 'AIS_STALE_S' in line or 'age unknown' in line, (
+            'a contact count is returned without the age being consulted, '
+            'so a stale fleet reads as live traffic with a count to prove '
+            'it: {!r}'.format(line))
 
 
 def test_the_ais_layer_updates_by_mmsi_rather_than_rebuilding():
