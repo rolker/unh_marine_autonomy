@@ -55,6 +55,7 @@ os.environ['ROS_AUTOMATIC_DISCOVERY_RANGE'] = 'OFF'
 from marine_ais_msgs.msg import AISContact       # noqa: E402
 
 from marine_web_view import ais_renderer         # noqa: E402
+from marine_web_view.ais_renderer import excluded_from_public  # noqa: E402
 from marine_web_view.ais_renderer import heading_degrees      # noqa: E402
 from marine_web_view.ais_renderer import speed_and_course     # noqa: E402
 from marine_web_view.ais_renderer import vessel_dimensions    # noqa: E402
@@ -70,7 +71,7 @@ UNKNOWN_VARIANCE = 1.0e6                    # the tracker's "not reported"
 
 def _contact(mmsi=366000001, latitude=43.08, longitude=-70.75, stamp=1000.0,
              heading_deg=None, sog_knots=None, cog_deg=None, name='',
-             callsign='', dimensions=None):
+             callsign='', dimensions=None, nav_status=0, ship_type=0):
     """Return an AISContact shaped the way ais_contact_tracker publishes one."""
     contact = AISContact()
     contact.id = mmsi
@@ -98,6 +99,8 @@ def _contact(mmsi=366000001, latitude=43.08, longitude=-70.75, stamp=1000.0,
         course = math.radians(90.0 - cog_deg)
         contact.twist.twist.linear.x = math.cos(course) * speed
         contact.twist.twist.linear.y = math.sin(course) * speed
+    contact.navigational_status.status = nav_status
+    contact.static_info.ship_and_cargo_type = ship_type
     contact.static_info.name = name
     contact.static_info.callsign = callsign
     if dimensions is not None:
@@ -244,6 +247,91 @@ def test_a_contact_unheard_for_the_timeout_is_dropped_and_forgotten(node):
     assert sorted(node._contacts) == [1, 2], (
         'the expired contact is still held: memory grows for the life of '
         'the node')
+
+
+def test_a_distress_beacon_is_never_published(node):
+    """Recorded operator decision (#357), and it runs in the RENDERER.
+
+    Navigational status 14 is AIS-SART / MOB / EPIRB -- in the ordinary case a
+    person in the water. The public page has no operational need for it, and
+    filtering it on the page instead would still put the position in the
+    bucket, on the CDN and in the page source. The only version that keeps it
+    off a public network is the one that never uploads it, so the artifact is
+    what this asserts against.
+    """
+    node._on_contact(_contact(mmsi=1, nav_status=14))
+    node._on_contact(_contact(mmsi=2))
+    artifact = _published(node)
+    assert [f['properties']['mmsi'] for f in artifact['features']] == [2]
+    assert 1 not in node._contacts, (
+        'a withheld position is held in memory, one code path away from '
+        'being published')
+
+
+def test_a_responder_is_never_published(node):
+    """Types 51 and 55: search and rescue, and law enforcement.
+
+    A responder's own position says where a response is happening, and by
+    inference what it is responding to, while it is happening.
+    """
+    node._on_contact(_contact(mmsi=51, ship_type=51))
+    node._on_contact(_contact(mmsi=55, ship_type=55))
+    node._on_contact(_contact(mmsi=52, ship_type=52))     # a tug, published
+    node._on_contact(_contact(mmsi=50, ship_type=50))     # a pilot vessel
+    artifact = _published(node)
+    assert [f['properties']['mmsi'] for f in artifact['features']] == [50, 52]
+
+
+def test_a_contact_that_later_declares_distress_is_withdrawn(node):
+    """The filter has to run on every report, not only on the first.
+
+    A vessel can hoist distress, or resolve to type 51 from a type 5 message,
+    long after it was first heard -- and published.
+    """
+    node._on_contact(_contact(mmsi=1))
+    assert [f['properties']['mmsi'] for f in _published(node)['features']] == [1]
+    node._on_contact(_contact(mmsi=1, nav_status=14))
+    artifact = _published(node)
+    assert artifact['features'] == [], (
+        'a contact that declared distress stayed on the public map')
+    assert node._contacts == {}
+
+
+def test_a_withheld_contact_is_logged_once_and_not_silently(node):
+    """A filtered page must be tellable from a quiet one.
+
+    Nothing else can say so: the artifact looks exactly the same as a river
+    with nothing on it.
+    """
+    lines = []
+    node.get_logger().info = lambda message, **kwargs: lines.append(message)
+    for _ in range(20):
+        node._on_contact(_contact(mmsi=7, nav_status=14))
+    withheld = [line for line in lines if 'MMSI 7' in line]
+    assert len(withheld) == 1, lines
+    assert 'withheld' in withheld[0] and 'distress' in withheld[0], withheld
+
+
+def test_a_contact_that_stands_down_is_reported_again_if_it_declares_again(
+        node):
+    """The once-per-MMSI record must not outlive the condition it describes."""
+    lines = []
+    node.get_logger().info = lambda message, **kwargs: lines.append(message)
+    node._on_contact(_contact(mmsi=7, nav_status=14))
+    node._on_contact(_contact(mmsi=7))
+    node._on_contact(_contact(mmsi=7, nav_status=14))
+    assert len([line for line in lines if 'withheld' in line]) == 2, lines
+
+
+def test_the_filter_is_the_two_categories_the_operator_named(node):
+    """Pinned against quiet broadening or narrowing of a policy decision."""
+    assert ais_renderer.DISTRESS_NAV_STATUS == 14
+    assert set(ais_renderer.RESPONDER_SHIP_TYPES) == {51, 55}
+    assert excluded_from_public(_contact(nav_status=14)) is not None
+    assert excluded_from_public(_contact(ship_type=51)) is not None
+    assert excluded_from_public(_contact(ship_type=55)) is not None
+    assert excluded_from_public(_contact()) is None
+    assert excluded_from_public(_contact(nav_status=1)) is None
 
 
 def test_a_replay_against_the_wrong_clock_announces_itself(node):

@@ -47,7 +47,7 @@ Everything a viewer sees is one object: one FeatureCollection for all
 contacts, written when the set or its contents change. An idle river with the
 boat on the trailer costs zero S3 PUTs.
 
-Two things this node has to get right that are invisible in a good run:
+Three things this node has to get right that are invisible in a good run:
 
 * **A contact with no position.** ais_parser writes NaN lat/lon when a
   position report carries none, the tracker copies the pose and publishes it
@@ -61,6 +61,9 @@ Two things this node has to get right that are invisible in a good run:
   good yaw of zero -- due east in ENU. The tracker records what was actually
   reported in the yaw covariance, so that is what is tested here, the same way
   ais_layer.cpp does for the costmap.
+* **Who is not on the map.** Distress beacons and SAR/law-enforcement contacts
+  are dropped HERE rather than hidden on the page, so those positions never
+  reach S3 at all. See `excluded_from_public` and the README.
 
 See rolker/unh_marine_autonomy#357.
 """
@@ -103,6 +106,14 @@ DEFAULT_HEADING_VARIANCE_THRESHOLD = 1.0e5
 # One knot in metres per second.
 KNOT = 0.514444
 
+# ITU-R M.1371 navigational status 14: AIS-SART, MOB and EPIRB. A distress
+# beacon, which in the ordinary case is a person in the water.
+DISTRESS_NAV_STATUS = 14
+
+# Ship-and-cargo types 51 (search and rescue) and 55 (law enforcement). The
+# page's own SPECIAL_TYPE table names them; this is the same two codes.
+RESPONDER_SHIP_TYPES = frozenset((51, 55))
+
 # Below this speed the reported course is not recoverable. ais_parser encodes
 # course over ground as the DIRECTION of the velocity vector (linear.x/y), so
 # at a speed of zero both components are zero and the course is gone -- and
@@ -123,6 +134,34 @@ def _clean(text):
         return None
     cleaned = str(text).replace('@', ' ').strip()
     return cleaned or None
+
+
+def excluded_from_public(contact):
+    """Return why a contact must not be published, or None to publish it.
+
+    Recorded operator decision (#357): distress beacons and SAR /
+    law-enforcement contacts are kept off the public page. The reasoning is
+    worth keeping next to the code rather than in a commit message.
+
+    The page exists to show BizzyBoat in context, so it has no operational
+    need for either category. AIS being public data elsewhere is not a reason
+    for THIS page to rebroadcast a person in the water -- an AIS-SART is
+    somebody's worst day, and a CDN-fronted map of it is a different act from
+    a receiver hearing it. And the filter runs here, in the renderer, rather
+    than on the page: hiding a marker in JavaScript still puts the position in
+    the bucket, on the CDN and in the page source, one click away. The only
+    version of this that keeps the data off a public network is the one that
+    never uploads it.
+
+    A responder's own position is withheld for the neighbouring reason: it
+    reveals where a response is happening, and by inference what it is
+    responding to, at the moment it is happening.
+    """
+    if contact.navigational_status.status == DISTRESS_NAV_STATUS:
+        return 'distress (AIS-SART / MOB / EPIRB)'
+    if contact.static_info.ship_and_cargo_type in RESPONDER_SHIP_TYPES:
+        return 'search and rescue / law enforcement'
+    return None
 
 
 def vessel_dimensions(static_info):
@@ -248,6 +287,10 @@ class AisRenderer(Node):
         # One warning, ever, for the clock mismatch below: if it is wrong it
         # is wrong for every contact in the bag.
         self._clock_warned = False
+        # MMSIs already reported as withheld, throttled for the same reason
+        # `_positionless` is: a contact transmits for as long as it is in
+        # range, and a line per report is a log nobody can read.
+        self._withheld = set()
 
         # Same gate, same reasoning as the other two renderers: a dry run
         # writes to local_path and needs no AWS access at all, so no client is
@@ -294,8 +337,27 @@ class AisRenderer(Node):
         the complete state of that contact.
 
         A contact with no usable position is refused here rather than filtered
-        at render time, so nothing that cannot be drawn is ever held.
+        at render time, so nothing that cannot be drawn is ever held. So is a
+        contact `excluded_from_public`: a withheld position must not be held
+        in memory waiting for a code path that publishes it.
         """
+        reason = excluded_from_public(msg)
+        if reason is not None:
+            # Dropped from memory too, not merely refused: a vessel can hoist
+            # distress, or have its type resolve to 51/55 from a later type 5
+            # message, long after it was first heard and published.
+            self._contacts.pop(msg.id, None)
+            self._positionless.discard(msg.id)
+            if msg.id not in self._withheld:
+                self._withheld.add(msg.id)
+                # A withheld contact must not be indistinguishable from one
+                # that was never heard: a quiet page has to be tellable from
+                # a filtering one, and only this log can do that.
+                self.get_logger().info(
+                    'MMSI {} withheld from the public artifact -- {} '
+                    '(logged once per contact)'.format(msg.id, reason))
+            return
+        self._withheld.discard(msg.id)
         position = msg.pose.position
         if not (math.isfinite(position.latitude) and
                 math.isfinite(position.longitude)):

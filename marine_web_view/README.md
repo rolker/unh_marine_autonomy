@@ -138,7 +138,8 @@ and there is no out-of-order history to reconcile.
 
 ### Output
 
-One GeoJSON `FeatureCollection` for **all** contacts, not one object each. Per
+One GeoJSON `FeatureCollection` for **all** contacts, not one object each —
+minus the contacts [withheld from the public page](#who-is-not-on-the-map). Per
 contact: `mmsi`, `name`, `callsign`, `ship_and_cargo_type`,
 `navigational_status`, `speed_knots`, `course_deg`, `heading_deg`, `stamp`,
 `stamp_iso`, and the same `vessel` block `state_renderer` publishes, so the
@@ -169,7 +170,37 @@ contact is pruned from memory, not merely filtered out of the snapshot, so an
 MMSI that ages out and later reappears is a fresh entry with no stale state
 behind it.
 
-### Two things that are invisible in a good run
+### Who is not on the map
+
+Two categories of contact are dropped before they reach the artifact, and the
+filter runs in the **renderer**, not on the page — so those positions never
+reach S3 or the CDN at all:
+
+| Withheld | Code |
+|---|---|
+| Distress beacons | navigational status `14` — AIS-SART / MOB / EPIRB |
+| Search and rescue, law enforcement | ship-and-cargo types `51` and `55` |
+
+The page exists to show BizzyBoat in context, so it has no operational need for
+either. AIS being public data elsewhere is not a reason for *this* page to
+rebroadcast a person in the water: an AIS-SART is somebody's worst day, and a
+CDN-fronted map of it is a different act from a receiver hearing it. A
+responder's own position is withheld for the neighbouring reason — it says
+where a response is happening, and by inference what it is responding to, while
+it is happening.
+
+Filtering on the page instead would not do this. A hidden marker is still a
+position in the bucket, on the CDN, and in the page source one click away; the
+only version that keeps the data off a public network is the one that never
+uploads it. That also means a contact already published is *withdrawn* when it
+later declares distress or resolves to type 51/55 — the filter runs on every
+report, not only the first.
+
+Each exclusion is logged once per MMSI on the ROC desktop. A filtered page and
+an empty river produce byte-identical artifacts, and that log is the only thing
+that can tell them apart.
+
+### Two other things that are invisible in a good run
 
 **A contact with no position.** `ais_parser` writes NaN lat/lon when a position
 report carries none, and the tracker copies the pose and publishes it anyway.
