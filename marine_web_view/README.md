@@ -173,6 +173,16 @@ reports the freshest contact's age in the readout, so a dead renderer (or a
 receiver that lost its antenna) is visibly different from a quiet river rather
 than a confident fleet of hulls that never moves again.
 
+That holds while contacts are **held**, and its limit is worth stating: with
+none held there is no stamp to ride on. When the last contact expires the
+renderer publishes one empty collection and then, by design, never publishes
+again — so a genuinely empty river and a renderer that died an hour later both
+read as *no contacts*, indefinitely. Only an unreachable artifact is
+distinguishable in that state, and it reads as *offline*. Closing this would
+mean paying a PUT per `interval` to say nothing is happening, which is exactly
+the bill the Cost section exists to avoid; the ROC-side log is what tells the
+two apart.
+
 ### Expiry
 
 `contact_timeout` defaults to 10 minutes — deliberately generous, and well

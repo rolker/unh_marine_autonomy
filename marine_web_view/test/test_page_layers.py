@@ -433,6 +433,11 @@ def test_a_dead_ais_renderer_does_not_read_as_a_quiet_river():
     its antenna -- leaves a confident fleet of hulls on the river forever, and
     nothing on the page contradicts them. The fade and the readout are what
     make "nothing is being received" different from "nothing is out there".
+
+    Narrowly: this holds while contacts are HELD. Liveness rides on their
+    stamps, so once the last one expires the artifact is empty and the two
+    readings collapse back into one 'no contacts' -- recorded on the page
+    beside aisText() and in the README rather than pretended away here.
     """
     page = _code(_page())
     assert 'AIS_STALE_S' in page, (

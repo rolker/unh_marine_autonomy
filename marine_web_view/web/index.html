@@ -869,6 +869,14 @@ function aisStale(p) {
 // being received, whatever the map is still showing. Age is decided first and
 // prefixed to the count, the way coverageText() does it, so "stale" can never
 // be shadowed by a healthy-sounding contact count.
+//
+// KNOWN LIMIT, and the honest place to record it: liveness rides on the
+// contacts, so with NO contacts there is nothing to ride on. When the last
+// one expires the renderer publishes one empty collection and, by design,
+// never publishes again, so 'no contacts' is what an empty river and a
+// renderer that died an hour later both read as. Only "offline" -- the
+// artifact itself unreachable -- is distinguishable in that state. See the
+// README's Output section.
 function aisText() {
   if (!aisFeatures.length) return aisAlive ? 'no contacts' : 'offline';
   const ages = aisFeatures.map(f => aisAge(f.properties || {}))
