@@ -461,8 +461,8 @@ recorded in no bag, so off-boat it renders nothing however long it runs.
 ## `web/index.html`
 
 Single-page Leaflet view. Layers, bottom to top: Esri World Imagery, CCOM/JHC
-bathymetry rendered as fixed-scale depth colours, hillshade, live sonar
-coverage, then the vessel track and hull. The vessel is drawn with CAMP's
+bathymetry rendered as fixed-scale depth colours, hillshade, previously
+surveyed days, live sonar coverage, then the vessel track and hull. The vessel is drawn with CAMP's
 geometry — triangle while metres-per-pixel exceeds `max(length, width) / 10`,
 hull outline below that, circle when heading is unknown.
 
@@ -850,6 +850,143 @@ ros2 launch marine_simulation sim_robot_launch.py \
 about 74 minutes. A vessel that enters on a high tide can strand minutes
 later on charted ground that was navigable when it arrived -- realistic
 behaviour at an unrealistic rate. Use `1` for sustained work.
+
+## `scripts/publish_history_tiles.py`
+
+Pre-renders days that have already been surveyed into their own static pyramid
+at `live/history/`, from the finished QPS exports, and publishes a small
+manifest beside them.
+
+It exists because the live coverage layer is a projection of what the boat's
+coverage source holds **right now**. Reset that source, or start a new day
+against a fresh store, and every earlier day leaves the map -- the same seabed,
+the same survey, gone from the display the operator uses to decide where to
+run next. `coverage_renderer` is deliberately memory-only (see [Memory-only, by
+design](#memory-only-by-design)) and should stay that way; a finished day is
+better carried by the thing that already has it, a finished grid.
+
+### It is a separate layer, not more coverage tiles
+
+Live coverage asserts something history does not: *the sonar is on this ground
+now*. The page spends real machinery on that claim -- a heartbeat manifest, a
+staleness fade, a footprint outline. A finished day supports none of it, and
+publishing it into `live/coverage/` would attach the live claim to ground the
+boat left days ago.
+
+That is not hypothetical. On 2026-08-27, with the coverage source reset for
+the day, `live/coverage/15/` still held 35 tiles from the 24th and the 26th --
+the un-publish bookkeeping is per-run and in memory, so tiles published by an
+earlier run are never cleaned up (see [Publishing and
+un-publishing](#publishing-and-un-publishing)). The page drew all of them in
+full live styling. Previous days were already on the map; what was missing was
+any way to tell them from today.
+
+So history gets its own prefix, its own manifest, and its own pane at
+`zIndex 340` -- below the coverage pane's 350, so today's line draws over the
+ground it re-runs, and outside the `.leaflet-coverage-pane` filter, so the live
+footprint outline stays the live footprint's.
+
+### Muting, and why the colours deliberately do not match
+
+The exports carry QPS's rainbow ramp, not the page's pinned 0-40 m blue-green
+one. They cannot be recoloured onto it: they are 8-bit RGBA with hillshade
+baked in -- 211,575 distinct colours over 1.46 M data pixels in the Day 2
+export -- so colour does not invert back to depth. A float depth grid would be
+a better input and could be coloured on the page's own ramp; that is a
+different pipeline, and this one is what the exports on hand support.
+
+Rather than ship a second saturated ramp beside the live one, the publisher
+desaturates toward a **warm** neutral and lightens (`--saturation`,
+`--lighten`; defaults 0.18 and 0.28, with the layer drawn at 0.80 opacity).
+The divergence then becomes the signal: old is warm and muted, live is cool
+and vivid, and the two read as different things before the operator reaches
+the outline or the readout. What survives the mute is relief and footprint,
+which is what a history layer is for. What is destroyed is any invitation to
+compare its colours against the live layer's as though they were one scale --
+which is also why the depth legend is not extended to cover it.
+
+The mute is **affine** in RGB, so it commutes with the averaging gdal2tiles
+does to build overview levels: muting the source once and tiling the result is
+the same as tiling and muting every tile. `test_history_tiles.py` pins that,
+because a non-affine mute (a gamma, an HSV round trip) would silently colour
+the overview levels differently from the native one -- the same ground
+changing colour as you zoom.
+
+### What it does
+
+1. Mutes each source into the workdir, row-blocked -- these exports are
+   ~8700 x 10200 and a whole-array float copy is over a gigabyte on a host
+   that is also running a survey. Alpha is copied through untouched: muting is
+   about colour, and touching alpha would move the footprint boundary.
+2. Warps them into one Web Mercator mosaic in **one** `gdal.Warp` call over
+   the whole list, oldest first. Not a VRT: a VRT stacks sources band by band
+   with no notion of alpha, so a later day's *transparent* pixels overwrite an
+   earlier day's data and punch the previous day full of holes. Warp reads the
+   source alpha as a validity mask, which is what "later sources win where
+   they overlap" has to mean.
+3. Cuts an **XYZ** pyramid with `gdal2tiles` (`--xyz` is load-bearing: the
+   default is TMS, whose Y axis runs the other way, and every tile would still
+   resolve and return 200 with the survey mirrored about the equator).
+   `--exclude` drops fully transparent tiles -- these exports are survey lines
+   inside a box that is ~1.5 % covered, so without it the run publishes
+   thousands of empty PNGs. Measured on the two Isles of Shoals days: 2,662
+   tiles down to 218, 17 MB down to 7 MB.
+4. Uploads, then writes `index.json` (the key list) and `meta.json` (the
+   page-facing manifest) **in that order, manifest last** -- the manifest must
+   not advertise a pyramid that is not fully uploaded, and the index must not
+   still describe the previous one once these tiles are live.
+5. Un-publishes: keys the previous run wrote that this one did not are
+   deleted. A static pyramid has no next pass to heal in, and the page paints
+   a miss transparent, so a stranded tile is served as current forever.
+
+### Parameters worth knowing
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--labels` | *(each file's basename)* | Comma-separated, matched to the sources **in order**. Deliberately **not** derived from mtime: an export written the morning after a survey dates the export, not the survey, and would publish a confidently wrong date |
+| `--dry-run` | off | Renders into `web/live/history/`, touching no AWS credential -- the same relative path the bucket serves, so the page previews identically |
+| `--profile` | `p11-renderer` | The boat-side credential, scoped to `s3:PutObject` on `live/*`. That scope is why this prefix lives under `live/` and not beside `tiles/` |
+| `--saturation` / `--lighten` | `0.18` / `0.28` | Re-tune the mute. Changing either re-renders the pyramid; the layer's *opacity* comes from the manifest instead, so that one is a page-side tweak |
+| `--min-zoom` / `--max-zoom` | `13` / *(derived)* | The max is computed from the mosaic resolution, rounded to the nearest level and capped at 18. A 1 m grid at 43 N is ~1.37 Web Mercator m/px, which lands on z17 |
+
+Sources are given **oldest first**. A run takes about 15 s for two days of
+Isles of Shoals coverage, and holds a per-user run lock for its duration --
+two concurrent runs would race the un-publish, with one deleting tiles the
+other had just published.
+
+```bash
+# Preview locally, no credentials touched.
+./scripts/publish_history_tiles.py --dry-run \
+    ~/'Shoals Day1_1m_CUBE_ITRF2020.tif' ~/Shoals2026_Day2_1m_CUBE_ITRF2020.tif
+
+# Publish.
+./scripts/publish_history_tiles.py --labels 2026-08-25,2026-08-26 \
+    ~/'Shoals Day1_1m_CUBE_ITRF2020.tif' ~/Shoals2026_Day2_1m_CUBE_ITRF2020.tif
+```
+
+### The page side
+
+`meta.json` carries `min_zoom`, `max_zoom`, `tiles`, `labels`, `bounds`,
+`opacity` and a stamp. The page builds the layer from it rather than
+hardcoding a zoom -- the same lesson `coverage_renderer`'s manifest exists for
+-- and validates it the same way, because it is remote JSON that configures
+`minZoom`/`minNativeZoom`: integer zooms in 0..22 through the shared
+`saneZoom`, plus an ordering check, since an inverted pair describes a pyramid
+that cannot exist and Leaflet does not reject it.
+
+`bounds` is `[[south, west], [north, east]]` -- Leaflet's order, the reverse of
+the GeoJSON `[lon, lat]` the state renderer publishes. Both orders are live on
+this page.
+
+The layer rebuilds only when the pyramid's **shape** changes (zooms, opacity,
+tile count, labels), not on every poll: a rebuild re-requests every visible
+tile, which is right when a new day lands and pure churn on the other 287
+polls of the day. The poll runs every 5 minutes and exists so a viewer who
+left the page open overnight picks up yesterday without a reload.
+
+No history published is the ordinary state on day one and reads as *none
+published*. A manifest that stops describing a pyramid takes the layer down
+with it, rather than leaving it claiming days the bucket may no longer serve.
 
 ## `scripts/refresh_chart_tiles.py`
 
