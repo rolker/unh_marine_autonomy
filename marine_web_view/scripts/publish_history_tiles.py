@@ -404,6 +404,13 @@ def mosaic_bounds(dataset):
     convert = osr.CoordinateTransformation(source, target)
     west, south = convert.TransformPoint(left, bottom)[:2]
     east, north = convert.TransformPoint(right, top)[:2]
+    # Released here, transform first. The CoordinateTransformation holds both
+    # SpatialReferences, and left to interpreter shutdown SWIG cannot find a
+    # destructor for them -- every run ended with two "detected a memory leak
+    # of type OSRSpatialReferenceShadow" lines on stderr. Harmless, and
+    # exactly the kind of harmless that trains an operator to ignore this
+    # script's output.
+    del convert, source, target
     return [[south, west], [north, east]]
 
 
