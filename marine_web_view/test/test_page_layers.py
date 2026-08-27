@@ -602,7 +602,7 @@ def test_the_coverage_layer_is_configured_from_the_manifest():
     # built. The test passed solely because the definition's parameter happens
     # to be spelled `zoom`.
     defined_at = definition.start() + definition.group(0).index('buildCoverage')
-    calls = [m for m in re.finditer(r'\bbuildCoverage\s*\(\s*([^)]*?)\s*\)',
+    calls = [m for m in re.finditer(r'\bbuildCoverage\s*\(\s*([^,)]*?)\s*[,)]',
                                     code)
              if m.start() != defined_at]
     assert calls, (
@@ -614,8 +614,8 @@ def test_the_coverage_layer_is_configured_from_the_manifest():
         'not built from the manifest the poll just read')
     for call in calls:
         assert call.group(1) == 'zoom', (
-            'buildCoverage is called with {!r}: the layer must be built from '
-            'the validated zoom, not from the raw manifest field'
+            'buildCoverage first argument is {!r}: the layer must be built '
+            'from the validated zoom, not from the raw manifest field'
             .format(call.group(1)))
     assert re.search(r'(?:const|let|var)\s+zoom\s*=\s*saneZoom\('
                      r'\s*meta\.zoom\s*\)', code), (
@@ -673,7 +673,8 @@ def test_the_coverage_refresh_is_gated_on_the_change_signal():
     start, end = _function_span(page, 'pollCoverage')
     body = page[start:end]
 
-    gate = re.search(r'if\s*\(([^)]*)\)\s*refreshCoverage\s*\(\s*\)', body)
+    gate = re.search(r'if\s*\(([^)]*)\)\s*refreshCoverage\s*\([^)]*\)',
+                     body)
     assert gate, (
         'pollCoverage() does not call refreshCoverage() under a guard: the '
         'tile layer either never refreshes or refreshes unconditionally')
@@ -1078,3 +1079,72 @@ def test_no_top_level_statement_uses_the_dollar_helper_early():
         'a top-level `$(...)` call appears at offset(s) {} , above the `$` '
         'declaration at {}: that is a ReferenceError at load and the rest of '
         'the script never runs'.format(early, declaration.start()))
+
+
+def test_the_coverage_tile_url_is_versioned_so_a_redraw_refetches():
+    """A redraw that reuses the URL fetches nothing, and the map freezes.
+
+    Leaflet's redraw() drops every tile element and creates new ones with the
+    same src. Chrome answers those from the document's in-memory resource
+    cache without revalidating: measured against tiles carrying max-age=10,
+    across seven redraws spanning 36 s of real time, an existing tile was
+    requested exactly ONCE, while uncacheable 404s in the same layout were
+    re-requested every pass. The display then sits on the frame it first
+    loaded until the operator reloads the page by hand -- which is what the
+    boat reported, twice.
+
+    The first fix lowered cache_control below render_interval on the
+    assumption the browser would miss cache once the tile expired. It cannot
+    work: the browser never asks. Only a changed URL forces the fetch, so the
+    URL must carry a version -- and this pins it, because the failure is
+    invisible in every static reading of the page.
+    """
+    code = _code(_page())
+    assert re.search(r"COVERAGE_DIR\s*\+\s*'\{z\}/\{x\}/\{y\}\.png\?v=\{v\}'",
+                     code), (
+        'the coverage tile URL carries no version: every redraw requests a '
+        'URL the browser already holds, and the layer freezes until reload')
+    start, end = _function_span(code, 'buildCoverage')
+    assert re.search(r'\bv:\s*version\b', code[start:end]), (
+        'the layer is built without seeding its URL version')
+
+
+def test_the_coverage_version_moves_before_the_redraw_not_after():
+    """redraw() reads the URL as it builds each tile.
+
+    Set the version afterwards and every pass renders the PREVIOUS version's
+    tiles -- a permanently one-pass-stale display, which looks enough like
+    working to survive review.
+    """
+    code = _code(_page())
+    start, end = _function_span(code, 'refreshCoverage')
+    body = code[start:end]
+    assign = body.find('options.v = version')
+    redraw = body.find('.redraw(')
+    assert assign != -1, 'refreshCoverage() never updates the URL version'
+    assert redraw != -1, 'refreshCoverage() no longer redraws'
+    assert assign < redraw, (
+        'the version is applied after redraw(), so each pass draws the '
+        'previous version of every tile')
+
+
+def test_the_coverage_version_is_shared_by_every_viewer():
+    """A per-viewer cache-buster would move the load onto the origin.
+
+    The version must be the renderer's own counter, identical for everyone,
+    so CloudFront still serves one object to all viewers. `Date.now()` or
+    `Math.random()` would work in the browser and quietly turn every tile
+    request into an origin fetch, per viewer, forever -- the cost the manifest
+    poll deliberately avoids by NOT cache-busting.
+    """
+    code = _code(_page())
+    start, end = _function_span(code, 'pollCoverage')
+    body = code[start:end]
+    assert re.search(r'const\s+version\s*=\s*rendered\s*===\s*null\s*\?\s*0'
+                     r'\s*:\s*rendered', body), (
+        'the tile version no longer comes from the validated manifest counter')
+    for forbidden in ('Date.now()', 'Math.random()'):
+        assert forbidden not in body.split('const version')[1][:400], (
+            'the tile version is derived from {}: that is a per-viewer '
+            'cache-buster and every tile GET becomes an origin fetch'
+            .format(forbidden))

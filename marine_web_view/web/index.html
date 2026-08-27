@@ -527,11 +527,33 @@ function setCoverageAlive(alive) {
 
 // Returns true when the layer was actually (re)built, so the caller knows the
 // tiles have just been requested and does not immediately ask again.
-function buildCoverage(zoom) {
+function buildCoverage(zoom, version) {
   if (coverageZoom === zoom) return false;
   if (coverageLayer) { map.removeLayer(coverageLayer); coverageLayer = null; }
   coverageZoom = zoom;
-  coverageLayer = new L.TileLayer(COVERAGE_DIR + '{z}/{x}/{y}.png', {
+  coverageLayer = new L.TileLayer(COVERAGE_DIR + '{z}/{x}/{y}.png?v={v}', {
+    // The tile URL carries the renderer's published-tile counter, and this is
+    // what makes a redraw actually fetch anything.
+    //
+    // Leaflet's redraw() drops every tile element and builds new ones with
+    // the SAME src. Chrome answers those from the document's in-memory
+    // resource cache without revalidating -- measured: across seven redraws
+    // spanning 36 s of real time against tiles carrying max-age=10, an
+    // existing tile was requested exactly ONCE, while uncacheable 404s in the
+    // same layout were re-requested every pass. So the tile the page shows is
+    // frozen at whatever it first loaded, for the life of the document, and
+    // the only cure is the manual browser refresh the boat kept reporting.
+    //
+    // Lowering cache_control below render_interval was the earlier attempt at
+    // this and could not have worked: the browser never asks, so no max-age
+    // short of no-store changes the outcome.
+    //
+    // `v` moves only when the renderer publishes -- the same value for every
+    // viewer, so this is not the per-viewer cache busting the manifest fetch
+    // rightly avoids. CloudFront's cache policy here (Managed-CachingOptimized)
+    // keeps query strings OUT of the cache key, so the edge still serves one
+    // object to everyone and the version costs nothing there.
+    v: version,
     // minZoom, NOT just minNativeZoom. Leaflet's _clampZoom returns
     // minNativeZoom whenever the map is below it, and then lays the whole
     // viewport out in tiles OF THAT ZOOM: at map zoom 10 against a native 15
@@ -581,8 +603,12 @@ function buildCoverage(zoom) {
 // the requests, and the short max-age is what decides whether the browser can
 // answer them from its own cache or has to go back to CloudFront. Without a
 // redraw the browser is simply never asked, and the max-age is inert.
-function refreshCoverage() {
+function refreshCoverage(version) {
   if (!coverageLayer) return;
+  // Before the redraw, not after: redraw() reads the URL as it builds each
+  // tile, so a version applied afterwards would take effect one pass late --
+  // which is the same one-pass-stale display, just harder to see.
+  coverageLayer.options.v = version;
   // redraw() does NOT honour the layer's own minZoom. Leaflet applies minZoom
   // only in _setView; redraw() goes through _clampZoom, which consults
   // min/maxNativeZoom alone. So redrawing a layer that minZoom is currently
@@ -640,7 +666,12 @@ async function pollCoverage() {
       // layer's zoom bounds and its liveness clock from nonsense.
       throw new Error('malformed manifest');
     }
-    const rebuilt = buildCoverage(zoom);
+    // The version the tile URLs carry. `rendered` is already validated by
+    // saneCount; a manifest that fails it leaves the version pinned at 0,
+    // which is the pre-versioning behaviour rather than a URL reading
+    // `?v=null` that would never match the object the CDN holds.
+    const version = rendered === null ? 0 : rendered;
+    const rebuilt = buildCoverage(zoom, version);
     // Refresh on "the tiles CHANGED", never on "a pass happened". `stamp` is
     // rewritten every pass whether or not anything was rendered, so gating on
     // it meant a docked boat with the sonar off drove a full teardown and
@@ -651,7 +682,7 @@ async function pollCoverage() {
     // moves it backwards and that is still news. A rebuild has just requested
     // every tile anyway.
     const advanced = rendered !== null && rendered !== coverageRendered;
-    if (!rebuilt && advanced) refreshCoverage();
+    if (!rebuilt && advanced) refreshCoverage(version);
     coverageRendered = rendered;
     coverageStamp = stamp;
     const age = Date.now()/1000 - stamp;
