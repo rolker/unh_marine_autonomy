@@ -910,3 +910,171 @@ def test_the_construction_pattern_tracks_the_pages_layer_classes():
         'a newly defined layer class is not discovered')
     assert re.search(_constructions(invented), 'x = new Sidescan({});'), (
         'a newly defined layer class would escape the addTo check')
+
+
+def test_the_history_layer_is_configured_from_its_manifest():
+    """The previous-days pyramid's zoom range is remote input like any other.
+
+    It drives minZoom/minNativeZoom on a second tile layer, so it carries the
+    identical browser-freeze hazard the coverage manifest does -- Leaflet lays
+    the viewport out in tiles of the native level whenever the map is below it.
+    The zooms must therefore reach the layer through `saneZoom`, and the pair
+    must be ordered: `min_zoom` above `max_zoom` describes a pyramid that
+    cannot exist, and Leaflet does not reject it.
+    """
+    code = _code(_page())
+    assert 'HISTORY_META' in code, 'the history manifest is not fetched'
+    assert re.search(r'saneZoom\(\s*meta\.min_zoom\s*\)', code), (
+        'the history min zoom does not come from the manifest via saneZoom')
+    assert re.search(r'saneZoom\(\s*meta\.max_zoom\s*\)', code), (
+        'the history max zoom does not come from the manifest via saneZoom')
+    assert re.search(r'lo\s*===\s*null\s*\|\|\s*hi\s*===\s*null\s*\|\|'
+                     r'\s*lo\s*>\s*hi', code), (
+        'a manifest whose zooms fail validation, or are inverted, still '
+        'configures the layer')
+    definition = re.search(r'function\s+buildHistory\s*\(', code)
+    assert definition, 'the page has no buildHistory()'
+    defined_at = definition.start() + definition.group(0).index('buildHistory')
+    calls = [m for m in re.finditer(r'\bbuildHistory\s*\(', code)
+             if m.start() != defined_at]
+    assert calls, (
+        'buildHistory() is defined but never called: the history layer is '
+        'never built and previous days never appear')
+    start, end = _function_span(code, 'pollHistory')
+    assert any(start <= call.start() < end for call in calls), (
+        'buildHistory() is never called from pollHistory()')
+
+
+def test_the_history_layer_does_not_share_the_live_coverage_pane():
+    """Finished days must not be drawn with the live layer's styling.
+
+    `.leaflet-coverage-pane` carries a drop shadow that means "this is the
+    live footprint". Fold history into that pane and the live outline is drawn
+    around ground the sonar left days ago -- which is the exact confusion this
+    layer was added to remove, since the bucket had days-old tiles standing in
+    live/coverage/ being drawn as if fresh.
+
+    It must also sit BELOW live coverage, or today's fresh line is buried
+    under yesterday's mosaic.
+    """
+    page = _page()
+    code = _code(page)
+    assert re.search(r"createPane\(\s*'history'\s*\)", code), (
+        'the history layer has no pane of its own')
+    assert re.search(r"pane:\s*'history'", code), (
+        'the history layer is not assigned to its own pane')
+    zindex = dict(re.findall(
+        r"getPane\(\s*'(\w+)'\s*\)\.style\.zIndex\s*=\s*(\d+)", code))
+    assert 'history' in zindex and 'coverage' in zindex, (
+        'one of the two panes no longer sets an explicit zIndex, so their '
+        'stacking is left to Leaflet and to declaration order')
+    assert int(zindex['history']) < int(zindex['coverage']), (
+        'the history pane ({}) is stacked at or above live coverage ({}): '
+        "today's coverage would be drawn under previous days".format(
+            zindex['history'], zindex['coverage']))
+
+
+def test_the_history_layer_carries_no_liveness_styling():
+    """A finished day cannot go stale, and must not be faded as if it could.
+
+    The coverage layer fades when its renderer stops, because what it shows
+    might be minutes out of date. History is a published artifact of a day
+    that is over: fading it would say something false, and the machinery that
+    does the fading has no manifest field here to drive it.
+    """
+    code = _code(_page())
+    start, end = _function_span(code, 'buildHistory')
+    body = code[start:end]
+    for forbidden in ('COVERAGE_STALE_OPACITY', 'setCoverageAlive',
+                      'coverageAlive'):
+        assert forbidden not in body, (
+            'buildHistory() reaches for {}: the history layer is being '
+            'given the live layer staleness behaviour'.format(forbidden))
+
+
+def test_a_missing_history_manifest_takes_the_layer_down():
+    """No history published is the ordinary state, and must read as such.
+
+    The failure that matters is the other one: leaving a previous manifest's
+    layer on the map after the manifest stops describing it. Those tiles may
+    have been un-published, in which case the layer is claiming days the
+    bucket no longer serves.
+    """
+    code = _code(_page())
+    start, end = _function_span(code, 'pollHistory')
+    body = code[start:end]
+    catch = body[body.index('catch'):]
+    assert re.search(r'map\.removeLayer\(\s*historyLayer\s*\)', catch), (
+        'an unreachable or malformed history manifest leaves the layer on '
+        'the map')
+    assert re.search(r'historyLayer\s*=\s*null', catch), (
+        'historyLayer is not cleared, so the next poll cannot rebuild it')
+    assert re.search(r'historyKey\s*=\s*null', catch), (
+        'historyKey survives the teardown, so a manifest that comes back '
+        'unchanged is treated as already built and the layer never returns')
+
+
+def test_the_history_toggle_cannot_desync_from_the_map():
+    """The checkbox and the map must agree after a rebuild, not just a click.
+
+    A new day republishes the manifest and rebuilds the layer. Add the rebuilt
+    layer without consulting the checkbox and a viewer who turned history off
+    finds it back the next morning, with the control still saying off -- the
+    same desync `syncAisLayer` exists to prevent on the AIS group.
+    """
+    code = _code(_page())
+    assert re.search(r"\$\('history'\)\.addEventListener\(\s*'change'", code), (
+        'the history checkbox is not wired to anything')
+    start, end = _function_span(code, 'buildHistory')
+    assert 'syncHistoryLayer()' in code[start:end], (
+        'buildHistory() does not re-apply the checkbox state, so a rebuilt '
+        'layer ignores it')
+    sync_start, sync_end = _function_span(code, 'syncHistoryLayer')
+    body = code[sync_start:sync_end]
+    assert re.search(r"\$\('history'\)\.checked", body), (
+        'syncHistoryLayer() does not read the checkbox')
+
+
+def test_history_labels_are_scrubbed_before_they_are_displayed():
+    """Manifest labels are free text that reaches the readout.
+
+    They are the operator's own words rather than a stranger's, so this is a
+    smaller worry than the AIS names -- but it is the same mechanism and the
+    same cheap fix: textContent closes off markup, and stripping bidi controls
+    closes off text that reorders what is printed around it.
+    """
+    code = _code(_page())
+    start, end = _function_span(code, 'historyLabels')
+    body = code[start:end]
+    assert 'u202A-' in body or 'u202a-' in body, (
+        'history labels are not stripped of bidi overrides')
+    assert re.search(r'\.slice\(\s*0\s*,\s*\d+\s*\)', body), (
+        'history labels are not length-capped before display')
+    assert re.search(r"\$\('hist'\)\.textContent", code), (
+        'the history readout is written through something other than '
+        'textContent')
+
+
+def test_no_top_level_statement_uses_the_dollar_helper_early():
+    """`const $` is declared late, and a top-level use above it is fatal.
+
+    Not a style point: `const` is not hoisted, so a top-level `$(...)` before
+    the declaration throws a ReferenceError at load -- which aborts the rest
+    of the script. No polls are scheduled, every readout stays on its em dash,
+    and the map comes up with the basemap and nothing else. It looks like a
+    network problem rather than a syntax-order one.
+
+    Every existing use of `$` is inside a function, where the declaration has
+    long since run by call time. This pins that a new one cannot quietly be
+    added at the top level above the declaration -- which is exactly how the
+    history toggle was first wired.
+    """
+    code = _code(_page())
+    declaration = re.search(r'^const \$ = ', code, re.M)
+    assert declaration, 'the page no longer declares the `$` helper'
+    early = [m.start() for m in re.finditer(r'^\$\(', code, re.M)
+             if m.start() < declaration.start()]
+    assert not early, (
+        'a top-level `$(...)` call appears at offset(s) {} , above the `$` '
+        'declaration at {}: that is a ReferenceError at load and the rest of '
+        'the script never runs'.format(early, declaration.start()))

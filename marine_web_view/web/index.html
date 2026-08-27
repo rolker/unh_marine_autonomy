@@ -137,12 +137,14 @@
     <dt>Heading</dt><dd id="hdg">—</dd>
     <dt>Fix age</dt><dd id="age">—</dd>
     <dt>Coverage</dt><dd id="cov">—</dd>
+    <dt>History</dt><dd id="hist">—</dd>
     <dt>AIS</dt><dd id="ais-age">—</dd>
   </dl>
   <div id="status"><span id="dot"></span><span id="msg">connecting…</span></div>
   <div id="details">
   <label><input type="checkbox" id="follow" checked> follow boat</label>
   <label><input type="checkbox" id="ais" checked> AIS traffic</label>
+  <label><input type="checkbox" id="history" checked> previous days</label>
   <div id="legend"><h2>Depth</h2></div>
   <div id="credit">
     Operated by the Center for Coastal and Ocean Mapping / Joint Hydrographic
@@ -222,6 +224,16 @@ map.createPane('coverage');
 // Same stacking the layer's own zIndex option used to set, moved up to the pane
 // so the pane (and its outline) sits above imagery and hillshade as one unit.
 map.getPane('coverage').style.zIndex = 350;
+
+// Previous days get their own pane BELOW live coverage, and separate from it
+// for two reasons. Stacking: today's coverage must draw over the ground it
+// re-runs, not under it. And the outline: `.leaflet-coverage-pane`'s drop
+// shadow means "this is the live footprint", so folding finished days into
+// that pane would put the live outline around ground the sonar left days ago.
+// This pane deliberately carries no filter of its own -- the history layer is
+// meant to recede.
+map.createPane('history');
+map.getPane('history').style.zIndex = 340;
 
 // Basemap: Esri World Imagery -- genuinely cached. NOTE {z}/{y}/{x} (ArcGIS
 // order), reversed from the usual XYZ, and the tiles are JPEG.
@@ -654,6 +666,145 @@ async function pollCoverage() {
   }
 }
 
+// ---- Previous days' coverage ---------------------------------------------
+//
+// Published by scripts/publish_history_tiles.py from the finished exports of
+// days already surveyed, into its own prefix and its own pane.
+//
+// A separate layer rather than more tiles under live/coverage/, because the
+// two carry different claims. Live coverage means "the sonar is on this
+// ground now" and the page spends real machinery saying so -- a heartbeat
+// manifest, a staleness fade, a footprint outline. A finished day makes no
+// such claim: it does not change, it cannot go stale, and there is nothing to
+// fade. Drawing it through the live layer's styling would attach the live
+// claim to it, which is the failure this layer exists to fix -- the bucket
+// had days-old tiles standing in live/coverage/, drawn as if fresh.
+//
+// It carries the export's own rainbow ramp rather than this page's pinned
+// 0-40 m blue-green one, and cannot be recoloured onto it: the exports have
+// hillshade baked into the RGB, so colour does not invert back to depth. The
+// publisher mutes them toward a warm neutral instead, and the divergence
+// becomes the signal -- old is desaturated and warm, live is saturated and
+// cool. Two palettes that cannot be read as one scale, which is also why the
+// depth legend is NOT extended to cover this layer.
+const HISTORY_DIR  = 'live/history/';
+const HISTORY_META = HISTORY_DIR + 'meta.json';
+// Slow, and it is not a liveness poll: the manifest changes when a day's
+// export is published, at most once a day. This exists so a viewer who left
+// the page open overnight picks up yesterday without a reload.
+const HISTORY_MS = 300000;                    // 5 minutes
+const HISTORY_MAX_Z = 22;                     // matches the map's own maxZoom
+const HISTORY_OPACITY = 0.8;                  // fallback; the manifest sets it
+// The same transparent pixel the coverage layer uses. A miss is the normal
+// case for both -- the publisher writes no tile for ground nobody surveyed --
+// so a miss must paint nothing rather than a broken-image icon.
+const HISTORY_BLANK = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+let historyLayer = null, historyKey = null;
+
+// How much of the manifest is trusted, and why each check is here:
+//
+// The zooms configure minZoom/minNativeZoom, which is the SAME browser-freeze
+// bound buildCoverage() documents -- below its native zoom Leaflet lays the
+// whole viewport out in tiles of that level, 4^n of them. So they get the
+// identical Number.isInteger 0..22 treatment through saneZoom(), plus an
+// ordering check the coverage manifest does not need, carrying one zoom.
+//
+// The labels are the operator's own text from the command line, rendered into
+// the readout. They go in through textContent, so markup is already inert, but
+// they are still capped and stripped of control and bidi characters for the
+// reason ais_renderer scrubs contact names: a bidi override reorders the text
+// AROUND it, so a label can be dressed to read as something it is not.
+function historyLabels(meta) {
+  if (!Array.isArray(meta.labels)) return [];
+  return meta.labels
+    .filter(x => typeof x === 'string')
+    .slice(0, 12)
+    .map(x => x.replace(
+        /[\u0000-\u001F\u007F-\u009F\u200E\u200F\u202A-\u202E\u2066-\u2069]/g,
+        '').slice(0, 24))
+    .filter(x => x.length);
+}
+
+// Returns true when the layer was actually rebuilt. A rebuild tears the layer
+// down and re-requests every visible tile, which is right when a new day has
+// been published and pure churn on the other 287 polls of the day -- so the
+// pyramid's shape, not the manifest's stamp, is what decides.
+function buildHistory(meta) {
+  const lo = saneZoom(meta.min_zoom), hi = saneZoom(meta.max_zoom);
+  if (lo === null || hi === null || lo > hi) return false;
+  const opacity = (typeof meta.opacity === 'number' && meta.opacity > 0
+                   && meta.opacity <= 1) ? meta.opacity : HISTORY_OPACITY;
+  const key = [lo, hi, opacity, meta.tiles | 0,
+               historyLabels(meta).join('|')].join(',');
+  if (key === historyKey) return false;
+  historyKey = key;
+  if (historyLayer) { map.removeLayer(historyLayer); historyLayer = null; }
+  historyLayer = new L.TileLayer(HISTORY_DIR + '{z}/{x}/{y}.png', {
+    // minZoom, not just minNativeZoom -- see buildCoverage() for what the
+    // difference costs. The pyramid is rendered down to its own floor, so
+    // below that the layer is hidden rather than upscaled from nothing.
+    minZoom: lo,
+    maxZoom: HISTORY_MAX_Z,
+    minNativeZoom: lo, maxNativeZoom: hi,
+    opacity: opacity,
+    pane: 'history',
+    errorTileUrl: HISTORY_BLANK,
+    attribution: 'Previous days: MBES, CCOM/JHC'
+  }).addTo(map);
+  // Added unconditionally, then removed again by syncHistoryLayer() if the
+  // box is unchecked. Reaching the map at the construction site is what
+  // test_page_layers.py can actually verify -- a layer reached only through
+  // a toggle is indistinguishable from one that is never reached at all,
+  // which is the #341 failure that test exists for. The cost is that a
+  // viewer who has turned the layer OFF gets one frame of aborted tile
+  // requests when a new day is published; that is once a day, against a
+  // guard that is checked on every commit.
+  syncHistoryLayer();
+  return true;
+}
+
+// The checkbox and the map are kept in step through one function, called on
+// every change AND after every rebuild: a layer replaced while the box was
+// unchecked would otherwise come back visible, with the control saying the
+// opposite of what the map is doing.
+function syncHistoryLayer() {
+  if (!historyLayer) return;
+  if ($('history').checked) map.addLayer(historyLayer);
+  else map.removeLayer(historyLayer);
+}
+
+function historyText(meta) {
+  const labels = historyLabels(meta);
+  const days = labels.length + (labels.length === 1 ? ' day' : ' days');
+  const joined = labels.join(', ');
+  // The readout is narrow and a label is free text; past a line's worth, the
+  // count is the part worth keeping.
+  return joined.length <= 34 ? days + ' · ' + joined : days;
+}
+
+async function pollHistory() {
+  try {
+    // `default`, not `no-store`: unlike the coverage manifest this is not a
+    // heartbeat, so being answered from the browser's own cache within its
+    // 5-minute max-age costs nothing and keeps the request off the origin.
+    const r = await fetch(HISTORY_META, { cache: 'default' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const meta = await r.json();
+    if (!buildHistory(meta) && historyLayer === null) {
+      throw new Error('malformed manifest');
+    }
+    $('hist').textContent = historyText(meta);
+  } catch (e) {
+    // No history published for this survey is the ORDINARY state on day one,
+    // not a fault: nothing is drawn and the readout says so plainly. What it
+    // must not do is leave a previous manifest's layer on the map claiming
+    // days that are no longer published.
+    if (historyLayer) { map.removeLayer(historyLayer); historyLayer = null; }
+    historyKey = null;
+    $('hist').textContent = 'none published';
+  }
+}
+
 // Legend: continuous bar built from the same RAMP, so it cannot drift from
 // what is rendered. Top = surface, bottom = MAX_DEPTH.
 (function () {
@@ -1065,6 +1216,16 @@ function syncAisLayer() {
 $('ais').addEventListener('change', syncAisLayer);
 syncAisLayer();
 
+// Wired HERE, beside the AIS toggle, and not down in the history section --
+// `$` is defined further down the page than that section is, and a top-level
+// `$(...)` call up there is a ReferenceError at load that takes the whole
+// script with it: no polls scheduled, every readout stuck on an em dash, and
+// a map with nothing but the basemap on it. Every other use of `$` is inside
+// a function, so only a top-level one is exposed to the ordering.
+// syncHistoryLayer() is not called here: the layer does not exist until the
+// first manifest arrives, and buildHistory() applies the checkbox itself.
+$('history').addEventListener('change', syncHistoryLayer);
+
 async function poll() {
   try {
     const r = await fetch(SRC, { cache:'default' });   // no cache-buster: let
@@ -1077,10 +1238,12 @@ poll();
 pollTrack();
 pollCoverage();
 pollAis();
+pollHistory();
 setInterval(poll, POLL_MS);
 setInterval(pollTrack, TRACK_MS);
 setInterval(pollCoverage, COVERAGE_MS);
 setInterval(pollAis, AIS_MS);
+setInterval(pollHistory, HISTORY_MS);
 setInterval(updateAge, 1000);
 
 // Start collapsed on a phone: the map is the point, the readout is secondary.
