@@ -57,8 +57,11 @@ from launch_ros.actions import Node
 
 PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# The renderers, in the order web_view_launch.py includes them, with the S3
-# key each one must end up owning. Sharing a key is the failure this file
+# The two renderers that own an S3 key, in the order web_view_launch.py
+# includes them, with the key and interval each must end up with.
+# coverage_renderer is deliberately absent: it declares neither argument,
+# because it publishes a tile tree rather than one object. The uniqueness
+# check below still covers all three. Sharing a key is the failure this file
 # exists for, so the expected values are written out rather than derived.
 EXPECTED = (
     ('state_renderer', 'live/position.geojson', '1.0'),
