@@ -484,7 +484,14 @@ def lock_dir():
     path = (os.path.join(base, 'p11-tiles') if base
             else os.path.join(os.path.expanduser('~'), '.cache', 'p11-tiles'))
     os.makedirs(path, mode=0o700, exist_ok=True)
+    # lstat, not stat: a symlink here is exactly the substitution being guarded
+    # against, and stat() would follow it and report the target. A symlink is in
+    # practice already rejected by the mode check below (a link's own mode is
+    # 0o777), but only incidentally and with a misleading reason -- say what is
+    # actually wrong. refresh_chart_tiles.py carries the same guard.
     info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode):
+        raise RuntimeError('{} is not a directory'.format(path))
     if info.st_uid != os.geteuid():
         raise RuntimeError('{} is owned by uid {}, not by this user'.format(
             path, info.st_uid))
@@ -583,7 +590,10 @@ def upload_tiles(client, tiles, concurrency, deadline_seconds,
     import concurrent.futures
     started = time.monotonic()
     done = 0
-    with concurrent.futures.ThreadPoolExecutor(concurrency) as pool:
+    # Clamp: ThreadPoolExecutor(0) raises ValueError, so an operator typo
+    # (--concurrency 0) would abort the run with a stack trace rather than a
+    # controlled error. refresh_chart_tiles.py clamps the same way.
+    with concurrent.futures.ThreadPoolExecutor(max(1, int(concurrency))) as pool:
         futures = {}
         for path, relative in tiles:
             if time.monotonic() - started > deadline_seconds:
