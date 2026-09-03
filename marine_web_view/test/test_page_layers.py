@@ -910,3 +910,37 @@ def test_the_construction_pattern_tracks_the_pages_layer_classes():
         'a newly defined layer class is not discovered')
     assert re.search(_constructions(invented), 'x = new Sidescan({});'), (
         'a newly defined layer class would escape the addTo check')
+
+
+def test_the_coverage_outline_is_wired_end_to_end():
+    """Dropping any one of the outline's three pieces silently removes it.
+
+    Coverage shares the basemap's depth ramp on purpose (#345 -- one depth
+    must not read as two colours), so where new soundings agree with the
+    chart the surveyed area has no edge of its own. The outline is what
+    puts one back, and it only works as a chain: a pane is created, the
+    coverage layer is built INTO that pane, and a stylesheet rule filters
+    the pane as a whole.
+
+    Break any link and nothing errors. The page loads, the tiles paint, the
+    coverage is still there -- and the operator simply cannot see where the
+    survey ends, which is the exact condition the outline was added to fix.
+    Drop `pane: 'coverage'` and the filter applies to an empty pane; drop
+    the rule and the pane is unstyled; drop the pane and Leaflet throws only
+    at layer-construction time, inside a rebuild that happens on every
+    manifest zoom change rather than at page load.
+    """
+    page = _page()
+
+    assert re.search(r"createPane\s*\(\s*'coverage'\s*\)", page), (
+        'the coverage pane is no longer created -- the outline filter has '
+        'nothing to apply to')
+
+    assert re.search(r"pane\s*:\s*'coverage'", page), (
+        'the coverage layer no longer renders into the coverage pane, so '
+        'the outline filter applies to an empty pane and the surveyed area '
+        'loses its edge against the basemap ramp (#345)')
+
+    assert re.search(r'\.leaflet-coverage-pane\s*\{[^}]*drop-shadow', page), (
+        'the .leaflet-coverage-pane drop-shadow rule is gone -- coverage '
+        'reverts to being the same colour as the seabed beneath it')
