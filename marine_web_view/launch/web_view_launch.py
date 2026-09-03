@@ -172,23 +172,31 @@ def generate_launch_description():
             'chart_datum_frame', default_value=[platform, '/chart_datum'],
             description='Vertical reference to colour depths against.'),
 
-        # Deliberately BELOW coverage_renderer's own default, which equals its
-        # render_interval. At equality a redraw issued the moment new tiles
-        # land is answered from the browser's cache -- the tile it holds is
-        # still inside its max-age -- and CloudFront can serve an already-stale
-        # copy on top of that. The page only redraws when the manifest's tile
-        # counter advances, so the stale frame is not corrected 20 s later; it
-        # waits for the NEXT advance, which on a slow survey line is minutes.
-        # Reported from the boat as coverage that updates only on a manual
-        # browser refresh. Strictly less than render_interval means every
-        # next-pass redraw is guaranteed to miss cache. Costs some extra tile
-        # GETs; the manifest's own max-age is min(5, this) and is unaffected.
+        # This value does NOT govern whether the browser refetches a redrawn
+        # tile. An earlier pass here set it below render_interval on the theory
+        # that a redraw would then land on an expired tile; measurement showed
+        # that could not work, because Leaflet's redraw() rebuilds tile elements
+        # with the SAME src and Chrome answers those from the document's
+        # in-memory resource cache without revalidating at all. Across seven
+        # redraws spanning 36 s against tiles carrying max-age=10, an existing
+        # tile was requested exactly ONCE. No max-age short of no-store changes
+        # that, and no-store would put every tile GET on the origin for every
+        # viewer.
+        #
+        # Browser refetch is handled instead by versioning the tile URL with the
+        # renderer's published-tile counter (see web/index.html buildCoverage).
+        # What cache_control still governs is CDN/origin revalidation of a tile
+        # object that was OVERWRITTEN in place at the same key -- so it bounds
+        # how long an edge may serve a superseded copy of an unchanged URL.
+        # There is no longer any constraint tying it to render_interval.
+        # The manifest's own max-age is min(5, this) and is unaffected.
         DeclareLaunchArgument(
             'cache_control', default_value='10',
-            description='max-age stamped on each coverage tile. Keep it '
-                        'STRICTLY below render_interval or the display can '
-                        'sit on a cached tile until the next counter '
-                        'advance.'),
+            description='max-age stamped on each coverage tile. Bounds how '
+                        'long a CDN edge may serve a superseded copy of an '
+                        'overwritten tile. It does NOT control browser '
+                        'refetch on redraw -- the versioned tile URL does '
+                        'that.'),
     ]
 
     renderers = [
