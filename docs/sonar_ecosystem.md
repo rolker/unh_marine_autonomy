@@ -7,9 +7,9 @@ current; when an umbrella closes or a frontier shifts, update the relevant row.
 
 > Status legend: ✅ done · 🔨 in progress · 📋 designed, not built · ⚠️ blocked/degraded
 
-_Last verified: 2026-08-20 (world-model reframe under ADR-0010; store-bathy row,
-ADR spine, and frontier refreshed against merge state);
-"Where to direct efforts" frontier updated 2026-08-20 ([#311](https://github.com/rolker/unh_marine_autonomy/issues/311))._
+_Last verified: 2026-09-03 (survey-explorer stages 1–5 complete; ADR spine
+extended to 0013; provenance row repointed at the import ledger; Arc 2's
+live-marking premise flagged against field experience) ([#367](https://github.com/rolker/unh_marine_autonomy/issues/367))._
 
 ## The two arcs
 
@@ -93,15 +93,16 @@ sequenced with a field-rebuild day.
 | **Estimate — bathy** | CUBE draft tiles (live), backscatter co-estimation, slope correction | — | 0007 | ✅ mature ([cube#54], [cube#70] closed); slope-correction merged but dormant (needs [cube#59]) |
 | **Estimate — sidescan** | `marine_sidescan_mosaic`: live mosaic (L13, uint16) + offline Tier-1/Tier-2 chain | [#171](https://github.com/rolker/unh_marine_autonomy/issues/171) (I2), [#185](https://github.com/rolker/unh_marine_autonomy/issues/185) | — | ✅ built: live mosaic node + Tier-1 `.sst1` archive + Tier-2 `flat`/`processed` builders + overview pyramid ([#188]); placement is DEM-orthorectified against the bathy store in the `processed` build ([#297], `--bathy-store`), flat-bottom in the live `draft` path by design (ADR-0006 D6/D9) and in the cheap `flat` Tier-2 builder by scope |
 | **Store — core** | Generic band/dtype tiled-GeoTIFF store core | [#172](https://github.com/rolker/unh_marine_autonomy/issues/172) | 0002 | ✅ closed (`marine_tiled_raster_store`) |
-| **Store — bathy** | World-model **depths** theme: four provenance layers (`chart`/`reference`/`draft`/`processed`), best-source priority query, multi-level (D3/D4) | [#86](https://github.com/rolker/unh_marine_autonomy/issues/86) | 0002 / 0010 | ✅ readiness arc complete; **D8** draft/processed split + cell-wise `clearOverlappedDraft` anti-clobber ([#313] + [cube#134]) ✅; **chart** layer + wholesale regeneration ([#280], exporter [s57#29], CLI [#291]) ✅; **D9** depths overview pyramid (shallowest-preserving `overviews/` sidecar, `build_depth_overviews`) ([#188] via [#320]) ✅, generalised to **mixed-level layers** with a native-wins rule and a per-tile geometric-error coverage manifest (uma-ADR-0013 D2/D3) so `reference` gets coverage below its coarsest native level ([#331]) 🔨; [#151] levels ✅; [#189]/[#256] atomic tile write 📋 (gates live chart regen, D7) |
+| **Store — bathy** | World-model **depths** theme: four provenance layers (`chart`/`reference`/`draft`/`processed`), best-source priority query, multi-level (D3/D4) | [#86](https://github.com/rolker/unh_marine_autonomy/issues/86) | 0002 / 0010 | ✅ readiness arc complete; **D8** draft/processed split + cell-wise `clearOverlappedDraft` anti-clobber ([#313] + [cube#134]) ✅; **chart** layer + wholesale regeneration ([#280], exporter [s57#29], CLI [#291]) ✅; **D9** depths overview pyramid (shallowest-preserving `overviews/` sidecar, `build_depth_overviews`) ([#188] via [#320]) ✅, generalised to **mixed-level layers** with a native-wins rule and a per-tile geometric-error coverage manifest (uma-ADR-0013 D2/D3) so `reference` gets coverage below its coarsest native level ([#331]) ✅ (merged 2026-08-22); [#151] levels ✅; [#189]/[#256] atomic tile write 📋 (gates live chart regen, D7) |
 | **Store — backscatter** | Two-tier backscatter store (GeoCoder, draft/processed) | [#180](https://github.com/rolker/unh_marine_autonomy/issues/180) | 0006 / 0007 | 🔨 **M3/MBES half ✅ done**: [cube#80] offline producer merged → `marine_mbes_backscatter_store`; **sidescan half 🔨 in flight**: durable `processed` build with best-source compositing + registry, DEM orthorectification and a `projection.json` provenance sidecar ([#297]); GeoCoder radiometry (beam pattern, slope, EGN) still 📋 |
-| **Store — provenance** | Cross-store multi-platform source-id + registry | [#179](https://github.com/rolker/unh_marine_autonomy/issues/179) | 0005 | 📋 deferred (multi-platform later tier) |
+| **Store — provenance** | Cross-store source-id + registry; **per-import ledger** (which bags were folded) | [#179](https://github.com/rolker/unh_marine_autonomy/issues/179), [#366](https://github.com/rolker/unh_marine_autonomy/issues/366) | 0005 | ⚠️ **the deferral expired.** Per-cell interning stays 📋, but the store has no record of *which bags were imported* at all — and CUBE accumulation is not idempotent, so a re-import double-counts silently. ADR-0005's re-introduction trigger reads "when a second platform contributes"; what arrived first was a second **campaign** on the same platform, which overwrote the `depths` store's single `survey` label (`massabesic-jun2026` → `shoals-aug2026`, 2026-08-25) while both campaigns' data remained. [#366] is the ledger + the campaign/project metadata it carries |
 | **Live transport** | `SonarVisualizationTile` + anti-entropy tile-sync | [#230](https://github.com/rolker/unh_marine_autonomy/issues/230) (= #86-Phase-6 / #171-I3) | 0008 | ✅ **end-to-end**: #230 transport + [cube#78] producer + [camp#121] consumer (live cache) all merged; a **second independent consumer** (`marine_web_view`'s `coverage_renderer`, [#345](https://github.com/rolker/unh_marine_autonomy/issues/345)) reconciles the same catalog/request/tile triple in Python, which is the first cross-language exercise of the protocol |
 | **Costmap** | Bathy → Nav2 costmap layer | [#127](https://github.com/rolker/unh_marine_autonomy/issues/127) | — | ✅ **usable** — tide-frame fix [uma#220] + latch-hardening [uma#223] merged (PR#222). Midpoint+uncertainty cost-model rework ✅ **landed** ([#290](https://github.com/rolker/unh_marine_autonomy/pull/290)) — an ADR-0010 D7 precondition for chart ingestion (see the frontier), not just an enhancement |
 | **Render — CAMP** | Unified band-select + colormap raster render + live cache | [#175](https://github.com/rolker/unh_marine_autonomy/issues/175) (I4), [camp#121], [camp#108], [camp#63] | 0001 / 0008 | ✅ file-store display + GPU raster ([camp#90]), band-select ([camp#108], PR [camp#124] merged), and live cache ([camp#121], PR [camp#139] merged) all landed |
 | **Render — web** | Browser SA viewer (contacts + bathy + sidescan) | [#166](https://github.com/rolker/unh_marine_autonomy/issues/166) | 0008 | 🔨 `marine_web_view` is live: `state_renderer` publishes position + track and a pinned-scale bathymetry/hillshade basemap ([#341](https://github.com/rolker/unh_marine_autonomy/issues/341)), and `coverage_renderer` renders live MBES coverage from the ADR-0008 transport to slippy PNGs in S3 ([#345](https://github.com/rolker/unh_marine_autonomy/issues/345)) — the **second** end-to-end ADR-0008 consumer after CAMP. Contacts and sidescan on the web map still 📋 |
 | **Reprocess** | Offline M3 bag → store tiles; PINGMapper offline sidescan EGN | [#171](https://github.com/rolker/unh_marine_autonomy/issues/171) (C1) | — | ✅ M3 import landed ([cube#63] closed); 📋 sidescan offline pipeline to validate; ⚠️ draft→**processed** promotion workflow thin |
-| **Survey index / query** | Location → raw bag data that saw it: `marine_survey_index` per-tile pass intervals (ping geometry, not store acceptance) + query CLI | [#258](https://github.com/rolker/unh_marine_autonomy/issues/258) / [#259](https://github.com/rolker/unh_marine_autonomy/issues/259) | — | ✅ stage 1 (indexer + CLI); explorer stages 2–5 📋 (schema contract: [survey_index_schema.md](survey_index_schema.md)) |
+| **Survey index / query** | Location → raw bag data that saw it: `marine_survey_index` per-tile pass intervals (ping geometry, not store acceptance) + query CLI | [#259](https://github.com/rolker/unh_marine_autonomy/issues/259); explorer now [mpt#36](https://github.com/rolker/marine_perception_tools/issues/36) | — | ✅ indexer + CLI + nav-track schema v2 ([#265]) (schema contract: [survey_index_schema.md](survey_index_schema.md)) |
+| **Explore — offline** | `survey_explorer`: store-tile basemap as the index, tile-granular selection, multi-pass MBES cloud, in-app CUBE lab, sidescan drape on the CUBE relief | [mpt#36](https://github.com/rolker/marine_perception_tools/issues/36) (was [#258], closed) | 0010 / 0013 | ✅ **all five #258 stages merged** ([mpt#31], 2026-09-03), including its stretch goal (surface-aware slant-range projection instead of flat-at-nadir-depth). Design: [`mpt/docs/survey_explorer.md`](https://github.com/rolker/marine_perception_tools/blob/jazzy/docs/survey_explorer.md) |
 | **Metering** | Per-topic priority on the `udp_bridge` rate-limiter | [udp_bridge#19](https://github.com/rolker/udp_bridge/issues/19) | 0008 (D9) | 📋 |
 
 [cube#15]: https://github.com/rolker/cube_bathymetry/issues/15
@@ -140,6 +141,12 @@ sequenced with a field-rebuild day.
 [#320]: https://github.com/rolker/unh_marine_autonomy/pull/320
 [#331]: https://github.com/rolker/unh_marine_autonomy/issues/331
 [cube#134]: https://github.com/rolker/cube_bathymetry/pull/134
+[#258]: https://github.com/rolker/unh_marine_autonomy/issues/258
+[#259]: https://github.com/rolker/unh_marine_autonomy/issues/259
+[#265]: https://github.com/rolker/unh_marine_autonomy/issues/265
+[#366]: https://github.com/rolker/unh_marine_autonomy/issues/366
+[uma-ADR-0013]: decisions/0013-bounded-lod-navigation.md
+[mpt#31]: https://github.com/rolker/marine_perception_tools/pull/31
 [s57#29]: https://github.com/rolker/s57_tools/pull/29
 
 ## Arc 2 — Targets (find, mark, curate)
@@ -151,7 +158,7 @@ topic), intentionally *not* the Arc-1 raster tile-sync.
 
 | Stage | What | Owning issue(s) | ADR | Status |
 |-------|------|-----------------|-----|--------|
-| **Explore** | `rqt` sonar review tools: waterfall over sidescan **and now MBES**, echogram, target views | [rqt#53] (echogram), [rqt#40] (MBES backscatter extractor), [rqt#50]/[rqt#69]/[rqt#73]/[rqt#82] (waterfall) | — | ✅ waterfall + echogram modernized ([rqt#53] done: PR#52/#55/#64/#80 merged); MBES backscatter extractor [rqt#40] 📋 |
+| **Explore — live** | `rqt` sonar review tools: waterfall over sidescan **and now MBES**, echogram, target views. *See the premise note below: the offline path (`survey_explorer`) is where exploration actually happens.* | [rqt#53] (echogram), [rqt#40] (MBES backscatter extractor), [rqt#50]/[rqt#69]/[rqt#73]/[rqt#82] (waterfall) | — | ✅ waterfall + echogram modernized ([rqt#53] done: PR#52/#55/#64/#80 merged); MBES backscatter extractor [rqt#40] 📋 |
 | **Mark** | draw-a-box target marking in the live view → `TargetAnnotation` | [rqt#59] | — | 📋 (gated on the `TargetAnnotation` msg); **near-term subset [rqt#86] ✅ done** (PR#89) — waterfall box-drag publishes a `Contact` to the operator bag. Spawned the lightweight `marine_contacts` builder pkg ([uma#243]), bag recording ([echoboats#348]), configurable topic ([rqt#90]) |
 | **Mark → Contact** | live-view marking publishes into `contact_manager` | [rqt#81] | 0004 | 📋 — the load-bearing link between the arcs |
 | **Contact** | unified `Contact` CRUD store + curate/confirm + distribution | [#157](https://github.com/rolker/unh_marine_autonomy/issues/157) / [#167](https://github.com/rolker/unh_marine_autonomy/issues/167) (+#156) | 0004 | 🔨 v1 core in flight |
@@ -170,6 +177,28 @@ topic), intentionally *not* the Arc-1 raster tile-sync.
 [rqt#90]: https://github.com/rolker/rqt_operator_tools/issues/90
 [uma#243]: https://github.com/rolker/unh_marine_autonomy/issues/243
 [echoboats#348]: https://github.com/rolker/unh_echoboats_project11/issues/348
+
+> **⚠️ The arc's premise is under revision (operator-reported, 2026-09-03).**
+> Arc 2 is drawn above as *live* exploration and marking: watch the `rqt` sonar
+> views underway, box a target, get a Contact. That tooling was built and works
+> ([rqt#86] / PR#89). **In practice it was not used.** Roland reports that during
+> the Massabesic surveys he was occupied driving and monitoring the boat and had
+> no attention spare for marking from the live display. The exploration that
+> actually produced results happened *after* the deployment, over indexed
+> recorded data, in `survey_explorer` (Arc 1's *Explore — offline* row).
+>
+> This is evidence about the arc's shape, not a fault in the tools — live marking
+> keeps its place for the moments someone is free to use it. What it means is
+> that the **primary** path into a Contact is post-deployment, and the arc is
+> drawn around the secondary one. It also connects to a gap this document already
+> names below: the draft→processed + coverage-QC loop, "the gap between
+> 'collected data' and 'finished survey'", and the unanswered question of what
+> **product** a post-deployment review should yield — a target list for
+> re-survey/ROV, a finished processed grid, a coverage-QC report, target imagery
+> for a write-up.
+>
+> Redrawing the arc is a design decision and is deliberately **not** made here.
+> Recorded so the diagram is not read as settled.
 
 > **Tracking gap (follow-up):** unlike Arc 1 (which has #86 / #171 / ADR-0008),
 > the explore→mark→contact→display arc has **no unifying umbrella** tying the
@@ -193,10 +222,12 @@ topic), intentionally *not* the Arc-1 raster tile-sync.
 | [0009](decisions/0009-sonar-info-message.md) | `SonarInfo` per-sensor acoustic metadata | Acquire/Estimate |
 | [0010](decisions/0010-geospatial-world-model.md) | Geospatial world model (taxonomy, datum invariant, per-layer processes) | Store (umbrella) |
 | [0011](decisions/0011-overview-pyramid.md) | Overview pyramids (sidecar layout, fold-policy contract) | Store |
+| [0012](decisions/0012-curvature-preserving-speed-regulation.md) | Curvature-preserving speed regulation | (helm — outside both arcs; listed so the numbering has no gap) |
+| [0013](decisions/0013-bounded-lod-navigation.md) | Bounded LOD navigation (geometric error, declared coverage, shared selection core) | Render (both consumers) |
 
 ## Where to direct efforts
 
-### Near-term: last few days of Massabesic — three operator tools ✅ COMPLETE
+### Historical: last few days of Massabesic — three operator tools ✅ COMPLETE (2026-06)
 
 Mission-driven priority (Roland, 2026-06-27): the three tools worth having before
 the final surveying days. **All three landed (as of 2026-06-29).** Coverage
@@ -226,19 +257,34 @@ from the offline import ([cube#80], durable store layer), live coverage from
 nadir-stripe angle-correction ([cube#81]) is now **closed** (PR cube#84 merged, an
 empirical angular-response/ARA approach) and corrects both once enabled.
 
-**Next frontier (2026-07-13): survey data exploration —
-[#258](https://github.com/rolker/unh_marine_autonomy/issues/258).** The campaign
-is over and the question changed from "display coverage live" to "review what we
+**Survey data exploration (2026-07-13 → 2026-09-03): ✅ BUILT.** The campaign
+ended and the question changed from "display coverage live" to "review what we
 collected" (target candidates to re-survey / ROV-dive on Massabesic, and the same
-tooling for the late-August Isles of Shoals data). The stores are averaged
-products; target work needs the **raw, un-averaged data behind a location**.
-#258 is the umbrella: a tile-indexed explorer — survey index + "which bags saw
-this spot" query CLI ([#259](https://github.com/rolker/unh_marine_autonomy/issues/259),
-stage 1) → stores-as-overview pane → multi-bag single-pass drill-down (raw
-soundings + sidescan with shadows preserved) → per-tile CUBE re-runs with custom
-parameters → surface texturing / sidescan drape. CAMP deliberately stays the
-realtime monitoring/planning tool; exploration lives in the offline explorer
-(`marine_perception_tools`, growing out of `sidescan_target_viewer`).
+tooling for the Isles of Shoals data). The stores are averaged products; target
+work needs the **raw, un-averaged data behind a location**.
+
+[#258](https://github.com/rolker/unh_marine_autonomy/issues/258) was the umbrella
+and delivered all five of its stages: the survey index + "which bags saw this
+spot" query CLI ([#259]), the stores-as-overview pane, multi-bag single-pass
+drill-down (raw soundings + sidescan with shadows preserved), per-tile CUBE
+re-runs with operator-chosen parameters, and surface texturing / sidescan drape —
+the last of which reached #258's stretch goal, projecting sidescan onto the CUBE
+relief rather than a flat seafloor at nadir depth. #258 closed 2026-07-14, before
+most of that landed; **its live successor is
+[mpt#36](https://github.com/rolker/marine_perception_tools/issues/36)**, with the
+durable design in
+[`mpt/docs/survey_explorer.md`](https://github.com/rolker/marine_perception_tools/blob/jazzy/docs/survey_explorer.md).
+
+CAMP deliberately stays the realtime monitoring/planning tool; exploration lives
+in the offline explorer.
+
+**The frontier moved with it.** What #258 built is a bounded reviewing tool; what
+it is becoming is the working interface to the world model — navigating every
+layer of it rather than one, filtering passes by track geometry, testing
+processing on a small piece before committing the dataset to it, and driving
+ingest of new data (a UI over the existing `import_bag` path). Those directions,
+and the store-side prerequisites they surface ([#366] the import ledger,
+[uma-ADR-0013] D7's shared selection core), are tracked in mpt#36 and here.
 
 **World-model arc (2026-08-20): decision adopted, migration pending.** The
 Isles-of-Shoals return to ENC-covered water drove [ADR-0010](decisions/0010-geospatial-world-model.md)
