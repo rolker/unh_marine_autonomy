@@ -505,7 +505,50 @@ class CoverageRenderer(Node):
 
         namespace = str(self._param('coverage_namespace')).rstrip('/')
         latched = QoSProfile(depth=1)
-        latched.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
+        # ------------------------------------------------------------------
+        # FIELD WORKAROUND 2026-08-26 -- NOT the intended QoS. REVERT to
+        # TRANSIENT_LOCAL once the relay is fixed.
+        #
+        # The producer publishes this catalog transient_local
+        # (cube_bathymetry_node.cpp:515, "transient_local for late joiners"),
+        # and TRANSIENT_LOCAL is the correct request. But udp_bridge
+        # republishes it VOLATILE on the operator side, and a TRANSIENT_LOCAL
+        # subscriber cannot match a VOLATILE publisher -- so this node
+        # received no catalog at all, never reconciled, and could only paint
+        # the handful of tiles pushed to it on coverage_tiles. CAMP hides the
+        # same break because it warm-loads a disk cache; this renderer is
+        # memory-only, so a restart left the page nearly empty.
+        #
+        # VOLATILE matches the relay and gets the survey back on the page.
+        # What it costs is late-join: with no latched sample, this node sees
+        # nothing until the producer's next periodic publish. That is ~6 s
+        # during an active survey (measured 5 catalog messages in 30 s), so
+        # the cost is small WHILE THE PRODUCER IS RUNNING -- and unbounded if
+        # it is not, which is exactly the case transient_local exists for.
+        #
+        # CORRECTED at import review: the relay is NOT at fault and needs no
+        # change. udp_bridge already supports per-topic transient-local
+        # durability (its doc/qos_design.md, "Durability"), and deliberately
+        # does not auto-mirror source QoS -- that is a recorded decision with
+        # its own reasoning. The boat's bridge config simply never set
+        # `durability: transient_local` on coverage_catalog, so the topic took
+        # the documented VOLATILE default.
+        #
+        # REVERT THIS TO TRANSIENT_LOCAL once that config lands. The fix and
+        # the coupled revert here and in CAMP are tracked as
+        # rolker/unh_echoboats_project11#484. README.md's QoS table documents
+        # the intended TRANSIENT_LOCAL for this topic and is the shape to
+        # return to.
+        #
+        # Nothing will prompt the revert, which is why it is written here: a
+        # transient-local publisher still MATCHES a volatile subscriber, so
+        # once the config lands this node keeps working and keeps silently
+        # losing late-join. Note also that the relay is not always in the path
+        # -- the 2026-09-01 field log records coverage reaching the operator
+        # over a direct rmw_zenoh route -- and in that case this downgrade
+        # costs late-join for no reason at all.
+        # ------------------------------------------------------------------
+        latched.durability = QoSDurabilityPolicy.VOLATILE
         latched.reliability = QoSReliabilityPolicy.RELIABLE
         # Depth 10, matching the producer (cube_bathymetry_node.cpp:513) and
         # CAMP's consumer. A deeper queue on a BEST_EFFORT topic does not make

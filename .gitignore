@@ -15,3 +15,10 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+
+# Local previews. Every dry_run in marine_web_view writes into web/live/ --
+# that is the same relative path the bucket serves, which is what makes the
+# page render identically against a local copy and against CloudFront. The
+# artifacts themselves are generated: geojson from the renderers, and a whole
+# tile pyramid from publish_history_tiles.py.
+marine_web_view/web/live/

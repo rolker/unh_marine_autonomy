@@ -171,6 +171,32 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'chart_datum_frame', default_value=[platform, '/chart_datum'],
             description='Vertical reference to colour depths against.'),
+
+        # This value does NOT govern whether the browser refetches a redrawn
+        # tile. An earlier pass here set it below render_interval on the theory
+        # that a redraw would then land on an expired tile; measurement showed
+        # that could not work, because Leaflet's redraw() rebuilds tile elements
+        # with the SAME src and Chrome answers those from the document's
+        # in-memory resource cache without revalidating at all. Across seven
+        # redraws spanning 36 s against tiles carrying max-age=10, an existing
+        # tile was requested exactly ONCE. No max-age short of no-store changes
+        # that, and no-store would put every tile GET on the origin for every
+        # viewer.
+        #
+        # Browser refetch is handled instead by versioning the tile URL with the
+        # renderer's published-tile counter (see web/index.html buildCoverage).
+        # What cache_control still governs is CDN/origin revalidation of a tile
+        # object that was OVERWRITTEN in place at the same key -- so it bounds
+        # how long an edge may serve a superseded copy of an unchanged URL.
+        # There is no longer any constraint tying it to render_interval.
+        # The manifest's own max-age is min(5, this) and is unaffected.
+        DeclareLaunchArgument(
+            'cache_control', default_value='10',
+            description='max-age stamped on each coverage tile. Bounds how '
+                        'long a CDN edge may serve a superseded copy of an '
+                        'overwritten tile. It does NOT control browser '
+                        'refetch on redraw -- the versioned tile URL does '
+                        'that.'),
     ]
 
     renderers = [
@@ -185,6 +211,7 @@ def generate_launch_description():
             'coverage_namespace': LaunchConfiguration('coverage_namespace'),
             'map_frame': LaunchConfiguration('map_frame'),
             'chart_datum_frame': LaunchConfiguration('chart_datum_frame'),
+            'cache_control': LaunchConfiguration('cache_control'),
             'bucket': bucket,
             'profile': profile,
             'dry_run': dry_run,

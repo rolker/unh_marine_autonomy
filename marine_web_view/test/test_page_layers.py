@@ -602,7 +602,7 @@ def test_the_coverage_layer_is_configured_from_the_manifest():
     # built. The test passed solely because the definition's parameter happens
     # to be spelled `zoom`.
     defined_at = definition.start() + definition.group(0).index('buildCoverage')
-    calls = [m for m in re.finditer(r'\bbuildCoverage\s*\(\s*([^)]*?)\s*\)',
+    calls = [m for m in re.finditer(r'\bbuildCoverage\s*\(\s*([^,)]*?)\s*[,)]',
                                     code)
              if m.start() != defined_at]
     assert calls, (
@@ -614,8 +614,8 @@ def test_the_coverage_layer_is_configured_from_the_manifest():
         'not built from the manifest the poll just read')
     for call in calls:
         assert call.group(1) == 'zoom', (
-            'buildCoverage is called with {!r}: the layer must be built from '
-            'the validated zoom, not from the raw manifest field'
+            'buildCoverage first argument is {!r}: the layer must be built '
+            'from the validated zoom, not from the raw manifest field'
             .format(call.group(1)))
     assert re.search(r'(?:const|let|var)\s+zoom\s*=\s*saneZoom\('
                      r'\s*meta\.zoom\s*\)', code), (
@@ -673,7 +673,8 @@ def test_the_coverage_refresh_is_gated_on_the_change_signal():
     start, end = _function_span(page, 'pollCoverage')
     body = page[start:end]
 
-    gate = re.search(r'if\s*\(([^)]*)\)\s*refreshCoverage\s*\(\s*\)', body)
+    gate = re.search(r'if\s*\(([^)]*)\)\s*refreshCoverage\s*\([^)]*\)',
+                     body)
     assert gate, (
         'pollCoverage() does not call refreshCoverage() under a guard: the '
         'tile layer either never refreshes or refreshes unconditionally')
@@ -912,6 +913,243 @@ def test_the_construction_pattern_tracks_the_pages_layer_classes():
         'a newly defined layer class would escape the addTo check')
 
 
+def test_the_history_layer_is_configured_from_its_manifest():
+    """The previous-days pyramid's zoom range is remote input like any other.
+
+    It drives minZoom/minNativeZoom on a second tile layer, so it carries the
+    identical browser-freeze hazard the coverage manifest does -- Leaflet lays
+    the viewport out in tiles of the native level whenever the map is below it.
+    The zooms must therefore reach the layer through `saneZoom`, and the pair
+    must be ordered: `min_zoom` above `max_zoom` describes a pyramid that
+    cannot exist, and Leaflet does not reject it.
+    """
+    code = _code(_page())
+    assert 'HISTORY_META' in code, 'the history manifest is not fetched'
+    assert re.search(r'saneZoom\(\s*meta\.min_zoom\s*\)', code), (
+        'the history min zoom does not come from the manifest via saneZoom')
+    assert re.search(r'saneZoom\(\s*meta\.max_zoom\s*\)', code), (
+        'the history max zoom does not come from the manifest via saneZoom')
+    assert re.search(r'lo\s*===\s*null\s*\|\|\s*hi\s*===\s*null\s*\|\|'
+                     r'\s*lo\s*>\s*hi', code), (
+        'a manifest whose zooms fail validation, or are inverted, still '
+        'configures the layer')
+    definition = re.search(r'function\s+buildHistory\s*\(', code)
+    assert definition, 'the page has no buildHistory()'
+    defined_at = definition.start() + definition.group(0).index('buildHistory')
+    calls = [m for m in re.finditer(r'\bbuildHistory\s*\(', code)
+             if m.start() != defined_at]
+    assert calls, (
+        'buildHistory() is defined but never called: the history layer is '
+        'never built and previous days never appear')
+    start, end = _function_span(code, 'pollHistory')
+    assert any(start <= call.start() < end for call in calls), (
+        'buildHistory() is never called from pollHistory()')
+
+
+def test_the_history_layer_does_not_share_the_live_coverage_pane():
+    """Finished days must not be drawn with the live layer's styling.
+
+    `.leaflet-coverage-pane` carries a drop shadow that means "this is the
+    live footprint". Fold history into that pane and the live outline is drawn
+    around ground the sonar left days ago -- which is the exact confusion this
+    layer was added to remove, since the bucket had days-old tiles standing in
+    live/coverage/ being drawn as if fresh.
+
+    It must also sit BELOW live coverage, or today's fresh line is buried
+    under yesterday's mosaic.
+    """
+    page = _page()
+    code = _code(page)
+    assert re.search(r"createPane\(\s*'history'\s*\)", code), (
+        'the history layer has no pane of its own')
+    assert re.search(r"pane:\s*'history'", code), (
+        'the history layer is not assigned to its own pane')
+    zindex = dict(re.findall(
+        r"getPane\(\s*'(\w+)'\s*\)\.style\.zIndex\s*=\s*(\d+)", code))
+    assert 'history' in zindex and 'coverage' in zindex, (
+        'one of the two panes no longer sets an explicit zIndex, so their '
+        'stacking is left to Leaflet and to declaration order')
+    assert int(zindex['history']) < int(zindex['coverage']), (
+        'the history pane ({}) is stacked at or above live coverage ({}): '
+        "today's coverage would be drawn under previous days".format(
+            zindex['history'], zindex['coverage']))
+
+
+def test_the_history_layer_carries_no_liveness_styling():
+    """A finished day cannot go stale, and must not be faded as if it could.
+
+    The coverage layer fades when its renderer stops, because what it shows
+    might be minutes out of date. History is a published artifact of a day
+    that is over: fading it would say something false, and the machinery that
+    does the fading has no manifest field here to drive it.
+    """
+    code = _code(_page())
+    start, end = _function_span(code, 'buildHistory')
+    body = code[start:end]
+    for forbidden in ('COVERAGE_STALE_OPACITY', 'setCoverageAlive',
+                      'coverageAlive'):
+        assert forbidden not in body, (
+            'buildHistory() reaches for {}: the history layer is being '
+            'given the live layer staleness behaviour'.format(forbidden))
+
+
+def test_a_missing_history_manifest_takes_the_layer_down():
+    """No history published is the ordinary state, and must read as such.
+
+    The failure that matters is the other one: leaving a previous manifest's
+    layer on the map after the manifest stops describing it. Those tiles may
+    have been un-published, in which case the layer is claiming days the
+    bucket no longer serves.
+    """
+    code = _code(_page())
+    start, end = _function_span(code, 'pollHistory')
+    body = code[start:end]
+    catch = body[body.index('catch'):]
+    assert re.search(r'map\.removeLayer\(\s*historyLayer\s*\)', catch), (
+        'an unreachable or malformed history manifest leaves the layer on '
+        'the map')
+    assert re.search(r'historyLayer\s*=\s*null', catch), (
+        'historyLayer is not cleared, so the next poll cannot rebuild it')
+    assert re.search(r'historyKey\s*=\s*null', catch), (
+        'historyKey survives the teardown, so a manifest that comes back '
+        'unchanged is treated as already built and the layer never returns')
+
+
+def test_the_history_toggle_cannot_desync_from_the_map():
+    """The checkbox and the map must agree after a rebuild, not just a click.
+
+    A new day republishes the manifest and rebuilds the layer. Add the rebuilt
+    layer without consulting the checkbox and a viewer who turned history off
+    finds it back the next morning, with the control still saying off -- the
+    same desync `syncAisLayer` exists to prevent on the AIS group.
+    """
+    code = _code(_page())
+    assert re.search(r"\$\('history'\)\.addEventListener\(\s*'change'", code), (
+        'the history checkbox is not wired to anything')
+    start, end = _function_span(code, 'buildHistory')
+    assert 'syncHistoryLayer()' in code[start:end], (
+        'buildHistory() does not re-apply the checkbox state, so a rebuilt '
+        'layer ignores it')
+    sync_start, sync_end = _function_span(code, 'syncHistoryLayer')
+    body = code[sync_start:sync_end]
+    assert re.search(r"\$\('history'\)\.checked", body), (
+        'syncHistoryLayer() does not read the checkbox')
+
+
+def test_history_labels_are_scrubbed_before_they_are_displayed():
+    """Manifest labels are free text that reaches the readout.
+
+    They are the operator's own words rather than a stranger's, so this is a
+    smaller worry than the AIS names -- but it is the same mechanism and the
+    same cheap fix: textContent closes off markup, and stripping bidi controls
+    closes off text that reorders what is printed around it.
+    """
+    code = _code(_page())
+    start, end = _function_span(code, 'historyLabels')
+    body = code[start:end]
+    assert 'u202A-' in body or 'u202a-' in body, (
+        'history labels are not stripped of bidi overrides')
+    assert re.search(r'\.slice\(\s*0\s*,\s*\d+\s*\)', body), (
+        'history labels are not length-capped before display')
+    assert re.search(r"\$\('hist'\)\.textContent", code), (
+        'the history readout is written through something other than '
+        'textContent')
+
+
+def test_no_top_level_statement_uses_the_dollar_helper_early():
+    """`const $` is declared late, and a top-level use above it is fatal.
+
+    Not a style point: `const` is not hoisted, so a top-level `$(...)` before
+    the declaration throws a ReferenceError at load -- which aborts the rest
+    of the script. No polls are scheduled, every readout stays on its em dash,
+    and the map comes up with the basemap and nothing else. It looks like a
+    network problem rather than a syntax-order one.
+
+    Every existing use of `$` is inside a function, where the declaration has
+    long since run by call time. This pins that a new one cannot quietly be
+    added at the top level above the declaration -- which is exactly how the
+    history toggle was first wired.
+    """
+    code = _code(_page())
+    declaration = re.search(r'^const \$ = ', code, re.M)
+    assert declaration, 'the page no longer declares the `$` helper'
+    early = [m.start() for m in re.finditer(r'^\$\(', code, re.M)
+             if m.start() < declaration.start()]
+    assert not early, (
+        'a top-level `$(...)` call appears at offset(s) {} , above the `$` '
+        'declaration at {}: that is a ReferenceError at load and the rest of '
+        'the script never runs'.format(early, declaration.start()))
+
+
+def test_the_coverage_tile_url_is_versioned_so_a_redraw_refetches():
+    """A redraw that reuses the URL fetches nothing, and the map freezes.
+
+    Leaflet's redraw() drops every tile element and creates new ones with the
+    same src. Chrome answers those from the document's in-memory resource
+    cache without revalidating: measured against tiles carrying max-age=10,
+    across seven redraws spanning 36 s of real time, an existing tile was
+    requested exactly ONCE, while uncacheable 404s in the same layout were
+    re-requested every pass. The display then sits on the frame it first
+    loaded until the operator reloads the page by hand -- which is what the
+    boat reported, twice.
+
+    The first fix lowered cache_control below render_interval on the
+    assumption the browser would miss cache once the tile expired. It cannot
+    work: the browser never asks. Only a changed URL forces the fetch, so the
+    URL must carry a version -- and this pins it, because the failure is
+    invisible in every static reading of the page.
+    """
+    code = _code(_page())
+    assert re.search(r"COVERAGE_DIR\s*\+\s*'\{z\}/\{x\}/\{y\}\.png\?v=\{v\}'",
+                     code), (
+        'the coverage tile URL carries no version: every redraw requests a '
+        'URL the browser already holds, and the layer freezes until reload')
+    start, end = _function_span(code, 'buildCoverage')
+    assert re.search(r'\bv:\s*version\b', code[start:end]), (
+        'the layer is built without seeding its URL version')
+
+
+def test_the_coverage_version_moves_before_the_redraw_not_after():
+    """redraw() reads the URL as it builds each tile.
+
+    Set the version afterwards and every pass renders the PREVIOUS version's
+    tiles -- a permanently one-pass-stale display, which looks enough like
+    working to survive review.
+    """
+    code = _code(_page())
+    start, end = _function_span(code, 'refreshCoverage')
+    body = code[start:end]
+    assign = body.find('options.v = version')
+    redraw = body.find('.redraw(')
+    assert assign != -1, 'refreshCoverage() never updates the URL version'
+    assert redraw != -1, 'refreshCoverage() no longer redraws'
+    assert assign < redraw, (
+        'the version is applied after redraw(), so each pass draws the '
+        'previous version of every tile')
+
+
+def test_the_coverage_version_is_shared_by_every_viewer():
+    """A per-viewer cache-buster would move the load onto the origin.
+
+    The version must be the renderer's own counter, identical for everyone,
+    so CloudFront still serves one object to all viewers. `Date.now()` or
+    `Math.random()` would work in the browser and quietly turn every tile
+    request into an origin fetch, per viewer, forever -- the cost the manifest
+    poll deliberately avoids by NOT cache-busting.
+    """
+    code = _code(_page())
+    start, end = _function_span(code, 'pollCoverage')
+    body = code[start:end]
+    assert re.search(r'const\s+version\s*=\s*rendered\s*===\s*null\s*\?\s*0'
+                     r'\s*:\s*rendered', body), (
+        'the tile version no longer comes from the validated manifest counter')
+    for forbidden in ('Date.now()', 'Math.random()'):
+        assert forbidden not in body.split('const version')[1][:400], (
+            'the tile version is derived from {}: that is a per-viewer '
+            'cache-buster and every tile GET becomes an origin fetch'
+            .format(forbidden))
+
+
 def test_the_coverage_outline_is_wired_end_to_end():
     """Dropping any one of the outline's three pieces silently removes it.
 
@@ -944,3 +1182,45 @@ def test_the_coverage_outline_is_wired_end_to_end():
     assert re.search(r'\.leaflet-coverage-pane\s*\{[^}]*drop-shadow', page), (
         'the .leaflet-coverage-pane drop-shadow rule is gone -- coverage '
         'reverts to being the same colour as the seabed beneath it')
+
+
+def test_a_malformed_manifest_tears_the_layer_down_even_when_one_is_built():
+    """The teardown must not depend on whether a layer already exists.
+
+    `buildHistory()` returns false for BOTH a malformed manifest and the
+    ordinary "nothing changed" case, so its return alone cannot distinguish
+    them. Gating the throw on `historyLayer === null` meant a manifest that
+    went bad after a good one had loaded never reached the catch: the stale
+    layer stayed on the map claiming days that are no longer published, while
+    the readout was rewritten from the broken manifest. That is precisely what
+    the catch block's own comment says must not happen.
+    """
+    page = _page()
+    assert not re.search(r'!buildHistory\(meta\)\s*&&\s*historyLayer === null', page), (
+        'pollHistory still gates the malformed-manifest throw on there being '
+        'no existing layer -- a manifest that goes bad after a good one will '
+        'leave the stale layer on the map')
+    poll = page[page.index('async function pollHistory'):]
+    poll = poll[:poll.index('\n}')]
+    assert 'saneZoom' in poll, (
+        'pollHistory no longer validates the manifest zooms itself, so a '
+        'malformed manifest cannot reliably reach the teardown path')
+    assert "throw new Error('malformed manifest')" in poll, (
+        'pollHistory no longer throws on a malformed manifest')
+
+
+def test_the_history_readout_has_no_dangling_separator():
+    """`historyText()` must not emit "0 days · " with nothing after it.
+
+    `buildHistory()` gates on zooms only, never on labels, so a perfectly
+    valid manifest can reach the readout with no usable labels at all --
+    absent, empty, or emptied by the scrubber. The separator then introduces
+    nothing and reads as a formatting bug in exactly the error cases where the
+    readout most needs to be legible.
+    """
+    page = _page()
+    body = page[page.index('function historyText'):]
+    body = body[:body.index('\n}')]
+    assert re.search(r'if\s*\(\s*!labels\.length\s*\)\s*return\s+days\s*;', body), (
+        'historyText does not short-circuit on an empty label list, so it '
+        'still produces a trailing " · " separator with nothing after it')
