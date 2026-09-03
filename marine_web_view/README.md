@@ -511,9 +511,20 @@ Part of [#345](https://github.com/rolker/unh_marine_autonomy/issues/345).
 
 | topic | type | QoS | role |
 |---|---|---|---|
-| `<ns>/coverage_catalog` | `marine_interfaces/TileCatalog` | RELIABLE, **TRANSIENT_LOCAL** | complete snapshot of what the source holds |
+| `<ns>/coverage_catalog` | `marine_interfaces/TileCatalog` | RELIABLE, **TRANSIENT_LOCAL** (this renderer currently subscribes VOLATILE — see note below) | complete snapshot of what the source holds |
 | `<ns>/coverage_requests` | `marine_interfaces/TileRequest` | RELIABLE, VOLATILE | what we are missing or stale on |
 | `<ns>/coverage_tiles` | `marine_interfaces/SonarVisualizationTile` | **BEST_EFFORT**, VOLATILE | dirty sub-windows |
+
+> **Durability note — the renderer's subscription does not currently match this table.**
+> `TRANSIENT_LOCAL` above is what `cube_bathymetry` publishes and what this renderer
+> *should* request. It subscribes `VOLATILE` instead, as a field workaround: the
+> operator-side bridge republishes the catalog `VOLATILE`, and a transient-local
+> subscriber cannot match a volatile publisher, so the renderer received no catalog
+> at all. The cause is a missing `durability: transient_local` on the boat's bridge
+> topic entry, not a defect in the relay — tracked with the coupled revert as
+> [rolker/unh_echoboats_project11#484](https://github.com/rolker/unh_echoboats_project11/issues/484).
+> Revert `coverage_renderer.py` to `TRANSIENT_LOCAL` when that lands; nothing will
+> prompt it, because a transient-local publisher still matches a volatile subscriber.
 
 The catalog is a **complete** snapshot, and that completeness is a
 precondition: prune-on-absence against a partial or paged catalog would read

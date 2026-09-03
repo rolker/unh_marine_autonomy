@@ -526,8 +526,27 @@ class CoverageRenderer(Node):
         # the cost is small WHILE THE PRODUCER IS RUNNING -- and unbounded if
         # it is not, which is exactly the case transient_local exists for.
         #
-        # The real fix is in the relay: preserve the producer's durability
-        # instead of downgrading it. Tracked for wrap-up.
+        # CORRECTED at import review: the relay is NOT at fault and needs no
+        # change. udp_bridge already supports per-topic transient-local
+        # durability (its doc/qos_design.md, "Durability"), and deliberately
+        # does not auto-mirror source QoS -- that is a recorded decision with
+        # its own reasoning. The boat's bridge config simply never set
+        # `durability: transient_local` on coverage_catalog, so the topic took
+        # the documented VOLATILE default.
+        #
+        # REVERT THIS TO TRANSIENT_LOCAL once that config lands. The fix and
+        # the coupled revert here and in CAMP are tracked as
+        # rolker/unh_echoboats_project11#484. README.md's QoS table documents
+        # the intended TRANSIENT_LOCAL for this topic and is the shape to
+        # return to.
+        #
+        # Nothing will prompt the revert, which is why it is written here: a
+        # transient-local publisher still MATCHES a volatile subscriber, so
+        # once the config lands this node keeps working and keeps silently
+        # losing late-join. Note also that the relay is not always in the path
+        # -- the 2026-09-01 field log records coverage reaching the operator
+        # over a direct rmw_zenoh route -- and in that case this downgrade
+        # costs late-join for no reason at all.
         # ------------------------------------------------------------------
         latched.durability = QoSDurabilityPolicy.VOLATILE
         latched.reliability = QoSReliabilityPolicy.RELIABLE
