@@ -86,10 +86,13 @@ def _renderer(launch_file, enable_argument, launch_arguments):
         actions=[IncludeLaunchDescription(
             PythonLaunchDescriptionSource(PathJoinSubstitution([
                 FindPackageShare('marine_web_view'), 'launch', launch_file])),
-            # Only arguments the included file DECLARES may be passed: launch
-            # raises on an unknown one. Anything not listed keeps that
-            # renderer's own default, which is the intent for the S3 keys --
-            # they differ per renderer and are already right.
+            # Only arguments the included file DECLARES are worth passing,
+            # and launch does NOT enforce that: an unrecognised name is set
+            # as a plain launch configuration and the node never sees it, so
+            # a typo here is silent. test_web_view_launch.py checks the list
+            # against what each include declares. Anything not listed keeps
+            # that renderer's own default, which is the intent for the S3
+            # keys -- they differ per renderer and are already right.
             launch_arguments=launch_arguments.items(),
         )],
         condition=IfCondition(LaunchConfiguration(enable_argument)),
