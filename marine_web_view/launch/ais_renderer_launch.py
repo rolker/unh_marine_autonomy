@@ -30,6 +30,8 @@
 
 """Launch the public web-view AIS renderer."""
 
+from typing import List
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -112,10 +114,15 @@ def generate_launch_description():
             'heading_variance_threshold': LaunchConfiguration(
                 'heading_variance_threshold'),
             # An INTEGER_ARRAY, so the substitution has to be typed: a bare
-            # LaunchConfiguration reaches the node as the STRING '[]' and the
-            # declared type rejects it at startup.
+            # LaunchConfiguration reaches the node as the STRING '[]', and
+            # `_ignore_list` refuses a string rather than silently ignoring
+            # nobody. The type has to be `List[int]` and not a bare `list`:
+            # launch_ros coerces against int/bool/float/str and their
+            # typing.List forms only, and rejects anything else with
+            # "Unrecognized data type" before a node is spawned -- which took
+            # this launch file down whatever the argument was set to.
             'ignore_mmsis': ParameterValue(
-                LaunchConfiguration('ignore_mmsis'), value_type=list),
+                LaunchConfiguration('ignore_mmsis'), value_type=List[int]),
         }],
     )
 

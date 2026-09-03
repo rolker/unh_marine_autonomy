@@ -101,6 +101,25 @@
     .lgticks { flex-direction:row; justify-content:space-between; width:100%; }
     #hud.collapsed #details, #hud.collapsed .sub { display:none; }
   }
+
+  /* Outline the live-coverage footprint. Coverage deliberately shares the
+     basemap's depth ramp (uma#345), so where new soundings agree with the
+     chart it is the same colour as the seabed under it and the surveyed area
+     has no visible edge. drop-shadow follows the ALPHA channel, and a coverage
+     tile is transparent wherever the sonar has not covered ground, so this
+     traces the true survey boundary rather than a bounding box.
+
+     On the pane, so the tiles composite into one image before the filter runs.
+     Per-tile it would outline all four sides of every tile, seams included.
+
+     Two shadows: a dark one to separate coverage from light seabed colours, and
+     a tight white one inside it so the edge survives against the dark blues at
+     the deep end of the ramp. Kept to 3px/1px -- the footprint should read at a
+     glance without the halo swallowing the thin coverage of a single line. */
+  .leaflet-coverage-pane {
+    filter: drop-shadow(0 0 3px rgba(0,0,0,.85))
+            drop-shadow(0 0 1px rgba(255,255,255,.55));
+  }
 </style>
 </head>
 <body>
@@ -186,6 +205,23 @@ const DEAD_S  = 60;   // red past this
 // zoomed away from its single rendered level.
 const map = L.map('map', { zoomControl: true, minZoom: 8, maxZoom: 22 })
   .setView([43.08, -70.71], 13);
+
+// Live coverage gets a pane of its own so the outline in the stylesheet can be
+// applied to the layer as a WHOLE. Coverage shares the basemap's depth ramp on
+// purpose (uma#345: the ramps must not diverge, or one depth reads as two
+// colours), so the footprint cannot be picked out by colour -- it is picked out
+// by an outline instead, and the outline needs the union of the tiles.
+//
+// A pane, NOT the tile layer: `filter` on the layer shadows each <img>
+// separately, so every interior tile seam gets an edge and the operator reads a
+// grid over live coverage. Compositing the pane first outlines only the real
+// coverage boundary, which is exactly where the tiles turn transparent.
+// Created once here, not per layer -- the coverage layer is torn down and
+// rebuilt on every manifest zoom change.
+map.createPane('coverage');
+// Same stacking the layer's own zIndex option used to set, moved up to the pane
+// so the pane (and its outline) sits above imagery and hillshade as one unit.
+map.getPane('coverage').style.zIndex = 350;
 
 // Basemap: Esri World Imagery -- genuinely cached. NOTE {z}/{y}/{x} (ArcGIS
 // order), reversed from the usual XYZ, and the tiles are JPEG.
@@ -500,7 +536,9 @@ function buildCoverage(zoom) {
     maxZoom: COVERAGE_MAX_Z,
     minNativeZoom: zoom, maxNativeZoom: zoom,
     opacity: coverageAlive ? COVERAGE_OPACITY : COVERAGE_STALE_OPACITY,
-    zIndex: 350,
+    // Stacking now lives on the pane (see createPane above), which is what the
+    // outline filter is applied to.
+    pane: 'coverage',
     // A tile exists only where the sonar has covered ground, so a miss is the
     // normal case rather than an error. Serve a transparent pixel instead of
     // letting Leaflet show a broken-image tile. That is exactly why the
