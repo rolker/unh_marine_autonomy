@@ -809,7 +809,11 @@ function historyText(meta) {
   const days = labels.length + (labels.length === 1 ? ' day' : ' days');
   const joined = labels.join(', ');
   // The readout is narrow and a label is free text; past a line's worth, the
-  // count is the part worth keeping.
+  // count is the part worth keeping. With no usable labels at all -- absent,
+  // empty, or emptied by scrubbing -- the separator has nothing to introduce,
+  // and buildHistory() gates on zooms only so a valid manifest can reach here
+  // with none.
+  if (!labels.length) return days;
   return joined.length <= 34 ? days + ' · ' + joined : days;
 }
 
@@ -821,9 +825,19 @@ async function pollHistory() {
     const r = await fetch(HISTORY_META, { cache: 'default' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const meta = await r.json();
-    if (!buildHistory(meta) && historyLayer === null) {
+    // Validate BEFORE consulting buildHistory's return, and independently of
+    // whether a layer already exists. buildHistory() returns false both for a
+    // malformed manifest and for the ordinary "nothing changed, no rebuild
+    // needed" case, so its return alone cannot distinguish them -- and gating
+    // the throw on `historyLayer === null` meant a manifest that went bad
+    // AFTER a good one loaded left the old layer on the map claiming days that
+    // are no longer published, which is exactly what the catch below exists to
+    // prevent.
+    if (saneZoom(meta.min_zoom) === null || saneZoom(meta.max_zoom) === null ||
+        saneZoom(meta.min_zoom) > saneZoom(meta.max_zoom)) {
       throw new Error('malformed manifest');
     }
+    buildHistory(meta);
     $('hist').textContent = historyText(meta);
   } catch (e) {
     // No history published for this survey is the ORDINARY state on day one,

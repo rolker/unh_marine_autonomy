@@ -1182,3 +1182,45 @@ def test_the_coverage_outline_is_wired_end_to_end():
     assert re.search(r'\.leaflet-coverage-pane\s*\{[^}]*drop-shadow', page), (
         'the .leaflet-coverage-pane drop-shadow rule is gone -- coverage '
         'reverts to being the same colour as the seabed beneath it')
+
+
+def test_a_malformed_manifest_tears_the_layer_down_even_when_one_is_built():
+    """The teardown must not depend on whether a layer already exists.
+
+    `buildHistory()` returns false for BOTH a malformed manifest and the
+    ordinary "nothing changed" case, so its return alone cannot distinguish
+    them. Gating the throw on `historyLayer === null` meant a manifest that
+    went bad after a good one had loaded never reached the catch: the stale
+    layer stayed on the map claiming days that are no longer published, while
+    the readout was rewritten from the broken manifest. That is precisely what
+    the catch block's own comment says must not happen.
+    """
+    page = _page()
+    assert not re.search(r'!buildHistory\(meta\)\s*&&\s*historyLayer === null', page), (
+        'pollHistory still gates the malformed-manifest throw on there being '
+        'no existing layer -- a manifest that goes bad after a good one will '
+        'leave the stale layer on the map')
+    poll = page[page.index('async function pollHistory'):]
+    poll = poll[:poll.index('\n}')]
+    assert 'saneZoom' in poll, (
+        'pollHistory no longer validates the manifest zooms itself, so a '
+        'malformed manifest cannot reliably reach the teardown path')
+    assert "throw new Error('malformed manifest')" in poll, (
+        'pollHistory no longer throws on a malformed manifest')
+
+
+def test_the_history_readout_has_no_dangling_separator():
+    """`historyText()` must not emit "0 days · " with nothing after it.
+
+    `buildHistory()` gates on zooms only, never on labels, so a perfectly
+    valid manifest can reach the readout with no usable labels at all --
+    absent, empty, or emptied by the scrubber. The separator then introduces
+    nothing and reads as a formatting bug in exactly the error cases where the
+    readout most needs to be legible.
+    """
+    page = _page()
+    body = page[page.index('function historyText'):]
+    body = body[:body.index('\n}')]
+    assert re.search(r'if\s*\(\s*!labels\.length\s*\)\s*return\s+days\s*;', body), (
+        'historyText does not short-circuit on an empty label list, so it '
+        'still produces a trailing " · " separator with nothing after it')
