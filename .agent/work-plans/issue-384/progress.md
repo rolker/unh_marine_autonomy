@@ -76,3 +76,19 @@ issue: 384
 ---
 **Authored-By**: `Claude Code Agent`
 **Model**: `Claude Sonnet`
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-09-14 13:45 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-384/plan.md` at `3f96ed2`
+**Branch**: feature/issue-384 at `3f96ed2`
+**Phases**: single
+
+### Open questions
+- [ ] Branch-protection: `require_pr` ruleset only targets `~DEFAULT_BRANCH` (jazzy today) — `rolling` will have no push protection until it becomes default or the ruleset is edited (not changed here, Ask-First)
+- [ ] CI: `.github/workflows/ros-base-docker.yml` triggers only on `branches: [jazzy]` — PRs into `rolling` get no CI run unless the trigger list is widened (not changed here, Ask-First)
+- [ ] `ros2launch_gui`'s pre-existing `rolling` branch (tip 2026-02-17, well behind jazzy) — confirm it's stale/unrelated, not an intentional prior port to reuse
+- [ ] `distro: rolling` key contract — plan names it per the issue text only; needs confirmation from the consumer-repo (`rolker/agent_workspace`) reviewer that the adapter's parser expects exactly this key/value
+- [ ] ADR for the rolling-primary decision — recommended as a follow-up issue (repo TBD: here vs. `rolker/agent_workspace#172`), not filed as part of this plan-task run
