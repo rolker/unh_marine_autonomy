@@ -157,7 +157,9 @@ producers or consumers** in the same change.
 ## Consequences
 
 - **Producers** (follow-ups, separate issues): `kongsberg_em_bridge` parses the
-  N/78 `siglen` field and publishes `SonarInfo` (`marine_tools`);
+  N/78 `siglen` field and publishes `SonarInfo` (`marine_tools`) — shipped,
+  with the angular-response curve added by
+  [marine_tools#71](https://github.com/rolker/marine_tools/issues/71);
   `garmin_sidescan` later. The platform bag-record topic list gains the
   `sonar_info` topics (`unh_echoboats_project11`).
 - **Consumers** (follow-up): the CUBE estimator reads the angular-response

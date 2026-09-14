@@ -246,8 +246,10 @@ The acoustic analog of `sensor_msgs/CameraInfo`: latched (`transient_local`)
 per-sensor metadata published beside a sonar data stream and recorded in bags,
 so offline processing has the acquisition settings (pulse length, bandwidth,
 signal type — the GeoCoder ensonified-area inputs), intensity semantics, and
-correction state. No producer yet (format-proving prototype; `kongsberg_em_bridge`
-is the planned first producer). See
+correction state. Published today by `kongsberg_em_bridge` (`marine_tools`) on
+`sonar_info`, including the angular-response curve
+([marine_tools#71](https://github.com/rolker/marine_tools/issues/71));
+`garmin_sidescan`, `edgetech_sonar` and `imagenex_deltat` do not publish it. See
 [ADR-0009](decisions/0009-sonar-info-message.md).
 
 #### `marine_interfaces/SonarInfo`
