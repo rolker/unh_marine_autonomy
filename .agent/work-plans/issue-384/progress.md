@@ -118,3 +118,31 @@ issue: 384
 
 ### Independence note
 This review ran in a fresh-context sub-agent dispatched with the standard handoff header ("You are a fresh-context sub-agent dispatched for issue #384") — no `## Plan Authored` entry was written earlier in this context, so no self-review annotation applies per the skill's detection rule.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-09-14 (see commit timestamp)
+**By**: Claude Code Agent (Claude Sonnet)
+**Verdict**: approved
+
+**Branch**: feature/issue-384 at `efbdd7e`
+**Mode**: pre-push
+**Depth**: Standard (reason: `.github/workflows/ros-base-docker.yml` is an override-trigger file)
+**Must-fix**: 0 | **Suggestions**: 2
+**Round**: 1 | **Ship**: recommended — no must-fix findings; diff is shippable as-is
+
+### Findings
+- [ ] (suggestion) Workflow display name `docker-jazzy-ros-core` becomes branch-ambiguous once it also triggers on `rolling` (image intentionally stays jazzy) — `.github/workflows/ros-base-docker.yml:1`
+- [ ] (suggestion) The rolling-primary-model decision still has no ADR (already tracked as an open, deferred follow-up in the plan's Open Questions #5) — file it as a follow-up issue when ready
+
+### Specialist summary
+- Static Analysis: pre-existing yamllint style issues (bracket spacing, line length) confirmed identical on `origin/jazzy`'s copy of the workflow file — no new regressions introduced by this diff.
+- Governance: no concerns. Principle self-check, ADR-0008 alignment, and consequence tracking all verified accurate. `.agents/README.md`'s claims about `setup_layers.sh`/`manifest_fallback.sh` ignoring unknown `bootstrap.yaml` keys (including `distro:`) were independently re-verified against source (setup_layers.sh:173-176, manifest_fallback.sh:270-272) — accurate. Byte-identical check confirmed: only `bootstrap.yaml`, `core.repos` (single-entry pin), the CI workflow, and `.agents/README.md` carry content changes; all other `.repos` files and `layers.txt`/`optional_layers.txt` are untouched in the diff, matching the plan's claim.
+- Claude Adversarial (Lens A — logic/correctness): confirmed only `unh_marine_autonomy`'s own `core.repos` entry was re-pinned; workflow YAML syntax valid; no other `.github/workflows/*.yml` file exists in the repo to have been missed. One suggestion (workflow name).
+- Claude Adversarial (Lens B — security/cross-cutting): confirmed the CI workflow has `permissions: contents: read` only, no secrets, no publish/push step — the interim branch-protection gap on `rolling` (already known/deferred) has no CI teeth to exploit. No other script in the workspace reads `bootstrap.yaml`/`core.repos` besides the two named consumers; this dev workspace's own `configs/project_bootstrap.url` stays pinned to `jazzy` so nothing starts reading `rolling` as a side effect of this merge. No findings.
+
+### Plan Adherence
+Diff matches the plan's Files to Change table exactly: `config/bootstrap.yaml` (add `distro: rolling`, `branch: jazzy`→`rolling`), `config/repos/core.repos` (self-pin to `rolling`), `.github/workflows/ros-base-docker.yml` (add `rolling` to both trigger lists, image unchanged), `.agents/README.md` (Manifest Repo Role section updated). The 8 files the plan says carry no content change do not appear in the diff at all. No scope creep, no omissions.
+
+### Bootstrap.yaml contract check (against the verified adapter contract)
+`config/bootstrap.yaml` is flat `key: value` at column 0, unquoted single-token values, ends with a trailing newline (fixes the pre-existing missing-newline defect as a side effect). `distro: rolling` matches `^distro:` and the value matches `^[a-z0-9_]+$` per the contract verified in `rolker/agent_workspace`.
