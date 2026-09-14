@@ -1,3 +1,4 @@
 git_url: https://github.com/rolker/unh_marine_autonomy.git
-branch: jazzy
+branch: rolling
 layer: core
+distro: rolling
