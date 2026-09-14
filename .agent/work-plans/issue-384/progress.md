@@ -92,3 +92,29 @@ issue: 384
 - [ ] `ros2launch_gui`'s pre-existing `rolling` branch (tip 2026-02-17, well behind jazzy) — confirm it's stale/unrelated, not an intentional prior port to reuse
 - [ ] `distro: rolling` key contract — plan names it per the issue text only; needs confirmation from the consumer-repo (`rolker/agent_workspace`) reviewer that the adapter's parser expects exactly this key/value
 - [ ] ADR for the rolling-primary decision — recommended as a follow-up issue (repo TBD: here vs. `rolker/agent_workspace#172`), not filed as part of this plan-task run
+
+## Plan Review
+**Status**: complete
+**When**: 2026-09-14 13:38 -04:00
+**By**: Claude Sonnet (dispatched fresh-context sub-agent — handoff header present, independent of plan authorship)
+
+**Plan**: `.agent/work-plans/issue-384/plan.md` at `3f96ed2`
+**PR**: PR-less (local-first; worktree `feature/issue-384`, `gh` verifications run against `rolker/unh_marine_autonomy`)
+**Verdict**: approve
+
+### Findings
+- [ ] (suggestion) "Estimated Scope" says "10 files touched" but the Files to Change table itself lists 11 (`bootstrap.yaml`, `core.repos`, 6 other `.repos` files, `layers.txt`, `optional_layers.txt`, `.agents/README.md`) — cosmetic miscount, not a scope problem (6 of the 11 are no-content-change copies).
+- [ ] (suggestion) The "`ros2_agent_workspace` ignores unknown keys" claim was verified only against `setup_layers.sh`'s parser; `.agent/scripts/manifest_fallback.sh` also greps `bootstrap.yaml` (`git_url:`/`branch:`/`config_path:`) and likewise ignores `distro:` — re-verified during this review, strengthens rather than undermines the plan's claim, but citing both consumers in the plan would make the evidence airtight for the next reader.
+
+### Verification performed
+- Confirmed no `rolling` branch exists yet on `rolker/unh_marine_autonomy` (404) and `default_branch` is still `jazzy`.
+- Confirmed the `require_pr` ruleset (id `11881731`) targets `ref_name.include: ["~DEFAULT_BRANCH"]` only — `rolling` will indeed have no push protection, matching the plan's Open Question 1.
+- Confirmed `.github/workflows/ros-base-docker.yml` triggers only on `branches: [jazzy]` for both `push` and `pull_request` — matching Open Question 2.
+- Confirmed `ros2launch_gui`'s `rolling` branch tip (2026-02-17) predates its `jazzy` tip (2026-08-24) — supports treating it as stale, matching Open Question 3.
+- Spot-checked several `core`/`platforms`/`sensors`/`ui`/`underlay` entries (including `geographic_info`, an upstream org repo) for `rolling` branches: all 404, consistent with the plan's "no dependency repo has a rolling branch" conclusion.
+- Counted `.repos` entries across all 6 dependent files: 44 total (7+8+8+3+1+8+9), exactly matching the plan's per-entry evidence table row count — the table is a complete enumeration, not a sample.
+- Verified `re-verified manifest_fallback.sh` also grep-parses `bootstrap.yaml` and ignores unknown keys the same way `setup_layers.sh` does (see suggestion above).
+- Verified `feature/issue-384`'s merge-base with `origin/jazzy` is `jazzy`'s current tip (`6f89cda`) — the branch-creation mechanics in the plan's Context section are mechanically sound as described.
+
+### Independence note
+This review ran in a fresh-context sub-agent dispatched with the standard handoff header ("You are a fresh-context sub-agent dispatched for issue #384") — no `## Plan Authored` entry was written earlier in this context, so no self-review annotation applies per the skill's detection rule.
