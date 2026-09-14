@@ -739,7 +739,10 @@ model of stage 1.
 directly, with a flush-and-close-checked write that is explicitly **not
 crash-atomic**.
 
-**What it must be fed.** Estimated nodes plus the store layout rules from
+**What it must be fed.** Estimated nodes for bathymetry; for sidescan, the
+tier-1 per-ping archive plus the current bathymetry (ADR-0006 D1: tier-2 is a
+re-projection of tier-1, so a better DEM means a re-projection, not a
+re-import). Both go through the store layout rules from
 [ADR-0002](decisions/0002-bathymetric-data-store.md),
 [ADR-0010](decisions/0010-geospatial-world-model.md) and
 [ADR-0011](decisions/0011-overview-pyramid.md). Layer naming is a live trap: the
@@ -759,8 +762,15 @@ on an existing transport ([#379](https://github.com/rolker/unh_marine_autonomy/i
 and an onboard coverage planner is a later consumer of the same tile catalog.
 
 **A different product, not a duplicate stage.** The explorer exports a single
-GeoTIFF for sharing through `cube_export`, rather than tiles. Two places
-nonetheless know how to turn nodes into rasters.
+GeoTIFF for sharing through `cube_export`
+(`marine_perception_tools/src/cube_export.cpp`), rather than tiles. Two places
+nonetheless know how to turn nodes into rasters: `cube_export` rasterises the
+box-CUBE surface the explorer already holds in memory, while `bag_to_geotiff`
+(`cube_bathymetry/src/bag_to_geotiff.cpp`) runs its own estimation pass over
+bags and writes one GeoTIFF with no store in between. They are distinct in
+input (an in-memory lab session versus bags) and in what they skip (the store),
+not in the raster they write — the shared piece is the nodes-to-raster step,
+which is the duplicate to judge when [cube#146](https://github.com/rolker/cube_bathymetry/issues/146) consolidates georeferencing.
 
 ## The water-body model
 
@@ -843,8 +853,8 @@ used for the slant-to-ground correction — the live node drops a ping whose
 altitude is missing or stale unless configured to assume zero), and optionally
 a DEM from the depths store; produces
 backscatter mosaic tiles through `marine_sidescan_mosaic` (decode, per-ping
-projection with a nadir altitude, tier-1 flat and tier-2 DEM-draped mosaics,
-overview pyramids) into the sidescan store
+projection with a nadir altitude, a tier-1 per-ping `.sst1` archive, tier-2
+flat and DEM-draped mosaics, overview pyramids) into the sidescan store
 ([ADR-0006](decisions/0006-multi-platform-backscatter-store.md)). It shares the
 spine with bathymetry and none of the middle. Its live node has no tile
 publisher ([#379](https://github.com/rolker/unh_marine_autonomy/issues/379)).
