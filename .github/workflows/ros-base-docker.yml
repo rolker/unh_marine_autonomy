@@ -1,4 +1,4 @@
-name: docker-jazzy-ros-core
+name: docker-ros-core
 
 on:
   push:

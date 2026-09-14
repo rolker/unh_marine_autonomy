@@ -148,7 +148,7 @@ the issue's "Done when" requires.
 parses `bootstrap.yaml` as flat `key: value` lines anchored at column 0. A quoted value
 (`"rolling"`) fails the adapter's regex because `awk '{print $2}'` keeps the quotes; an
 indented or nested key is not matched by the `^` anchor. Any future encoding of the
-role × distro matrix must keep `distro` (and the four existing keys) flat, or change every
+role × distro matrix must keep `distro` (and the existing `git_url`, `branch`, `layer` keys, plus the optional `config_path` the adapter also accepts) flat, or change every
 consumer first. The `.agents/README.md` update states this rule for future editors.
 
 **Self-reference check (adapter side):** bootstrap clones `git_url` at `branch:` into
@@ -246,7 +246,7 @@ Still open:
 
 1. `rolling` exists on origin and the PR from `feature/issue-384` targets it.
 2. What the adapter literally does at bootstrap succeeds after merge: fetching the raw file
-   returns the four existing keys plus `distro`:
+   returns the three existing keys plus `distro`:
 
    ```bash
    curl -fsSL https://raw.githubusercontent.com/rolker/unh_marine_autonomy/rolling/config/bootstrap.yaml
@@ -259,7 +259,7 @@ Still open:
 4. `jazzy` is untouched: `git diff origin/jazzy..origin/rolling -- config/` after the merge
    shows only the `bootstrap.yaml` and `core.repos` lines above.
 5. The `require_pr` ruleset lists `refs/heads/rolling`, and a PR into `rolling` triggers
-   `docker-jazzy-ros-core`.
+   `docker-ros-core` (renamed from `docker-jazzy-ros-core` after both reviews flagged the jazzy-only name).
 
 ## Estimated Scope
 
