@@ -83,6 +83,8 @@ stores rebuild after the pipeline changes is the operator's decision, recorded.
 cube#155, #156, #157, #158; marine_tools#84; imagenex_deltat#2;
 rviz_sonar_image#9; marine_perception_tools#54; unh_echoboats_project11#489;
 #378, #379, #380. Scope notes: cube#129, cube#146, #300.
+Added by the operator-review round: marine_perception_tools#55, #381 (both
+linked from the page); #382 (consequence gaps, not linked from the page).
 
 ## Local Review
 **Status**: complete

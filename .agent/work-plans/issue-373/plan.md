@@ -133,10 +133,12 @@ shape in four ways:
 - **Conventions.** The units table gained the operator's three-category rule,
   the three divergence justifications, and the defensibility rule for
   extending the error model — cross-package content that has no other home.
-- **Follow-ups.** The review filed twelve issues the page now links instead of
-  describing: cube#155, #156, #157, #158; marine_tools#84; imagenex_deltat#2;
-  rviz_sonar_image#9; marine_perception_tools#54; unh_echoboats_project11#489;
-  #378, #379, #380 — plus scope notes on cube#129, #146 and #300.
+- **Follow-ups.** The reviews filed fourteen issues the page now links instead
+  of describing: cube#155, #156, #157, #158; marine_tools#84; imagenex_deltat#2;
+  rviz_sonar_image#9; marine_perception_tools#54, #55;
+  unh_echoboats_project11#489; #378, #379, #380, #381 — plus scope notes on
+  cube#129, #146 and #300. #382 (cross-links after #368, DeltaT reference
+  entry) is a consequence of this page, recorded in progress.md only.
 
 Files-to-change is unchanged (the page, the one link line, this plan).
 
