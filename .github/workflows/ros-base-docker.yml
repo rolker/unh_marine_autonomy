@@ -1,10 +1,10 @@
-name: docker-jazzy-ros-core
+name: docker-ros-core
 
 on:
   push:
-    branches: [ jazzy ]
+    branches: [ jazzy, rolling ]
   pull_request:
-    branches: [ jazzy ]
+    branches: [ jazzy, rolling ]
 
 jobs:
   build:

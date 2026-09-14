@@ -26,4 +26,4 @@ repositories:
   unh_marine_autonomy:
     type: git
     url: https://github.com/rolker/unh_marine_autonomy.git
-    version: jazzy
+    version: rolling

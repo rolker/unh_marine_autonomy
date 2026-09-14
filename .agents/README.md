@@ -152,6 +152,25 @@ defines the `.repos` files that pull in all project repos across 6 layers:
 | simulation | `config/repos/simulation.repos` | unh_marine_simulation |
 | ui | `config/repos/ui.repos` | camp, rqt_marine_radar, + 2 more |
 
+**Manifest branches (rolling-primary model, #384).** The manifest is versioned per ROS 2
+distro by branch of this repo, and each branch's `config/repos/core.repos` pins this repo
+itself at the same branch so the manifest and the core-layer source agree (the manifest
+lives inside the core-layer checkout):
+
+| Branch | Role | `config/bootstrap.yaml` |
+|--------|------|-------------------------|
+| `rolling` | Development trunk (ROS 2 Rolling) | `branch: rolling`, `distro: rolling` |
+| `jazzy` | Deployed variant; receives ported code. Deployed machines pin it via `configs/project_bootstrap.url` and never read other branches | `branch: jazzy`, no `distro:` (the consumer supplies the distro) |
+
+`bootstrap.yaml` is a **flat** `key: value` file, read by `grep '^key:'` in every consumer
+(`ros2_agent_workspace`'s `setup_layers.sh` and `manifest_fallback.sh`, and the distro-aware
+`rolker/agent_workspace` adapter). Keep keys at column 0, one unquoted token per value, and
+never nest them under a mapping; consumers ignore keys they do not know, which is how
+`distro:` can exist on `rolling` without touching the jazzy consumers. On `rolling`, every
+`.repos` entry other than this repo keeps the same `version:` as on `jazzy` until a real
+Rolling port of that repo lands; a port is its own issue in that repo, followed by a
+`.repos` pin change here.
+
 ## Common Pitfalls
 
 - **Build order matters**: `marine_interfaces` and `mission_manager_interfaces` are IDL
