@@ -54,23 +54,27 @@ other branches, so `jazzy`'s manifest layout must not change.
    per-repo `.repos` pins on `rolling` default to the same ref as `jazzy` until a real port
    lands (stale-docs item, not a candidate — this section becomes inaccurate the moment
    `rolling` exists with a different `branch:`/`distro:` than what it currently documents).
-5. **Verify branch-protection / CI setup on `rolling`** (check only — no changes; both CI
-   config and branch-protection changes are Ask-First per `AGENTS.md`):
+5. **Branch-protection / CI coverage on `rolling`** (both Ask-First per `AGENTS.md`; the
+   operator decided 2026-09-14 to cover both with the branch rather than leave the trunk-to-be
+   unguarded — plan review checkpoint):
    - The repo's push/PR-required ruleset (`require_pr`, id `11881731`) targets
      `ref_name.include: ["~DEFAULT_BRANCH"]` — GitHub's token for "whichever branch is
-     currently the repository default," which is `jazzy` today. **This means `rolling` will
+     currently the repository default," which is `jazzy` today. **This means `rolling` would
      have *no* branch-protection ruleset applied to it** (direct pushes, force-push, and
      deletion all permitted) until either `rolling` becomes the default branch or the ruleset
      is edited to name `rolling` explicitly. Confirmed today: `jazzy`'s legacy
      branches/protection API returns 404 ("not protected") because protection lives in this
      ruleset, not the legacy API — and the ruleset's condition is default-branch-relative, not
-     a fixed name.
+     a fixed name. **Decision: after the host pushes `rolling`, the host adds
+     `refs/heads/rolling` to the ruleset's `ref_name.include` list via `gh api` (an admin
+     action the operator approves when it runs; not a commit in this PR).**
    - `.github/workflows/ros-base-docker.yml` triggers only on
-     `push: branches: [jazzy]` / `pull_request: branches: [jazzy]`. **PRs targeting `rolling`
-     will not run this workflow at all** until its trigger list includes `rolling` (or is
-     widened).
-   - Both gaps are recorded as **Open Questions** below rather than fixed in this plan — see
-     AGENTS.md's Ask-First list ("Changing CI or branch protection configuration").
+     `push: branches: [jazzy]` / `pull_request: branches: [jazzy]`, so PRs targeting `rolling`
+     would not run it. **Decision: add `rolling` to both trigger lists in this PR.** The
+     workflow keeps its `ros:jazzy-ros-core` image: building the pinned (jazzy-era) sources
+     against a Rolling image is the workspace-side phase-4 build issue's job, and switching
+     the image here would gate this manifest change on a port that has not happened. Recorded
+     under Consequences as a follow-up for that issue.
 
 ### Per-entry `.repos` pin decisions
 
@@ -121,7 +125,7 @@ the issue's "Done when" requires.
 | ui | marine_perception_tools | jazzy | jazzy (unchanged) | No `rolling` branch |
 | ui | marine_colormap | jazzy | jazzy (unchanged) | No `rolling` branch |
 | ui | marine_sonar_widgets | jazzy | jazzy (unchanged) | No `rolling` branch |
-| underlay | ros2launch_gui | jazzy | jazzy (unchanged) — **see open question** | A branch literally named `rolling` exists, but its tip (`6e316f2`, 2026-02-17) predates the `jazzy` branch's tip (`6afbc8f`, 2026-08-24) by ~6 months and many merged PRs — it reads as stale/unrelated to this initiative, not a real Rolling port. Proposing NOT to use it. |
+| underlay | ros2launch_gui | jazzy | jazzy (unchanged) — **operator-confirmed 2026-09-14** | A branch literally named `rolling` exists, but its tip (`6e316f2`, 2026-02-17) predates the `jazzy` branch's tip (`6afbc8f`, 2026-08-24) by ~6 months and many merged PRs — stale/unrelated to this initiative, not a real Rolling port. Not used; fewer variables in the first rolling build. Future port candidate. |
 | underlay | ros2launch_session | jazzy | jazzy (unchanged) | No `rolling` branch |
 | underlay | geographic_info | ros2 | ros2 (unchanged) | Upstream org (`ros-geographic-info`), no `rolling` branch; `ros2` is already distro-generic, not jazzy-specific |
 | underlay | audio_common | port_sound_play_h_to_ros2 | unchanged | Custom feature branch, unrelated to distro; no `rolling` branch |
@@ -138,7 +142,25 @@ the issue's "Done when" requires.
 | `git_url` | `https://github.com/rolker/unh_marine_autonomy.git` | unchanged | Both `setup_layers.sh` (jazzy) and the distro-aware adapter (rolling) |
 | `branch` | `jazzy` | `rolling` | Both — tells the consumer which branch of this repo to clone as the manifest/core-layer checkout |
 | `layer` | `core` | unchanged | Both |
-| `distro` | *(absent)* | `rolling` | **New.** `setup_layers.sh` ignores it (confirmed: it parses `bootstrap.yaml` via per-key `grep '^git_url:'` / `'^branch:'` / `'^layer:'`, so an unrecognized `distro:` line is silently skipped). The **only** consumer is the not-yet-built distro-aware `rolker/agent_workspace` adapter. This plan cannot verify that adapter's parser from this worktree — see Open Questions. |
+| `distro` | *(absent)* | `rolling` | **New.** `setup_layers.sh` ignores it (confirmed: it parses `bootstrap.yaml` via per-key `grep '^git_url:'` / `'^branch:'` / `'^layer:'`, so an unrecognized `distro:` line is silently skipped); `manifest_fallback.sh` parses the file the same way and also ignores it (confirmed by plan review). The **only** consumer is the distro-aware `rolker/agent_workspace` `ros2_colcon` adapter. **Key contract verified 2026-09-14 by a reviewer in that repo** against `.agent/project_types/ros2_colcon/adapter.sh` (post PR #238): bootstrap reads exactly the flat top-level keys `git_url`, `branch` (required), `layer`, `config_path` (default `config`) via `grep "^<key>:" \| cut -d'#' -f1 \| awk '{print $2}'`; distro resolution greps `^distro:` from `bootstrap.yaml` first and falls back to `ROS_DISTRO` in the per-project config, value must match `^[a-z0-9_]+$`. So `distro: rolling` is the right name and form. |
+
+**Flat-file constraint (recorded for the step-4/7 role-variant design):** every consumer
+parses `bootstrap.yaml` as flat `key: value` lines anchored at column 0. A quoted value
+(`"rolling"`) fails the adapter's regex because `awk '{print $2}'` keeps the quotes; an
+indented or nested key is not matched by the `^` anchor. Any future encoding of the
+role × distro matrix must keep `distro` (and the four existing keys) flat, or change every
+consumer first. The `.agents/README.md` update states this rule for future editors.
+
+**Self-reference check (adapter side):** bootstrap clones `git_url` at `branch:` into
+`layers/main/core_ws/src/unh_marine_autonomy`, then the core layer runs
+`vcs import --skip-existing`, which skips the already-present repo whatever its pinned
+`version:`, so `adapter setup` and `validate` pass either way. The `core.repos` re-pin to
+`rolling` matters for `adapter sync`, which only pulls a checkout whose current branch
+matches the `.repos` `version:`; with the manifest on `rolling` and `core.repos` saying
+`jazzy` it would fetch-only forever. The pin is therefore required for sync, and correct.
+Workspace-side hazard, not a plan change: the adapter's hosting-dir reuse guard hard-fails
+only on origin-URL mismatch and merely warns on a branch mismatch, so `p11-rolling` must be
+registered against its own fresh hosting dir, never `p11-jazzy`'s.
 
 ## Files to Change
 
@@ -154,7 +176,8 @@ the issue's "Done when" requires.
 | `config/repos/underlay.repos` | No content change |
 | `config/layers.txt` | No content change |
 | `config/optional_layers.txt` | No content change |
-| `.agents/README.md` | Update "Manifest Repo Role" section: document the jazzy/rolling split and the `distro:` key |
+| `.agents/README.md` | Update "Manifest Repo Role" section: document the jazzy/rolling split, the `distro:` key, and the flat-file constraint |
+| `.github/workflows/ros-base-docker.yml` | Add `rolling` to the `push` and `pull_request` `branches:` lists (image unchanged) |
 
 ## Principles Self-Check
 
@@ -178,8 +201,9 @@ the issue's "Done when" requires.
 | If we change... | Also update... | Included in plan? |
 |---|---|---|
 | `config/bootstrap.yaml` `branch:`/`distro:` on `rolling` | `.agents/README.md` Manifest Repo Role section | Yes — step 4 |
-| Create `rolling` with no branch-protection ruleset coverage | Branch-protection ruleset (`require_pr`) to explicitly include `rolling` | No — Ask-First (CI/protection config); recorded as Open Question |
-| Create `rolling` with no CI trigger coverage | `.github/workflows/ros-base-docker.yml` `branches:` lists | No — Ask-First (CI config); recorded as Open Question |
+| Create `rolling` with no branch-protection ruleset coverage | Branch-protection ruleset (`require_pr`) to explicitly include `rolling` | Yes — host-side `gh api` edit right after the branch is pushed (operator decision 2026-09-14; approved at the publish checkpoint, not a commit) |
+| Create `rolling` with no CI trigger coverage | `.github/workflows/ros-base-docker.yml` `branches:` lists | Yes — Approach step 5, in this PR (operator decision 2026-09-14) |
+| CI on `rolling` still builds against `ros:jazzy-ros-core` | Workflow image / name on the `rolling` branch, once the sources are expected to build on Rolling | No — belongs to the workspace-side phase-4 build issue (`rolker/agent_workspace#172` step 6 phase 4); note it there |
 | rolling-primary model adopted | An ADR capturing the decision (currently only a comment on `rolker/agent_workspace#172`) | No — operator decision: propose as a follow-up issue, not part of this change |
 | `rolling`'s `.repos` entries defaulting to jazzy refs | Per-repo Rolling port issues, once each maintainer decides a `version:` pin that's more than "same as jazzy" | No — explicitly deferred by the issue itself to separate future issues |
 
@@ -198,36 +222,50 @@ the issue's "Done when" requires.
 
 ## Open Questions
 
-1. **Branch-protection coverage for `rolling`**: the `require_pr` ruleset only targets
-   `~DEFAULT_BRANCH` (currently `jazzy`), so `rolling` will be created with **no** push
-   protection. Should the ruleset be edited to explicitly add `rolling` to its `ref_name`
-   include list now, or is an unprotected interim acceptable (relying on the
-   agent/workspace-convention worktree discipline rather than GitHub enforcement) until
-   `rolling` becomes the default branch as part of a later rolling-primary migration step?
-   This plan does not change the ruleset (Ask-First).
-2. **CI trigger coverage for `rolling`**: `.github/workflows/ros-base-docker.yml` only
-   triggers on `branches: [jazzy]`. Should its trigger list be widened to include `rolling`
-   now (so PRs into `rolling` get CI), and if so, in this PR or a fast-follow? This plan does
-   not change the workflow (Ask-First).
-3. **`ros2launch_gui`'s pre-existing `rolling` branch**: confirm it is unrelated/stale (last
-   commit 2026-02-17, well behind `jazzy`'s 2026-08-24 tip) rather than an intentional prior
-   Rolling-port attempt this plan should be reusing or reconciling with.
-4. **`distro:` key parsing in the consumer adapter**: this plan names the expected key/value
-   (`distro: rolling`) based on the issue text alone — it cannot verify the not-yet-built
-   `rolker/agent_workspace` adapter's actual parser (key name, nesting, accepted values) from
-   this worktree. The plan-review phase for this issue runs in that consumer repo per the
-   operator's routing decision; it should confirm the key contract matches what that adapter
-   will actually read before implementation, or flag a mismatch now while it's still a
-   one-line change.
+Resolved at the plan-review checkpoint, 2026-09-14 (operator decisions; the first four
+questions are kept here for the record):
+
+1. **Branch-protection coverage for `rolling`** — *resolved*: add `refs/heads/rolling` to
+   the `require_pr` ruleset's include list host-side right after the branch is pushed
+   (Approach step 5).
+2. **CI trigger coverage for `rolling`** — *resolved*: widen the trigger lists in this PR
+   (Approach step 5); image stays jazzy, image change tracked to the phase-4 build issue.
+3. **`ros2launch_gui`'s pre-existing `rolling` branch** — *resolved*: stale, not used; keep
+   the jazzy ref (pin table).
+4. **`distro:` key parsing in the consumer adapter** — *resolved*: verified by a reviewer in
+   `rolker/agent_workspace` against the adapter source (key table above).
+
+Still open:
+
 5. **ADR for the rolling-primary decision**: tracked as a recommendation (Consequences table)
    to file as a follow-up issue — not filed as part of this plan-task run. Should it be filed
    in `unh_marine_autonomy` (whose branch/versioning model it governs) or cross-referenced
    from `rolker/agent_workspace#172` where the decision itself was made?
 
+## Verification (Done when)
+
+1. `rolling` exists on origin and the PR from `feature/issue-384` targets it.
+2. What the adapter literally does at bootstrap succeeds after merge: fetching the raw file
+   returns the four existing keys plus `distro`:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/rolker/unh_marine_autonomy/rolling/config/bootstrap.yaml
+   # expect: git_url, branch: rolling, layer: core, distro: rolling — each at column 0, unquoted
+   ```
+
+3. Every `.repos` entry on `rolling` resolves: `git ls-remote --exit-code <url> <version>`
+   succeeds for all 44 entries (only `unh_marine_autonomy`'s pin changed; the rest were
+   verified resolvable on jazzy already).
+4. `jazzy` is untouched: `git diff origin/jazzy..origin/rolling -- config/` after the merge
+   shows only the `bootstrap.yaml` and `core.repos` lines above.
+5. The `require_pr` ruleset lists `refs/heads/rolling`, and a PR into `rolling` triggers
+   `docker-jazzy-ros-core`.
+
 ## Estimated Scope
 
 Single PR (`feature/issue-384` → `rolling`, once `rolling` exists on origin), config-only:
-10 files touched (`bootstrap.yaml`, `core.repos`, `.agents/README.md` content changes; the
-other six `.repos` files plus `layers.txt`/`optional_layers.txt` copied over unchanged as
-part of populating the new branch). No package code, no build/test changes — `make validate`
-against the new branch is the workspace-side follow-up issue's job, not this one.
+12 files in the table above, of which 4 change content (`bootstrap.yaml`, `core.repos`,
+`.agents/README.md`, the CI workflow) and 8 (`layers.txt`, `optional_layers.txt`, the other
+six `.repos` files) carry over unchanged because `rolling` is cut from the `jazzy` tip. No
+package code, no build/test changes — `make validate` against the new branch is the
+workspace-side follow-up issue's job, not this one.
