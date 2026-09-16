@@ -177,13 +177,37 @@ which bags fed which store (#366) is a by-product of the keys rather than a sepa
 Open: one schema across stages or one per stage with a shared core; what the walk is
 called and where it lives; how the copy-of-record question (below) interacts with it.
 
-## Distribution and the copy of record *(open — not yet discussed)*
+## Distribution and the copy of record *(open)*
 
 Gabby, salmon, the dev box and the cloud each hold a store today and they diverge; the
 2026-09-03 salmon → dev copy was by hand and fixed a broken prior by accident. Tile sync
 (ADR-0002 D6) has been deferred since June; the live transport (ADR-0008) carries `draft`
 for display only. The model needs a stated copy of record and a replica rule before the
 regenerate command can mean one thing on every host. Not designed yet.
+
+**Field observation that constrains it (Roland, 2026-09-16).** In practice there was no
+time after a deployment to produce a day's `processed` layer on a shoreside machine and
+push it to gabby before the next outing. So the next deployment started without the
+previous day's coverage folded in. The consequence for the model: the `processed` rung
+cannot assume a shoreside, curated producer on a daily cadence. Some **crude automatic
+processing on the boat** (gabby re-running its own bags overnight into its own `processed`,
+with whatever priors and trajectory rung it has) is the realistic way a new deployment
+starts with fresh coverage; the curated shoreside re-run, when it happens, supersedes it.
+The June-2026 host-role split (gabby = live store, salmon = durable archive + curated
+store; see [prior work](#prior-work-this-draft-builds-on)) assumed the opposite cadence.
+
+What this asks of the design, still open:
+
+- A rung is defined by *process*, not by host — so a boat-produced `processed` and a
+  shoreside `processed` are the same rung with different fingerprints (inputs, priors,
+  trajectory rung). The fingerprint is what lets a replica decide which one is better.
+- A replica rule that prefers the build with the more complete inputs (more bags, a
+  post-processed trajectory, corrections applied), not the newest write.
+- Whether `draft` should persist and accumulate across deployments on the boat as a
+  cheaper first step, before any on-boat re-run exists.
+- Sync direction and trigger (boat → shore for bags and boat-processed; shore → boat for
+  curated processed and priors), and what happens to a boat store while a shore build is
+  in flight.
 
 ## Migration from today's tree *(draft)*
 
@@ -243,12 +267,15 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 | 3 | Trajectory product format and the day/mission unit | agent proposes |
 | 4 | Backscatter: byproduct or product? | Roland |
 | 5 | Per-cell quality/flag band back, or σ only? | Roland (ties to the safety review) |
-| 6 | Copy of record and replica rule | not yet discussed |
+| 6 | Copy of record, replica rule, and on-boat automatic `processed` (see Distribution) | Roland + agent |
 | 7 | `water/` theme: in this model now, or later? | Roland |
 | 8 | Fingerprint: one schema or shared core? | agent proposes |
 
 ## Change log
 
+- 2026-09-16 (later) — Distribution: recorded the field observation that daily shoreside
+  processing did not happen; on-boat automatic `processed` and fingerprint-based replica
+  preference added as open design points.
 - 2026-09-16 — first version from the taxonomy discussion: five categories, uniform
   ladder, corrections as data, trajectories with deferred pose, observations as a stage,
   fingerprints/regenerate, migration table, ADR amendment list, safety-review list.
