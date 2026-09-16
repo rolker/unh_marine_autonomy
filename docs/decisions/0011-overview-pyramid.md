@@ -214,11 +214,15 @@ same engine pieces when they next change.
      the layer to fix, not a reason to loop: a mis-named tile changes the
      catalog, the next `--if-stale` builds, and the build refuses again,
      loudly, every time until the tile is fixed — by design. The trigger lives
-     in the **importers' callers**: `build_bathy_store.sh`
+     in the **general regenerate process** for the world store (the design draft's
+     dependency walk, [#391](https://github.com/rolker/unh_marine_autonomy/issues/391)),
+     which runs it for every layer an import touched and fails the run on any non-zero exit
+     (it holds its own store lock, so it never meets 6). Until that process exists, the
+     platform import script
      ([rolker/unh_echoboats_project11#490](https://github.com/rolker/unh_echoboats_project11/issues/490))
-     runs it for every layer the CUBE pass touched and fails the run on any
-     non-zero exit (it holds its own store lock, so it never meets 6), and the
-     `reference` importers' callers do the same for `reference/`. A builder in
+     calls it the same way as an interim — platform-specific scripts are not the
+     long-term home of store operations (operator, 2026-09-16); the platform repo
+     holds configuration, not process. A builder in
      a *different* package cannot be invoked from `import_bag`'s process, and
      the shell already sequences the two, so the trigger is a call site, not a
      library dependency. The same exit codes are the contract a display
