@@ -19,26 +19,12 @@ first batch adopter, an MBES builder a later one.
 **Amended 2026-09-16 ([#389](https://github.com/rolker/unh_marine_autonomy/issues/389)):**
 §6 adds the **source catalog** a builder records beside its sidecar, the
 **staleness check** and **`--if-stale`** trigger mode that read it, and the
-**incremental refold** that re-folds only the ancestors of changed native tiles.
-§5's "batch first, incremental later" is thereby discharged for the depth
-builder; the sidescan builder and the MBES backscatter builder
+**incremental refold** that re-folds only the changed native tiles' own slots
+and ancestors. This makes the depth builder incremental; §5's clause about the
+CAMP live-coverage cache adopting the engine is unaffected. The sidescan
+builder and the MBES backscatter builder
 ([#390](https://github.com/rolker/unh_marine_autonomy/issues/390)) adopt the
 same engine pieces when they next change.
-
-## Context
-
-Survey-born store layers are single-level (sidescan at L13, bathymetry at
-L10). Zoomed out, a consumer must open every fine tile there is — the
-1000-tile sidescan store costs a 3.6 GB eager read to display at any scale,
-and survey data cannot participate in coarse-level queries (ADR-0010 D9's
-voyage-planner case) at all. The chart layer does not share this problem: its
-ENC scale ladder is a native, curated, shoal-biased pyramid.
-
-GDAL's internal GeoTIFF overviews (`BuildOverviews`) were considered and
-rejected: they are per-file, so a zoomed-out render still opens every fine
-file; and one resampling algorithm applies to all bands of a dataset, which
-cannot express per-band policies (depth mean-vs-shoalest, uncertainty
-pairing).
 
 ## Decision
 
@@ -177,73 +163,114 @@ pairing).
    - **Source catalog.** A builder writes `overviews/source.json`
      (schema `overview-source/1`) into staging beside `coverage.json`, so it
      rides the same swap and is crash-consistent with the tiles it describes.
-     It records the **native tile catalog the pyramid was folded from**: one
-     entry per native tile — `name`, `size` in bytes and `mtime_ns` as the
-     filesystem reports them — sorted by name, plus a `digest` (SHA-256 over
-     the sorted `name\0size\0mtime_ns\n` lines), the `folded_at` wall time,
-     the builder's `min_level`, and the levels the run built. The catalog is a
-     **stat pass, never a tile read**: it costs milliseconds at any store size,
-     which is what lets the check run unconditionally after every import. It
-     detects added, removed and rewritten tiles. It does **not** detect a
-     rewrite that preserves size and mtime to the filesystem's resolution
-     (a same-size rewrite inside one second on a 1-s-granularity mount) —
-     accepted; a content hash would close that gap only by reading every tile
-     (gigabytes under depth-adaptive levels), which is what the check exists
-     to avoid. Inode numbers are deliberately **not** recorded: they would
-     make a plain copy of a store (`rsync`, the salmon→dev sync) read as stale
-     and force a full rebuild for no change in content. The catalog is
-     **derived and advisory** exactly as `coverage.json` is: an absent,
-     unreadable or schema-mismatched `source.json` means "staleness unknown",
-     never "current".
+     It records the **native tile catalog the pyramid was folded from**: every
+     regular `*.tif` directly in the layer directory — well-named or not, since
+     a mis-named tile appearing or changing is a change — with each file's
+     `name`, `size` and `mtime_ns` as the filesystem reports them, sorted by
+     name; a `digest` of that list; the builder's **policy version** (a string
+     the depth builder bumps whenever its fold or error-saturation rules
+     change); the run's `min_level`; and the levels built. The catalog is a
+     **stat pass, never a tile read**: milliseconds at any store size, which is
+     what lets the check run unconditionally after every import. It is taken
+     **after the last native tile has been read**, never at the start of the
+     run — a fold takes minutes to hours, and a catalog captured first would
+     record the new mtime of a tile an importer rewrote mid-run under content
+     that was never folded, and the pyramid would then read current forever.
+     Before the swap the builder re-stats the layer; any drift from the
+     catalog it is about to write fails the run with the previous sidecar
+     untouched. What the catalog detects: added, removed and rewritten tiles.
+     What it does not: a rewrite that preserves size and mtime to the
+     filesystem's resolution (a same-size rewrite inside one second on a
+     1-s-granularity mount) — accepted; a content hash would close that gap
+     only by reading every tile (gigabytes under depth-adaptive levels), which
+     is what the check exists to avoid. Inode numbers are deliberately **not**
+     recorded: they would make a plain copy of a store (`rsync`, the
+     salmon→dev sync) read as stale and force a full rebuild for no change in
+     content. The catalog is **derived and advisory** exactly as
+     `coverage.json` is: an absent, unreadable or schema-mismatched
+     `source.json` means "staleness unknown", never "current". **Migration:**
+     every sidecar that exists today has no `source.json`, so the first
+     `--if-stale` run over it is a full build — which is the Massabesic case
+     this amendment exists for.
 
    - **Staleness check and trigger mode.** `build_depth_overviews <layer>
-     --check` recomputes the catalog and compares it to the recorded one,
-     printing the added / removed / changed tile counts (and the first few
-     names of each); exit **0** = current, **3** = stale, **4** = unknown
-     (no sidecar, no `source.json`, or one this builder cannot read). It
-     writes nothing. `--if-stale` builds only when the answer is stale or
-     unknown and is a no-op (exit 0, one line) when current — the form an
-     import pipeline calls unconditionally after every ingest, so the
-     rebuild-on-update rule stops depending on anyone remembering. The
-     trigger lives in the **importers' callers**: `build_bathy_store.sh`
+     --check` answers two questions and writes nothing: are the **inputs**
+     unchanged (recomputed catalog equals the recorded one, digest first, then
+     the lists), and is the **sidecar intact** (the `.tif` set in `overviews/`
+     equals the set `coverage.json` declares — a hand-deleted tile or a
+     half-retired directory is damage, not currency). Exit **0** = current on
+     both counts; **3** = stale, printing the added / removed / changed tile
+     counts (and the first few names of each) or the sidecar damage found;
+     **5** = unknown (no sidecar, no `source.json`, or one this builder cannot
+     read). **4 stays what it already means** in this CLI — a build refused
+     because a native tile could not be reconstructed (`tiles_skipped > 0`),
+     sidecar unchanged — and **6** is new: the layer is busy (`overviews.tmp/`
+     exists: a concurrent build, or a crashed run's debris the operator must
+     clear). `--if-stale` builds when the check answers stale or unknown and
+     returns the build's own codes; when the check answers current it is a
+     no-op — exit 0, one line — so an import pipeline calls it
+     unconditionally after every ingest and the rebuild-on-update rule stops
+     depending on anyone remembering. A refused build (4) is a real defect in
+     the layer to fix, not a reason to loop: a mis-named tile changes the
+     catalog, the next `--if-stale` builds, and the build refuses again,
+     loudly, every time until the tile is fixed — by design. The trigger lives
+     in the **importers' callers**: `build_bathy_store.sh`
      ([rolker/unh_echoboats_project11#490](https://github.com/rolker/unh_echoboats_project11/issues/490))
-     runs it for every layer the CUBE pass touched and fails the run if it
-     fails, and the `reference` importers' callers do the same for
-     `reference/`. A builder in a *different* package cannot be invoked from
-     `import_bag`'s process, and the shell already sequences the two, so the
-     trigger is a call site, not a library dependency. The same three exit
-     codes are the contract a display consumer (CAMP's Stores tab, the
-     explorer) will use to **warn** that a layer's overviews are stale — a
-     follow-up on the consumer side, and warn-only by construction: per
-     [ADR-0013](0013-bounded-lod-navigation.md) D8 the staleness of a derived
-     sidecar is a rendering fact, and no safety query (shoal-finding,
-     least-depth, clearance) may ever consult it, skip a level on it, or
-     change what it reads because of it.
+     runs it for every layer the CUBE pass touched and fails the run on any
+     non-zero exit (it holds its own store lock, so it never meets 6), and the
+     `reference` importers' callers do the same for `reference/`. A builder in
+     a *different* package cannot be invoked from `import_bag`'s process, and
+     the shell already sequences the two, so the trigger is a call site, not a
+     library dependency. The same exit codes are the contract a display
+     consumer (CAMP's Stores tab, the explorer) will use to **warn** that a
+     layer's overviews are stale — a follow-up on the consumer side, and
+     warn-only by construction: per [ADR-0013](0013-bounded-lod-navigation.md)
+     D8 the staleness of a derived sidecar is a rendering fact, and no safety
+     query (shoal-finding, least-depth, clearance) may ever consult it, skip a
+     level on it, or change what it reads because of it.
 
-   - **Incremental refold.** When a readable, schema-compatible `source.json`
-     exists and its `min_level` matches the run's, the builder diffs the two
-     catalogs and re-folds **only the ancestors of the changed native tiles**;
-     every other derived tile is **carried over** from the previous sidecar
-     into staging (hard-linked where the filesystem allows, copied otherwise)
-     so the swap contract of §2 is unchanged — the live `overviews/` is still
-     replaced whole, atomically where possible, and never observed partial.
-     `--full` forces the wholesale fold; a mismatched or missing catalog
-     falls back to it silently-but-loudly (one line saying why). The dirty set
-     is exact by induction over the fold order: a parent is re-folded iff at
-     least one native tile beneath it changed; its contributors are the native
-     tiles at the child level plus the derived children, which are either
-     re-folded in this run (their own subtree changed) or carried over (it did
-     not) — in both cases current. A **removed** native tile dirties its
-     ancestors like any change; an ancestor left with no contributor at all is
-     **deleted** from the pyramid rather than carried over, and one that is now
-     occupied by a **new native tile** is dropped too (native wins on disk, §2
-     #331). The dirty-ancestor walk and the carry-over live in the shared
-     engine (`marine_tiled_raster_store`), keyed on `gggs::parent()` so the
-     polar-band child counts need no special case; the depth builder is the
-     first adopter, and the sidescan and MBES builders take it without a
-     policy change when they next change. Recording the per-tile catalog
-     rather than a digest alone is what makes this possible: the digest
-     answers "is it stale", the catalog answers "which tiles".
+   - **Incremental refold.** The builder refolds incrementally when **all** of
+     these hold: `source.json` and `coverage.json` are both readable, the
+     recorded policy version and `min_level` match the run's, and the sidecar
+     is intact (its `.tif` set equals the manifest's). Otherwise — including
+     `--full` — it folds wholesale and says in one line why. Incrementally, it
+     diffs the two catalogs and computes the **dirty set**: for every added,
+     removed or changed native tile, **its own `(level, index)` and every
+     ancestor** up to `min_level` (a removed native tile frees its own slot for
+     a derived tile folded from the level below, which no ancestor rule would
+     reach). Dirty slots are re-folded; every other derived tile is **carried
+     over** from the previous sidecar into staging **before** any dirty tile is
+     written, and the two sets are disjoint by construction — a carried entry
+     is never a name the refold will write, so a carry-over that shares the
+     live sidecar's storage (a hard link) can never be truncated through by a
+     write. The dirty set is exact by induction over the fold order: a slot is
+     re-folded iff a native tile at or beneath it changed; its contributors
+     are the native tiles at the child level plus the derived children, which
+     are either re-folded in this run (their own subtree changed) or carried
+     over (it did not) — in both cases current. A dirty slot left with no
+     contributor is **deleted**, and one now occupied by a native tile is
+     dropped (native wins on disk, §2 #331). The new `coverage.json` is
+     **carried ∪ refolded − deleted**, with each carried tile's geometric error
+     taken from the previous manifest and **pre-seeded into the run's derived
+     manifest before folding**, so a refolded parent's error saturates over
+     its carried children exactly as [ADR-0013](0013-bounded-lod-navigation.md)
+     D2 requires; a previous manifest missing a carried tile's error is
+     treated as damage and forces a full fold. The dirty-set walk and the
+     carry-over live in the shared engine (`marine_tiled_raster_store`), keyed
+     on `gggs::parent()` so the polar-band child counts need no special case;
+     the depth builder is the first adopter, and the sidescan and MBES
+     builders take it without a policy change when they next change.
+     Recording the per-tile catalog rather than a digest alone is what makes
+     this possible: the digest answers "is it stale", the catalog answers
+     "which tiles".
+
+   **Filesystems.** The three "where the filesystem allows" clauses in this
+   ADR degrade together: on the NAS (`/mnt/nadata`, the season archive) and
+   other NFS/FUSE mounts, the §2 swap is already rename-aside rather than
+   atomic, mtime granularity may be coarse, and hard links may be unavailable
+   (carry-over then copies). None of them changes correctness — only the
+   width of the swap window, the size of the undetectable rewrite, and the
+   cost of a carry-over.
 
    **What this does not change.** The fold policies of §4, the sidecar layout
    and swap of §2, and the native-wins rule of the #331 amendment are
@@ -251,7 +278,9 @@ pairing).
    record is a sibling file so no consumer of the manifest needs to change.
    The **wholesale** language in §2 ("builders delete and recreate it
    wholesale") is now read as *the live sidecar is replaced whole*, not *every
-   tile is recomputed*.
+   tile is recomputed*. Mechanism detail this amendment deliberately leaves to
+   the plan: the digest's exact preimage, the link-versus-copy carry-over, and
+   the report format.
 
 ## Consequences
 
