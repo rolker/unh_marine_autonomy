@@ -209,6 +209,55 @@ What this asks of the design, still open:
   curated processed and priors), and what happens to a boat store while a shore build is
   in flight.
 
+## Prior work this draft builds on
+
+The stores have been designed three times since February 2026; most of it is on GitHub
+and in two trackers, and some decisions exist only in issue threads. This section is the
+map, so the draft is written from all of it and not from the ADRs alone.
+
+**Where the design lives today**
+
+| Source | What it is | Maintained? |
+|---|---|---|
+| `docs/sonar_ecosystem.md` | the tracker for the whole sonar/store ecosystem: two arcs (coverage, targets), stage-by-stage status, ADR spine | yes (verified 2026-08-20); "a tracker, not a spec" |
+| `docs/sonar_processing_chain.md` | the as-shipped six-stage chain, a known-defects table, and the `water/` theme + angular-response directions (2026-09-11, no decision record) | yes |
+| `docs/survey_index_schema.md` | the SQLite index of which bags saw which tile — indexes ping geometry, not store acceptance (uma#258 decision) | yes |
+| echoboats `docs/roadmap.md` | the operator roadmap; "complete the stores → world arc" is priority 1 | yes (reconciled 2026-08-20) |
+| package READMEs (bathy store, MBES backscatter store, tiled raster store, sidescan mosaic, cube_bathymetry) | the most current mechanism descriptions; several standing rules live only there (S-102 import is operator-run only; no deployed `chart/` layer until uma#276; the sidescan → bathy on-disk contract) | yes |
+| umbrella issues uma#86 (founding design, OPEN since 2026-02-25), #171 (sidescan), #179/#180 (provenance, backscatter), #258 → mpt#36 (explorer), #272 (world model), #300 (`water/`), #329 (LOD), #333 (web view); cube#96/#111/#143; camp#90 → #104 → #160 → #194/#195 | the phase framing and the checkpoint decisions | mixed; #86 never closed |
+
+**Decisions recorded only in threads** (keep; none is in an ADR):
+
+- Pyramids are cross-tile GGGS parent tiles, not GDAL internal overviews; imagery first; one engine, per-store policy (uma#188, 2026-07-24).
+- Remote-distribution wire contract: tiles in frame `earth`, `header.stamp` = data time, never reuse for a `map`-frame stream (uma#86, 2026-06-15). Tier 2 of sync was never built; this is the only record.
+- Host roles: gabby = raw bags + live store; salmon = durable archive + curated store; dev = prototypes only (2026-06-20) — superseded in cadence by the 2026-09-16 field observation in Distribution.
+- Chart prior primes CUBE's *predicted* surface only, never accumulates (cube#89, 2026-06-29); one depth-belief precedence for live and offline, cube stays datum-free (cube#160, 2026-09-15, "discuss before implementing").
+- Native data always wins on disk; derived overviews only fill gaps, extended to `chart` after the layer went blank past level 5 (uma#331, 2026-08-21).
+- CAMP composites levels with the selection as a ceiling rather than extending store pyramids to chart/reference (camp#194, 2026-08-21).
+- Costmap combine is raise-only — surveyed-clear cannot relax charted caution (uma#296, 2026-08-07); one of the safety-motivated decisions under review.
+- The costmap cost model: worst-case clearance = depth − σ; keepout only on trusted data below 0.4 m; chart never keepout (2026-06-25).
+- Explorer: index from ping geometry, not store acceptance; single pass is the unit of sidescan interpretation; CUBE as a callable library; no exploration features in CAMP (uma#258, 2026-07-13).
+- `~/data/world` is one collection split by source class, never per campaign (2026-08-25, uma#366 framing).
+
+**Directions tried and reversed** (do not re-propose without the reason changing):
+
+- Per-day epoch partitioning → one fused grid per layer (uma#221, 2026-06-25): a UTC day is a weak proxy for a survey. Note the trajectory unit proposed here *is* a UTC day; the difference is that a trajectory is a time series with gaps, not a partition of a raster.
+- One unified backscatter store → two sibling stores (uma#190, 2026-06-21).
+- `--append` → greenfield regeneration with tile-open seed precedence (cube#96, 2026-07-01).
+- Per-cell source and time rasters dropped (uma#248, 2026-07-01), with the recorded callback that multi-sensor sidescan fusion will need a coarse sensor/frequency tag (cube#120).
+- Single `survey/` → re-split into `draft/` + `processed/` (uma#308, 2026-08-20): the live node drops pings under backpressure, so last-write-wins made the store worse by surveying.
+- Chart footprint clipping withdrawn after measurement: it deleted 64.6 % of charted coverage (uma#337, 2026-08-22).
+- Staged S-102 import replace → merge (uma#339): per-tile replacement clobbered seams.
+- Baked pose for sidescan tier 1 (2026-06-20) → deferred pose (this draft, 2026-09-16), because navigation post-processing is now a mode to support.
+
+**Open design placeholders** the draft must either absorb or leave pointed at: uma#366
+(import ledger), #369/#386/#388 (level policy inputs), #376/#371/#365 (costmap residency
+and reload), #296/#294/#295 (costmap combine, empty-coverage guard, chart provenance),
+#316 (S-102 seams), #332 (geometric error producers), #334 (overview durability), #370
+(whole-area export), #247 (sidescan ↔ CUBE), #381 (`water/` + units); cube#111, #98,
+#129, #146, #160; camp#109, #198, #191, #208, #221; mpt#36 direction 1 (a shared LOD
+selection core, "blocked on a decision, not code"), mpt#43; echoboats#490, #488, #434.
+
 ## Migration from today's tree *(draft)*
 
 | Today (`~/data/world/`) | Contents (2026-09-16, dev host) | Becomes |
@@ -273,6 +322,8 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 
 ## Change log
 
+- 2026-09-16 (later) — added Prior work: trackers, thread-only decisions, reversed
+  directions, open placeholders, from a sweep of GitHub + repo docs.
 - 2026-09-16 (later) — Distribution: recorded the field observation that daily shoreside
   processing did not happen; on-boat automatic `processed` and fingerprint-based replica
   preference added as open design points.
