@@ -79,7 +79,7 @@ such when this section is cut: the datum library reads the geoid and VDatum grid
 (a grid *is* the product; tiling it would add nothing), and the ENC renderer reads the
 edition files for symbology (features stay vector until S-101 lands, ADR-0010 D2/D11).
 
-## The provenance ladder *(settled: shape and order; open: rung names)*
+## The provenance ladder *(settled, 2026-09-16: shape, order and rung names)*
 
 Every quantity store, and the trajectory tree, has the same ordered set of rungs:
 
@@ -94,7 +94,8 @@ Every quantity store, and the trajectory tree, has the same ordered set of rungs
   wins. Absent rungs are simply absent; backscatter has no `published`, trajectories have
   no `reference`.
 - A rung names *how* a value was made, never *what* it is. `published` replaces the
-  current `chart` so the word chart stops meaning both a rung and the ENC corpus.
+  current `chart` so the word chart stops meaning both a rung and the ENC corpus
+  (**decided 2026-09-16**: `published | reference | draft | processed`).
 - The **shoalest-reliable** query (ADR-0002 D7, ADR-0013 D8) does not walk the ladder: it
   reads every rung to the finest level. See [safety review](#owed-review-of-safety-motivated-decisions)
   — this is one of the decisions under review, not a premise of this document.
@@ -234,8 +235,8 @@ settles — a checklist every quantity must answer:
    (#390); a staleness signal for all three (#389).
 3. Live vs processed rungs: depths yes; backscatter and sidescan single-rung.
 4. Fingerprint recorded: depths partially (cube ADR-0003, `tiling` only); others none.
-5. What the quantity is *for*: backscatter's role (display byproduct vs product) is
-   undecided and drives how much of the above it gets.
+5. What the quantity is *for*: backscatter is a **product** (decided 2026-09-16), so it
+   gets all of the above; `water/` is in the model now with the same checklist.
 
 ## Fingerprints and the regenerate command *(open)*
 
@@ -445,17 +446,20 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 
 | # | Question | Owner |
 |---|---|---|
-| 1 | Rung names: `published | reference | draft | processed`? | Roland |
+| 1 | Rung names | **decided**: `published | reference | draft | processed` |
 | 2 | Correction-record schema and canonical home | agent proposes, Roland decides |
 | 3 | Trajectory product format and the day/mission unit | agent proposes |
-| 4 | Backscatter: byproduct or product? (the vision's cross-dataset constraint leans product) | Roland |
+| 4 | Backscatter | **decided**: a PRODUCT — full per-quantity treatment (#390 pyramid, #383 mixed levels, draft/processed rungs, cross-dataset work) |
 | 5 | Tile contents per user; is uncertainty required for every data type? | tile-contents thread |
+| 9 | Cleaning marks live with corrections and datum polygons as reviewed data applied at link time (**decided**) — but is `config/` the right NAME for that category? Candidates: `curation/`, `annotations/`, `edits/` | Roland |
 | 6 | Copy of record, replica rule, and on-boat automatic `processed` (see Distribution) | Roland + agent |
-| 7 | `water/` theme: in this model now, or later? | Roland |
+| 7 | `water/` theme | **decided**: in the model now as a named quantity with the same ladder and stage rules; implementation stays under uma#300 |
 | 8 | Fingerprint: one schema or shared core? | agent proposes |
 
 ## Change log
 
+- 2026-09-16 (later) — decided: rung names; backscatter = product; `water/` in the model now;
+  cleaning marks are reviewed data with corrections (category name open).
 - 2026-09-16 (later) — reference frame thread: MaCORS/GEOID18/VDatum are NAD83(2011); +1.19 m
   height offset vs WGS84 measured with PROJ; direction = convert at ingest in mru_transform.
 - 2026-09-16 (later) — Purpose rewritten as Roland's vision; register batch 1 verdicts (R1, R2,
