@@ -252,6 +252,12 @@ the key, compare, rebuild if different. "Regenerate the world" is then a depende
 from sources to pyramids — a `make`, not a script that knows the order — and the ledger of
 which bags fed which store (#366) is a by-product of the keys rather than a separate file.
 
+**The regenerate command is a general process of the store repo, never a platform
+script** (Roland, 2026-09-16): platform-specific scripts (`build_bathy_store.sh`) were
+acceptable during development; the platform repo now supplies configuration only (bag root,
+topics, frames, platform/sensor ids, curve paths) and the process lives with the stores.
+rolker/unh_echoboats_project11#490 is reframed to interim fixes followed by retirement.
+
 Open: one schema across stages or one per stage with a shared core; what the walk is
 called and where it lives; how the copy-of-record question (below) interacts with it.
 
@@ -486,6 +492,7 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 
 ## Change log
 
+- 2026-09-16 (later) — regenerate is a general store process; platform scripts retire (echoboats#490 reframed).
 - 2026-09-16 (later) — `config/` renamed `curation/` (corrections + cleaning); datum polygons stay in sources.
 - 2026-09-16 (later) — register batch 5 (R20–R24): all re-examined; roles not hosts; libraries beside the
   stores; explorer direction; S-100 adoption strategy owed (Q11). REGISTER COMPLETE for the first pass.
