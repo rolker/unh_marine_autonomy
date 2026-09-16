@@ -16,6 +16,15 @@ sidecar, no change to their fine-tile formats). The **MBES backscatter** layer
 named under the imagery MEAN policy in §4 lives in ADR-0007; sidescan is the
 first batch adopter, an MBES builder a later one.
 
+**Amended 2026-09-16 ([#389](https://github.com/rolker/unh_marine_autonomy/issues/389)):**
+§6 adds the **source catalog** a builder records beside its sidecar, the
+**staleness check** and **`--if-stale`** trigger mode that read it, and the
+**incremental refold** that re-folds only the ancestors of changed native tiles.
+§5's "batch first, incremental later" is thereby discharged for the depth
+builder; the sidescan builder and the MBES backscatter builder
+([#390](https://github.com/rolker/unh_marine_autonomy/issues/390)) adopt the
+same engine pieces when they next change.
+
 ## Context
 
 Survey-born store layers are single-level (sidescan at L13, bathymetry at
@@ -157,6 +166,93 @@ pairing).
    root fix for camp#171 (fold frees no memory) — but that is CAMP-side work
    (step 4 of the sequence), out of scope here.
 
+6. **Staleness is recorded, checkable, and repairable in place
+   ([#389](https://github.com/rolker/unh_marine_autonomy/issues/389)).**
+   Nothing re-ran the batch builders after an import, and nothing could tell a
+   current sidecar from a week-old one: on 2026-09-15 the dev host's
+   `depths/processed/overviews/` was a fold of a store regenerated a week
+   later, still carrying the blunders the regen had removed, and CAMP drew it
+   as truth. Three additions, all on the builder side of the contract:
+
+   - **Source catalog.** A builder writes `overviews/source.json`
+     (schema `overview-source/1`) into staging beside `coverage.json`, so it
+     rides the same swap and is crash-consistent with the tiles it describes.
+     It records the **native tile catalog the pyramid was folded from**: one
+     entry per native tile — `name`, `size` in bytes and `mtime_ns` as the
+     filesystem reports them — sorted by name, plus a `digest` (SHA-256 over
+     the sorted `name\0size\0mtime_ns\n` lines), the `folded_at` wall time,
+     the builder's `min_level`, and the levels the run built. The catalog is a
+     **stat pass, never a tile read**: it costs milliseconds at any store size,
+     which is what lets the check run unconditionally after every import. It
+     detects added, removed and rewritten tiles. It does **not** detect a
+     rewrite that preserves size and mtime to the filesystem's resolution
+     (a same-size rewrite inside one second on a 1-s-granularity mount) —
+     accepted; a content hash would close that gap only by reading every tile
+     (gigabytes under depth-adaptive levels), which is what the check exists
+     to avoid. Inode numbers are deliberately **not** recorded: they would
+     make a plain copy of a store (`rsync`, the salmon→dev sync) read as stale
+     and force a full rebuild for no change in content. The catalog is
+     **derived and advisory** exactly as `coverage.json` is: an absent,
+     unreadable or schema-mismatched `source.json` means "staleness unknown",
+     never "current".
+
+   - **Staleness check and trigger mode.** `build_depth_overviews <layer>
+     --check` recomputes the catalog and compares it to the recorded one,
+     printing the added / removed / changed tile counts (and the first few
+     names of each); exit **0** = current, **3** = stale, **4** = unknown
+     (no sidecar, no `source.json`, or one this builder cannot read). It
+     writes nothing. `--if-stale` builds only when the answer is stale or
+     unknown and is a no-op (exit 0, one line) when current — the form an
+     import pipeline calls unconditionally after every ingest, so the
+     rebuild-on-update rule stops depending on anyone remembering. The
+     trigger lives in the **importers' callers**: `build_bathy_store.sh`
+     ([rolker/unh_echoboats_project11#490](https://github.com/rolker/unh_echoboats_project11/issues/490))
+     runs it for every layer the CUBE pass touched and fails the run if it
+     fails, and the `reference` importers' callers do the same for
+     `reference/`. A builder in a *different* package cannot be invoked from
+     `import_bag`'s process, and the shell already sequences the two, so the
+     trigger is a call site, not a library dependency. The same three exit
+     codes are the contract a display consumer (CAMP's Stores tab, the
+     explorer) will use to **warn** that a layer's overviews are stale — a
+     follow-up on the consumer side, and warn-only by construction: per
+     [ADR-0013](0013-bounded-lod-navigation.md) D8 the staleness of a derived
+     sidecar is a rendering fact, and no safety query (shoal-finding,
+     least-depth, clearance) may ever consult it, skip a level on it, or
+     change what it reads because of it.
+
+   - **Incremental refold.** When a readable, schema-compatible `source.json`
+     exists and its `min_level` matches the run's, the builder diffs the two
+     catalogs and re-folds **only the ancestors of the changed native tiles**;
+     every other derived tile is **carried over** from the previous sidecar
+     into staging (hard-linked where the filesystem allows, copied otherwise)
+     so the swap contract of §2 is unchanged — the live `overviews/` is still
+     replaced whole, atomically where possible, and never observed partial.
+     `--full` forces the wholesale fold; a mismatched or missing catalog
+     falls back to it silently-but-loudly (one line saying why). The dirty set
+     is exact by induction over the fold order: a parent is re-folded iff at
+     least one native tile beneath it changed; its contributors are the native
+     tiles at the child level plus the derived children, which are either
+     re-folded in this run (their own subtree changed) or carried over (it did
+     not) — in both cases current. A **removed** native tile dirties its
+     ancestors like any change; an ancestor left with no contributor at all is
+     **deleted** from the pyramid rather than carried over, and one that is now
+     occupied by a **new native tile** is dropped too (native wins on disk, §2
+     #331). The dirty-ancestor walk and the carry-over live in the shared
+     engine (`marine_tiled_raster_store`), keyed on `gggs::parent()` so the
+     polar-band child counts need no special case; the depth builder is the
+     first adopter, and the sidescan and MBES builders take it without a
+     policy change when they next change. Recording the per-tile catalog
+     rather than a digest alone is what makes this possible: the digest
+     answers "is it stale", the catalog answers "which tiles".
+
+   **What this does not change.** The fold policies of §4, the sidecar layout
+   and swap of §2, and the native-wins rule of the #331 amendment are
+   untouched. `coverage.json` keeps schema `coverage-manifest/1`; the new
+   record is a sibling file so no consumer of the manifest needs to change.
+   The **wholesale** language in §2 ("builders delete and recreate it
+   wholesale") is now read as *the live sidecar is replaced whole*, not *every
+   tile is recomputed*.
+
 ## Consequences
 
 - CAMP's LOD renderer (step 3) reads overview levels by view scale from the
@@ -165,7 +261,11 @@ pairing).
   policy lands (after the D8 re-split).
 - Every ingest should be followed by an overview rebuild (cheap relative to
   ingest); a stale sidecar renders stale coarse imagery but can never corrupt
-  fine data.
+  fine data. **Since #389 (§6)** the ingest pipeline runs `--if-stale`
+  unconditionally, a stale sidecar is detectable (`--check`, exit 3), and the
+  rebuild after a small ingest re-folds only the changed tiles' ancestors.
+  A display consumer may warn on a stale sidecar; nothing on a safety path may
+  read the signal (ADR-0013 D8).
 - Overviews add ~1/3 of a layer's fine-tile volume (geometric series).
 - **Deferred, for the depths pyramid:** `marine_bathymetry_store`'s flat-layout
   loader (`tile_io.cpp`) WARNs and skips **any** subdirectory it finds under a
