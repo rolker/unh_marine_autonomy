@@ -138,22 +138,25 @@ happens **at ingest**, and for the live chain that means **`mru_transform`**: ba
 GPS data exactly as received, the TF tree reflects WGS84. Consequences to design: the
 conversion is conditional on fix source/status (RTK-fixed positions are in the base frame,
 autonomous ones are not), so `mru_transform` needs a per-position-source frame declaration
-and applies the Helmert (PROJ) only where it applies; the resulting frame is published and
-recorded in the trajectory rung and the store registry; the datum library gains the
+and applies the Helmert (PROJ) only where it applies; the resulting frame is published; the datum library gains the
 reverse step (WGS84 → NAD83(2011) → GEOID18 → NAVD88 → MLLW) so chart-datum conversion
-stays correct; existing tiles are NAD83-valued and are re-labelled or regenerated (they are
-regenerable). Frame realization becomes a recorded property of every trajectory rung and
-every store rung. Not to be dictated by MaCORS: any source declares its frame.
+stays correct; existing tiles are NAD83-valued and are regenerated (they are regenerable). Not to be
+dictated by MaCORS: any source declares its frame.
 Tracked as [rolker/mru_transform#47](https://github.com/rolker/mru_transform/issues/47).
 
 **Refinement (Roland, 2026-09-16):** confirming MaCORS is a platform-instance detail. The
-mechanism discovers a source's frame automatically where it can (RTCM base position
-matched against published CORS coordinates per candidate frame; RTCM datum messages;
-receiver reporting) and falls back to per-source user configuration, where the user looks
-the datum up. And the stores carry **transform metadata the way the VDatum grids do**: per
-rung and per trajectory, the frame realization + epoch, the vertical reference, and the
-transformation lineage applied (PROJ/EPSG id, version). That block is part of the
-[tile-contents thread](#tile-contents-thread) — metadata at rung level, not per cell.
+mechanism discovers a source's frame automatically where it can (RTCM datum messages,
+receiver reporting, base position matched against published CORS coordinates when the base
+is a real station — not for a network/virtual base) and falls back to per-source user
+configuration, where the user looks the datum up. **The stores carry no datum labels**, per
+tile or per rung: the invariant is enforced at the source, so what is needed is the
+**transformation support data** (Helmert parameters, epoch handling, any future grids)
+provisioned beside the geoid and VDatum grids under `sources/datum/` and consumed by
+`mru_transform` through PROJ. Existing recordings are corrected in the processing chain
+by a [correction record](#corrections-as-data) ("positions from source S in recording R
+are in frame F") and the affected rungs regenerated. Also true: the datum library reads
+the stores to find the chart datum, so once the live chain is WGS84 its own pipeline must
+add the WGS84 → NAD83(2011) step before GEOID18.
 
 ## Corrections as data *(open)*
 
@@ -399,7 +402,7 @@ at a time; the register is the record.
 | # | Decision | When / where | Pressure at the time | Changed since | Verdict |
 |---|---|---|---|---|---|
 | R1 | One GGGS-tiled store, per-cell {depth, σ}, layer priority; no PostGIS | ADR-0002 D1–D3, 2026-06-10 | Massabesic deployment #250 (June 10–11) | mixed levels, five categories | **stands** (09-16): GGGS defensible; tile contents to be revised per user needs → tile-contents thread |
-| R2 | All heights ellipsoidal, datum conversion at import; `map_tide` only runtime vertical reference | ADR-0002 D4 / ADR-0010 D5 | GRANIT layer in the wrong datum (06-15) | geoid round-trip error 0.626 m found 08-21; frame realization never named (MaCORS = NAD83(2011)); registry `datum` empty | **stands** (09-16), widened: stores stay WGS84; RTK-frame → WGS84 at ingest (`mru_transform` for the live chain); frame recorded per rung — see the reference frame thread (NAD83(2011) vs WGS84 = +1.19 m in h here) |
+| R2 | All heights ellipsoidal, datum conversion at import; `map_tide` only runtime vertical reference | ADR-0002 D4 / ADR-0010 D5 | GRANIT layer in the wrong datum (06-15) | geoid round-trip error 0.626 m found 08-21; frame realization never named (MaCORS = NAD83(2011)) | **stands** (09-16): stores stay WGS84, no datum labels on tiles; RTK-frame → WGS84 at the source (`mru_transform`, with transformation support data under `sources/datum/`); old recordings via correction records + regeneration — see the reference frame thread (NAD83(2011) vs WGS84 = +1.19 m in h here) |
 | R3 | Per-tile GeoTIFFs, later 3-file split, later collapsed to value tile only | ADR-0002 D5, #178, #248 | tile-sync design, then #96 greenfield | — | not yet |
 | R4 | Change key = version/timestamp, not content hash | ADR-0008 D3 (06-27) vs ADR-0002 D6 | live transport build for the last Massabesic days | never reconciled into 0002 | not yet |
 | R5 | Per-day epochs → one fused grid per layer | uma#221, 06-25 | first M3 ingest blocked on it | trajectory unit = UTC day proposed here | not yet |
