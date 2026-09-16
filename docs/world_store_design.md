@@ -293,6 +293,43 @@ plus a one-time move; nothing in a tile changes.
 | cube 0003 | named as an instance of the universal fingerprint; unimplemented fields listed |
 | camp 0014 | D4's quoted "as imported" for `reference` corrected (camp#202) |
 
+## Decision re-examination register *(in progress)*
+
+Roland, 2026-09-16: the decisions made during the deployment months — including the ones
+that were later reversed — "could probably all use a new look in case time crunches made
+us overlook important details." Each row gets a fresh read in the off-season: what was
+decided, under what pressure, what has changed since, and a verdict. A verdict of *stands*
+means re-examined and kept, not "never looked at". Rows are worked in conversation, a few
+at a time; the register is the record.
+
+| # | Decision | When / where | Pressure at the time | Changed since | Verdict |
+|---|---|---|---|---|---|
+| R1 | One GGGS-tiled store, per-cell {depth, σ}, layer priority; no PostGIS | ADR-0002 D1–D3, 2026-06-10 | Massabesic deployment #250 (June 10–11) | mixed levels, five categories | not yet |
+| R2 | All heights ellipsoidal, datum conversion at import; `map_tide` only runtime vertical reference | ADR-0002 D4 / ADR-0010 D5 | GRANIT layer in the wrong datum (06-15) | geoid round-trip error 0.626 m found 08-21 | not yet |
+| R3 | Per-tile GeoTIFFs, later 3-file split, later collapsed to value tile only | ADR-0002 D5, #178, #248 | tile-sync design, then #96 greenfield | — | not yet |
+| R4 | Change key = version/timestamp, not content hash | ADR-0008 D3 (06-27) vs ADR-0002 D6 | live transport build for the last Massabesic days | never reconciled into 0002 | not yet |
+| R5 | Per-day epochs → one fused grid per layer | uma#221, 06-25 | first M3 ingest blocked on it | trajectory unit = UTC day proposed here | not yet |
+| R6 | Unified backscatter store → two sibling stores | uma#190, 06-21 | sidescan driver in progress | MBES store has no pyramid, single rung, no mixed levels | not yet |
+| R7 | `--append` → greenfield regeneration, stores are a regenerable cache | cube#96, 06-30 → 07-01 | 07-02 authoritative rebuild deadline | regenerate is not operational (no ledger, script broken) | not yet |
+| R8 | Per-cell source and time rasters dropped; σ carries quality | uma#248, 07-01 | same | multi-sensor fusion callback (cube#120); blunder gate cannot flag | not yet |
+| R9 | Single `survey/` → `draft/` + `processed/` re-split | uma#308, 08-20 | pre-Shoals | backscatter never followed | not yet |
+| R10 | Chart layer regenerated wholesale from the corpus, never merged; footprint clipping withdrawn | ADR-0010 D7, uma#337 | Shoals ENC-first prior, 08-20 → 22 | — | not yet |
+| R11 | Pyramids = cross-tile parent tiles in a sidecar; depth fold shallowest-preserving, imagery mean | uma#188 / ADR-0011, 07-24 | between deployments | staleness (#389); safety review | not yet |
+| R12 | Native wins on disk; derived overviews fill gaps only | uma#331, 08-21 | chart layer blank past level 5 on dev | — | not yet |
+| R13 | Depth-adaptive levels: 0.05·depth, no floor, clamp [8, 14], shallowest depth per tile | ADR-0010 D9 #369, 09-09 | Shoals data in hand | writer as built differs (parents alive, achieved level, k = 0.71) | not yet |
+| R14 | Capture distance floor 0.5 m removed; k = 0.71 | cube#143, 09-14 | — | — | not yet |
+| R15 | Sidescan tier 1 bakes the full pose; nav/mounting change = reimport | ADR-0006 D2, 06-20 | driver + mosaic for the last Massabesic days | reversed by this draft (deferred pose) — re-examine the reversal too | not yet |
+| R16 | Sidescan fixed at L13 ("proposed position") | ADR-0006 D10 | same | mixed levels everywhere else | not yet |
+| R17 | Costmap: worst-case clearance = depth − σ; keepout only on trusted data < 0.4 m; chart never keepout | 06-25 discussion | Massabesic fences from the interpolated prior | — | not yet |
+| R18 | Costmap combine is raise-only | uma#296, 08-07 | — | flagged as safety-motivated | not yet |
+| R19 | Safety queries never consult LOD; shoalest-reliable reads every rung and level | ADR-0013 D8, 08-21 | — | safety review | not yet |
+| R20 | Live node writes only `draft`; chart prior primes the predicted surface only | cube#89, 06-29 | — | cube#160 depth-belief precedence proposed | not yet |
+| R21 | Host roles: gabby live, salmon durable + curated, dev prototypes | 06-20 discussion | — | cadence reversed by the 09-16 field observation | not yet |
+| R22 | CAMP composites with the selection as a ceiling rather than store-side pyramids for chart/reference | camp#194, 08-21 | Shoals prep | mpt#43 same bug in the explorer | not yet |
+| R23 | Explorer indexes ping geometry, not store acceptance; single pass = unit of sidescan interpretation | uma#258, 07-13 | ball-turret search | — | not yet |
+| R24 | S-102 import operator-run only; no deployed `chart/` until uma#276 | READMEs | — | — | not yet |
+| R25 | `~/data/world` = one collection by source class, never per campaign | 08-25 | Shoals import | — | stands (restated 09-16) |
+
 ## Owed review of safety-motivated decisions *(open)*
 
 Roland, 2026-09-16: agents made safety a top requirement throughout this evolution and it
@@ -322,6 +359,8 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 
 ## Change log
 
+- 2026-09-16 (later) — added the decision re-examination register (25 rows, all but one
+  'not yet').
 - 2026-09-16 (later) — added Prior work: trackers, thread-only decisions, reversed
   directions, open placeholders, from a sweep of GitHub + repo docs.
 - 2026-09-16 (later) — Distribution: recorded the field observation that daily shoreside
