@@ -51,7 +51,7 @@ edges (D5); layers encode process and σ encodes trust (D4).
 
 ## The model — five categories *(open: names; settled: the split)*
 
-Read it as a build pipeline. Sources are the source files, corrections are patches applied
+Read it as a build pipeline. Sources are the source files, curation records are patches applied
 at compile time, observations are object files, trajectories are a library everything
 links against, stores are the linked binaries, pyramids and manifests are derived
 artefacts, and the regenerate command is `make`.
@@ -59,7 +59,7 @@ artefacts, and the regenerate command is `make`.
 | Category | What it holds | Who may read it | Regenerable? |
 |---|---|---|---|
 | **sources** | Material received from outside, as received: bag references, ENC editions + registry, S-100 products (S-102 grids, later S-101 features), geoid and VDatum grids, third-party priors (GRANIT, BAGs) | Importers only — **never a consumer** | No: data of record, immutable |
-| **config** | Human-authored, git-reviewed, materialized here for discovery: correction records, datum override polygons | Importers, the datum library | From git |
+| **curation** | Human-authored or human-reviewed statements about the data, materialized from git: correction records, cleaning marks (name decided 2026-09-16; datum override polygons are NOT here — they are a declared prior and stay under `sources/datum/user/` as ADR-0010 D3 placed them) | Importers, the link step | From git |
 | **trajectories** | Platform pose (earth → base_link) versus time; a product covers a platform + time interval + rung, partitioning is the user's choice; own ladder | The link step; QC tools | Yes, from bags (+ raw GNSS for post-processed rungs) |
 | **observations** | Pose-independent, time-stamped, sensor-frame samples per quantity: sidescan per-ping samples (today's tier 1), the CUBE sounding spill, future casts | The link step only | Yes, from bags + corrections; expensive |
 | **quantity stores** | The consumed products: `depths/`, `backscatter/`, `sidescan/`, `water/`, `features/`, and **derived products** built from other quantity stores (a merged mosaic if ever wanted; more likely seafloor classification from sidescan + backscatter + bathymetry); GGGS-tiled, laddered, with pyramids and manifests | Every consumer | Yes, from observations + trajectories, or from other stores (derived) |
@@ -168,7 +168,7 @@ and how to read around it, e.g.
 - bag *Z*: `frame_id` `base_link` should read `bizzy/base_link`;
 - platform *P* from date *D*: static transform `base_link → m3` is *T'* (mounting change).
 
-Records live in `config/corrections/`, materialized from a project repo where they are
+Records live in `curation/corrections/`, materialized from a project repo where they are
 PR-reviewed like the datum polygons, keyed by the source's identity (for a bag, the
 SHA-256 of its `metadata.yaml`, the key cube ADR-0003 already uses). Importers apply them
 while reading; the fingerprint of every downstream stage includes the set applied. This
@@ -349,8 +349,9 @@ selection core, "blocked on a decision, not code"), mpt#43; echoboats#490, #488,
 | `charts/ENC_ROOT`, `charts/*.yaml` | ENC editions + region config | `sources/enc/` |
 | `s100/s102/` | S-102 import cache | `sources/s100/` |
 | `datum/geoid`, `datum/vdatum` | grids | `sources/datum/` |
-| `datum/user/` (planned) | override polygons | `config/datum/` |
-| (none) | correction records | `config/corrections/` |
+| `datum/user/` (planned) | override polygons | `sources/datum/user/` (unchanged role: a declared prior) |
+| (none) | correction records | `curation/corrections/` |
+| (none) | cleaning marks | `curation/cleaning/` |
 | (none) | trajectories | `trajectories/<platform>/<day>/` |
 | (none) | CUBE spill | `observations/depths/` |
 
@@ -478,13 +479,14 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 | 5 | Tile contents per user; is uncertainty required for every data type? | tile-contents thread |
 | 11 | Gradual S-100 adoption strategy (S-102 now, S-101 features later); what the stores must accommodate | agent proposes |
 | 10 | Shoreline / coastline representation in the store (needed so the costmap stops using `unsurveyed_is_lethal` as a shore proxy) | agent proposes |
-| 9 | Cleaning marks live with corrections and datum polygons as reviewed data applied at link time (**decided**) — but is `config/` the right NAME for that category? Candidates: `curation/`, `annotations/`, `edits/` | Roland |
+| 9 | Category name | **decided**: `curation/` (corrections + cleaning marks); datum polygons stay under `sources/datum/user/` |
 | 6 | Copy of record, replica rule, and on-boat automatic `processed` (see Distribution) | Roland + agent |
 | 7 | `water/` theme | **decided**: in the model now as a named quantity with the same ladder and stage rules; implementation stays under uma#300 |
 | 8 | Fingerprint: one schema or shared core? | agent proposes |
 
 ## Change log
 
+- 2026-09-16 (later) — `config/` renamed `curation/` (corrections + cleaning); datum polygons stay in sources.
 - 2026-09-16 (later) — register batch 5 (R20–R24): all re-examined; roles not hosts; libraries beside the
   stores; explorer direction; S-100 adoption strategy owed (Q11). REGISTER COMPLETE for the first pass.
 - 2026-09-16 (later) — register batch 4 (R17–R19): R17 stands + shoreline representation owed (Q10);
