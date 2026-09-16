@@ -144,6 +144,7 @@ reverse step (WGS84 → NAD83(2011) → GEOID18 → NAVD88 → MLLW) so chart-da
 stays correct; existing tiles are NAD83-valued and are re-labelled or regenerated (they are
 regenerable). Frame realization becomes a recorded property of every trajectory rung and
 every store rung. Not to be dictated by MaCORS: any source declares its frame.
+Tracked as [rolker/mru_transform#47](https://github.com/rolker/mru_transform/issues/47).
 
 ## Corrections as data *(open)*
 
