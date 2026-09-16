@@ -13,16 +13,37 @@ a candidate for an ADR cut; *open* means the shape may still change and code sho
 bake it in; the [open questions](#open-questions) list names who owns each answer. Edit
 the [change log](#change-log) with every substantive edit.
 
-## Purpose
+## Purpose — the vision (Roland, 2026-09-16)
 
-`~/data/world/` is the platform's persistent knowledge of its environment: one geodata
-collection shared by the navigation stack, the operator station (CAMP), the survey
-explorer, and the public web view. Everything in it is derivable from source material —
-bags, chart editions, third-party grids — and is therefore a cache with a recorded key.
-That single invariant (*regenerable from sources, and provably so*) is what the rest of
-this document exists to make operational; on 2026-09-16 it was true in the ADRs and not
-in practice (no ledger of folded bags, a broken import script, a fingerprint that
-recorded only tiling, pyramids nobody rebuilt).
+The world store is **one unified place to explore the data we collect and to work with it
+to develop better ways of using it**. Its roles, in his words, lightly ordered:
+
+- **No replication of data across projects or purposes.** The autonomy stack and the
+  operator's view read the same collection; a new project or analysis does not get its own
+  copy.
+- **A place for raw data to go and get turned into products users can explore.**
+- **A place where different datasets are fused, or at least seen in context with each
+  other**, for a more complete view of the area in question.
+- **A source for robots to get navigation-related information.**
+- **A structure that lets parts of the whole be updated or visualized without paying for
+  the whole** — a quadtree or similar layout (GGGS) is what makes a piece of a large
+  collection cheap to touch.
+- The vision **evolved**: what began as a home for post-survey CUBE surfaces and sidescan
+  grew to hold chart data serving several purposes at once (priming CUBE, feeding the
+  costmap, display).
+- **Not yet stated anywhere before today:** the combination of different kinds of data,
+  and of data from previous passes, may **constrain the products better than any single
+  dataset can** — estimating an equivalent sound speed from overlapping passes, processing
+  backscatter and sidescan in the presence of bathymetry. This is the direction uma#300
+  (cast-free sound speed inversion) and uma#247 (sidescan ↔ CUBE) point at, and it decides
+  what each tile must keep (see [tile contents](#tile-contents-thread)).
+
+Everything in the store is derivable from source material — bags, chart editions,
+third-party grids — and is therefore a cache with a recorded key. That invariant
+(*regenerable from sources, and provably so*) is what the rest of this document exists to
+make operational; on 2026-09-16 it was true in the ADRs and not in practice (no ledger of
+folded bags, a broken import script, a fingerprint that recorded only tiling, pyramids
+nobody rebuilt).
 
 Inherited from ADR-0010 and unchanged here: one collection split by kind and provenance,
 never by campaign or site (D1/D3); all heights WGS84-ellipsoidal, datum conversion at the
@@ -293,6 +314,29 @@ plus a one-time move; nothing in a tile changes.
 | cube 0003 | named as an instance of the universal fingerprint; unimplemented fields listed |
 | camp 0014 | D4's quoted "as imported" for `reference` corrected (camp#202) |
 
+## Tile contents thread *(open)*
+
+What each tile keeps is to be **revised per the users of the store and what they need**
+(R1 verdict). Users identified so far: the costmap (depth, σ), CAMP and the explorer
+(depth, σ, backscatter, quality for display), CUBE priming (depth, σ, and ideally the
+hypothesis state), survey QC (sample count, hypothesis count/strength, flags), the
+cross-dataset constraint work (whatever an equivalent-sound-speed or backscatter-with-bathy
+estimator needs from a previous pass — likely more than the surface: per-cell angle
+coverage, sample statistics). Whether **a form of uncertainty is required for every data
+type** (backscatter, sidescan, water properties) is to be debated. Per-cell *source* stays
+out (lineage is tile-granular via the survey index and fingerprints). Data-cleaning marks
+belong here too (see R7).
+
+## Time thread *(open, separate from tile contents)*
+
+Time is its own problem and is not to be folded into the metadata question. Two very
+different time scales want tracking: **seafloor change** between passes (the change-
+detection idea explored and deferred in uma#221, still wanted), and **fast-varying
+quantities** such as sound speed and water level that a derived product depends on. A
+per-cell timestamp served neither well and was dropped (#248); trajectories and
+observations now carry time natively, and the question is what a *store* should record —
+per pass, per tile, or as a separate time axis for the quantities that need it.
+
 ## Decision re-examination register *(in progress)*
 
 Roland, 2026-09-16: the decisions made during the deployment months — including the ones
@@ -304,14 +348,14 @@ at a time; the register is the record.
 
 | # | Decision | When / where | Pressure at the time | Changed since | Verdict |
 |---|---|---|---|---|---|
-| R1 | One GGGS-tiled store, per-cell {depth, σ}, layer priority; no PostGIS | ADR-0002 D1–D3, 2026-06-10 | Massabesic deployment #250 (June 10–11) | mixed levels, five categories | not yet |
-| R2 | All heights ellipsoidal, datum conversion at import; `map_tide` only runtime vertical reference | ADR-0002 D4 / ADR-0010 D5 | GRANIT layer in the wrong datum (06-15) | geoid round-trip error 0.626 m found 08-21 | not yet |
+| R1 | One GGGS-tiled store, per-cell {depth, σ}, layer priority; no PostGIS | ADR-0002 D1–D3, 2026-06-10 | Massabesic deployment #250 (June 10–11) | mixed levels, five categories | **stands** (09-16): GGGS defensible; tile contents to be revised per user needs → tile-contents thread |
+| R2 | All heights ellipsoidal, datum conversion at import; `map_tide` only runtime vertical reference | ADR-0002 D4 / ADR-0010 D5 | GRANIT layer in the wrong datum (06-15) | geoid round-trip error 0.626 m found 08-21; frame realization never named (MaCORS = NAD83(2011)); registry `datum` empty | **stands** (09-16), widened: must account for RTK datums / frame realization and record it per rung |
 | R3 | Per-tile GeoTIFFs, later 3-file split, later collapsed to value tile only | ADR-0002 D5, #178, #248 | tile-sync design, then #96 greenfield | — | not yet |
 | R4 | Change key = version/timestamp, not content hash | ADR-0008 D3 (06-27) vs ADR-0002 D6 | live transport build for the last Massabesic days | never reconciled into 0002 | not yet |
 | R5 | Per-day epochs → one fused grid per layer | uma#221, 06-25 | first M3 ingest blocked on it | trajectory unit = UTC day proposed here | not yet |
 | R6 | Unified backscatter store → two sibling stores | uma#190, 06-21 | sidescan driver in progress | MBES store has no pyramid, single rung, no mixed levels | not yet |
-| R7 | `--append` → greenfield regeneration, stores are a regenerable cache | cube#96, 06-30 → 07-01 | 07-02 authoritative rebuild deadline | regenerate is not operational (no ledger, script broken) | not yet |
-| R8 | Per-cell source and time rasters dropped; σ carries quality | uma#248, 07-01 | same | multi-sensor fusion callback (cube#120); blunder gate cannot flag | not yet |
+| R7 | `--append` → greenfield regeneration, stores are a regenerable cache | cube#96, 06-30 → 07-01 | 07-02 authoritative rebuild deadline | regenerate is not operational (no ledger, script broken) | **stands** (09-16): full regeneration must be possible when all bags + the corrections layer exist; **add a data-cleaning layer** (manual, automatic or both — decide later) |
+| R8 | Per-cell source and time rasters dropped; σ carries quality | uma#248, 07-01 | same | multi-sensor fusion callback (cube#120); blunder gate cannot flag | **partly** (09-16): source/time stay out; uncertainty may be required for every data type (to debate); metadata-per-tile and time are two separate threads |
 | R9 | Single `survey/` → `draft/` + `processed/` re-split | uma#308, 08-20 | pre-Shoals | backscatter never followed | not yet |
 | R10 | Chart layer regenerated wholesale from the corpus, never merged; footprint clipping withdrawn | ADR-0010 D7, uma#337 | Shoals ENC-first prior, 08-20 → 22 | — | not yet |
 | R11 | Pyramids = cross-tile parent tiles in a sidecar; depth fold shallowest-preserving, imagery mean | uma#188 / ADR-0011, 07-24 | between deployments | staleness (#389); safety review | not yet |
@@ -351,14 +395,16 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 | 1 | Rung names: `published | reference | draft | processed`? | Roland |
 | 2 | Correction-record schema and canonical home | agent proposes, Roland decides |
 | 3 | Trajectory product format and the day/mission unit | agent proposes |
-| 4 | Backscatter: byproduct or product? | Roland |
-| 5 | Per-cell quality/flag band back, or σ only? | Roland (ties to the safety review) |
+| 4 | Backscatter: byproduct or product? (the vision's cross-dataset constraint leans product) | Roland |
+| 5 | Tile contents per user; is uncertainty required for every data type? | tile-contents thread |
 | 6 | Copy of record, replica rule, and on-boat automatic `processed` (see Distribution) | Roland + agent |
 | 7 | `water/` theme: in this model now, or later? | Roland |
 | 8 | Fingerprint: one schema or shared core? | agent proposes |
 
 ## Change log
 
+- 2026-09-16 (later) — Purpose rewritten as Roland's vision; register batch 1 verdicts (R1, R2,
+  R7 stand with amendments; R8 partly); new threads: tile contents, time; data-cleaning layer.
 - 2026-09-16 (later) — added the decision re-examination register (25 rows, all but one
   'not yet').
 - 2026-09-16 (later) — added Prior work: trackers, thread-only decisions, reversed
