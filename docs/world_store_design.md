@@ -105,6 +105,46 @@ Today's names on disk: depths use `chart | reference | draft | processed`; the M
 backscatter store uses a single `survey`; sidescan uses `tier1 | processed`. The
 migration table below maps them.
 
+## Reference frame thread *(open — finding 2026-09-16)*
+
+The ellipsoidal invariant (R2) never named the ellipsoid's **frame realization**, and the
+chain today is not in the frame its labels say:
+
+- **MaCORS RTK corrections reference NAD83(2011) epoch 2010.0** (every rover configuration
+  guide says "select NAD 1983 2011 / EPSG:6318"; the network's own pages are behind a login,
+  so this is to be confirmed from the station-coordinate list with our credentials).
+  An RTK rover inherits the base frame, so with RTK fixed every BizzyBoat position — and
+  `ellipsoidal_fix_node`'s recovered ellipsoidal height — is NAD83(2011).
+- **GEOID18 (`us_noaa_g2018u0.tif`) is defined for NAD83(2011) heights only** (NGS: heights in
+  WGS84 or ITRF "are not compatible"), and the VDatum GTX grids are NAD83(2011)-registered.
+  `marine_vertical_datum` documents its input as WGS84 and feeds it straight to GEOID18, so the
+  chart layer, the lake datum (48.88 m, derived from the boat's own nav z) and the survey
+  layers are all **NAD83(2011) heights labelled WGS84** — consistent with each other by
+  accident, as long as RTK is fixed.
+- **The offset is not small.** PROJ (EPSG:8970, ITRF2014 → NAD83(2011), epoch 2010.0),
+  NAD83 minus ITRF/WGS84: Portsmouth dN −1.08 m, dE +0.27 m, **dh +1.19 m**; Massabesic
+  dN −1.07, dE +0.28, dh +1.19; Lewes dN −0.95, dE +0.36, dh +1.31. Horizontal drift between
+  the plate-fixed NAD83 epoch and a current-epoch WGS84 position adds ~2 cm/yr since 2010.
+- **Where it breaks today:** (1) RTK loss — autonomous GNSS positions are WGS84 at the
+  current epoch, so `mru_transform` (which accepts any fix, `status >= 0`) sees a ~1.1 m
+  horizontal and ~1.2 m vertical jump that the sea-surface estimate and every sounding
+  inherit; (2) ENC positions are WGS84 while survey positions are NAD83 — a ~1.1 m
+  horizontal offset between the chart and survey rungs, one full cell at level 10; (3) any
+  other caster, PPK base, platform (an ITRF-positioned vessel) or product joins in its own
+  frame; (4) `registry.json`'s `datum` field is empty on every store.
+
+**Direction (Roland, 2026-09-16):** stores stay WGS84; the correction from the RTK frame
+happens **at ingest**, and for the live chain that means **`mru_transform`**: bags keep the
+GPS data exactly as received, the TF tree reflects WGS84. Consequences to design: the
+conversion is conditional on fix source/status (RTK-fixed positions are in the base frame,
+autonomous ones are not), so `mru_transform` needs a per-position-source frame declaration
+and applies the Helmert (PROJ) only where it applies; the resulting frame is published and
+recorded in the trajectory rung and the store registry; the datum library gains the
+reverse step (WGS84 → NAD83(2011) → GEOID18 → NAVD88 → MLLW) so chart-datum conversion
+stays correct; existing tiles are NAD83-valued and are re-labelled or regenerated (they are
+regenerable). Frame realization becomes a recorded property of every trajectory rung and
+every store rung. Not to be dictated by MaCORS: any source declares its frame.
+
 ## Corrections as data *(open)*
 
 A **correction record** is a small, reviewed file that says what is wrong with a source
@@ -349,7 +389,7 @@ at a time; the register is the record.
 | # | Decision | When / where | Pressure at the time | Changed since | Verdict |
 |---|---|---|---|---|---|
 | R1 | One GGGS-tiled store, per-cell {depth, σ}, layer priority; no PostGIS | ADR-0002 D1–D3, 2026-06-10 | Massabesic deployment #250 (June 10–11) | mixed levels, five categories | **stands** (09-16): GGGS defensible; tile contents to be revised per user needs → tile-contents thread |
-| R2 | All heights ellipsoidal, datum conversion at import; `map_tide` only runtime vertical reference | ADR-0002 D4 / ADR-0010 D5 | GRANIT layer in the wrong datum (06-15) | geoid round-trip error 0.626 m found 08-21; frame realization never named (MaCORS = NAD83(2011)); registry `datum` empty | **stands** (09-16), widened: must account for RTK datums / frame realization and record it per rung |
+| R2 | All heights ellipsoidal, datum conversion at import; `map_tide` only runtime vertical reference | ADR-0002 D4 / ADR-0010 D5 | GRANIT layer in the wrong datum (06-15) | geoid round-trip error 0.626 m found 08-21; frame realization never named (MaCORS = NAD83(2011)); registry `datum` empty | **stands** (09-16), widened: stores stay WGS84; RTK-frame → WGS84 at ingest (`mru_transform` for the live chain); frame recorded per rung — see the reference frame thread (NAD83(2011) vs WGS84 = +1.19 m in h here) |
 | R3 | Per-tile GeoTIFFs, later 3-file split, later collapsed to value tile only | ADR-0002 D5, #178, #248 | tile-sync design, then #96 greenfield | — | not yet |
 | R4 | Change key = version/timestamp, not content hash | ADR-0008 D3 (06-27) vs ADR-0002 D6 | live transport build for the last Massabesic days | never reconciled into 0002 | not yet |
 | R5 | Per-day epochs → one fused grid per layer | uma#221, 06-25 | first M3 ingest blocked on it | trajectory unit = UTC day proposed here | not yet |
@@ -403,6 +443,8 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 
 ## Change log
 
+- 2026-09-16 (later) — reference frame thread: MaCORS/GEOID18/VDatum are NAD83(2011); +1.19 m
+  height offset vs WGS84 measured with PROJ; direction = convert at ingest in mru_transform.
 - 2026-09-16 (later) — Purpose rewritten as Roland's vision; register batch 1 verdicts (R1, R2,
   R7 stand with amendments; R8 partly); new threads: tile contents, time; data-cleaning layer.
 - 2026-09-16 (later) — added the decision re-examination register (25 rows, all but one
