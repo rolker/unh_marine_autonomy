@@ -384,6 +384,28 @@ type** (backscatter, sidescan, water properties) is to be debated. Per-cell *sou
 out (lineage is tile-granular via the survey index and fingerprints). Data-cleaning marks
 belong here too (see R7).
 
+## Level thread *(open — a dedicated look owed)*
+
+How a quantity's storage level is chosen is to be settled **generally**, not per quantity:
+the depth ladder (ADR-0010 D9 #369, as-built in cube#143: coarser of required-from-depth
+and achieved-from-density, positioning floor uma#386 unmerged), the chart's native scale
+ladder (no generated pyramid, ADR-0010 D7), data that never passes through CUBE (S-102
+imports, reference grids, sidescan mosaics, water properties), and the writer-side
+differences ADR-0010 D9 does not yet record. Roland (2026-09-16): take a closer look and
+compare with the chart case before pinning anything further; sidescan's level is decided
+by its properties like any other quantity (R16).
+
+**Idea to vet (Roland, 2026-09-16) — pass-stacked sidescan tiles.** Sidescan loses a lot by
+being composited into one tile. Each new pass over a tile could generate a *new* tile with
+that pass pasted over the existing one; a partial pass replaces only what it covers. That
+is a form of **time-varying tile**: a per-tile stack of pass versions rather than one
+composite. It is consistent with the explorer's rule that a single pass is the unit of
+sidescan interpretation (uma#258) and different from the per-day epochs dropped in R5 (a
+partition of the raster by date, serving nobody). Architectural implications, if it
+holds: tile versions become first-class in the store layout and the sync model; the
+pyramid folds the top of the stack; the [time thread](#time-thread-open-separate-from-tile-contents)
+gains a concrete consumer. Not decided.
+
 ## Time thread *(open, separate from tile contents)*
 
 Time is its own problem and is not to be folded into the metadata question. Two very
@@ -415,12 +437,12 @@ at a time; the register is the record.
 | R8 | Per-cell source and time rasters dropped; σ carries quality | uma#248, 07-01 | same | multi-sensor fusion callback (cube#120); blunder gate cannot flag | **partly** (09-16): source/time stay out; uncertainty may be required for every data type (to debate); metadata-per-tile and time are two separate threads |
 | R9 | Single `survey/` → `draft/` + `processed/` re-split | uma#308, 08-20 | pre-Shoals | backscatter never followed | **stands** (09-16): keep a live rung separate from processed; backscatter adopts it |
 | R10 | Chart layer regenerated wholesale from the corpus, never merged; footprint clipping withdrawn | ADR-0010 D7, uma#337 | Shoals ENC-first prior, 08-20 → 22 | — | not yet |
-| R11 | Pyramids = cross-tile parent tiles in a sidecar; depth fold shallowest-preserving, imagery mean | uma#188 / ADR-0011, 07-24 | between deployments | staleness (#389); safety review | not yet |
-| R12 | Native wins on disk; derived overviews fill gaps only | uma#331, 08-21 | chart layer blank past level 5 on dev | — | not yet |
-| R13 | Depth-adaptive levels: 0.05·depth, no floor, clamp [8, 14], shallowest depth per tile | ADR-0010 D9 #369, 09-09 | Shoals data in hand | writer as built differs (parents alive, achieved level, k = 0.71) | not yet |
-| R14 | Capture distance floor 0.5 m removed; k = 0.71 | cube#143, 09-14 | — | — | not yet |
+| R11 | Pyramids = cross-tile parent tiles in a sidecar; depth fold shallowest-preserving, imagery mean | uma#188 / ADR-0011, 07-24 | between deployments | staleness (#389); no coarse-level query exists | **amended** (09-16): depth overviews fold REPRESENTATIVE (mean/median), not shoalest; a conservative/shoalest overview for a voyage planner stays possible, mechanism deferred until a planner needs it |
+| R12 | Native wins on disk; derived overviews fill gaps only | uma#331, 08-21 | chart layer blank past level 5 on dev | display LOD partly solved (ADR-0013, camp#194/195); shared LOD library (ADR-0013 D7, mpt#36) is display-side | **stands for storage** (09-16); two scenarios still to be listed separately: live (`draft`, boat cache) vs processed/other rungs |
+| R13 | Depth-adaptive levels: 0.05·depth, no floor, clamp [8, 14], shallowest depth per tile | ADR-0010 D9 #369, 09-09 | Shoals data in hand | writer as built differs (parents alive, achieved level, k = 0.71); uma#386 floor unmerged; cube#161 achieved 10–11 at 1400 s/m² | **deferred to a dedicated look** (09-16): compare with the chart ladder and with data that does not go through CUBE (S-102, reference grids, sidescan) — see the level thread |
+| R14 | Capture distance floor 0.5 m removed; k = 0.71 | cube#143, 09-14 | — | — | **out of scope** (09-16): a CUBE processing question, not a store decision; lives with cube |
 | R15 | Sidescan tier 1 bakes the full pose; nav/mounting change = reimport | ADR-0006 D2, 06-20 | driver + mosaic for the last Massabesic days | reversed by this draft (deferred pose) | **reversal stands** (09-16): trajectories take the pose half of tier 1; the samples half is the sidescan observations record; tier 1 dissolves |
-| R16 | Sidescan fixed at L13 ("proposed position") | ADR-0006 D10 | same | mixed levels everywhere else | not yet |
+| R16 | Sidescan fixed at L13 ("proposed position") | ADR-0006 D10 | same | mixed levels everywhere else | **withdrawn** (09-16): sidescan's level is determined by its data properties like every other quantity |
 | R17 | Costmap: worst-case clearance = depth − σ; keepout only on trusted data < 0.4 m; chart never keepout | 06-25 discussion | Massabesic fences from the interpolated prior | — | not yet |
 | R18 | Costmap combine is raise-only | uma#296, 08-07 | — | flagged as safety-motivated | not yet |
 | R19 | Safety queries never consult LOD; shoalest-reliable reads every rung and level | ADR-0013 D8, 08-21 | — | safety review | not yet |
@@ -461,6 +483,9 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 
 ## Change log
 
+- 2026-09-16 (later) — register batch 3 (R11–R14, R16): representative depth overviews; R12 stands
+  (two scenarios to list); R13 deferred to a level look; R14 out of scope (cube); R16 withdrawn.
+  Level thread + the pass-stacked sidescan tile idea added.
 - 2026-09-16 (later) — register batch 2 (R5, R6, R9, R15): all stand; trajectories not split by the
   store; derived products added as a kind of quantity store; tier 1 dissolves into observations + trajectories.
 - 2026-09-16 (later) — decided: rung names; backscatter = product; `water/` in the model now;
