@@ -146,6 +146,15 @@ regenerable). Frame realization becomes a recorded property of every trajectory 
 every store rung. Not to be dictated by MaCORS: any source declares its frame.
 Tracked as [rolker/mru_transform#47](https://github.com/rolker/mru_transform/issues/47).
 
+**Refinement (Roland, 2026-09-16):** confirming MaCORS is a platform-instance detail. The
+mechanism discovers a source's frame automatically where it can (RTCM base position
+matched against published CORS coordinates per candidate frame; RTCM datum messages;
+receiver reporting) and falls back to per-source user configuration, where the user looks
+the datum up. And the stores carry **transform metadata the way the VDatum grids do**: per
+rung and per trajectory, the frame realization + epoch, the vertical reference, and the
+transformation lineage applied (PROJ/EPSG id, version). That block is part of the
+[tile-contents thread](#tile-contents-thread) — metadata at rung level, not per cell.
+
 ## Corrections as data *(open)*
 
 A **correction record** is a small, reviewed file that says what is wrong with a source
