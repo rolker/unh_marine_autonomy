@@ -60,9 +60,9 @@ artefacts, and the regenerate command is `make`.
 |---|---|---|---|
 | **sources** | Material received from outside, as received: bag references, ENC editions + registry, S-100 products (S-102 grids, later S-101 features), geoid and VDatum grids, third-party priors (GRANIT, BAGs) | Importers only — **never a consumer** | No: data of record, immutable |
 | **config** | Human-authored, git-reviewed, materialized here for discovery: correction records, datum override polygons | Importers, the datum library | From git |
-| **trajectories** | Platform pose (earth → base_link) versus time, one product per platform per UTC survey day; own ladder | The link step; QC tools | Yes, from bags (+ raw GNSS for post-processed rungs) |
+| **trajectories** | Platform pose (earth → base_link) versus time; a product covers a platform + time interval + rung, partitioning is the user's choice; own ladder | The link step; QC tools | Yes, from bags (+ raw GNSS for post-processed rungs) |
 | **observations** | Pose-independent, time-stamped, sensor-frame samples per quantity: sidescan per-ping samples (today's tier 1), the CUBE sounding spill, future casts | The link step only | Yes, from bags + corrections; expensive |
-| **quantity stores** | The consumed products: `depths/`, `backscatter/`, `sidescan/`, `water/`, `features/`; GGGS-tiled, laddered, with pyramids and manifests | Every consumer | Yes, from observations + trajectories |
+| **quantity stores** | The consumed products: `depths/`, `backscatter/`, `sidescan/`, `water/`, `features/`, and **derived products** built from other quantity stores (a merged mosaic if ever wanted; more likely seafloor classification from sidescan + backscatter + bathymetry); GGGS-tiled, laddered, with pyramids and manifests | Every consumer | Yes, from observations + trajectories, or from other stores (derived) |
 
 Rules that follow:
 
@@ -181,9 +181,12 @@ world-wide file), and whether a record may also *exclude* a bag (today's `SKIP_B
 
 ## Trajectories and deferred pose *(open)*
 
-The trajectory product is earth → base_link over time for one platform and one UTC
-survey day, with gaps allowed (a lunch stop at the dock is a gap, not a boundary); a
-multi-day mission overrides the day with a mission id. Static geometry (sensor mounting,
+The trajectory product is earth → base_link over time for one platform over a time
+interval, with gaps allowed (a lunch stop at the dock is a gap, not a boundary). **The store
+does not define how trajectories are split** (R5 verdict, 2026-09-16): a user may cut them
+per outing, per day, per mission or per season. The link step needs only a lookup — given a
+platform, a rung and an instant, the trajectory covering it — so intervals of one rung must
+not overlap, or must state precedence when they do. Static geometry (sensor mounting,
 lever arms) stays where it is today — the bag's static TF tree — and is revised by a
 correction record, never copied into the trajectory.
 
@@ -207,7 +210,7 @@ read by a consumer, never tile-synced. Per quantity:
 
 | Quantity | Observation | Exists today as |
 |---|---|---|
-| sidescan | per-ping slant-indexed samples + nadir altitude + sound speed | `imagery/sidescan/tier1` (ADR-0006 D2/D3, pose baked — to change) |
+| sidescan | per-ping slant-indexed samples + timestamps + nadir altitude + sound speed (the pose half of today's tier 1 moves to trajectories; tier 1 as an artifact dissolves — R15) | `imagery/sidescan/tier1` (ADR-0006 D2/D3, pose baked) |
 | depths + MBES backscatter | per-sounding sensor-frame range/angle/intensity | the cube#143 recon spill (one chronological file per run) |
 | water | casts, surface sensor series | nothing yet (Appledore casts are files) |
 
@@ -406,17 +409,17 @@ at a time; the register is the record.
 | R2 | All heights ellipsoidal, datum conversion at import; `map_tide` only runtime vertical reference | ADR-0002 D4 / ADR-0010 D5 | GRANIT layer in the wrong datum (06-15) | geoid round-trip error 0.626 m found 08-21; frame realization never named (MaCORS = NAD83(2011)) | **stands** (09-16): stores stay WGS84, no datum labels on tiles; RTK-frame → WGS84 at the source (`mru_transform`, with transformation support data under `sources/datum/`); old recordings via correction records + regeneration — see the reference frame thread (NAD83(2011) vs WGS84 = +1.19 m in h here) |
 | R3 | Per-tile GeoTIFFs, later 3-file split, later collapsed to value tile only | ADR-0002 D5, #178, #248 | tile-sync design, then #96 greenfield | — | not yet |
 | R4 | Change key = version/timestamp, not content hash | ADR-0008 D3 (06-27) vs ADR-0002 D6 | live transport build for the last Massabesic days | never reconciled into 0002 | not yet |
-| R5 | Per-day epochs → one fused grid per layer | uma#221, 06-25 | first M3 ingest blocked on it | trajectory unit = UTC day proposed here | not yet |
-| R6 | Unified backscatter store → two sibling stores | uma#190, 06-21 | sidescan driver in progress | MBES store has no pyramid, single rung, no mixed levels | not yet |
+| R5 | Per-day epochs → one fused grid per layer | uma#221, 06-25 | first M3 ingest blocked on it | — | **stands** (09-16) for the store; trajectories are NOT split by the store — user's choice, lookup by interval |
+| R6 | Unified backscatter store → two sibling stores | uma#190, 06-21 | sidescan driver in progress | both now have an observations stage; backscatter is a product | **stands** (09-16): separate products (collection differs enough); any combination is a DERIVED third product (merged mosaic, seafloor classification) |
 | R7 | `--append` → greenfield regeneration, stores are a regenerable cache | cube#96, 06-30 → 07-01 | 07-02 authoritative rebuild deadline | regenerate is not operational (no ledger, script broken) | **stands** (09-16): full regeneration must be possible when all bags + the corrections layer exist; **add a data-cleaning layer** (manual, automatic or both — decide later) |
 | R8 | Per-cell source and time rasters dropped; σ carries quality | uma#248, 07-01 | same | multi-sensor fusion callback (cube#120); blunder gate cannot flag | **partly** (09-16): source/time stay out; uncertainty may be required for every data type (to debate); metadata-per-tile and time are two separate threads |
-| R9 | Single `survey/` → `draft/` + `processed/` re-split | uma#308, 08-20 | pre-Shoals | backscatter never followed | not yet |
+| R9 | Single `survey/` → `draft/` + `processed/` re-split | uma#308, 08-20 | pre-Shoals | backscatter never followed | **stands** (09-16): keep a live rung separate from processed; backscatter adopts it |
 | R10 | Chart layer regenerated wholesale from the corpus, never merged; footprint clipping withdrawn | ADR-0010 D7, uma#337 | Shoals ENC-first prior, 08-20 → 22 | — | not yet |
 | R11 | Pyramids = cross-tile parent tiles in a sidecar; depth fold shallowest-preserving, imagery mean | uma#188 / ADR-0011, 07-24 | between deployments | staleness (#389); safety review | not yet |
 | R12 | Native wins on disk; derived overviews fill gaps only | uma#331, 08-21 | chart layer blank past level 5 on dev | — | not yet |
 | R13 | Depth-adaptive levels: 0.05·depth, no floor, clamp [8, 14], shallowest depth per tile | ADR-0010 D9 #369, 09-09 | Shoals data in hand | writer as built differs (parents alive, achieved level, k = 0.71) | not yet |
 | R14 | Capture distance floor 0.5 m removed; k = 0.71 | cube#143, 09-14 | — | — | not yet |
-| R15 | Sidescan tier 1 bakes the full pose; nav/mounting change = reimport | ADR-0006 D2, 06-20 | driver + mosaic for the last Massabesic days | reversed by this draft (deferred pose) — re-examine the reversal too | not yet |
+| R15 | Sidescan tier 1 bakes the full pose; nav/mounting change = reimport | ADR-0006 D2, 06-20 | driver + mosaic for the last Massabesic days | reversed by this draft (deferred pose) | **reversal stands** (09-16): trajectories take the pose half of tier 1; the samples half is the sidescan observations record; tier 1 dissolves |
 | R16 | Sidescan fixed at L13 ("proposed position") | ADR-0006 D10 | same | mixed levels everywhere else | not yet |
 | R17 | Costmap: worst-case clearance = depth − σ; keepout only on trusted data < 0.4 m; chart never keepout | 06-25 discussion | Massabesic fences from the interpolated prior | — | not yet |
 | R18 | Costmap combine is raise-only | uma#296, 08-07 | — | flagged as safety-motivated | not yet |
@@ -458,6 +461,8 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 
 ## Change log
 
+- 2026-09-16 (later) — register batch 2 (R5, R6, R9, R15): all stand; trajectories not split by the
+  store; derived products added as a kind of quantity store; tier 1 dissolves into observations + trajectories.
 - 2026-09-16 (later) — decided: rung names; backscatter = product; `water/` in the model now;
   cleaning marks are reviewed data with corrections (category name open).
 - 2026-09-16 (later) — reference frame thread: MaCORS/GEOID18/VDatum are NAD83(2011); +1.19 m
