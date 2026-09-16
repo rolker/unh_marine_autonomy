@@ -443,9 +443,9 @@ at a time; the register is the record.
 | R14 | Capture distance floor 0.5 m removed; k = 0.71 | cube#143, 09-14 | — | — | **out of scope** (09-16): a CUBE processing question, not a store decision; lives with cube |
 | R15 | Sidescan tier 1 bakes the full pose; nav/mounting change = reimport | ADR-0006 D2, 06-20 | driver + mosaic for the last Massabesic days | reversed by this draft (deferred pose) | **reversal stands** (09-16): trajectories take the pose half of tier 1; the samples half is the sidescan observations record; tier 1 dissolves |
 | R16 | Sidescan fixed at L13 ("proposed position") | ADR-0006 D10 | same | mixed levels everywhere else | **withdrawn** (09-16): sidescan's level is determined by its data properties like every other quantity |
-| R17 | Costmap: worst-case clearance = depth − σ; keepout only on trusted data < 0.4 m; chart never keepout | 06-25 discussion | Massabesic fences from the interpolated prior | — | not yet |
-| R18 | Costmap combine is raise-only | uma#296, 08-07 | — | flagged as safety-motivated | not yet |
-| R19 | Safety queries never consult LOD; shoalest-reliable reads every rung and level | ADR-0013 D8, 08-21 | — | safety review | not yet |
+| R17 | Costmap: worst-case clearance = depth − σ; keepout only on trusted data < 0.4 m; chart never keepout | 06-25 discussion | Massabesic fences from the interpolated prior | `unsurveyed_is_lethal` doubles as a shoreline proxy | **stands** (09-16); the store must hold a real **shoreline/coastline** — representation to be designed (features theme? vector from chart land + curation polygons?) → open Q10. The Massabesic whole-survey sim dry-run to settle costmap details is still wished for |
+| R18 | Costmap combine is raise-only | uma#296, 08-07 | — | uma#296 fix proposed (trusted samples only) | **usage question, not a store decision** (09-16): the store must supply the data + metadata (incl. uncertainties) the combine needs; the fix lives in `bathymetry_layer` (uma#296) |
+| R19 | Safety queries never consult LOD; shoalest-reliable reads every rung and level | ADR-0013 D8, 08-21 | uma#376/#371 residency + fan-out are the price | **stands, refined** (09-16): safety queries never use *generic* (derived, folded) LOD layers; a NATIVE parent tile CUBE produced alongside its children is a real estimate and may be consulted |
 | R20 | Live node writes only `draft`; chart prior primes the predicted surface only | cube#89, 06-29 | — | cube#160 depth-belief precedence proposed | not yet |
 | R21 | Host roles: gabby live, salmon durable + curated, dev prototypes | 06-20 discussion | — | cadence reversed by the 09-16 field observation | not yet |
 | R22 | CAMP composites with the selection as a ceiling rather than store-side pyramids for chart/reference | camp#194, 08-21 | Shoals prep | mpt#43 same bug in the explorer | not yet |
@@ -476,6 +476,7 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 | 3 | Trajectory product format and the day/mission unit | agent proposes |
 | 4 | Backscatter | **decided**: a PRODUCT — full per-quantity treatment (#390 pyramid, #383 mixed levels, draft/processed rungs, cross-dataset work) |
 | 5 | Tile contents per user; is uncertainty required for every data type? | tile-contents thread |
+| 10 | Shoreline / coastline representation in the store (needed so the costmap stops using `unsurveyed_is_lethal` as a shore proxy) | agent proposes |
 | 9 | Cleaning marks live with corrections and datum polygons as reviewed data applied at link time (**decided**) — but is `config/` the right NAME for that category? Candidates: `curation/`, `annotations/`, `edits/` | Roland |
 | 6 | Copy of record, replica rule, and on-boat automatic `processed` (see Distribution) | Roland + agent |
 | 7 | `water/` theme | **decided**: in the model now as a named quantity with the same ladder and stage rules; implementation stays under uma#300 |
@@ -483,6 +484,9 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 
 ## Change log
 
+- 2026-09-16 (later) — register batch 4 (R17–R19): R17 stands + shoreline representation owed (Q10);
+  R18 is a costmap usage question (uma#296), store just supplies data + uncertainties; R19 stands,
+  refined to 'no generic LOD layers' — a native CUBE parent tile may be consulted.
 - 2026-09-16 (later) — register batch 3 (R11–R14, R16): representative depth overviews; R12 stands
   (two scenarios to list); R13 deferred to a level look; R14 out of scope (cube); R16 withdrawn.
   Level thread + the pass-stacked sidescan tile idea added.
