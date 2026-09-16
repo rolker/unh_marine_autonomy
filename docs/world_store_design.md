@@ -308,7 +308,7 @@ map, so the draft is written from all of it and not from the ADRs alone.
 
 - Pyramids are cross-tile GGGS parent tiles, not GDAL internal overviews; imagery first; one engine, per-store policy (uma#188, 2026-07-24).
 - Remote-distribution wire contract: tiles in frame `earth`, `header.stamp` = data time, never reuse for a `map`-frame stream (uma#86, 2026-06-15). Tier 2 of sync was never built; this is the only record.
-- Host roles: gabby = raw bags + live store; salmon = durable archive + curated store; dev = prototypes only (2026-06-20) — superseded in cadence by the 2026-09-16 field observation in Distribution.
+- Host roles: gabby = raw bags + live store; salmon = durable archive + curated store; dev = prototypes only (2026-06-20) — superseded in cadence by the 2026-09-16 field observation in Distribution, and by R21: the design names roles, not hosts.
 - Chart prior primes CUBE's *predicted* surface only, never accumulates (cube#89, 2026-06-29); one depth-belief precedence for live and offline, cube stays datum-free (cube#160, 2026-09-15, "discuss before implementing").
 - Native data always wins on disk; derived overviews only fill gaps, extended to `chart` after the layer went blank past level 5 (uma#331, 2026-08-21).
 - CAMP composites levels with the selection as a ceiling rather than extending store pyramids to chart/reference (camp#194, 2026-08-21).
@@ -416,7 +416,7 @@ per-cell timestamp served neither well and was dropped (#248); trajectories and
 observations now carry time natively, and the question is what a *store* should record —
 per pass, per tile, or as a separate time axis for the quantities that need it.
 
-## Decision re-examination register *(in progress)*
+## Decision re-examination register *(first pass complete 2026-09-16; R13 deferred to the level thread)*
 
 Roland, 2026-09-16: the decisions made during the deployment months — including the ones
 that were later reversed — "could probably all use a new look in case time crunches made
@@ -446,11 +446,11 @@ at a time; the register is the record.
 | R17 | Costmap: worst-case clearance = depth − σ; keepout only on trusted data < 0.4 m; chart never keepout | 06-25 discussion | Massabesic fences from the interpolated prior | `unsurveyed_is_lethal` doubles as a shoreline proxy | **stands** (09-16); the store must hold a real **shoreline/coastline** — representation to be designed (features theme? vector from chart land + curation polygons?) → open Q10. The Massabesic whole-survey sim dry-run to settle costmap details is still wished for |
 | R18 | Costmap combine is raise-only | uma#296, 08-07 | — | uma#296 fix proposed (trusted samples only) | **usage question, not a store decision** (09-16): the store must supply the data + metadata (incl. uncertainties) the combine needs; the fix lives in `bathymetry_layer` (uma#296) |
 | R19 | Safety queries never consult LOD; shoalest-reliable reads every rung and level | ADR-0013 D8, 08-21 | uma#376/#371 residency + fan-out are the price | **stands, refined** (09-16): safety queries never use *generic* (derived, folded) LOD layers; a NATIVE parent tile CUBE produced alongside its children is a real estimate and may be consulted |
-| R20 | Live node writes only `draft`; chart prior primes the predicted surface only | cube#89, 06-29 | — | cube#160 depth-belief precedence proposed | not yet |
-| R21 | Host roles: gabby live, salmon durable + curated, dev prototypes | 06-20 discussion | — | cadence reversed by the 09-16 field observation | not yet |
-| R22 | CAMP composites with the selection as a ceiling rather than store-side pyramids for chart/reference | camp#194, 08-21 | Shoals prep | mpt#43 same bug in the explorer | not yet |
-| R23 | Explorer indexes ping geometry, not store acceptance; single pass = unit of sidescan interpretation | uma#258, 07-13 | ball-turret search | — | not yet |
-| R24 | S-102 import operator-run only; no deployed `chart/` until uma#276 | READMEs | — | — | not yet |
+| R20 | Live node writes only `draft`; chart prior primes the predicted surface only | cube#89, 06-29 | — | cube#160 depth-belief precedence proposed | **stands** (09-16): live and prior (chart/reference) rungs stay separate |
+| R21 | Host roles: gabby live, salmon durable + curated, dev prototypes | 06-20 discussion | — | cadence reversed by the 09-16 field observation | **amended** (09-16): the design speaks of ROLES (live producer, archive, curation, replica), never actual hosts except as examples; capability table, not a schedule |
+| R22 | CAMP composites with the selection as a ceiling rather than store-side pyramids for chart/reference | camp#194, 08-21 | Shoals prep | mpt#43 same bug in the explorer | **stands** (09-16): the stores are one component, the shared libraries designed for them are the other; one-off consumer implementations are acceptable as prototypes for eventual libraries |
+| R23 | Explorer indexes ping geometry, not store acceptance; single pass = unit of sidescan interpretation | uma#258, 07-13 | ball-turret search | explorer evolved at deployment pace | **stands** (09-16); direction: as the stores mature, converge on an explorer that shows each store's `processed` rung WITH its source data, to see the big picture and find where processing needs improvement |
+| R24 | S-102 import operator-run only; no deployed `chart/` until uma#276 | READMEs | — | uma#276 is CLOSED (stale in two READMEs) | **retire the #276 clause** (09-16); who may write `published` moves to the ladder's write gates; a strategy for gradual S-100 adoption is owed — the stores must accommodate S-100 products (Q11) |
 | R25 | `~/data/world` = one collection by source class, never per campaign | 08-25 | Shoals import | — | stands (restated 09-16) |
 
 ## Owed review of safety-motivated decisions *(open)*
@@ -476,6 +476,7 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 | 3 | Trajectory product format and the day/mission unit | agent proposes |
 | 4 | Backscatter | **decided**: a PRODUCT — full per-quantity treatment (#390 pyramid, #383 mixed levels, draft/processed rungs, cross-dataset work) |
 | 5 | Tile contents per user; is uncertainty required for every data type? | tile-contents thread |
+| 11 | Gradual S-100 adoption strategy (S-102 now, S-101 features later); what the stores must accommodate | agent proposes |
 | 10 | Shoreline / coastline representation in the store (needed so the costmap stops using `unsurveyed_is_lethal` as a shore proxy) | agent proposes |
 | 9 | Cleaning marks live with corrections and datum polygons as reviewed data applied at link time (**decided**) — but is `config/` the right NAME for that category? Candidates: `curation/`, `annotations/`, `edits/` | Roland |
 | 6 | Copy of record, replica rule, and on-boat automatic `processed` (see Distribution) | Roland + agent |
@@ -484,6 +485,8 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 
 ## Change log
 
+- 2026-09-16 (later) — register batch 5 (R20–R24): all re-examined; roles not hosts; libraries beside the
+  stores; explorer direction; S-100 adoption strategy owed (Q11). REGISTER COMPLETE for the first pass.
 - 2026-09-16 (later) — register batch 4 (R17–R19): R17 stands + shoreline representation owed (Q10);
   R18 is a costmap usage question (uma#296), store just supplies data + uncertainties; R19 stands,
   refined to 'no generic LOD layers' — a native CUBE parent tile may be consulted.
