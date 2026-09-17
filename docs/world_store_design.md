@@ -1,9 +1,9 @@
 # The World Store — Design Draft
 
-**Status**: Evolving (started 2026-09-16). A design draft, not a decision record:
-it captures the model as currently understood, changes as the understanding changes,
-and is the document agents read *first* on anything world-store. ADRs are cut from it
-only when a section stops moving; until then the existing ADRs remain the record of
+**Status**: Evolving (started 2026-09-16, rev 2 2026-09-17). A design draft, not a decision
+record: it captures the model as currently understood, changes as the understanding
+changes, and is the document agents read *first* on anything world-store. ADRs are cut from
+it only when a section stops moving; until then the existing ADRs remain the record of
 what was decided when, and each carries a pointer here. Tracked by
 [rolker/unh_marine_autonomy#391](https://github.com/rolker/unh_marine_autonomy/issues/391).
 Document kind per rolker/ros2_agent_workspace#628's vocabulary: *design draft*.
@@ -12,6 +12,27 @@ Document kind per rolker/ros2_agent_workspace#628's vocabulary: *design draft*.
 a candidate for an ADR cut; *open* means the shape may still change and code should not
 bake it in; the [open questions](#open-questions) list names who owns each answer. Edit
 the [change log](#change-log) with every substantive edit.
+
+**Shape of the document** (Roland, 2026-09-17): three concerns, kept apart.
+
+1. [**The store model**](#part-1--the-store-model) — what the collection holds and how it is
+   organised: categories, provenance ladder, frames, corrections, trajectories,
+   observations, quantity stores, fingerprints, and the open threads on tile contents,
+   levels and time.
+2. [**The processes that work on the stores**](#part-2--processes-that-work-on-the-stores)
+   — import, link, regenerate, replicate, clean. General processes of the store repo,
+   configured per platform, never platform scripts.
+3. **Deployment specifics** — which role runs on which machine, where the durable archive
+   is, sync cadence between a boat and the shore. These are not design and they do not
+   live here: they belong to the platform repo (`unh_echoboats_project11`), see
+   [Part 3](#part-3--deployment-specifics-moved-out). This document names **roles**, never
+   hosts, except as dated examples.
+
+The [prior work](#prior-work-this-draft-builds-on), the
+[decision register](#decision-re-examination-register-first-pass-complete-2026-09-16-r13-deferred-to-the-level-thread),
+the [safety review](#owed-review-of-safety-motivated-decisions-open) and the two *transient*
+sections (migration, ADR amendments) are working material for the draft period and are
+deleted or cut out when the design lands.
 
 ## Purpose — the vision (Roland, 2026-09-16)
 
@@ -36,7 +57,7 @@ to develop better ways of using it**. Its roles, in his words, lightly ordered:
   dataset can** — estimating an equivalent sound speed from overlapping passes, processing
   backscatter and sidescan in the presence of bathymetry. This is the direction uma#300
   (cast-free sound speed inversion) and uma#247 (sidescan ↔ CUBE) point at, and it decides
-  what each tile must keep (see [tile contents](#tile-contents-thread)).
+  what each tile must keep (see [tile contents](#tile-contents-thread-open)).
 
 Everything in the store is derivable from source material — bags, chart editions,
 third-party grids — and is therefore a cache with a recorded key. That invariant
@@ -49,39 +70,53 @@ Inherited from ADR-0010 and unchanged here: one collection split by kind and pro
 never by campaign or site (D1/D3); all heights WGS84-ellipsoidal, datum conversion at the
 edges (D5); layers encode process and σ encodes trust (D4).
 
+# Part 1 — The store model
+
 ## The model — five categories *(open: names; settled: the split)*
 
-Read it as a build pipeline. Sources are the source files, curation records are patches applied
-at compile time, observations are object files, trajectories are a library everything
-links against, stores are the linked binaries, pyramids and manifests are derived
-artefacts, and the regenerate command is `make`.
+The collection is divided by **what a thing is and where it came from**, never by campaign,
+site or purpose. Five categories, each with one answer to "who writes it, who reads it,
+and can it be rebuilt":
 
-| Category | What it holds | Who may read it | Regenerable? |
-|---|---|---|---|
-| **sources** | Material received from outside, as received: bag references, ENC editions + registry, S-100 products (S-102 grids, later S-101 features), geoid and VDatum grids, third-party priors (GRANIT, BAGs) | Importers only — **never a consumer** | No: data of record, immutable |
-| **curation** | Human-authored or human-reviewed statements about the data, materialized from git: correction records, cleaning marks (name decided 2026-09-16; datum override polygons are NOT here — they are a declared prior and stay under `sources/datum/user/` as ADR-0010 D3 placed them) | Importers, the link step | From git |
-| **trajectories** | Platform pose (earth → base_link) versus time; a product covers a platform + time interval + rung, partitioning is the user's choice; own ladder | The link step; QC tools | Yes, from bags (+ raw GNSS for post-processed rungs) |
-| **observations** | Pose-independent, time-stamped, sensor-frame samples per quantity: sidescan per-ping samples (today's tier 1), the CUBE sounding spill, future casts | The link step only | Yes, from bags + corrections; expensive |
-| **quantity stores** | The consumed products: `depths/`, `backscatter/`, `sidescan/`, `water/`, `features/`, and **derived products** built from other quantity stores (a merged mosaic if ever wanted; more likely seafloor classification from sidescan + backscatter + bathymetry); GGGS-tiled, laddered, with pyramids and manifests | Every consumer | Yes, from observations + trajectories, or from other stores (derived) |
+| Category | What it holds | Written by | Read by | Regenerable? |
+|---|---|---|---|---|
+| **sources** | Material received from outside, as received: bag references, ENC editions + registry, S-100 products (S-102 grids, later S-101 features), geoid and VDatum grids, third-party priors (GRANIT, BAGs) | Importers, from the outside world | Importers; direct inspection tools (a point-cloud view of a bag, a chart renderer's symbology) | No: data of record, immutable |
+| **curation** | Human-authored or human-reviewed statements about the data, materialized from git: correction records, cleaning marks (name decided 2026-09-16; datum override polygons are NOT here — they are a declared prior and stay under `sources/datum/user/` as ADR-0010 D3 placed them) | People, through PR review | Importers, the link step | From git |
+| **trajectories** | Platform pose (earth → base_link) versus time; a product covers a platform + time interval + rung, partitioning is the user's choice; own ladder | The trajectory process (from bags; from raw GNSS for post-processed rungs) | The link step; QC tools | Yes |
+| **observations** | Pose-independent, time-stamped, sensor-frame samples per quantity: sidescan per-ping samples (today's tier 1), the CUBE sounding spill, future casts | The import process (from sources + corrections) | The link step only | Yes; expensive |
+| **quantity stores** | The consumed products: `depths/`, `backscatter/`, `sidescan/`, `water/`, `features/`, and **derived products** built from other quantity stores (seafloor classification from sidescan + backscatter + bathymetry; a merged acoustic mosaic if ever wanted); GGGS-tiled, laddered, with pyramids and manifests | The link step; derived-product builders | Every consumer | Yes, from observations + trajectories, or from other stores (derived) |
 
-Rules that follow:
+Pyramids, coverage manifests and source catalogs are **derived artefacts** of a quantity
+store, rebuilt from it and never edited.
 
-- **Consumers read quantity stores only.** An S-102 grid reaches CAMP by being imported
-  into `depths/published`, never by CAMP opening the HDF5. This is what removes the
-  kind-versus-provenance confusion in ADR-0010 D3, where `charts/`, `s100/` and `datum/`
-  sat beside the quantity trees as if they were quantities.
-- **Every stage below sources carries a fingerprint** (see [fingerprints](#fingerprints-and-the-regenerate-command)).
-- **Nothing under sources is ever edited.** A bag with a bug gets a correction record,
-  not a retrofit (see [corrections](#corrections-as-data)).
+*Aside, for readers who think in build systems:* sources are source files, curation
+records are patches applied at compile time, observations are object files, trajectories
+are a library everything links against, quantity stores are the linked binaries, pyramids
+and manifests are derived artefacts, and regenerate is `make`. The analogy is how the
+split was first found (Roland, 2026-09-16); it is not how the model is explained.
 
-Two exceptions to "consumers never read sources", both deliberate and to be recorded as
-such when this section is cut: the datum library reads the geoid and VDatum grids directly
-(a grid *is* the product; tiling it would add nothing), and the ENC renderer reads the
-edition files for symbology (features stay vector until S-101 lands, ADR-0010 D2/D11).
+## Rules, and why each exists *(rev 2: audited)*
 
-## The provenance ladder *(settled, 2026-09-16: shape, order and rung names)*
+Every rule in this document must name the failure it prevents or the consumer it serves;
+a rule that cannot is removed (Roland, 2026-09-17: "audit all the rules in the design and
+ask why that rule is present"). The rules that survived the first audit:
 
-Every quantity store, and the trajectory tree, has the same ordered set of rungs:
+| Rule | Why it exists | Who needs it |
+|---|---|---|
+| **Nothing under sources is ever edited.** A bag with a bug gets a correction record, not a retrofit. | Regenerability: a store is provably a function of its sources only if the sources are what was received. The 2026 retrofit of bag stamps and frame ids had to be re-synced across four hosts by hand and was, in Roland's words, painful and error-prone. | The regenerate process; anyone reproducing a product |
+| **Consumers do not depend on sources for a product a store provides.** An S-102 grid reaches CAMP by being imported into `depths/published`, never by CAMP opening the HDF5. | Removes the kind-versus-provenance confusion of ADR-0010 D3 (`charts/`, `s100/`, `datum/` sat beside the quantity trees as if they were quantities) and keeps every consumer on one, laddered, fingerprinted representation. | CAMP, the costmap, the explorer, CUBE priming |
+| Consumers **may** read sources directly for what no store provides: inspection and QC of the raw data (the explorer's point cloud from a bag's soundings), symbology from ENC editions until S-101 features exist (ADR-0010 D2/D11), the geoid and VDatum grids (a grid *is* the product; tiling it adds nothing). | Rev 1 stated "consumers never read sources" with two exceptions; the explorer's bag reads showed the rule was wrong, not the exceptions (Roland, 2026-09-17). The narrower rule above is the one that has a reason. | The survey explorer, the ENC renderer, the datum library |
+| **Every stage below sources carries a fingerprint.** | Staleness is one check at every stage; without it the store is a cache with no key (the 2026-09-16 state: no ledger, stale pyramids). | The regenerate process, replica selection |
+| **A rung names how a value was made, never what it is.** | Otherwise a name like `chart` ends up meaning both a provenance and a corpus (the double meaning caught 2026-09-16). | Every reader of a path |
+| **The collection is one, split by kind and provenance, never by campaign or site** (ADR-0010 D1/D3, R25). | Replicating data per project or purpose is what the vision forbids. | Everyone |
+| **All heights WGS84-ellipsoidal, frame enforced at the source** (ADR-0002 D4 / ADR-0010 D5, R2; see the [reference frame thread](#reference-frame-thread-open--finding-2026-09-16)). | A store cannot combine two passes whose frames differ by 1.2 m without knowing it; labelling every tile instead would push the problem to every consumer. | Fusion, the costmap, the datum library |
+
+Rules not yet audited because their section is still open: the write gates per rung (who
+may write `published`), the replica rule, and whatever the level thread settles.
+
+## The provenance ladder *(settled: shape and rung names; rev 2: order is a default, not a law)*
+
+Every quantity store, and the trajectory tree, uses the same vocabulary of rungs:
 
 | Rung | Meaning | Depth example | Trajectory example |
 |---|---|---|---|
@@ -90,30 +125,36 @@ Every quantity store, and the trajectory tree, has the same ordered set of rungs
 | `reference` | A third-party prior we did not produce | GRANIT, a BAG | — |
 | `published` | An authority's product | ENC, S-102 | — |
 
-- Order is priority for the **best-estimate** query: the highest rung with data at a cell
-  wins. Absent rungs are simply absent; backscatter has no `published`, trajectories have
-  no `reference`.
+- The ladder is an ordered **vocabulary**, and the order above is the **default
+  preference** of the best-estimate query: the highest rung with data at a cell wins.
+  It is a default, not a prescription (Roland, 2026-09-17): an application may target a
+  rung directly (compare a `draft` with what is `published`; show only what we surveyed)
+  or supply its own order when it has a reason. What the store guarantees is that every
+  rung is addressable on its own and that the default order is stated once, here.
+- Absent rungs are simply absent: backscatter has no `published` today, trajectories have
+  no `reference`. A quantity is not required to fill the ladder.
 - A rung names *how* a value was made, never *what* it is. `published` replaces the
   current `chart` so the word chart stops meaning both a rung and the ENC corpus
   (**decided 2026-09-16**: `published | reference | draft | processed`).
-- The **shoalest-reliable** query (ADR-0002 D7, ADR-0013 D8) does not walk the ladder: it
-  reads every rung to the finest level. See [safety review](#owed-review-of-safety-motivated-decisions)
-  — this is one of the decisions under review, not a premise of this document.
-- Priority *within* the prior class (`reference` vs `published`) is still deferred to the
-  first consumer that needs it (ADR-0010 D4).
+- The **shoalest-reliable** query (ADR-0002 D7, ADR-0013 D8) is one application-specific
+  order: it reads every rung to the finest level. See the
+  [safety review](#owed-review-of-safety-motivated-decisions-open) — under review, not a
+  premise of this document.
+- Priority *within* the prior class (`reference` vs `published`) is deferred to the first
+  consumer that needs it (ADR-0010 D4).
 
 Today's names on disk: depths use `chart | reference | draft | processed`; the MBES
 backscatter store uses a single `survey`; sidescan uses `tier1 | processed`. The
-migration table below maps them.
+[migration table](#transient-migration-from-todays-tree-draft-delete-when-the-migration-lands) maps them.
 
 ## Reference frame thread *(open — finding 2026-09-16)*
 
 The ellipsoidal invariant (R2) never named the ellipsoid's **frame realization**, and the
 chain today is not in the frame its labels say:
 
-- **MaCORS RTK corrections reference NAD83(2011) epoch 2010.0** (every rover configuration
-  guide says "select NAD 1983 2011 / EPSG:6318"; the network's own pages are behind a login,
-  so this is to be confirmed from the station-coordinate list with our credentials).
+- **MaCORS RTK corrections reference NAD83(2011) epoch 2010.00** — stated by MassDOT itself
+  (MaCORS FAQ: "The established datum for MaCORS is NAD 83 (2011) (Epoch 2010.00)"; confirmed
+  by Roland, 2026-09-17).
   An RTK rover inherits the base frame, so with RTK fixed every BizzyBoat position — and
   `ellipsoidal_fix_node`'s recovered ellipsoidal height — is NAD83(2011).
 - **GEOID18 (`us_noaa_g2018u0.tif`) is defined for NAD83(2011) heights only** (NGS: heights in
@@ -154,7 +195,7 @@ tile or per rung: the invariant is enforced at the source, so what is needed is 
 **transformation support data** (Helmert parameters, epoch handling, any future grids)
 provisioned beside the geoid and VDatum grids under `sources/datum/` and consumed by
 `mru_transform` through PROJ. Existing recordings are corrected in the processing chain
-by a [correction record](#corrections-as-data) ("positions from source S in recording R
+by a [correction record](#corrections-as-data-open) ("positions from source S in recording R
 are in frame F") and the affected rungs regenerated. Also true: the datum library reads
 the stores to find the chart datum, so once the live chain is WGS84 its own pipeline must
 add the WGS84 → NAD83(2011) step before GEOID18.
@@ -166,7 +207,9 @@ and how to read around it, e.g.
 
 - bag *X*, topic *Y*, between *t1* and *t2*: message stamps are offset by −3.0 s;
 - bag *Z*: `frame_id` `base_link` should read `bizzy/base_link`;
-- platform *P* from date *D*: static transform `base_link → m3` is *T'* (mounting change).
+- platform *P* from date *D*: static transform `base_link → m3` is *T'* (mounting change);
+- recording *R*, position source *S*: positions are in frame *F* (the RTK datum correction of the
+  [reference frame thread](#reference-frame-thread-open--finding-2026-09-16); added 2026-09-17).
 
 Records live in `curation/corrections/`, materialized from a project repo where they are
 PR-reviewed like the datum polygons, keyed by the source's identity (for a bag, the
@@ -205,8 +248,10 @@ lookup the bag read used to do, minus the bag decoding.
 
 ## Observations *(settled: the stage exists; open: formats)*
 
-Object files: regenerable from sources plus corrections, expensive to regenerate, never
-read by a consumer, never tile-synced. Per quantity:
+Regenerable from sources plus corrections, expensive to regenerate, never read by a consumer,
+and **replicated whole or rebuilt in place, never distributed tile by tile** the way a
+quantity store is (an observation set has no spatial index to sync by; a replica either
+copies the set or regenerates it from the same sources). Per quantity:
 
 | Quantity | Observation | Exists today as |
 |---|---|---|
@@ -229,69 +274,205 @@ from #389 — a source catalog for staleness. Mixed native levels are the norm
 (ADR-0002 D2 #151, ADR-0010 D9 #369, cube#143). These mechanisms are settled and are
 *not* re-opened here.
 
+**The quantities.** Backscatter and sidescan are separate quantities with separate
+pipelines (R6 stands). They measure the same physical property — the seafloor's acoustic
+return — by different processes: MBES backscatter is a value the bathymetric process
+yields as a by-product of each sounding, sidescan is a process of its own that images
+the return. The name **backscatter** is therefore reserved for the MBES-derived quantity
+(Roland, 2026-09-17: calling a combination "backscatter" would confuse it with the MBES
+product). No combined store is designed here. If a merged product is ever built it is a
+*derived* quantity store and gets its own name — **seafloor reflectance** is the proposal
+on the table (open Q12). `imagery/` as a theme disappears with this: it grouped two
+quantities by the shape of their output, not by what they are, and it would not survive
+the first non-acoustic image source.
+
+**Sources the model must admit** (Roland, 2026-09-17; none designed yet, all must fit
+without a new category): bathymetry from lidar (a `depths` producer that never passes
+through CUBE — the level thread's third case); video and still imagery from an ROV or a
+camera (genuinely imagery, its own quantity, with a pose problem the trajectory tree must
+serve for a tethered vehicle); water-column casts and surface sensor series (`water/`,
+decided 2026-09-16); a shoreline (below). The test for each is the checklist.
+
+**Shoreline** (R17, open Q10): the costmap needs a real shoreline so it stops using
+`unsurveyed_is_lethal` as a shore proxy. A shoreline varies with water level, so every
+shoreline product carries the water level it is valid for, and the store must be able to
+hold more than one for the same place. Sourced from charts and reference material now
+(`features/shoreline`, `published` and `reference` rungs). The model also admits a
+`processed` shoreline we derive ourselves later — from camera imagery, or from the
+surveyed waterline against the tide — without a new mechanism (Roland, 2026-09-17: "we
+should consider that as possible in the overall design").
+
 What is **not** yet uniform, and is the second half of this document once the structure
 settles — a checklist every quantity must answer:
 
-1. Level policy: depth-adaptive for depths; the MBES backscatter store cannot yet hold
-   mixed levels (#383); sidescan is pinned at L13 by a "proposed position" (ADR-0006 D10).
+1. Level policy: the general strategy of the [level thread](#level-thread-open--a-dedicated-look-owed)
+   with this quantity's inputs; today depth-adaptive for depths, the MBES backscatter
+   store cannot yet hold mixed levels (#383), sidescan's L13 pin withdrawn (R16).
 2. Pyramid: depths yes (`build_depth_overviews`); sidescan yes; MBES backscatter **none**
    (#390); a staleness signal for all three (#389).
 3. Live vs processed rungs: depths yes; backscatter and sidescan single-rung.
 4. Fingerprint recorded: depths partially (cube ADR-0003, `tiling` only); others none.
-5. What the quantity is *for*: backscatter is a **product** (decided 2026-09-16), so it
-   gets all of the above; `water/` is in the model now with the same checklist.
+5. What the quantity is *for*, and what each tile must keep for those users
+   ([tile contents](#tile-contents-thread-open)): backscatter is a **product** (decided
+   2026-09-16), so it gets all of the above; `water/` is in the model now with the same
+   checklist.
+6. Whether the quantity needs tile versions (the pass-stacked idea in the level thread),
+   and if not, that it pays nothing for the mechanism.
 
-## Fingerprints and the regenerate command *(open)*
+## Fingerprints *(open)*
 
 Every stage below sources writes a fingerprint naming exactly what it was built from:
 source identities (bag `metadata.yaml` SHA-256, edition ids), the correction set applied,
 the trajectory rung and its fingerprint, tool and policy versions, tiling. cube ADR-0003's
 `build_fingerprint.json` and #389's `overviews/source.json` are two instances of this one
 idea; the generalization is that *staleness is the same check at every stage*: recompute
-the key, compare, rebuild if different. "Regenerate the world" is then a dependency walk
-from sources to pyramids — a `make`, not a script that knows the order — and the ledger of
-which bags fed which store (#366) is a by-product of the keys rather than a separate file.
+the key, compare, rebuild if different. The ledger of which bags fed which store (#366) is
+a by-product of the keys rather than a separate file.
 
-**The regenerate command is a general process of the store repo, never a platform
-script** (Roland, 2026-09-16): platform-specific scripts (`build_bathy_store.sh`) were
-acceptable during development; the platform repo now supplies configuration only (bag root,
-topics, frames, platform/sensor ids, curve paths) and the process lives with the stores.
-rolker/unh_echoboats_project11#490 is reframed to interim fixes followed by retirement.
+A fingerprint **records**; it does not **judge**. Which of two builds of the same rung is
+the better one is decided by the [replica rule](#replica-rule-and-copy-of-record-open),
+which compares what the fingerprints record.
 
-Open: one schema across stages or one per stage with a shared core; what the walk is
-called and where it lives; how the copy-of-record question (below) interacts with it.
+Open: one schema across stages or one per stage with a shared core (Q8).
 
-## Distribution and the copy of record *(open)*
+## Tile contents thread *(open)*
 
-Gabby, salmon, the dev box and the cloud each hold a store today and they diverge; the
-2026-09-03 salmon → dev copy was by hand and fixed a broken prior by accident. Tile sync
+What each tile keeps is to be **revised per the users of the store and what they need**
+(R1 verdict). Users identified so far: the costmap (depth, σ), CAMP and the explorer
+(depth, σ, backscatter, quality for display), CUBE priming (depth, σ, and ideally the
+hypothesis state), survey QC (sample count, hypothesis count/strength, flags), the
+cross-dataset constraint work (whatever an equivalent-sound-speed or backscatter-with-bathy
+estimator needs from a previous pass — likely more than the surface: per-cell angle
+coverage, sample statistics). Whether **a form of uncertainty is required for every data
+type** (backscatter, sidescan, water properties) is to be debated. Per-cell *source* stays
+out (lineage is tile-granular via the survey index and fingerprints). A cleaning mark (R7)
+applies to a tile's cells, so the tile format must leave room for a per-cell mask or an
+equivalent flag band — the mark itself lives under `curation/`, its effect is in the tile.
+
+## Level thread *(open — a dedicated look owed)*
+
+How a quantity's storage level is chosen is settled as **one general strategy with a
+per-quantity consideration** (Roland, 2026-09-17): the strategy names the inputs every
+quantity answers (required resolution from the physics, achieved resolution from the data
+density, a floor, a clamp) and each quantity records its answers in the checklist under
+[quantity stores](#quantity-stores-settled-mechanism-open-per-quantity-treatment). Inputs seen so far:
+the depth ladder (ADR-0010 D9 #369, as-built in cube#143: coarser of required-from-depth
+and achieved-from-density, positioning floor uma#386 unmerged), the chart's native scale
+ladder (no generated pyramid, ADR-0010 D7), data that never passes through CUBE (S-102
+imports, reference grids, sidescan mosaics, water properties), and the writer-side
+differences ADR-0010 D9 does not yet record. Roland (2026-09-16): take a closer look and
+compare with the chart case before pinning anything further; sidescan's level is decided
+by its properties like any other quantity (R16).
+
+**Idea to vet (Roland, 2026-09-16) — pass-stacked sidescan tiles.** Sidescan loses a lot by
+being composited into one tile. Each new pass over a tile could generate a *new* tile with
+that pass pasted over the existing one; a partial pass replaces only what it covers. That
+is a form of **time-varying tile**: a per-tile stack of pass versions rather than one
+composite. It is consistent with the explorer's rule that a single pass is the unit of
+sidescan interpretation (uma#258) and different from the per-day epochs dropped in R5 (a
+partition of the raster by date, serving nobody). Architectural implications, if it
+holds: tile versions become first-class in the store layout and the sync model; the
+pyramid folds the top of the stack; the [time thread](#time-thread-open-separate-from-tile-contents)
+gains a concrete consumer. Not decided.
+
+**Requirements the pass-stacked idea adds (Roland, 2026-09-17), if it is adopted:** a
+consumer can hold every version of a tile and step through them (mouse wheel) to watch
+the coverage build up pass by pass; a **representative version** — the "best" pass on
+top of everything else, so a sliver of a later pass does not add noise over a pass that
+covers the tile well — is chosen automatically and can be overridden by the user; the
+pyramid folds the representative. Two constraints on the store follow. First, tile
+versions must be a general mechanism the layout and the sync model understand, so other
+quantities can use the same treatment if they turn out to need it. Second, **a quantity
+that has no versions must pay nothing for the mechanism**: one tile file, no extra
+machinery, no slower reads. The layout is to be vetted against both before the idea is
+accepted.
+
+## Time thread *(open, separate from tile contents)*
+
+Time is its own problem and is not to be folded into the metadata question. Two very
+different time scales want tracking: **seafloor change** between passes (the change-
+detection idea explored and deferred in uma#221, still wanted), and **fast-varying
+quantities** such as sound speed and water level that a derived product depends on. A
+per-cell timestamp served neither well and was dropped (#248); trajectories and
+observations now carry time natively, and the question is what a *store* should record —
+per pass, per tile, or as a separate time axis for the quantities that need it.
+
+# Part 2 — Processes that work on the stores
+
+Every process here is a **general process of the store repo, never a platform script**
+(Roland, 2026-09-16). A platform repo supplies configuration only — bag root, topics,
+frames, platform and sensor ids, curve paths — and the process lives with the stores.
+`build_bathy_store.sh` (rolker/unh_echoboats_project11#490) is the last platform script;
+its issue is reframed to interim fixes followed by retirement.
+
+## Import, link, regenerate *(open)*
+
+- **Import** reads sources with the corrections applied and writes observations (and, for
+  a product that needs no pose, a quantity store directly: an S-102 grid into
+  `depths/published`).
+- **Link** applies a trajectory rung to observations and writes a quantity store rung,
+  then its derived artefacts. A navigation reprocess is a relink, not a reimport
+  ([deferred pose](#trajectories-and-deferred-pose-open)).
+- **Regenerate** is a dependency walk from sources to pyramids, driven by the
+  fingerprints: recompute each stage's key, rebuild what differs, in dependency order —
+  a `make`, not a script that knows the order. "Regenerate the world" and "bring this one
+  pyramid up to date" (#389's `--if-stale`) are the same walk at different roots.
+
+Open: what the walk is called and where it lives; how far a partial regenerate (one
+quantity, one region) can go without rebuilding its neighbours.
+
+## Replica rule and copy of record *(open)*
+
+More than one machine holds a store, they diverge, and the 2026-09-03 hand copy from
+the durable archive to a workstation fixed a broken prior by accident. Tile sync
 (ADR-0002 D6) has been deferred since June; the live transport (ADR-0008) carries `draft`
-for display only. The model needs a stated copy of record and a replica rule before the
-regenerate command can mean one thing on every host. Not designed yet.
+for display only. The model needs a stated copy of record and a replica rule before
+regenerate can mean one thing everywhere.
 
-**Field observation that constrains it (Roland, 2026-09-16).** In practice there was no
-time after a deployment to produce a day's `processed` layer on a shoreside machine and
-push it to gabby before the next outing. So the next deployment started without the
-previous day's coverage folded in. The consequence for the model: the `processed` rung
-cannot assume a shoreside, curated producer on a daily cadence. Some **crude automatic
-processing on the boat** (gabby re-running its own bags overnight into its own `processed`,
-with whatever priors and trajectory rung it has) is the realistic way a new deployment
-starts with fresh coverage; the curated shoreside re-run, when it happens, supersedes it.
-The June-2026 host-role split (gabby = live store, salmon = durable archive + curated
-store; see [prior work](#prior-work-this-draft-builds-on)) assumed the opposite cadence.
+**Roles, not hosts** (R21). The design speaks of a *live producer* (the platform,
+writing `draft` and possibly its own `processed`), an *archive* (the durable copy of the
+sources), a *curation* role (where the shoreside, reviewed `processed` is built) and
+*replicas* (any machine holding a copy for consumption). Which physical machine plays
+which role, and whether the archive also builds stores, is a deployment detail and is
+recorded in the platform repo (Part 3).
 
-What this asks of the design, still open:
+**The field observation that constrains the rule (Roland, 2026-09-16).** After a
+deployment day there was no time to build that day's `processed` shoreside and push it
+to the boat before the next outing, so the next day started without the previous day's
+coverage. Consequences:
 
-- A rung is defined by *process*, not by host — so a boat-produced `processed` and a
-  shoreside `processed` are the same rung with different fingerprints (inputs, priors,
-  trajectory rung). The fingerprint is what lets a replica decide which one is better.
-- A replica rule that prefers the build with the more complete inputs (more bags, a
-  post-processed trajectory, corrections applied), not the newest write.
-- Whether `draft` should persist and accumulate across deployments on the boat as a
-  cheaper first step, before any on-boat re-run exists.
-- Sync direction and trigger (boat → shore for bags and boat-processed; shore → boat for
-  curated processed and priors), and what happens to a boat store while a shore build is
-  in flight.
+- A rung is defined by *process*, not by role: a boat-produced `processed` (an overnight
+  automatic re-run of its own bags, with whatever priors and trajectory rung it has) and
+  the curated shoreside `processed` are the **same rung with different fingerprints**.
+- **Proposed replica rule (agent, 2026-09-17; open Q6):** the fingerprint records the
+  input set — bags, corrections, trajectory rung, priors, tool versions. A build whose
+  input set is a **superset** of another's supersedes it. When neither input set contains
+  the other the two are incomparable: both are kept, the consumer chooses, and the
+  curated build is the default where one exists. Newest write is never the criterion.
+- Still open: whether `draft` should persist and accumulate on the platform across
+  deployments as a cheaper first step; sync direction and trigger (platform → shore for
+  bags and platform-built products; shore → platform for curated products and priors);
+  what a platform store does while a shore build is in flight.
+
+## Cleaning and QC *(open)*
+
+A cleaning mark is a reviewed statement under `curation/cleaning/` (R7: manual,
+automatic or both — decide later) whose effect is applied at link time and lands in the
+tile as a per-cell mask or flag band ([tile contents](#tile-contents-thread-open)). QC
+tools read trajectories and observations directly; they are the second reader of those
+stages after the link step.
+
+# Part 3 — Deployment specifics *(moved out)*
+
+Which machine plays which role, where the durable archive is (as of 2026-09-17 the NAS
+share holds the season's bags), whether stores are also built there, the sync cadence
+between a boat and the shore, and the 2026 field incidents that motivate them are
+**deployment details of one platform**, not the design (Roland, 2026-09-17). They are to
+be recorded in `unh_echoboats_project11` as a deployment document that maps this
+document's roles to that platform's hosts — tracked by
+[rolker/unh_echoboats_project11#491](https://github.com/rolker/unh_echoboats_project11/issues/491).
+This document keeps only what constrains the model
+(the cadence observation above) and names no host outside dated examples.
 
 ## Prior work this draft builds on
 
@@ -342,7 +523,12 @@ and reload), #296/#294/#295 (costmap combine, empty-coverage guard, chart proven
 #129, #146, #160; camp#109, #198, #191, #208, #221; mpt#36 direction 1 (a shared LOD
 selection core, "blocked on a decision, not code"), mpt#43; echoboats#490, #488, #434.
 
-## Migration from today's tree *(draft)*
+## Transient: migration from today's tree *(draft; delete when the migration lands)*
+
+*Working material for the draft period, not design: this table exists so the move from
+the 2026-09 tree is planned once and checked once. It is removed when the migration lands
+(Roland, 2026-09-17).*
+
 
 | Today (`~/data/world/`) | Contents (2026-09-16, dev host) | Becomes |
 |---|---|---|
@@ -365,7 +551,11 @@ selection core, "blocked on a decision, not code"), mpt#43; echoboats#490, #488,
 right. Paths are configuration for every consumer, so the migration is a config change
 plus a one-time move; nothing in a tile changes.
 
-## ADRs this draft will amend when cut
+## Transient: ADRs this draft will amend when cut *(delete when the cuts land)*
+
+*Working material, not design (Roland, 2026-09-17): this is the to-do list for the ADR
+cuts, deleted as each amendment lands.*
+
 
 | ADR | What changes |
 |---|---|
@@ -377,51 +567,6 @@ plus a one-time move; nothing in a tile changes.
 | uma 0011, 0013 | pointer only |
 | cube 0003 | named as an instance of the universal fingerprint; unimplemented fields listed |
 | camp 0014 | D4's quoted "as imported" for `reference` corrected (camp#202) |
-
-## Tile contents thread *(open)*
-
-What each tile keeps is to be **revised per the users of the store and what they need**
-(R1 verdict). Users identified so far: the costmap (depth, σ), CAMP and the explorer
-(depth, σ, backscatter, quality for display), CUBE priming (depth, σ, and ideally the
-hypothesis state), survey QC (sample count, hypothesis count/strength, flags), the
-cross-dataset constraint work (whatever an equivalent-sound-speed or backscatter-with-bathy
-estimator needs from a previous pass — likely more than the surface: per-cell angle
-coverage, sample statistics). Whether **a form of uncertainty is required for every data
-type** (backscatter, sidescan, water properties) is to be debated. Per-cell *source* stays
-out (lineage is tile-granular via the survey index and fingerprints). Data-cleaning marks
-belong here too (see R7).
-
-## Level thread *(open — a dedicated look owed)*
-
-How a quantity's storage level is chosen is to be settled **generally**, not per quantity:
-the depth ladder (ADR-0010 D9 #369, as-built in cube#143: coarser of required-from-depth
-and achieved-from-density, positioning floor uma#386 unmerged), the chart's native scale
-ladder (no generated pyramid, ADR-0010 D7), data that never passes through CUBE (S-102
-imports, reference grids, sidescan mosaics, water properties), and the writer-side
-differences ADR-0010 D9 does not yet record. Roland (2026-09-16): take a closer look and
-compare with the chart case before pinning anything further; sidescan's level is decided
-by its properties like any other quantity (R16).
-
-**Idea to vet (Roland, 2026-09-16) — pass-stacked sidescan tiles.** Sidescan loses a lot by
-being composited into one tile. Each new pass over a tile could generate a *new* tile with
-that pass pasted over the existing one; a partial pass replaces only what it covers. That
-is a form of **time-varying tile**: a per-tile stack of pass versions rather than one
-composite. It is consistent with the explorer's rule that a single pass is the unit of
-sidescan interpretation (uma#258) and different from the per-day epochs dropped in R5 (a
-partition of the raster by date, serving nobody). Architectural implications, if it
-holds: tile versions become first-class in the store layout and the sync model; the
-pyramid folds the top of the stack; the [time thread](#time-thread-open-separate-from-tile-contents)
-gains a concrete consumer. Not decided.
-
-## Time thread *(open, separate from tile contents)*
-
-Time is its own problem and is not to be folded into the metadata question. Two very
-different time scales want tracking: **seafloor change** between passes (the change-
-detection idea explored and deferred in uma#221, still wanted), and **fast-varying
-quantities** such as sound speed and water level that a derived product depends on. A
-per-cell timestamp served neither well and was dropped (#248); trajectories and
-observations now carry time natively, and the question is what a *store* should record —
-per pass, per tile, or as a separate time axis for the quantities that need it.
 
 ## Decision re-examination register *(first pass complete 2026-09-16; R13 deferred to the level thread)*
 
@@ -478,19 +623,37 @@ be weighed against its product-quality cost. Candidates, each to be stated with 
 
 | # | Question | Owner |
 |---|---|---|
-| 1 | Rung names | **decided**: `published | reference | draft | processed` |
+| 1 | Rung names | **decided**: `published | reference | draft | processed`; order is a default (2026-09-17) |
 | 2 | Correction-record schema and canonical home | agent proposes, Roland decides |
 | 3 | Trajectory product format and the day/mission unit | agent proposes |
 | 4 | Backscatter | **decided**: a PRODUCT — full per-quantity treatment (#390 pyramid, #383 mixed levels, draft/processed rungs, cross-dataset work) |
 | 5 | Tile contents per user; is uncertainty required for every data type? | tile-contents thread |
-| 11 | Gradual S-100 adoption strategy (S-102 now, S-101 features later); what the stores must accommodate | agent proposes |
-| 10 | Shoreline / coastline representation in the store (needed so the costmap stops using `unsurveyed_is_lethal` as a shore proxy) | agent proposes |
-| 9 | Category name | **decided**: `curation/` (corrections + cleaning marks); datum polygons stay under `sources/datum/user/` |
-| 6 | Copy of record, replica rule, and on-boat automatic `processed` (see Distribution) | Roland + agent |
+| 6 | Copy of record and replica rule | **proposed** (2026-09-17): input-set superset supersedes; incomparable → both kept, curated default — Roland to confirm; on-platform automatic `processed`, sync direction and trigger still open |
 | 7 | `water/` theme | **decided**: in the model now as a named quantity with the same ladder and stage rules; implementation stays under uma#300 |
 | 8 | Fingerprint: one schema or shared core? | agent proposes |
+| 9 | Category name | **decided**: `curation/` (corrections + cleaning marks); datum polygons stay under `sources/datum/user/` |
+| 10 | Shoreline representation: water-level-qualified products under `features/`; sourced from charts/reference now, our own `processed` shoreline admitted later | agent proposes (rev 2 sketch above), Roland decides |
+| 11 | Gradual S-100 adoption strategy (S-102 now, S-101 features later); what the stores must accommodate | agent proposes |
+| 12 | Name for a merged acoustic product, if ever built (derived store) | **proposed**: *seafloor reflectance*; `backscatter` stays MBES-only — Roland to confirm |
+| 13 | Non-sonar sources: lidar bathymetry, ROV/camera imagery — confirm each fits the five categories via the checklist | agent proposes |
+| 14 | Tile versions (pass-stacked sidescan): layout + sync mechanism, vetted against the zero-cost-when-unused constraint | agent proposes after the level thread |
 
 ## Change log
+
+- 2026-09-17 — **rev 2** from Roland's review of PR#392 (16 comments): document split into
+  the store model (Part 1), the processes (Part 2) and deployment specifics (Part 3, moved
+  out to the platform repo, roles not hosts); build-pipeline analogy demoted to an aside;
+  rules audited with a Why column — "consumers never read sources" replaced by "consumers do
+  not depend on sources for a product a store provides" (the explorer reads bags for point
+  clouds); ladder order is a default preference, rungs addressable directly; migration and
+  ADR-amendment sections marked transient; MaCORS datum cited from the MassDOT FAQ; RTK
+  datum correction added as a correction-record case; "never tile-synced" defined;
+  cleaning-mark sentence rewritten as a tile-format requirement; level thread = one general
+  strategy + per-quantity consideration; pass-stacked tiles recorded as requirements with a
+  zero-cost-when-unused constraint; `backscatter` reserved for the MBES quantity, merged
+  product named only if built (Q12); lidar/ROV sources and the shoreline admitted (Q10, Q13);
+  fingerprint records, replica rule judges — superset rule proposed (Q6). Deployment document
+  filed as rolker/unh_echoboats_project11#491.
 
 - 2026-09-16 (later) — regenerate is a general store process; platform scripts retire (echoboats#490 reframed).
 - 2026-09-16 (later) — `config/` renamed `curation/` (corrections + cleaning); datum polygons stay in sources.
