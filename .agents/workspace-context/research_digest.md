@@ -1,7 +1,23 @@
 # Research Digest: Marine Robotics
 
-<!-- Last updated: 2026-08-21 -->
+<!-- Last updated: 2026-09-17 -->
 <!-- If older than 30 days, consider running /research --refresh; entries older than 90 days should be flagged for review -->
+
+## World Store — Existing Systems to Adopt (survey)
+
+**Added**: 2026-09-17 | **Sources**: [MB-System mbprocess](https://www3.mbari.org/products/mbsystem/html/mbprocess.html), [Kluster data structures](https://kluster.readthedocs.io/en/latest/indepth/datastructures.html), [GDAL GTI driver](https://gdal.org/en/stable/drivers/raster/gti.html), [STAC spec](https://github.com/radiantearth/stac-spec), [NOAA BlueTopo specs](https://nauticalcharts.noaa.gov/data/bluetopo_specs.html), [BAG FSD](https://bag.readthedocs.io/en/master/fsd/FSD-BAGStructure.html), [Snakemake](https://snakemake.readthedocs.io), [git-annex](https://git-annex.branchable.com); full survey in [`docs/world_store_prior_art.md`](../../docs/world_store_prior_art.md)
+
+Key takeaways:
+- Corrections-as-data and deferred pose already ship: MB-System's `.par`/`.esf`/`mbnavadjust` and Kluster's nav-as-swappable-variables; adopt their data models before designing uma#391's Q2/Q3
+- The mixed-level pyramid's addressing and C++ consumption are off the shelf (GDAL GTI ≥ 3.9 chaining one index per level, or STACTA over the existing `level_row_col.tif` names); only the pyramid builder stays ours
+- STAC (+ `file`, `processing`, `version`) replaces three bespoke manifest/fingerprint schemas; stac-geoparquet is readable by GTI directly; GGGS should be registered as an OGC TileMatrixSet JSON
+- BlueTopo is a production instance of the same architecture (mixed-resolution per-tile GeoTIFFs: elevation, uncertainty, contributor-index → RAT; tessellation in an authoritative GeoPackage); BAG's tracking list is the cleaning-mark schema
+- Two draft corrections: a SHA-256 of rosbag2 `metadata.yaml` is not a stable bag identity (versioned struct, unserialised fields); `mcap add` edits sources in place
+- Dead ends to avoid: MinIO archived 2026-04, Pachyderm dormant, Icechunk has no C++ path, H3 cells are not exactly nested
+
+**Relevance**: uma#391 world-store design draft (PR #392) — the survey is the basis for deciding what to adopt vs build in rev 3; eleven ranked experiments are listed in the survey document
+
+---
 
 ## ROS 2 Autonomous Surface Vehicles (ASVs)
 
