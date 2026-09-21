@@ -585,29 +585,68 @@ submissions, GMRT below 200 m and crowdsourced soundings; products are BlueTopo 
 not for navigation), ENC support and S-102. New regions roughly every six months; tiles
 inside a region refresh weekly to monthly. https://nauticalcharts.noaa.gov/learn/nbs.html,
 https://nauticalcharts.noaa.gov/data/bluetopo_specs.html. The paper is Rice, Wyllie,
-Gallagher, Geleg, *The National Bathymetric Source*, OCEANS 2023 Gulf Coast — **not
-retrieved**; the combine algorithm is presumably in it.
+Gallagher, Geleg, *The National Bathymetric Source*, OCEANS 2023 Gulf Coast (IEEE; read
+2026-09-21 from Roland's copy). Its lineage runs through CCOM: the "navigation surface"
+of Smith's 2003 UNH MSc is the ancestor it names.
 
-*The deconfliction*: BlueTopo bakes **one winner per cell** at build time — Elevation,
+*The workflow, from the paper*: four phases — **acquire** (NCEI and eHydro pulled by
+API with source databases, everything else found manually by the External Source Data
+team; GMRT below 200 m; a licence assigned per survey; data taken from the originator
+because distributors "could be modified in undocumented ways"; on re-acquisition the
+stored metadata **and a hash of the bathymetry** are compared before re-downloading),
+**normalize** (formats, CRS → NAD83(2011) UTM, coverage interpolation, quality metrics,
+then a *score*; human interventions are "recorded in databases to support end product
+lineage research"; alternate interpolations are generated and the operator's choice
+preserved), **compile**, and **extract** into five pipelines: ENC, S-102 (built as a BAG
+then converted), BlueTopo (MSL/NAVD88), Modeling (MLLW), and an internal planning
+product. Sources sit in four **buckets** — *qualified* (HSD-reviewed), *unqualified*,
+*sensitive*, *precompiled* (ENC, GMRT: individual source metadata unknown, "rated at the
+lowest quality") — and each pipeline names which buckets it may draw from. The program was
+"engineered to restart from source data, producing reproducible and consistent results by
+removing undocumented and subjective work", and its three pillars are named as depth,
+quality and source lineage.
+
+*The compile rule, verbatim in substance*: compilation is the transition "from
+survey-based workflows to location-based workflows"; a survey's quality score is
+**decayed as a function of time and location** (decay time = survey end date minus a
+reference time approximating tile generation; locality captures changeability, so
+newer-lower-quality can beat older-higher-quality in a changeable area and the reverse in
+a stable one). At each evaluation node the winner is chosen by the hierarchy
+**(1) highest decayed quality score, (2) finest resolution, (3) least depth, (4) name of
+the source**. It runs twice — first within each bucket, then between buckets per pipeline
+— then generalises by *linear* interpolation with its own (conservatively large)
+uncertainty, flagged `bathymetry coverage = false`; `survey coverage` is a separate flag
+(sidescan-supported surveys are covered without depths). Averaging or smoothing in the
+compile is explicitly rejected because it "obfuscate[s] the lineage between the final
+compilation and the source information". Node-based logic follows the BAG spec.
+Supersession is handled by the location-based decay plus a tile naming that allows
+"algorithmic and automatic generation and supersession between cells of different sizes";
+a data-driven variable-resolution compile is named as future work.
+
+*The product*: BlueTopo bakes **one winner per cell** at build time — Elevation,
 Uncertainty and a Contributor index into a 21-field RAT (`source_survey_id`,
 `survey_date_start/end`, `bathy_coverage` = false when the cell is interpolated,
 `horizontal/vertical_uncert_fixed/_var`, `significant_features`, `feature_least_depth`,
-`license_*`, `source_institution`, …). The public criteria, in the order three NOAA pages
-converge on: **coverage/completeness, measurement uncertainty (equipment class and depth),
-survey age with a decay factor**, plus feature-detection capability and "changeability of
-the location". No formula or strict priority is published.
-https://nauticalcharts.noaa.gov/updates/building-the-national-bathymetry/. Supersession —
-how a withdrawn or superseded survey is retracted from issued tiles — is **not published**.
+`license_*`, `source_institution`, …). The web pages give only the ingredients of the score
+(coverage, uncertainty, feature detection, age); the score's construction is in Wyllie et
+al., *Developing a method to validate the navigational bathymetric database*, US Hydro
+2017 (not read). Withdrawal of a source is not described; supersession is the decay.
 
 *Alignment*: NBS needs one answer per cell because a navigation product must; our
 consumers legitimately want different stacks (CAMP, the explorer, GeoZui4D, the costmap),
-which is why the store owns no order. The two are reconcilable: NBS's three criteria are
-the obvious **documented default a consumer may adopt** — written as a consumer-side rule,
-not a store property. Two things to take outright: the `bathy_coverage`
+which is why the store owns no order. The two are reconcilable: NBS's rule — decayed score, then
+resolution, then least depth, then source name — is the obvious **documented default a
+consumer may adopt**, written as a consumer-side rule, not a store property. Two further
+takes from the paper: (a) their *acquire* step already does what our content identity
+does — a hash of the bathymetry decides whether a source changed; (b) their rejection of
+averaging *in the compile* is about lineage at the product node, which our per-cell
+contributor preserves; it is not an argument against a representative fold in an
+overview pyramid, but the depth-fold decision should say why the two differ. Two things to take outright: the `bathy_coverage`
 measured-vs-interpolated flag, and the per-cell Contributor + RAT we already adopted (this
 read confirms per-cell, not per-tile, is the granularity NOAA found necessary). One open
-question is shared: supersession. Neither NBS (publicly) nor our draft says how a
-withdrawn source leaves a published product; that belongs in rev 3's consumer contract.
+question remains shared: *withdrawal*. NBS supersedes by decay; neither it nor our draft
+says how a source that is withdrawn outright leaves a published product. That belongs in
+rev 3's consumer contract.
 What we have that NBS does not publish: a fingerprinted raw-to-product regenerate, content
 identity down to the bag, and a field consumer.
 
@@ -706,7 +745,7 @@ has not filled; our `revisions/` + fingerprints is a candidate answer.
 
 ## Not verified in this part
 
-The Rice et al. OCEANS 2023 NBS paper and the UxSOC 2024–28 plan were not retrieved;
+The UxSOC 2024–28 plan was not retrieved; the Wyllie 2017 US Hydro score paper was not read;
 BlueTopo's 2/4/8/16 m depth tiers come from a CRAN package's docs, not NOAA; Qimera's
 edit-flag storage and the Hydro International article text were reached only through
 search summaries; Kluster's export list (GSF/LAS) is unconfirmed. The Fairweather 2018
