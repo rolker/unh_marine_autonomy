@@ -507,3 +507,207 @@ and Icechunk were unreliable through the fetch tool (versions are verified). Whe
 (https://github.com/mbari-org/SeafloorMappingDB) was found but not read; it is the only
 candidate that is explicitly a catalogue of seafloor mapping datasets from a peer
 institution and deserves an hour.
+
+---
+
+# Part 2 — Convergence check against the industry and NOAA (2026-09-21)
+
+Written after spine decisions 0, 1 and 3 (frame; content identity; `draft | reviewed |
+published` × `surveyed | imported`, store owns no preference order, `revisions/`). The
+question asked: *now that the design has evolved, is it converging on something that
+exists — and if so, should we align with it or extend it?* Roland's direction: follow
+NOAA's lead (NBS, Kluster) as far as practical, study what the industry knows (QPS,
+CARIS) and its complaints, and ask whether the framework can serve NOAA-style uncrewed
+operations. Four web reads plus the primary HSSD 2025 text; every "what it is" primer
+is kept short because Part 1 already carries most of these tools.
+
+## What the evolved design is, in three known shapes
+
+| Layer of our design | The existing thing it now resembles | Verdict |
+|---|---|---|
+| `sources` immutable + `revisions/` reapplied + `observations` intermediate + surfaces regenerated | the **Qimera / CARIS project model**: raw never edited, settings (HVF, SVP, tide, nav) reapplied, edits as flags on the intermediate, surfaces rebuilt | we replicate the principle; we diverge on *closed intermediates* and *per-project silos* — both divergences are backed by a cited complaint (below) |
+| `draft \| reviewed \| published` | NBS's **qualified vs. unqualified** split (HSD-reviewed data feed navigation products; unreviewed data still flow to non-navigational products "for timely access"); in data-engineering terms the bronze/silver/gold "medallion" layering | same shape; ours makes the review state a formal, queryable lifecycle rather than a backlog |
+| `depths/reviewed/imported` + `published` over many surveys | **NBS / BlueTopo**: many surveys of mixed origin tiled into one compiled surface with per-cell contributor | we adopted the tile *format* on 09-18; NBS's *deconfliction* is what we just handed to consumers — see below |
+| `observations/` (sensor-frame, pose deferred) + `trajectories/` | **Kluster FQPR**: raw beam angle/travel time kept in the transducer frame in Zarr, x/y/z materialised only at the georeference step; SBET nav imported as parallel variables | schema already borrowed; Kluster is *maintenance-mode* (below), so "own builder, their schema" stands |
+
+No single system combines all three with a boat-side consumer and a fleet replica rule;
+that combination is where the design is genuinely new, and each novel piece traces to a
+stated need (vision statement, the field-cadence observation, R21 roles-not-hosts).
+
+## QPS Qimera and CARIS HIPS — what the industry runs, and why people leave
+
+*What they are*: the two dominant commercial multibeam processing suites. A Qimera
+project is a folder with `qpsproject.xml`, raw files imported by reference and never
+edited, **QPD** processed-point files per vessel (QPS binary, no public spec), and a
+Dynamic Surface on top; changing a project setting (offsets, sound-speed strategy, tide,
+navigation source) flags the affected items and "Auto Process" reprocesses everything
+downstream in the right order (the CHC 2018 eTrac/NOAA evaluation credits this with
+removing order-of-reprocessing errors). CARIS converts raw to **HDCS** line files, applies
+the **HVF** vessel file at processing time, keeps rejects as *status flags on the records —
+"data points are not removed"* — and builds surfaces (including CUBE) into **CSAR**, its
+multi-resolution container. Exports: GSF, BAG, GeoTIFF, LAS and friends; neither exports
+S-102. https://confluence.qps.nl/qimera/latest/en/qimera-project-structure-150050672.html,
+https://qps.nl/qimera/all-specifications/,
+https://docs.teledynecaris.com/docs/4.4.11/hips%20and%20sips/CARIS%20HIPS%20and%20SIPS%20Help/HIPS%20and%20SIPS%20Reference.16.24.html
+
+*The complaints, with who said them*:
+- NOAA OCS, in Kluster's own rationale: "the data is inaccessible, or relies on
+  intermediate products that are locked within the software" —
+  https://kluster.readthedocs.io/en/latest/index.html. That is a complaint about exactly
+  the QPD/HDCS/CSAR pattern.
+- Cordero & Kastrisios (UNH CCOM), *Characterizing free and open-source tools for
+  ocean-mapping*: FOSS tools "provide features not available with" commercial suites and
+  "can reduce processing time and overall production costs", yet adoption in hydrographic
+  offices "remains limited" — https://www.researchgate.net/publication/344751310,
+  https://www.oshydro.org/projects/FOSSOM.html.
+- Hydro International (open-source and hydrographic data): cost "has excluded many";
+  uncrewed fleets need data-integrity automation with a human in the loop, and vendors
+  should engage the open-source community — fetched only as a search summary (HTTP 403).
+- *Not found*: public forum threads about licence prices, scripting limits or per-project
+  silos in so many words. Roland (09-21): not enough QPS experience to judge; the closed
+  format is the problem for him.
+
+*What we take from them*: (1) the **principle is theirs and we keep it** — raw untouched,
+edits as flags, settings reapplied; our `revisions/` is CARIS's status flag plus Qimera's
+project settings, made into reviewed records with a hash instead of a project file.
+(2) The **divergence is justified by the cited complaint**: Zarr, COG and STAC where they
+have QPD/HDCS/CSAR. (3) **A capability we lack**: both ship a mature interactive Swath
+Editor / CUBE-hypothesis review coupled to the reprocess engine. Our design has no
+first-class cleaning editor — component 6 said the manual tool is a survey-explorer
+feature; this survey confirms that is the single biggest human-facing gap, and it
+should be named in rev 3 as such.
+
+## NOAA National Bathymetric Source — the compilation we are converging on
+
+*What it is*: OCS's program that "builds and maintains a seamless and high-resolution
+model" of U.S. waters from NOAA surveys, USACE eHydro, JALBTCX lidar, external
+submissions, GMRT below 200 m and crowdsourced soundings; products are BlueTopo (public,
+not for navigation), ENC support and S-102. New regions roughly every six months; tiles
+inside a region refresh weekly to monthly. https://nauticalcharts.noaa.gov/learn/nbs.html,
+https://nauticalcharts.noaa.gov/data/bluetopo_specs.html. The paper is Rice, Wyllie,
+Gallagher, Geleg, *The National Bathymetric Source*, OCEANS 2023 Gulf Coast — **not
+retrieved**; the combine algorithm is presumably in it.
+
+*The deconfliction*: BlueTopo bakes **one winner per cell** at build time — Elevation,
+Uncertainty and a Contributor index into a 21-field RAT (`source_survey_id`,
+`survey_date_start/end`, `bathy_coverage` = false when the cell is interpolated,
+`horizontal/vertical_uncert_fixed/_var`, `significant_features`, `feature_least_depth`,
+`license_*`, `source_institution`, …). The public criteria, in the order three NOAA pages
+converge on: **coverage/completeness, measurement uncertainty (equipment class and depth),
+survey age with a decay factor**, plus feature-detection capability and "changeability of
+the location". No formula or strict priority is published.
+https://nauticalcharts.noaa.gov/updates/building-the-national-bathymetry/. Supersession —
+how a withdrawn or superseded survey is retracted from issued tiles — is **not published**.
+
+*Alignment*: NBS needs one answer per cell because a navigation product must; our
+consumers legitimately want different stacks (CAMP, the explorer, GeoZui4D, the costmap),
+which is why the store owns no order. The two are reconcilable: NBS's three criteria are
+the obvious **documented default a consumer may adopt** — written as a consumer-side rule,
+not a store property. Two things to take outright: the `bathy_coverage`
+measured-vs-interpolated flag, and the per-cell Contributor + RAT we already adopted (this
+read confirms per-cell, not per-tile, is the granularity NOAA found necessary). One open
+question is shared: supersession. Neither NBS (publicly) nor our draft says how a
+withdrawn source leaves a published product; that belongs in rev 3's consumer contract.
+What we have that NBS does not publish: a fingerprinted raw-to-product regenerate, content
+identity down to the bag, and a field consumer.
+
+## Kluster — adopt it, copy it, or feed it
+
+*What it is*: NOAA HSTB's open-source (CC0) distributed multibeam processor on the
+Pangeo stack (Xarray/Dask/Zarr), Eric Younkin, since 2019.
+https://github.com/noaa-ocs-hydrography/kluster. **Status: maintenance mode** — v1.1.7
+(Jan 2024) is a bug-fix release, the previous feature release was Oct 2022, 12 open
+issues. Kongsberg **M3 support was requested and never built** (issue #116); Norbit and
+newer KMALL revisions are also open. No stream or ROS ingest path; readers live in a
+separate `drivers` repo. Surfaces come from `bathygrid` (Python/Dask, no COG/STAC).
+
+*The schema we already borrow, now verified at variable level*: `raw_ping` (time × beam,
+per head) and `raw_att` Zarr stores; `beampointingangle`, `traveltime`, `counter`,
+`frequency` raw; `acrosstrack`/`alongtrack`/`depthoffset` after sound-velocity
+correction; `x`/`y`/`z` only after georeference; raw nav as `latitude`/`longitude`/
+`altitude`/`soundspeed` **inside the ping dataset**, post-processed nav as parallel
+`sbet_*` variables with `navigation_source` naming which is live; `tvu`/`thu`
+(Hare-Godin-Mayer, 2σ); `detectioninfo` 0 amplitude / 1 phase / 2 rejected / 3
+re-accepted; processing state as `_conversion_complete` … `_total_uncertainty_complete`
+attributes; lever arms and mounting angles by timestamp in `xyzrph`; chunks (1000, 400).
+https://kluster.readthedocs.io/en/latest/indepth/datastructures.html
+
+*Verdict — (b) own builder on Kluster's schema, as component 8 already does.* (a) using
+Kluster as the observation builder would need an mcap reader upstream of a file-oriented,
+per-line conversion model that does not fit continuous multi-sensor ROS streams, and would
+lose content identity, `revisions/`, the C++ boat-side reader and the GGGS/STAC output —
+against a maintenance-mode upstream with M3 unbuilt. (c) contributing an mcap reader and a
+revisions concept is the way to "advance those capabilities" for NOAA later; #116 shows
+there is demand. Concretely for rev 3: keep Kluster's variable names, its
+sensor-frame-first layering, its `_*_complete` state pattern (renamed to our stages), and
+`xyzrph`-by-timestamp as the on-disk form of a geometry revision, so a Kluster-literate
+hydrographer reads our observations without a glossary.
+
+## NOAA uncrewed operations and the HSSD — what a USV pipeline must satisfy
+
+*What NOAA does today*: DriX operational since 2023 (Thomas Jefferson, 2024: 2,300+ nm,
+~230 nm per 48 h mission, supervised autonomy, two operators, nav and video telemetered
+for near-real-time safety and data-quality monitoring); NRT small USVs; C-Worker 5
+evaluated 2016; Saildrone Surveyor 4,500 km in 26 days (2024); UxSOC (OMAO, Gulfport,
+FY2020) with 60+ projects and a 2024–28 strategic plan (PDF not parsed). The 2020
+Uncrewed Systems Strategy names the hydrographic objective as "automated data acquisition
+and processing tools, new data acquisition procedures, and data telemetry".
+https://www.omao.noaa.gov/uncrewed-systems/news-media/article/48-hours-life-drix-noaas-newest-uncrewed-surface-vehicle,
+https://nauticalcharts.noaa.gov/learn/uncrewed-systems.html. **No published NOAA
+architecture for a USV data pipeline was found**; the nearest is NBS's qualified/unqualified
+split, which NBS itself frames as the throughput bottleneck.
+
+*HSSD 2025.0.00, read from the primary PDF* (the reads could not parse it; verified here):
+- **4.2** Raw data must be *submitted* in the delivery structure, with manufacturer file
+  naming. There is **no rule that raw files must not be modified** — our never-rewrite
+  rule is stricter than NOAA's, chosen for our own reasons (the 07-02 rewrites), not
+  required by them. Listed raw types are vendor formats (ALL/KMALL, S7K, JSF, HSX, QPS
+  DB, XTF, GSF, LAS; Applanix/Kongsberg/iXblue nav; Seabird/AML SVP) — **ROS bags are not
+  a recognised raw type**; a NOAA deliverable would need a listed form alongside.
+- **6.2 Lineage**: finalized grids derived from source grids must ship with them "such
+  that the submitted grids could be re-computed from the point cloud data", thresholds
+  applied only at finalization. This is our regenerability rule (R7) stated by NOAA.
+- **BAG** (6.1/6.3): all ONSWG components; uncertainty strictly positive, no zeros;
+  node-parity between elevation and uncertainty; **number of contributing points and the
+  tracking list of user overrides are required**, else precursor grids; VR BAG ≤ 10 M
+  refinement grids; BAG 2.0+ CRS per project; vertical datum = chart datum (MLLW/LWD);
+  creation and survey dates. Point-by-point TPU on the Hare-Godin-Mayer model.
+- **10.0**: a machine-readable data licence is required; CC0-1.0 for public release.
+- "UxS" appears only in the glossary — the specification is **platform-agnostic**; nothing
+  uncrewed-specific exists yet.
+
+*Alignment*: `draft` on the boat is the fast path NBS justifies; deferred pose is what
+makes provisional USV nav (RTK now, PPK later) a relink; `revisions/` is an auditable
+lineage where the DR convention is red italic text; fleet replicas by fingerprint are the
+"automated acquisition and processing tools" the 2020 strategy asks for and nobody has
+published. *Not met*: a **BAG publish path** — chart-datum vertical (VDatum from our
+ITRF2020 ellipsoidal store), contributing-point count, and a node-level tracking list
+*derived from our sounding-level marks at export* (component 6's finding that the
+tracking list goes stale under relink is exactly why it must be derived, never stored);
+and a mapping to the OPR/survey submission structure. Both are export adapters, not
+model changes. *Advance*: an explicit lineage for uncrewed-collected data is a gap HSSD
+has not filled; our `revisions/` + fingerprints is a candidate answer.
+
+## Consequences for rev 3
+
+1. State the three-shape convergence up front (Qimera/CARIS principle, NBS qualified split
+   and tiles, Kluster observations) and the three justified divergences (open
+   intermediates, one store not silos, consumer-owned ordering). Cite the complaints.
+2. Add a **consumer contract** item: "NBS default ordering" (coverage → uncertainty → age)
+   as a documented option, and **supersession** as an open question shared with NBS.
+3. Name the **interactive cleaning editor** as the largest unbuilt human-facing capability
+   (survey explorer is the candidate), not a detail.
+4. Add a **publish path** section: BAG per HSSD 6.1/6.3 (VDatum, counts, derived tracking
+   list, licence), and note ROS bags are not a listed raw type.
+5. Observations: keep Kluster's names and state attributes verbatim where they apply;
+   record `xyzrph`-by-timestamp as the geometry-revision carrier.
+6. Kluster upstream contribution (mcap reader, revisions) goes on the roadmap as the
+   "advance NOAA's capability" item, after our schema stabilises.
+
+## Not verified in this part
+
+The Rice et al. OCEANS 2023 NBS paper and the UxSOC 2024–28 plan were not retrieved;
+BlueTopo's 2/4/8/16 m depth tiers come from a CRAN package's docs, not NOAA; Qimera's
+edit-flag storage and the Hydro International article text were reached only through
+search summaries; Kluster's export list (GSF/LAS) is unconfirmed. The Fairweather 2018
+Arctic USV launch with UNH is reported, not verified.
