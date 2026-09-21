@@ -1,6 +1,6 @@
 # Research Digest: Marine Robotics
 
-<!-- Last updated: 2026-09-17 -->
+<!-- Last updated: 2026-09-21 -->
 <!-- If older than 30 days, consider running /research --refresh; entries older than 90 days should be flagged for review -->
 
 ## World Store — Existing Systems to Adopt (survey)
@@ -380,3 +380,19 @@ shape regardless.
 standalone `ros2 launch` usability on the bench) and have the manager *converge* to the
 target lifecycle state — read current state, transition only when off-target — rather
 than emit transitions blindly, so the two cannot race.
+
+---
+
+## World store vs. the industry and NOAA: Qimera/CARIS, NBS, Kluster, uncrewed HSSD
+
+**Added**: 2026-09-21 | **Sources**: [Kluster](https://github.com/noaa-ocs-hydrography/kluster), [Kluster data structures](https://kluster.readthedocs.io/en/latest/indepth/datastructures.html), [NBS](https://nauticalcharts.noaa.gov/learn/nbs.html), [BlueTopo specs](https://nauticalcharts.noaa.gov/data/bluetopo_specs.html), [Building the National Bathymetry](https://nauticalcharts.noaa.gov/updates/building-the-national-bathymetry/), [Qimera project structure](https://confluence.qps.nl/qimera/latest/en/qimera-project-structure-150050672.html), [CARIS HIPS reference](https://docs.teledynecaris.com/docs/4.4.11/hips%20and%20sips/CARIS%20HIPS%20and%20SIPS%20Help/HIPS%20and%20SIPS%20Reference.16.24.html), [HSSD 2025](https://www.nauticalcharts.noaa.gov/publications/documents/HSSD_2025-0-00.pdf), [Cordero & Kastrisios FOSSOM](https://www.oshydro.org/projects/FOSSOM.html), [NOAA DriX](https://www.omao.noaa.gov/uncrewed-systems/news-media/article/48-hours-life-drix-noaas-newest-uncrewed-surface-vehicle)
+
+Key takeaways:
+- The evolved uma#391 design is three known shapes stacked: the Qimera/CARIS project principle (raw untouched, edits as flags, settings reapplied, surfaces rebuilt), NBS's qualified/unqualified review split, and Kluster's sensor-frame-first observations. The novel part is combining them with a boat-side consumer and a fleet replica rule.
+- Justified divergences, each backed by a cited complaint: open intermediates (NOAA's Kluster rationale: data "locked within the software"), one store not per-project silos, consumer-owned layer ordering.
+- NBS bakes one winner per cell (coverage → uncertainty → age decay; no public formula; supersession unpublished). Its criteria become a documented consumer default, not a store rule.
+- Kluster is maintenance-mode (bug-fix only since Oct 2022; M3 support requested, never built). Keep our own builder on its schema; an mcap reader + revisions concept is the upstream contribution later.
+- HSSD 2025 (primary text): raw must be *submitted*, never "not modified" — our never-rewrite rule is stricter than NOAA's; 6.2 lineage = grids re-computable from the point cloud (our R7); BAG needs contributing-point count + a tracking list of overrides, strictly positive uncertainty, chart datum; ROS bags are not a listed raw type; the spec is platform-agnostic ("UxS" only in the glossary).
+- Largest human-facing gap vs. the commercial suites: an interactive cleaning editor coupled to reprocessing.
+
+**Relevance**: settles the "are we reinventing something" question for the world-store design draft (uma#391 / PR#392); feeds rev 3's convergence statement, consumer contract (NBS default, supersession), BAG publish path, and the Kluster-schema observations. Full write-up: `docs/world_store_prior_art.md` Part 2.
