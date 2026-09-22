@@ -478,6 +478,36 @@ void writeOverviewSchema(const fs::path & dir, SigmaFold rule)
   fs::rename(tmp, path);
 }
 
+// One derived tile's own record: its geometric error and the schema it was
+// written under. Per-TILE rather than a shared manifest because the per-parent
+// writer runs many at once over one directory under a Snakemake DAG, and a
+// shared coverage.json would be a write race with no lock that would not also
+// serialise the DAG back into the batch build it replaces. The records are
+// assembled into coverage.json once, after the DAG (mws_assemble_coverage).
+void writeTileMeta(
+  const fs::path & tile_path, double geometric_error_m, SigmaFold rule,
+  std::size_t children_used)
+{
+  nlohmann::json doc{
+    {"schema", "depth-overview-tile/1"},
+    {"geometric_error_m", geometric_error_m},
+    {"bands", nlohmann::json::array({"min", "mean", "count", "sigma"})},
+    {"sigma_fold", sigmaFoldName(rule)},
+    {"sigma_band_written", rule != SigmaFold::kUndecided},
+    {"children_used", children_used}};
+  fs::path path = tile_path;
+  path.replace_extension(".json");
+  const fs::path tmp = fs::path(path).concat(".tmp");
+  {
+    std::ofstream out(tmp);
+    out << doc.dump(2) << "\n";
+    if (!out) {
+      throw std::runtime_error("cannot write " + tmp.string());
+    }
+  }
+  fs::rename(tmp, path);
+}
+
 // One level's tile counts: how many child tiles were read, how many parents were
 // written, and how many parents were left to a native tile. The IN count is the
 // diagnostic one for a partial store — an operator seeing "40 in" for a
@@ -1032,5 +1062,166 @@ DepthOverviewBuildResult buildMultiBandDepthOverviewPyramid(
     rule, "buildMultiBandDepthOverviewPyramid", progress);
 }
 
+
+namespace
+{
+
+// A derived tile's recorded geometric error, from its own per-tile sidecar.
+// nullopt when there is no sidecar or it is unreadable — the same answer the
+// batch builder gives for a native child, and saturatedGeometricError
+// substitutes the child level's GSD, which is a conservative upper bound.
+std::optional<double> tileMetaGeometricError(const fs::path & tile_path)
+{
+  fs::path meta = tile_path;
+  meta.replace_extension(".json");
+  std::ifstream in(meta);
+  if (!in) {
+    return std::nullopt;
+  }
+  try {
+    const nlohmann::json doc = nlohmann::json::parse(in);
+    const auto field = doc.find("geometric_error_m");
+    if (field != doc.end() && field->is_number()) {
+      return field->get<double>();
+    }
+  } catch (const std::exception &) {
+    // Advisory metadata (uma-ADR-0013 D8): unreadable is no worse than absent.
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+MultiBandParentResult buildMultiBandDepthOverviewParent(
+  const std::string & layer_dir_s, int level, uint32_t row, uint32_t col,
+  SigmaFold rule)
+{
+  const fs::path layer_dir(layer_dir_s);
+  if (!fs::is_directory(layer_dir)) {
+    throw std::runtime_error("not a directory: " + layer_dir_s);
+  }
+  if (level < 0 || static_cast<std::size_t>(level) + 1 >= gggs::levels.size()) {
+    throw std::invalid_argument(
+      "buildMultiBandDepthOverviewParent: level " + std::to_string(level) +
+      " has no child level to fold from");
+  }
+  // gridFromTileName round-trips its answer through tileFilename and compares
+  // it with this string, so the label must be the FILENAME, extension included
+  // — a bare "<level>_<row>_<col>" never matches and every index reads as
+  // "names no grid".
+  const std::string label = std::to_string(level) + "_" + std::to_string(row) +
+    "_" + std::to_string(col) + ".tif";
+  const gggs::GridIndex parent = marine_tiled_raster_store::gridFromTileName(
+    static_cast<uint8_t>(level), row, col, label);
+  if (!parent.valid()) {
+    throw std::invalid_argument(
+      "buildMultiBandDepthOverviewParent: " + label +
+      " does not name a grid at level " + std::to_string(level));
+  }
+
+  const fs::path overviews = layer_dir / "overviews";
+  MultiBandParentResult result;
+  result.geometric_error_m = std::numeric_limits<double>::quiet_NaN();
+
+  // NATIVE-WINS, same rule as the batch builder: compiled data is never
+  // overwritten and never merged into. Checked FIRST, so a Snakemake rule over
+  // a native-covered parent costs one stat() rather than four tile loads.
+  if (fs::exists(layer_dir / marine_tiled_raster_store::tileFilename(parent))) {
+    result.suppressed_by_native = true;
+    return result;
+  }
+
+  const uint8_t child_level = static_cast<uint8_t>(level + 1);
+  std::vector<marine_tiled_raster_store::TiledRasterTile<double>> child_tiles;
+  std::vector<const marine_tiled_raster_store::TiledRasterTile<double> *> child_ptrs;
+  std::vector<std::optional<double>> child_errors;
+  for (const gggs::GridIndex & child : gggs::children(parent)) {
+    const std::string name = marine_tiled_raster_store::tileFilename(child);
+    const fs::path native_path = layer_dir / name;
+    const fs::path derived_path = overviews / name;
+    const bool has_native = fs::exists(native_path);
+    const bool has_derived = fs::exists(derived_path);
+    if (has_native && has_derived) {
+      // Disjoint by construction in both writers, so this is a corrupted layer,
+      // not a precedence question. Resolving it silently would make the pyramid
+      // depend on which rule happened to run last.
+      throw std::runtime_error(
+        "tile " + name + " exists both natively in " + layer_dir_s +
+        " and as a derived overview in " + overviews.string() +
+        "; native and derived coverage must be disjoint — refusing to guess");
+    }
+    if (!has_native && !has_derived) {
+      continue;
+    }
+    const fs::path path = has_native ? native_path : derived_path;
+    marine_tiled_raster_store::TiledRasterTile<double> loaded =
+      marine_tiled_raster_store::loadTile<double>(
+      path.string(), gggs::Level(child_level),
+      has_native ? BathymetryTile::value_band_count : detail::kMultiBandCount);
+    child_tiles.push_back(
+      has_native ?
+      promoteNativeTile(loaded, detail::kMultiBandCount) : std::move(loaded));
+    child_errors.push_back(
+      has_native ? std::nullopt : tileMetaGeometricError(derived_path));
+  }
+  if (child_tiles.empty()) {
+    // Nothing to fold. Not an error: a per-parent DAG legitimately enumerates
+    // parents whose children have not been built (or do not exist) yet, and a
+    // throw here would turn a sparse region into a failed run.
+    return result;
+  }
+  child_ptrs.reserve(child_tiles.size());
+  for (const auto & tile : child_tiles) {
+    child_ptrs.push_back(&tile);
+  }
+  result.children_used = child_tiles.size();
+
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const marine_tiled_raster_store::TiledRasterTile<double> parent_tile =
+    marine_tiled_raster_store::buildParentTile<double>(
+    parent, child_ptrs,
+    std::vector<double>(detail::kMultiBandCount, nan), validCell,
+    [rule](const std::vector<std::vector<double>> & contributors) {
+      return detail::depthMultiBandFold(contributors, rule);
+    });
+
+  std::error_code ec;
+  fs::create_directories(overviews, ec);
+  if (ec && !fs::is_directory(overviews)) {
+    throw std::runtime_error(
+      "cannot create " + overviews.string() + ": " + ec.message());
+  }
+  // Cross-schema guard applies per tile too: a directory of single-band
+  // overviews must not gain a 4-band tile among them.
+  refuseCrossSchemaSidecar(overviews, detail::kMultiBandCount, "multi-band");
+
+  // Tile-level atomicity: write beside the destination, then rename over it.
+  // rename(2) within one directory is atomic, so a reader sees the previous
+  // tile or the new one and never a half-written raster. No overviews.tmp/
+  // staging and no run lock — one tile has no partial-pyramid hazard, and a
+  // per-parent DAG runs many of these at once over this directory.
+  const fs::path final_path =
+    overviews / marine_tiled_raster_store::tileFilename(parent);
+  const fs::path tmp_path = overviews /
+    ("." + marine_tiled_raster_store::tileFilename(parent) + "." +
+    std::to_string(static_cast<std::int64_t>(::getpid())) + ".tmp.tif");
+  try {
+    marine_tiled_raster_store::saveTile<double>(
+      parent_tile, tmp_path.string(),
+      std::vector<std::optional<double>>(
+        detail::kMultiBandCount, std::optional<double>(nan)));
+    fs::rename(tmp_path, final_path);
+  } catch (...) {
+    std::error_code cleanup_ec;
+    fs::remove(tmp_path, cleanup_ec);
+    throw;
+  }
+
+  result.geometric_error_m = detail::saturatedGeometricError(
+    level, static_cast<int>(child_level), child_errors);
+  result.written = true;
+  writeTileMeta(final_path, result.geometric_error_m, rule, result.children_used);
+  return result;
+}
 
 }  // namespace marine_bathymetry_store

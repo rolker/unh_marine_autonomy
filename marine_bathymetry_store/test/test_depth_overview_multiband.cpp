@@ -468,6 +468,189 @@ TEST(MultiBandPyramid, SingleBandWriterRefusesAMultiBandSidecar)
   EXPECT_THROW(mbs::buildDepthOverviewPyramid(single), std::runtime_error);
 }
 
+// --- the per-parent work unit -----------------------------------------------
+
+TEST(PerParentOverview, MatchesTheBatchBuilderForTheSameParent)
+{
+  // The whole point of the per-parent mode is that a DAG can refresh one tile
+  // without re-folding the layer. That is only true if it produces the same
+  // tile the batch build would have.
+  ScratchDir batch_dir("parent_batch");
+  ScratchDir per_dir("parent_single");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  const double depths[4] = {-10.0, -4.0, -20.0, -15.0};
+  for (std::size_t i = 0; i < fine.size(); ++i) {
+    writeUniformNativeTile(batch_dir.path(), fine[i], depths[i], 0.5);
+    writeUniformNativeTile(per_dir.path(), fine[i], depths[i], 0.5);
+  }
+  mbs::MultiBandOverviewOptions opts;
+  opts.layer_dir = batch_dir.path().string();
+  opts.min_level = kFineLevel - 1;
+  ASSERT_TRUE(mbs::buildMultiBandDepthOverviewPyramid(opts).sidecar_replaced);
+
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  const mbs::MultiBandParentResult one =
+    mbs::buildMultiBandDepthOverviewParent(
+    per_dir.path().string(), parent.level(), parent.row(), parent.column());
+  ASSERT_TRUE(one.written);
+  EXPECT_EQ(one.children_used, 4u);
+
+  const mtrs::TiledRasterTile<double> from_batch = loadMultiBand(
+    batch_dir.path() / "overviews" / mtrs::tileFilename(parent),
+    kFineLevel - 1);
+  const mtrs::TiledRasterTile<double> from_one = loadMultiBand(
+    per_dir.path() / "overviews" / mtrs::tileFilename(parent), kFineLevel - 1);
+  for (std::size_t band = 0; band < kMB; ++band) {
+    for (uint16_t row = 0; row < from_one.edge; ++row) {
+      for (uint16_t col = 0; col < from_one.edge; ++col) {
+        const double a = from_batch.get(row, col, band);
+        const double b = from_one.get(row, col, band);
+        if (std::isnan(a)) {
+          ASSERT_TRUE(std::isnan(b)) << "band " << band;
+        } else {
+          ASSERT_DOUBLE_EQ(a, b) << "band " << band;
+        }
+      }
+    }
+  }
+}
+
+TEST(PerParentOverview, WritesItsOwnGeometricErrorSidecar)
+{
+  // Per-TILE metadata, not a shared coverage.json: a parallel DAG writing one
+  // manifest would be a write race with no lock that would not also serialise
+  // the DAG back into the batch build it replaces.
+  ScratchDir dir("parent_meta");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  const mbs::MultiBandParentResult r = mbs::buildMultiBandDepthOverviewParent(
+    dir.path().string(), parent.level(), parent.row(), parent.column());
+  ASSERT_TRUE(r.written);
+  EXPECT_GT(r.geometric_error_m, 0.0);
+
+  fs::path meta = dir.path() / "overviews" / mtrs::tileFilename(parent);
+  meta.replace_extension(".json");
+  ASSERT_TRUE(fs::exists(meta));
+  std::ifstream in(meta);
+  const std::string text(
+    (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  EXPECT_NE(text.find("geometric_error_m"), std::string::npos) << text;
+  EXPECT_NE(text.find("\"sigma_fold\": \"undecided\""), std::string::npos) << text;
+
+  // No staging dir and no run lock: a second invocation over the same parent
+  // must simply redo the tile.
+  EXPECT_FALSE(fs::exists(dir.path() / "overviews.tmp"));
+  EXPECT_TRUE(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column())
+    .written);
+  // And it must leave no write-beside temporary behind.
+  for (const auto & e : fs::directory_iterator(dir.path() / "overviews")) {
+    const std::string name = e.path().filename().string();
+    EXPECT_EQ(name.find(".tmp"), std::string::npos) << name;
+    EXPECT_NE(name.front(), '.') << name;
+  }
+}
+
+TEST(PerParentOverview, ErrorNestsOverADerivedChild)
+{
+  // Two steps up: the grandparent folds a DERIVED child, whose recorded error
+  // comes back out of the per-tile sidecar. Saturation must hold across that
+  // hand-off, or the D7 core's nesting condition breaks at the seam.
+  ScratchDir dir("parent_nesting");
+  const gggs::GridIndex seed = gggs::Level(kFineLevel).gridIndex(kLat, kLon);
+  const gggs::GridIndex parent = gggs::parent(seed);
+  const gggs::GridIndex grandparent = gggs::parent(parent);
+  for (const gggs::GridIndex & g : gggs::children(parent)) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  const mbs::MultiBandParentResult child_run =
+    mbs::buildMultiBandDepthOverviewParent(
+    dir.path().string(), parent.level(), parent.row(), parent.column());
+  ASSERT_TRUE(child_run.written);
+  const mbs::MultiBandParentResult gp_run =
+    mbs::buildMultiBandDepthOverviewParent(
+    dir.path().string(), grandparent.level(), grandparent.row(),
+    grandparent.column());
+  ASSERT_TRUE(gp_run.written);
+  EXPECT_GE(gp_run.geometric_error_m, child_run.geometric_error_m);
+}
+
+TEST(PerParentOverview, NativeTileAtTheParentSuppressesTheWrite)
+{
+  // Native-wins, same rule as the batch builder: compiled data is never
+  // overwritten and never merged into.
+  ScratchDir dir("parent_native");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  writeUniformNativeTile(dir.path(), parent, -3.0, 0.2);
+
+  const mbs::MultiBandParentResult r = mbs::buildMultiBandDepthOverviewParent(
+    dir.path().string(), parent.level(), parent.row(), parent.column());
+  EXPECT_FALSE(r.written);
+  EXPECT_TRUE(r.suppressed_by_native);
+  EXPECT_FALSE(fs::exists(dir.path() / "overviews" / mtrs::tileFilename(parent)));
+}
+
+TEST(PerParentOverview, NoChildYetIsNotAnError)
+{
+  // A per-parent DAG legitimately enumerates parents whose children do not
+  // exist; throwing here would turn a sparse region into a failed run.
+  ScratchDir dir("parent_empty");
+  const gggs::GridIndex parent = gggs::parent(fineSiblings().front());
+  const mbs::MultiBandParentResult r = mbs::buildMultiBandDepthOverviewParent(
+    dir.path().string(), parent.level(), parent.row(), parent.column());
+  EXPECT_FALSE(r.written);
+  EXPECT_FALSE(r.suppressed_by_native);
+  EXPECT_EQ(r.children_used, 0u);
+}
+
+TEST(PerParentOverview, RefusesAChildThatIsBothNativeAndDerived)
+{
+  // Disjoint by construction in both writers, so this is a corrupted layer, not
+  // a precedence question — resolving it silently would make the pyramid depend
+  // on which rule ran last.
+  ScratchDir dir("parent_conflict");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  fs::create_directories(dir.path() / "overviews");
+  writeUniformNativeTile(dir.path() / "overviews", fine.front(), -8.0, 0.4);
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  try {
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column());
+    ADD_FAILURE() << "a child present both natively and as a derived overview "
+      "must be refused, not resolved by precedence";
+  } catch (const std::runtime_error & e) {
+    EXPECT_NE(std::string(e.what()).find("disjoint"), std::string::npos) <<
+      e.what();
+  }
+}
+
+TEST(PerParentOverview, RejectsAnIndexThatNamesNoGrid)
+{
+  ScratchDir dir("parent_badindex");
+  EXPECT_THROW(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), 3, 1u << 30, 1u << 30),
+    std::invalid_argument);
+  // The apex has no child level to fold from.
+  EXPECT_THROW(
+    mbs::buildMultiBandDepthOverviewParent(dir.path().string(), -1, 0, 0),
+    std::invalid_argument);
+  EXPECT_THROW(
+    mbs::buildMultiBandDepthOverviewParent("/nonexistent/layer/dir", 5, 0, 0),
+    std::runtime_error);
+}
+
 int main(int argc, char ** argv)
 {
   ::testing::InitGoogleTest(&argc, argv);

@@ -295,6 +295,63 @@ struct MultiBandOverviewOptions
 DepthOverviewBuildResult buildMultiBandDepthOverviewPyramid(
   const MultiBandOverviewOptions & opts, std::ostream * progress = nullptr);
 
+/// @brief Outcome of folding ONE parent tile (`buildMultiBandDepthOverviewParent`).
+struct MultiBandParentResult
+{
+  /// Whether the parent tile was written. False when no child exists, or when a
+  /// native tile already occupies the parent's `(level, index)`.
+  bool written = false;
+  /// The parent was left to a native tile at the same `(level, index)`.
+  bool suppressed_by_native = false;
+  /// How many of the up-to-four children were found and folded.
+  std::size_t children_used = 0;
+  /// The saturated geometric error recorded for the written tile
+  /// (`uma-ADR-0013` D1/D2); NaN when nothing was written.
+  double geometric_error_m = 0.0;
+};
+
+/// @brief Fold ONE parent tile from its up-to-four children and write it.
+///
+/// The per-parent work unit the design draft's Part 4 owes and the prototype's
+/// component 5 asked for: `build_depth_overviews` is one batch call, so a
+/// regenerate re-folds a whole layer to refresh one tile. This entry point is
+/// what Snakemake's per-tile rules invoke, so the DAG — not a full rebuild —
+/// decides what is stale.
+///
+/// Children are looked up in two places, exactly as the batch builder's
+/// contributor sets are: a NATIVE child (2-band, promoted on read) directly in
+/// @p layer_dir, and a DERIVED child (4-band) in `<layer_dir>/overviews/`. The
+/// two are disjoint by construction — a derived tile is never written where a
+/// native one exists — so a child found in both is a corrupted layer and throws
+/// rather than resolving silently by precedence.
+///
+/// **Native-wins** still holds: if a native tile occupies the parent's own
+/// `(level, index)`, nothing is written and @c suppressed_by_native is set.
+///
+/// **Atomicity is per tile**, not wholesale: the tile is written to a unique
+/// temporary beside its destination and renamed over it, which `rename(2)` makes
+/// atomic within a directory. There is no `overviews.tmp/` staging copy and no
+/// run lock — a single tile has no partial-pyramid hazard to guard against, and
+/// a per-parent DAG runs many of these concurrently over one directory, which a
+/// whole-sidecar lock would serialise into the batch builder it replaces.
+///
+/// Each written tile also gets a per-tile `<level>_<row>_<col>.json` sidecar
+/// carrying its `geometric_error_m`, band schema and σ rule. That is what makes
+/// the manifest race-free under a parallel DAG: nothing rewrites a shared
+/// `coverage.json` mid-run, and the assembly step reads the per-tile records
+/// once the DAG is done (`mws_assemble_coverage` in `marine_world_store`).
+///
+/// @param layer_dir The rev-3 quantity layer holding the native tiles.
+/// @param level Parent level; @p row, @p col its GGGS index at that level.
+/// @param rule The σ rule; @c kUndecided (the default) writes the band as nodata.
+/// @throws std::invalid_argument if @p level / @p row / @p col do not name a
+///   grid that exists at that level.
+/// @throws std::runtime_error if @p layer_dir is not a directory, if a child is
+///   present both natively and as a derived tile, or on any tile I/O failure.
+MultiBandParentResult buildMultiBandDepthOverviewParent(
+  const std::string & layer_dir, int level, uint32_t row, uint32_t col,
+  SigmaFold rule = SigmaFold::kUndecided);
+
 /// @brief Internals exposed for unit testing — not a stable public API.
 namespace detail
 {

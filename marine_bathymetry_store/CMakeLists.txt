@@ -99,6 +99,13 @@ target_include_directories(import_geotiff PRIVATE ${GDAL_INCLUDE_DIRS})
 add_executable(build_depth_overviews src/build_depth_overviews.cpp)
 target_link_libraries(build_depth_overviews ${PROJECT_NAME})
 
+# The `build_depth_overview_parent` CLI (uma#397, world_store_design.md §7 /
+# Part 4): folds ONE parent tile of the rev-3 4-band MIN/MEAN/COUNT/σ pyramid.
+# The per-parent work unit a Snakemake DAG invokes, so a regenerate refreshes
+# the stale tiles instead of re-folding a whole layer. Same thin-main() shape
+# over the library's overview_pyramid production path.
+add_executable(build_depth_overview_parent src/build_depth_overview_parent.cpp)
+target_link_libraries(build_depth_overview_parent ${PROJECT_NAME})
 
 # S-102 importer core (#278): discover/fetch/convert/run stages as an internal
 # static library so the pipeline is testable without spawning the CLI. Its
@@ -137,6 +144,7 @@ ament_export_dependencies(
   marine_autonomy marine_tiled_raster_store geographic_msgs nlohmann_json GDAL)
 
 install(TARGETS import_geotiff s102_import build_depth_overviews
+    build_depth_overview_parent
   RUNTIME DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
