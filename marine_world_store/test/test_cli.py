@@ -1,0 +1,175 @@
+# Copyright 2026 University of New Hampshire
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+#    * Redistributions of source code must retain the above copyright
+#      notice, this list of conditions and the following disclaimer.
+#
+#    * Redistributions in binary form must reproduce the above copyright
+#      notice, this list of conditions and the following disclaimer in the
+#      documentation and/or other materials provided with the distribution.
+#
+#    * Neither the name of the University of New Hampshire nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+"""
+The ``mws_*`` command lines, end to end over temp directories.
+
+Every CLI is a thin shell over the library, so these check the shell: that the
+arguments mean what the help says, that a store root is never guessed, and
+that nothing is written under a dry run.
+"""
+
+import json
+
+from marine_world_store import layout, source_identity
+from marine_world_store.cli import (
+    mws_import_source, mws_regenerate_catalog, mws_write_revision,
+)
+from marine_world_store.store_root import ENV_VAR
+import pytest
+
+
+@pytest.fixture
+def store_root(tmp_path, monkeypatch):
+    """Point the environment at a store root no real one can reach."""
+    root = tmp_path / 'store'
+    monkeypatch.setenv(ENV_VAR, str(root))
+    return root
+
+
+def make_bag(directory):
+    """Build a bag-shaped directory with one mcap split."""
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / 'rosbag2_0.mcap').write_bytes(b'ping')
+    (directory / 'metadata.yaml').write_text('rosbag2_bagfile_information:\n')
+    return directory
+
+
+def test_import_source_dry_run_writes_nothing(tmp_path, store_root, capsys):
+    """It prints the id it computed and stops."""
+    bag = make_bag(tmp_path / 'bag')
+    assert mws_import_source.main([str(bag), '--dry-run']) == 0
+    assert source_identity.bag_source_id(bag) in capsys.readouterr().out
+    assert not store_root.exists()
+
+
+def test_import_source_writes_the_source_item(tmp_path, store_root):
+    """The Item lands under ``sources/``, named by the content id."""
+    pytest.importorskip('pystac', reason='declared dependency; run rosdep')
+    bag = make_bag(tmp_path / 'bag')
+    assert mws_import_source.main(
+        [str(bag), '--platform', 'bizzyboat']) == 0
+    identifier = source_identity.bag_source_id(bag)
+    path = layout.sources_dir(store_root) / f'{identifier}.json'
+    assert json.loads(path.read_text())['properties']['mws:platform'] == \
+        'bizzyboat'
+
+
+def test_import_source_reports_a_missing_path(tmp_path, store_root):
+    """A path that is not there is an error, not an empty id."""
+    with pytest.raises(FileNotFoundError):
+        mws_import_source.main([str(tmp_path / 'nope')])
+
+
+def test_write_revision_round_trip(tmp_path, store_root):
+    """A YAML description becomes an append-only record."""
+    description = tmp_path / 'datum.yaml'
+    description.write_text(
+        'kind: datum\n'
+        'applies_to:\n  source_id: abc123\n'
+        'parameters:\n  height_offset_m: 1.19\n'
+        'evidence: PROJ transformation measured 2026-09-16\n'
+        'reviewer: Roland Arsenault\n')
+    assert mws_write_revision.main([str(description)]) == 0
+    written = list(layout.revisions_dir(store_root).glob('*.json'))
+    assert len(written) == 1
+    body = json.loads(written[0].read_text())
+    assert body['properties']['mws:revision']['kind'] == 'datum'
+
+
+def test_write_revision_refuses_an_unknown_field(tmp_path, store_root):
+    """A field nobody reads would silently not be part of the record."""
+    description = tmp_path / 'datum.yaml'
+    description.write_text(
+        'kind: datum\napplies_to:\n  source_id: a\nparameters:\n  x: 1\n'
+        'evidence: e\nreviewer: r\nreviewd_by: typo\n')
+    with pytest.raises(ValueError):
+        mws_write_revision.main([str(description)])
+
+
+def test_write_revision_dry_run_writes_nothing(tmp_path, store_root):
+    """Prints the record it would append."""
+    description = tmp_path / 'datum.json'
+    description.write_text(json.dumps({
+        'kind': 'datum', 'applies_to': {'source_id': 'a'},
+        'parameters': {'x': 1}, 'evidence': 'e', 'reviewer': 'r'}))
+    assert mws_write_revision.main([str(description), '--dry-run']) == 0
+    assert not store_root.exists()
+
+
+def test_regenerate_catalog_on_an_empty_store_is_not_an_error(
+        store_root, capsys):
+    """A store with no products yet is a legitimate state."""
+    store_root.mkdir(parents=True)
+    assert mws_regenerate_catalog.main([]) == 0
+    assert 'nothing to regenerate' in capsys.readouterr().out
+
+
+def test_regenerate_catalog_rebuilds_present_cells(store_root):
+    """Only the cells that exist; only the Collections that changed."""
+    pytest.importorskip('pystac', reason='declared dependency; run rosdep')
+    from marine_world_store import stac_catalog
+    from test_item_schema import a_tile_item
+    directory = layout.quantity_dir(
+        store_root, layout.Quantity.DEPTHS, layout.State.REVIEWED,
+        layout.Origin.SURVEYED)
+    stac_catalog.write_items(directory, [a_tile_item()])
+    assert mws_regenerate_catalog.main([]) == 0
+    assert layout.collection_path(directory).is_file()
+
+
+def test_store_root_argument_beats_the_environment(tmp_path, store_root,
+                                                   capsys):
+    """Precedence is the same in every tool, because it is one function."""
+    bag = make_bag(tmp_path / 'bag')
+    other = tmp_path / 'other'
+    mws_import_source.main([str(bag), '--store-root', str(other), '--dry-run'])
+    captured = capsys.readouterr().out
+    assert str(store_root) not in captured
+
+
+def test_run_turns_an_expected_failure_into_a_message(capsys):
+    """A CLI's normal "no" needs no traceback."""
+    from marine_world_store.cli._common import run
+
+    def boom(argv):
+        raise ValueError('that is not a store root')
+
+    assert run(boom, []) == 1
+    assert 'that is not a store root' in capsys.readouterr().err
+
+
+def test_run_lets_an_unexpected_exception_through():
+    """An unexpected exception is a bug report, and keeps its traceback."""
+    from marine_world_store.cli._common import run
+
+    def boom(argv):
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run(boom, [])
