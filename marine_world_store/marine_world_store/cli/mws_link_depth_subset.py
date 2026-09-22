@@ -39,8 +39,8 @@ they name read-only material on one particular host.
 
 Typical use, with a subset manifest::
 
-    mws_link_depth_subset --source-store ~/data/world/depths --layer processed \\
-        --store-root /tmp/rev3 --subset subset.yaml
+    mws_link_depth_subset --source-store <existing store>/depths \\
+        --layer processed --store-root /tmp/rev3 --subset subset.yaml
 
 where ``subset.yaml`` is::
 
