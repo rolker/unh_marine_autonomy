@@ -149,23 +149,51 @@ Two commit groups, as decided by the operator (2026-09-22), landing in one PR st
    the derived index from the Collection (never synced, always local). Fingerprints, not
    mtimes, are the trigger (§9) — the pre-step is what makes Snakemake's own mtime-based DAG
    correct on top of that.
-7. **Snakemake/pystac dependency tier** (ADR-0009 analogy — the ADR itself governs the
-   *workspace* repo only, per its own "Project repos are independent" clause, but the issue
-   asks for the tier stated explicitly): **apt, not a project `.venv`.** Both
-   `python3-pystac` (1.9.0-2) and `snakemake` (7.32.4-2) are Ubuntu 24.04 `universe`
-   packages — confirmed via `apt-cache policy` — so they satisfy Tier 1's *criteria*
-   (system-installable, needed at build/regenerate time, not an interactively-invoked
-   personal CLI) even though `rosdep resolve` has no key for either name (confirmed:
-   `ERROR: no rosdep rule for 'python3-pystac'`/`'snakemake'`). This project repo has no
-   `.venv`/`requirements.txt` convention (Tier 2 is explicitly workspace-repo tooling per
-   ADR-0009), so introducing one for two packages would be new process for a project repo
-   that doesn't otherwise need it. Decision: `package.xml` carries
-   `<exec_depend>python3-pystac</exec_depend>` and `<exec_depend>snakemake</exec_depend>`
-   with an inline XML comment noting rosdep has no rule for them; the package README states
-   `sudo apt install python3-pystac snakemake` as an explicit bootstrap step (same pattern as
-   any manually-documented, operator-run tool in this repo, e.g. `s102_import`). This is a
-   named gap, not a silent one — flagged under Consequences for whoever next touches this
-   repo's bootstrap/CI dependency install step.
+7. **Snakemake/pystac dependencies — LOCAL rosdep keys, upstream PRs owed at merge**
+   (superseding the earlier "apt install, named gap" wording, which the operator rejected
+   on 2026-09-22: "the end product needs to have all its dependencies resolved using
+   rosdep"). Mechanism = workspace `ros2_agent_workspace#654` / PR #656 (merged
+   2026-09-22; policy in the workspace's `.agent/knowledge/dependency_policy.md`). Both
+   `python3-pystac` (1.9.0-2) and `snakemake` (7.32.4-2) are Ubuntu 24.04 packages with no
+   upstream rosdistro key (checked upstream and locally 2026-09-22), i.e. the policy's
+   case 2. This PR therefore:
+   - adds `rosdep.yaml` at the **repo root** in the one accepted shape — plain per-OS
+     package lists, one `# upstream PR owed: ros/rosdistro` comment per key (the workspace
+     validate check reads it; nested/pip/source forms are rejected by the shape gate):
+     ```yaml
+     python3-pystac:  # upstream PR owed: ros/rosdistro (open at #397 merge time)
+       ubuntu: [python3-pystac]
+       debian: [python3-pystac]
+     snakemake:       # upstream PR owed: ros/rosdistro (open at #397 merge time)
+       ubuntu: [snakemake]
+       debian: [snakemake]
+     ```
+   - declares `<exec_depend>python3-pystac</exec_depend>` and
+     `<exec_depend>snakemake</exec_depend>` in `package.xml` — ordinary rosdep keys now;
+   - adds the workspace policy note's copy-pasteable "Install repo-local rosdep keys" step
+     to `.github/workflows/ros-base-docker.yml` **before** its existing `rosdep update`
+     (guarded by `hashFiles('rosdep.yaml')`), so hosted CI resolves the keys too;
+   - owes, at merge time: two upstream `ros/rosdistro` PRs; once they land the workspace's
+     `make validate` flags the local entries for deletion.
+   pystac is kept (it validates the Items against the STAC spec at write time); if it ever
+   becomes a burden the Items are plain JSON and it is droppable.
+8. **Package shape — a plain Python package with a `package.xml` shim** (operator decision
+   2026-09-22, "long-term better option"): `marine_world_store` is a standard setuptools
+   package (`setup.py` + `setup.cfg`, `src`-less flat layout as the repo's other
+   ament_python packages use, so colcon builds it here and `pip install .` works anywhere),
+   with `package.xml` beside it so rosdep resolves its dependencies and colcon installs it
+   into the ROS install space. Discipline enforced by tests, not prose:
+   - **no ROS imports**: nothing in `marine_world_store/` imports `rclpy`, `ament_*`,
+     `rclpy`-dependent packages, or reads the ROS install space for data files (a test greps
+     the package for those imports);
+   - **one dependency list**: `setup.cfg` `install_requires` and `package.xml`
+     `<exec_depend>`s name the same libraries (a test maps rosdep keys ↔ distribution names
+     via a small table in the test and fails on drift);
+   - tests run under plain `pytest` from the package directory **and** under `colcon test`
+     without change;
+   - the CLIs are `console_scripts` entry points (work with or without `ros2 run`).
+   The day the tools become a product for people outside ROS, publishing = the package as
+   it stands minus `package.xml`; nothing to rewrite.
 
 ### Common-library reuse (arc-wide constraint; plan-review must-fix)
 
@@ -187,7 +215,10 @@ would also need — root resolution, layout paths, fingerprints, Item reading �
 
 | File | Change |
 |------|--------|
-| `marine_world_store/` (new package: `package.xml`, `setup.py`, `setup.cfg`, `resource/`, `README.md`) | New ament_python package |
+| `marine_world_store/` (new package: `package.xml`, `setup.py`, `setup.cfg`, `resource/`, `README.md`) | New plain Python package with a `package.xml` shim (step 8) |
+| `rosdep.yaml` (repo root) | New — local rosdep keys for `python3-pystac`, `snakemake` (step 7) |
+| `.github/workflows/ros-base-docker.yml` | Add the "Install repo-local rosdep keys" step before `rosdep update` (step 7) |
+| `marine_world_store/test/test_{no_ros_imports,dependency_lists}.py` | New — package-shape discipline tests (step 8) |
 | `marine_world_store/marine_world_store/{store_root,layout,source_identity,fingerprint,stac_catalog,revisions}.py` | New — Group A core modules |
 | `marine_world_store/marine_world_store/cli/{mws_import_source,mws_write_revision,mws_regenerate_catalog,mws_link_depth_subset}.py` | New — Group A CLIs |
 | `marine_world_store/test/test_{store_root,layout,source_identity,fingerprint,stac_catalog,no_literal_store_root}.py` | New — Group A tests, incl. the guard test |
@@ -231,7 +262,8 @@ would also need — root resolution, layout paths, fingerprints, Item reading �
 |---|---|---|
 | Add `marine_world_store` package | `.agents/README.md` package inventory + repository layout | Yes |
 | Add a 4-band overview writer | `marine_bathymetry_store/README.md` (document alongside the existing wholesale writer) | Yes |
-| `package.xml` `<exec_depend>`s with no rosdep rule | Workspace/project bootstrap or CI dependency-install step needs a plain `apt-get install python3-pystac snakemake` fallback wherever it runs `rosdep install` for this repo | **No — flagged as a named gap**, not fixed in this PR (bootstrap/CI scripts are workspace-repo territory, out of this project-repo issue's scope; follow-up if it causes a CI failure) |
+| `package.xml` `<exec_depend>`s on keys upstream rosdistro lacks | `rosdep.yaml` at the repo root (local keys, shape-gated); hosted CI workflow gets the repo-local-keys step; two upstream ros/rosdistro PRs opened at merge time; local entries deleted once `make validate` flags them | Yes (rosdep.yaml + workflow step in this PR); upstream PRs at merge |
+| `marine_world_store` is a plain Python package with a `package.xml` shim | Tests: no-ROS-imports grep; `install_requires` ↔ `<exec_depend>` equality; pytest-and-colcon-test parity | Yes |
 | `s102_import`'s existing `~/data/world/s100/s102` literal | Nothing — different setting (import cache, already flag-overridable), explicitly allowlisted in the guard test | N/A — no change intended |
 | Rev 3 mismatches found during implementation | `docs/world_store_design.md` change log, inline | Yes — the issue instructs this explicitly |
 
