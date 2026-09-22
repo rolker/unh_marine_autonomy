@@ -82,6 +82,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -1091,6 +1092,47 @@ std::optional<double> tileMetaGeometricError(const fs::path & tile_path)
 }
 
 }  // namespace
+
+std::vector<gggs::GridIndex> listMultiBandOverviewParents(
+  const std::string & layer_dir_s, int parent_level)
+{
+  const fs::path layer_dir(layer_dir_s);
+  if (!fs::is_directory(layer_dir)) {
+    throw std::runtime_error("not a directory: " + layer_dir_s);
+  }
+  if (parent_level < 0 ||
+    static_cast<std::size_t>(parent_level) + 1 >= gggs::levels.size())
+  {
+    throw std::invalid_argument(
+      "listMultiBandOverviewParents: level " + std::to_string(parent_level) +
+      " has no child level to fold from");
+  }
+  const uint8_t child_level = static_cast<uint8_t>(parent_level + 1);
+  const fs::path overviews = layer_dir / "overviews";
+
+  // std::set, not a vector: GridIndex orders by level/row/column, so the
+  // deduplication and the GGGS ordering the caller is promised fall out
+  // together. Four children name one parent, and a native and a derived level
+  // can both feed one — a DAG scheduled twice over the same tile would race
+  // with itself over the destination.
+  std::set<gggs::GridIndex> parents;
+  std::size_t skipped = 0;
+  for (const fs::path & dir : {layer_dir, overviews}) {
+    for (const gggs::GridIndex & child :
+      marine_tiled_raster_store::gridsInDir(dir.string(), child_level, skipped))
+    {
+      const gggs::GridIndex parent = gggs::parent(child);
+      // Native-wins: scheduling a parent the compile already covers would only
+      // produce a suppressed no-op, once per invocation.
+      if (parent.valid() &&
+        !fs::exists(layer_dir / marine_tiled_raster_store::tileFilename(parent)))
+      {
+        parents.insert(parent);
+      }
+    }
+  }
+  return std::vector<gggs::GridIndex>(parents.begin(), parents.end());
+}
 
 MultiBandParentResult buildMultiBandDepthOverviewParent(
   const std::string & layer_dir_s, int level, uint32_t row, uint32_t col,

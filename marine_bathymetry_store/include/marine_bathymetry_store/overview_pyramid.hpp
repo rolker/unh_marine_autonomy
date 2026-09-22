@@ -30,6 +30,8 @@
 #include <string>
 #include <vector>
 
+#include "marine_autonomy/gggs.h"
+
 /// @file
 /// @brief Testable production path for the depth overview-pyramid builder
 ///        (`uma-ADR-0010` D9 / `uma-ADR-0011`, on the #188 fold engine, with
@@ -351,6 +353,25 @@ struct MultiBandParentResult
 MultiBandParentResult buildMultiBandDepthOverviewParent(
   const std::string & layer_dir, int level, uint32_t row, uint32_t col,
   SigmaFold rule = SigmaFold::kUndecided);
+
+/// @brief The parent tiles at @p parent_level that a per-parent run should build.
+///
+/// What a Snakemake DAG enumerates before it can schedule anything. It is here,
+/// not in the rules, because the parent↔child mapping is GGGS
+/// (`gggs::parent`), whose column counts vary by latitude band — a second
+/// implementation of that arithmetic in Python would be a second thing to get
+/// wrong, and the one that is wrong is the one with no tests.
+///
+/// Children are the native tiles in @p layer_dir and the derived tiles already
+/// in `<layer_dir>/overviews/`. A parent already occupied by a NATIVE tile is
+/// omitted: native data wins on disk, so scheduling it would only produce a
+/// suppressed no-op per invocation.
+///
+/// @return The parents, in GGGS order (row then column), deduplicated.
+/// @throws std::invalid_argument if @p parent_level has no child level.
+/// @throws std::runtime_error if @p layer_dir is not a directory.
+std::vector<gggs::GridIndex> listMultiBandOverviewParents(
+  const std::string & layer_dir, int parent_level);
 
 /// @brief Internals exposed for unit testing — not a stable public API.
 namespace detail

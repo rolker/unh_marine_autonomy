@@ -651,6 +651,68 @@ TEST(PerParentOverview, RejectsAnIndexThatNamesNoGrid)
     std::runtime_error);
 }
 
+TEST(PerParentOverview, ListsTheParentsADagShouldSchedule)
+{
+  // What a Snakemake DAG enumerates. Kept on this side of the fence because
+  // the parent/child mapping is GGGS, whose column counts vary by latitude
+  // band; a second implementation in the rules would be a second thing to get
+  // wrong, with no tests on it.
+  ScratchDir dir("parent_list");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  std::vector<gggs::GridIndex> parents =
+    mbs::listMultiBandOverviewParents(dir.path().string(), parent.level());
+  ASSERT_EQ(parents.size(), 1u) <<
+    "four children name ONE parent; a DAG scheduled twice over one tile would "
+    "race with itself over the destination";
+  EXPECT_EQ(parents.front(), parent);
+
+  // A parent the compile already covers is omitted: scheduling it would only
+  // produce a suppressed no-op, once per invocation.
+  writeUniformNativeTile(dir.path(), parent, -3.0, 0.2);
+  EXPECT_TRUE(
+    mbs::listMultiBandOverviewParents(
+      dir.path().string(), parent.level()).empty());
+
+  // A level with no children at all schedules nothing, rather than failing.
+  EXPECT_TRUE(
+    mbs::listMultiBandOverviewParents(dir.path().string(), 3).empty());
+  EXPECT_THROW(
+    mbs::listMultiBandOverviewParents(dir.path().string(), -1),
+    std::invalid_argument);
+  EXPECT_THROW(
+    mbs::listMultiBandOverviewParents("/nonexistent/layer/dir", 5),
+    std::runtime_error);
+}
+
+TEST(PerParentOverview, ListsADerivedTileAsAContributorToTheNextLevelUp)
+{
+  // The DAG climbs: once level N is built, level N-1's parents must appear.
+  ScratchDir dir("parent_list_climb");
+  const gggs::GridIndex seed = gggs::Level(kFineLevel).gridIndex(kLat, kLon);
+  const gggs::GridIndex parent = gggs::parent(seed);
+  const gggs::GridIndex grandparent = gggs::parent(parent);
+  for (const gggs::GridIndex & g : gggs::children(parent)) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  EXPECT_TRUE(
+    mbs::listMultiBandOverviewParents(
+      dir.path().string(), grandparent.level()).empty()) <<
+    "nothing at the child level yet";
+  ASSERT_TRUE(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column())
+    .written);
+  const std::vector<gggs::GridIndex> next =
+    mbs::listMultiBandOverviewParents(
+    dir.path().string(), grandparent.level());
+  ASSERT_EQ(next.size(), 1u);
+  EXPECT_EQ(next.front(), grandparent);
+}
+
 int main(int argc, char ** argv)
 {
   ::testing::InitGoogleTest(&argc, argv);

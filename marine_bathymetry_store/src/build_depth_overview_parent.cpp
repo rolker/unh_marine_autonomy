@@ -40,6 +40,7 @@
 #include <iostream>
 #include <string>
 
+#include "marine_autonomy/gggs.h"
 #include "marine_bathymetry_store/overview_pyramid.hpp"
 
 namespace
@@ -64,7 +65,15 @@ void usage()
     "  Writes are per-tile atomic (write-beside then rename), so many of these\n"
     "  may run concurrently over one layer.\n"
     "  Exit: 0 written, 0 also when suppressed by native or no child exists\n"
-    "        (both reported on stderr), 2 usage, 1 failure.\n";
+    "        (both reported on stderr), 2 usage, 1 failure.\n"
+    "\n"
+    "usage: build_depth_overview_parent --list-parents <layer_dir> <level>\n"
+    "  Prints, one `<level>_<row>_<col>` per line, the parents at <level> that\n"
+    "  have at least one child and are not already covered by a native tile —\n"
+    "  what a Snakemake DAG enumerates before it can schedule anything. It is\n"
+    "  here rather than in the rules because the parent/child mapping is GGGS,\n"
+    "  whose column counts vary by latitude band; a second implementation of\n"
+    "  that arithmetic would be a second thing to get wrong.\n";
 }
 
 // Strict unsigned parse: an empty, negative, non-numeric or trailing-garbage
@@ -99,6 +108,25 @@ int main(int argc, char ** argv)
     if (arg == "--help" || arg == "-h") {
       usage();
       return 0;
+    }
+  }
+  if (argc == 4 && std::string(argv[1]) == "--list-parents") {
+    uint32_t list_level = 0;
+    if (!parseU32(argv[3], list_level)) {
+      usage();
+      return 2;
+    }
+    try {
+      for (const gggs::GridIndex & parent :
+        mbs::listMultiBandOverviewParents(argv[2], static_cast<int>(list_level)))
+      {
+        std::cout << static_cast<int>(parent.level()) << "_" << parent.row() <<
+          "_" << parent.column() << "\n";
+      }
+      return 0;
+    } catch (const std::exception & e) {
+      std::cerr << "error: " << e.what() << "\n";
+      return 1;
     }
   }
   if (argc != 5) {
