@@ -150,3 +150,110 @@ Plan is well-aligned with rev 3's structural decisions (layout, source identity,
 ---
 **Authored-By**: `Claude Code Agent`
 **Model**: `Claude Sonnet`
+
+## Implementation
+**Status**: complete (Group A only; Group B not started, as scoped)
+**When**: 2026-09-22 13:27 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-397/plan.md` (amended inline with an
+"Implementation notes — Group A" section)
+**Branch**: `feature/issue-397` (stacked on `feature/issue-391`)
+**Scope**: plan Approach steps 1–3, plus steps 7 and 8 (dependencies and
+package shape). Steps 4–6 — the multi-band fold, the per-parent CLI, the
+Snakemake rules and the σ-fold measurement — are Group B and untouched.
+
+### What was built
+
+New package `marine_world_store` — a plain setuptools package with a
+`package.xml` shim, no `rclpy`/`ament` imports anywhere in it:
+
+- `store_root.py` — `--store-root` > `$WORLD_STORE_ROOT` > config file >
+  one `_DEFAULT_ROOT`; reports which decided. A config that exists but cannot
+  be read is an error, never a silent default.
+- `layout.py` — `<root>/<quantity>/<state>/<origin>/`, `sources/`,
+  `revisions/`, surveyed-only `trajectories/`/`observations/`; enums so a
+  typo'd axis is an error rather than a new directory.
+- `source_identity.py` — Merkle bag id over sorted `<split>\t<SHA256E key>`
+  lines, `metadata.yaml` and non-data files excluded; no git-annex dependency.
+- `fingerprint.py` — §9's additive input hash; ids sorted,
+  `consumer_ordering` not.
+- `coverage.py` — reads `marine_tiled_raster_store`'s `coverage.json` for the
+  per-tile `geometric_error_m` (uma-ADR-0013 D1–D3), with its scan fallback.
+- `footprint.py` — tile geometry/bbox from the raster's own georeferencing
+  (GDAL), not a second Python GGGS implementation.
+- `item_schema.py` — Item/Collection documents as plain dicts with the Part 2
+  contract fields (`mws:` prefixed), incl. the `geometric_error_m` and
+  `sigma_fold` hooks Group B needs.
+- `stac_catalog.py` — pystac validation + changed-Items-only writes.
+- `revisions.py` — append-only geometry/datum records, id = content hash.
+- `depth_subset.py` + `cli/mws_link_depth_subset.py` — the byte-identical
+  native-tile adapter; `cli/mws_import_source.py`,
+  `cli/mws_write_revision.py`, `cli/mws_regenerate_catalog.py`.
+
+Also: repo-root `rosdep.yaml` (local keys for `python3-pystac`, `snakemake`,
+shape-gate-validated), the "Install repo-local rosdep keys" step in
+`.github/workflows/ros-base-docker.yml`, the package README,
+`.agents/README.md` inventory + layout rows, and a
+`marine_tiled_raster_store/README.md` cross-reference.
+
+### Commits (11, oldest first)
+
+| SHA | Subject |
+|---|---|
+| `21cf5ff` | marine_world_store: a plain Python package with a package.xml shim |
+| `a65060e` | marine_world_store: resolve the store root, never write it down |
+| `7329707` | marine_world_store: the rev-3 layout, with typo-proof axes |
+| `0321553` | marine_world_store: content source identity and product fingerprints |
+| `4fb4fdc` | marine_world_store: Items, Collections and revision records |
+| `b73d467` | marine_world_store: the mws_* CLIs and the depth-tile adapter |
+| `c86d1cf` | dependencies: repo-local rosdep keys for pystac and snakemake |
+| `9f5ffed` | world store design: record the rev-3 corrections implementing it found |
+| `4fb9b10` | docs: document marine_world_store where its consequences land |
+| `b995b4f` | plan: record Group A's departures from what it planned |
+| `5cd1e33` | marine_world_store: the guard caught its own docstring's example |
+
+### Tests run
+
+- `./core_ws/build.sh marine_world_store` — **finished**, 1 package.
+- `./core_ws/test.sh marine_world_store` — **163 tests, 0 errors, 0 failures,
+  13 skipped**. The skips are the pystac-dependent tests (`python3-pystac` is
+  not installed on this host until `rosdep install` runs) and the pystac half
+  of the adapter test; every skip names that reason.
+- Plain `python3 -m pytest test/` from the package directory, with no ROS
+  sourced — **147 passed, 16 skipped** (the three ament lint tests skip
+  themselves there). Same suite, both runners, no changes.
+- ament `flake8`, `pep257`, `copyright` — **3 passed** with ROS sourced.
+- `.agent/scripts/rosdep_yaml_validate.sh rosdep.yaml` — exit 0.
+- CLI smoke test over a temp store (`--dry-run` for the adapter, an id
+  computation, a regenerate over an empty root) — all exit 0.
+- The literal-path guard caught a real occurrence during the run: the usage
+  example in the adapter's own docstring. Fixed in `5cd1e33`.
+
+### Rev-3 change-log entries added (`docs/world_store_design.md`)
+
+One dated entry with five process-derived corrections: (a) Part 2 line 3 — the
+per-tile nested `geometric_error_m` (ADR-0013 D2/D3), absent from rev 3
+entirely; (b) §7 — the σ fold rule marked **open** with its candidates, no σ
+band written until decided; (c) Part 2 line 2 — Item fields spelled with an
+`mws:` prefix; (d) §4 — EPSG:9989 verified in PROJ locally, and the 2020.0 is
+the *coordinate* epoch (ITRF2020's frame epoch is 2015.0); (e) Part 2 line 2 —
+a byte-identical re-expression declares the frame it holds plus the owed
+transformation. Part 4's "owed" EPSG line is narrowed accordingly.
+
+### Left for Group B / later
+
+- [ ] Plan steps 4–6: `depthMultiBandFold`, `buildMultiBandDepthOverview*`,
+      the per-parent CLI, the Snakemake rules under
+      `marine_world_store/snakemake/`, and the σ-fold measurement that decides
+      §7's open rule. The Item hooks they need are in place.
+- [ ] The **live** compare-by-value run against the real subset. Its inputs are
+      the adapter's CLI arguments; nothing was run against `~/data/world` or
+      the NAS in this pass, and no bag path is in the code.
+- [ ] `rosdep install` for this repo on the dev host, to un-skip the pystac
+      tests; then the two owed `ros/rosdistro` upstream PRs at merge time.
+- [ ] Not pushed: no `git push`, no PR from this dispatch.
+
+---
+**Authored-By**: `Claude Code Agent`
+**Model**: `Claude Opus`
