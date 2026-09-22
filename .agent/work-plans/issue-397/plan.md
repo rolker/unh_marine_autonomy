@@ -101,15 +101,37 @@ Two commit groups, as decided by the operator (2026-09-22), landing in one PR st
    additive): `detail::depthMultiBandFold(contributors) -> {min, mean, count, sigma}` per
    spine decision 2 (BAG VR `RESAMPLED_GRID` precedent) — `min` = the existing
    `depthShallowestFold`'s selected height (bit-identical, since "shoalest" is exactly the MIN
-   of ellipsoidal height), `mean`/`count` over valid contributors, `sigma` = `max(mean σ, max
-   child σ)` per the design's "mean σ + max σ" wording (confirm exact combination — flagged
-   in Open Questions, both are one-line changes). A new
-   `buildMultiBandDepthOverviewPyramid(...)` entry point writes a **4-band** tile
-   (MIN, MEAN, COUNT, σ) to the rev-3 tree; it does not touch or replace the existing
-   single-band `buildDepthOverviewPyramid` used by `draft/processed/reference/chart` — the
-   two fold functions and two tile schemas coexist, matching "process-derived decisions ...
-   the store stays usable through their change because a changed process is a new
-   fingerprint, never a migration."
+   of ellipsoidal height), `mean`/`count` over valid contributors. **The σ band's fold rule
+   is NOT decided** (operator, 2026-09-22: "this seems like something that should be thought
+   about much more"; rev 3 §7's "mean and max of the children" is ambiguous and is not a
+   decision). The fold therefore takes the σ rule as an explicit, named strategy parameter
+   (`SigmaFold::{Pooled, MaxChild, MeanChild, …}`), and **no σ band is written to the store
+   until the rule is decided**: the 4-band schema is reserved (MIN, MEAN, COUNT, σ), the σ
+   band is written as nodata with the rule name recorded as `sigma_fold: undecided` in the
+   tile metadata and Item, so a later decision is a new fingerprint, never a migration.
+   Group B's **first deliverable is the evidence** for that decision, in the style of spine
+   decision 2's `fold_measure` (prototype log §"Spine decision 2 EVIDENCE"): a measurement
+   over the Massabesic subset reporting, per level, how the candidate rules differ (pooled
+   variance = within-child σ² plus spread of child means, count-weighted; max child σ; mean
+   child σ; and the design's literal "mean and max" as two numbers), with how often each
+   rule's σ covers the true spread of the native cells under the parent. The orchestrator
+   pauses at that point and hands the numbers to the operator; the design thinking happens
+   there, and the chosen rule goes into rev 3 §7 as a spine-2 refinement. A new
+   `buildMultiBandDepthOverviewPyramid(...)` entry point writes the **4-band** tile to the
+   rev-3 tree; it does not touch or replace the existing single-band
+   `buildDepthOverviewPyramid` used by `draft/processed/reference/chart` — the two fold
+   functions and two tile schemas coexist, matching "process-derived decisions ... the store
+   stays usable through their change because a changed process is a new fingerprint, never
+   a migration."
+   **Geometric error is a producer obligation (ADR-0013 D2)**: the multi-band writer records
+   per-tile `geometric_error_m` in the `marine_tiled_raster_store::CoverageManifest` exactly
+   as the existing single-band writer does (`overview_pyramid.cpp`, `derived.geometricError`
+   over the children), so rev-3 overview tiles satisfy the error-nesting condition and the
+   D7 selection core (uma#395) can select them without a special case. Rev 3 does not mention
+   geometric error today; this PR adds a one-paragraph amendment to `docs/world_store_design.md`
+   (Part 2 consumer contract: each overview Item/tile carries `geometric_error_m`, nested
+   parent ≥ child, per ADR-0013 D2/D3) as a process-derived correction, logged in its change
+   log — a design change, not a code-only workaround.
 5. **Per-parent mode** (design draft Part 4 "owed": `build_depth_overviews` per-parent mode;
    prototype component 5's finding that "the real `build_depth_overviews` is one batch call
    and would need per-parent work units to benefit"): a new
@@ -145,6 +167,22 @@ Two commit groups, as decided by the operator (2026-09-22), landing in one PR st
    named gap, not a silent one — flagged under Consequences for whoever next touches this
    repo's bootstrap/CI dependency install step.
 
+### Common-library reuse (arc-wide constraint; plan-review must-fix)
+
+The issue requires "common libraries where practical (the LOD libraries: ADR-0013 D7,
+uma#395, mpt#36) rather than per-consumer code". What exists today, and what this PR reuses:
+
+| Library | State today | Reused here |
+|---|---|---|
+| `marine_tiled_raster_store` (tile IO, `CoverageManifest` with per-tile `geometric_error_m`, D2/D3) | Exists — the store half of ADR-0013 | **Yes**: Group B's per-parent writer and the multi-band pyramid write tiles and the manifest through it, never a private writer; Group A's Items carry the manifest's `geometric_error_m` per tile (see step 4). |
+| ADR-0013 D7 selection core (uma#395) | **Not implemented** (issue filed 2026-09-18; CAMP's `lod_level_selector.h` is the only selector and is cell-size based) | Nothing to consume yet. This PR **produces what the core will need** — nested geometric error on every rev-3 overview tile — and adds no selection logic of its own (no per-consumer level picking in `marine_world_store`). |
+| `marine_survey_index` (query CLI precedent) | Exists | Pattern reused for the `mws_*` CLIs; no code dependency. |
+
+Rule for implementation: anything a second consumer (CAMP #238, explorer mpt#60, costmap #398)
+would also need — root resolution, layout paths, fingerprints, Item reading — lives in
+`marine_world_store` as library functions, not in a CLI's `main`. Anything that is a
+*selection* decision is left to uma#395, not re-implemented here.
+
 ## Files to Change
 
 | File | Change |
@@ -160,9 +198,10 @@ Two commit groups, as decided by the operator (2026-09-22), landing in one PR st
 | `marine_bathymetry_store/CMakeLists.txt` | New executable target + install rule |
 | `marine_bathymetry_store/test/test_depth_overview_multiband.cpp` | New — fold correctness, MIN-vs-legacy equivalence, per-parent mode |
 | `marine_bathymetry_store/README.md` | Document the multi-band writer and per-parent mode alongside the existing wholesale one; note it targets the rev-3 tree only |
-| `marine_tiled_raster_store/README.md` | Note (if `layout.py`/generic helpers end up depending on its coverage-manifest conventions) — verify during implementation whether any C++-side generic helper is needed here, or Group A stays pure Python (current plan: pure Python, so likely no code change, doc cross-reference only) |
+| `marine_tiled_raster_store/README.md` | Doc cross-reference: Group B's multi-band and per-parent writers depend on this package's tile IO and `CoverageManifest` (`geometric_error_m`) today, not speculatively; Group A's Python reads the manifest's `geometric_error_m` into Items. No C++ code change expected in this package. |
+| `marine_bathymetry_store/test/sigma_fold_measure.py` (or a `measure` CLI) | New — Group B evidence step: candidate σ-fold rules measured on the Massabesic subset (see step 4); runs only when the subset root is present |
 | `.agents/README.md` | Add `marine_world_store` to the package inventory table |
-| `docs/world_store_design.md` | Amend if implementation surfaces a mismatch with rev 3 (process-derived correction, per the issue's own instruction — never a silent workaround) |
+| `docs/world_store_design.md` | (a) Part 2 amendment: overview tiles/Items carry nested `geometric_error_m` (ADR-0013 D2/D3); (b) §7: σ fold rule marked **open**, candidates listed, decided from the Group B measurement; (c) any further mismatch found during implementation — all as logged process-derived corrections, never a silent workaround |
 
 ## Principles Self-Check
 
@@ -184,6 +223,7 @@ Two commit groups, as decided by the operator (2026-09-22), landing in one PR st
 | ADR-0002 (bathymetric data store), ADR-0010 (geospatial world model), ADR-0011 (overview pyramid) | Yes, already deferred | All three already carry "Under revision" pointers to `docs/world_store_design.md`; this PR adds code alongside them without amending their text (no ADR cuts, per issue scope). |
 | ADR-0008 (ROS 2 conventions) | Yes | `marine_world_store` is a new ament_python package following the `mission_manager` precedent (package.xml format 3 conventions, `ament_copyright`/`ament_flake8`/`ament_pep257`/`python3-pytest` test_depends). |
 | ADR-0009 (Python package management, workspace repo only) | By analogy | Snakemake/pystac tier decided apt-not-venv (see Approach step 7); the rosdep-key gap is named, not silently worked around. |
+| ADR-0013 (bounded-LOD navigation) | **Yes** — D2 (error nesting is a producer obligation), D3 (manifest carries it), D7 (one selection core) | The multi-band and per-parent writers record nested `geometric_error_m` in the `CoverageManifest` via `marine_tiled_raster_store`, as the existing writer does; no selection logic is added here (that is uma#395's); rev 3 gains a Part 2 amendment naming the field. See "Common-library reuse". |
 
 ## Consequences
 
@@ -207,31 +247,41 @@ Two commit groups, as decided by the operator (2026-09-22), landing in one PR st
   `feedback_adr_fatigue_no_premature_adrs` (same reasoning applies to instruction-file
   premature generalization).
 
-## Open Questions
+## Open Questions (resolved at the 2026-09-22 plan checkpoint unless marked open)
 
-- **Compare-by-value test shape**: the issue says "compared by value with the existing
-  store." This plan proposes an automated CI-safe substitute — MIN-band-equals-legacy-fold
-  against the existing golden fixture, plus property checks (MEAN within [min,max],
-  COUNT ≤ contributor count, σ ≥ max child σ) — rather than a live diff against
-  `~/data/world`'s actual Massabesic/Appledore tiles, because raw survey data can't be
-  committed as a repo fixture and this PR must not touch `~/data`. Confirm this substitution
-  is acceptable, or that a documented (uncommitted, run-once) manual verification script
-  against the live subset is additionally wanted, matching the prototype log's own evidence
-  style.
-- **`mws_link_depth_subset`'s bag/source lookup**: read access to the real bag directories for
-  the Massabesic day and Appledore subset (for the Merkle source id) depends on what's
-  reachable on this dev host under `~/data/logs/...` at implementation time — confirm the
-  exact bag paths for "one Massabesic day" and "the Appledore shallow work" before
-  implementation starts, or the adapter falls back to a synthetic fixture bag directory for
-  the automated test while still exercising the real tool against live data once, by hand.
-- **σ combination for the overview's fourth band**: design draft §7 says "mean σ + max σ of
-  the children" without specifying how those combine into one stored value (max of the two?
-  a struct with both?). Flagged for a one-line confirmation before Group B implementation;
-  either choice is a small, isolated change to `depthMultiBandFold`.
+- **Compare-by-value test shape — RESOLVED**: two tests, both automated. (1) CI-safe:
+  MIN-band-equals-legacy-fold against the existing golden fixture, plus property checks
+  (MEAN within [min,max], COUNT ≤ contributor count). (2) **Live compare-by-value**: a pytest
+  that runs when both the subset test root and the existing store (resolved via
+  `resolve_store_root()`, read-only) are present and **skips with a reason otherwise** — it
+  compares the rev-3 tree's native cells and MIN overviews against the existing store's
+  tiles for the subset footprint by value (`reference_compare_stores_by_value_not_coverage`:
+  never by tile or pixel counts). No committed raw data; no manual script.
+- **Subset bag paths — RESOLVED** (verified on the NAS archive 2026-09-22, read-only):
+  Massabesic day = `/mnt/nadata/map2026asv/logs/gabby/logs/bizzyboat_sonar/2026-06-22T13-22-29+00-00`
+  (14 GB; use the prototype's 20-minute window for any observation-level step) and the
+  matching `bizzyboat/` nav bag of the same session; Appledore shallow work =
+  `.../bizzyboat_sonar/2026-08-27T11-15-26+00-00` (6.2 GB; the day the operator logs place
+  the boat between Appledore and Smuttynose). The paths are **inputs to the adapter CLI**
+  (arguments / a subset manifest YAML under the test root), never literals in code; the
+  automated tests use a synthetic fixture bag directory.
+- **σ fold rule for the overview's fourth band — OPEN, deliberately**: operator (2026-09-22):
+  "this seems like something that should be thought about much more". See step 4: rule is a
+  named strategy parameter, no σ band is written until decided, Group B produces the
+  measurement, the orchestrator pauses with the numbers. Rev 3 §7 is amended to say the rule
+  is open and list the candidates.
 - **Store frame EPSG code**: Part 4 lists "the reference-frame EPSG codes verified in PROJ
   before they are written" as owed. This plan writes whatever code is verified at
   implementation time (ITRF2020 realization query against the local PROJ database) rather
   than assuming one now.
+
+## Plan review amendments (2026-09-22)
+
+Plan Review (`progress.md`, verdict changes-requested) must-fixes applied inline, per the
+operator's "amend plan, then implement" decision: (1) common-library reuse section added;
+(2) geometric error made a stated producer obligation of the multi-band writer, with a rev-3
+Part 2 amendment; suggestions (3) rev-3 amendment rather than code-only fix — folded into (2);
+(4) `marine_tiled_raster_store/README.md` row corrected to a real, present dependency.
 
 ## Estimated Scope
 
