@@ -236,7 +236,7 @@ def _nanoseconds(container: Any, key: str) -> Optional[int]:
 
 def bag_interval(bag_dir: PathLike) -> Tuple[str, str]:
     """
-    The interval a bag directory recorded over, from its ``metadata.yaml``.
+    Read the interval a bag recorded over from its ``metadata.yaml``.
 
     Two readings, in order: the bag's own ``starting_time`` plus ``duration``,
     and -- when those are absent or the duration is missing -- the union of
@@ -276,7 +276,7 @@ def bag_interval(bag_dir: PathLike) -> Tuple[str, str]:
 
 def source_interval(path: PathLike) -> Tuple[str, str]:
     """
-    The interval for any kind of source: a bag directory, or a single file.
+    Date any kind of source: a bag directory, or a single file.
 
     A single-file source (a cast, a prior grid) carries no rosbag2 metadata,
     so there is nothing to derive from and the caller must state the interval.
@@ -294,7 +294,7 @@ def source_interval(path: PathLike) -> Tuple[str, str]:
 def union_intervals(intervals: Iterable[Sequence[Any]], *,
                     what: str = 'this product') -> Tuple[str, str]:
     """
-    The interval covering every one of ``intervals`` -- earliest to latest.
+    Cover every one of ``intervals`` -- earliest start to latest end.
 
     What a product Item carries: a tile built from three bags was observed
     over all three. Every contributing interval must be complete; one source

@@ -52,7 +52,7 @@ def write_metadata(bag_dir, body):
 
 
 def a_bag(tmp_path, start_ns=START_NS, duration_ns=DURATION_NS, count=10555):
-    """A bag directory carrying rosbag2's start-plus-duration fields."""
+    """Build a bag carrying rosbag2's start-plus-duration fields."""
     return write_metadata(tmp_path / 'bag', (
         f'  version: 9\n'
         f'  storage_identifier: mcap\n'

@@ -168,7 +168,7 @@ def test_an_undated_item_never_reaches_the_store(tmp_path):
 
 
 def test_an_item_with_a_single_datetime_is_written(tmp_path):
-    """STAC's other legal shape: an instant rather than a range."""
+    """Accept STAC's other legal shape: an instant, not a range."""
     item = a_tile_item()
     item['properties'].pop('start_datetime')
     item['properties'].pop('end_datetime')

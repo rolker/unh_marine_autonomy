@@ -310,7 +310,7 @@ ONE_MINUTE_NS = 60 * 10 ** 9
 
 
 def make_bag(directory, start_ns, duration_ns=ONE_MINUTE_NS, dated=True):
-    """A bag-shaped directory rosbag2 would have written."""
+    """Build a bag-shaped directory rosbag2 would have written."""
     directory.mkdir(parents=True, exist_ok=True)
     (directory / 'rosbag2_0.mcap').write_bytes(
         f'ping {start_ns}'.encode('utf-8'))
