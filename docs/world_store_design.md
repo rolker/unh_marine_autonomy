@@ -124,7 +124,12 @@ The collection has **one** horizontal and vertical frame: **ITRF2020 at referenc
 (derived from recorded RTCM where possible, declared for products); every ingest transforms
 into the store frame and names the transformation in provenance (`mru_transform` for live
 data, importers for products); the declaration is written in STAC with a specific EPSG code
-(never bare 4326), in coverage manifests, the TMS `crs` and the registry. Consequences
+(never bare 4326), in coverage manifests, the TMS `crs` and the registry. The code is
+**EPSG:9989**, ITRF2020's *geographic 3D* CRS (latitude, longitude, ellipsoidal height) —
+verified against PROJ 9 locally on 2026-09-22; 9988 is the geocentric form and 9990 the 2D
+one, and neither carries the height axis the store stores. Note the "reference epoch 2020.0"
+above is the **coordinate** epoch the collection is held at; ITRF2020's own frame epoch is
+2015.0, as PROJ reports it. Both are written. Consequences
 accepted: US products and CORS are NAD83(2011), so PROJ's time-dependent transformation is
 needed in one direction regardless; a fixed epoch implies plate-motion correction (≈ 12 cm in
 New Hampshire for 2026 observations); NATRF2022 ≈ ITRF2020@2020.0 is a bet until NOAA
@@ -202,7 +207,7 @@ revisions concept are the later upstream contribution.
   **contributor + RAT** (BlueTopo's pattern, NBS's granularity) and a measured-vs-interpolated
   flag are adopted; per-cell source and time stay out (R8).
 - **Overview levels — *decided* (spine 2, 2026-09-21)**: a folded level stores **MIN, MEAN,
-  COUNT and σ** (mean and max of the children) per parent cell — BAG VR's `RESAMPLED_GRID`
+  COUNT and σ** per parent cell — BAG VR's `RESAMPLED_GRID`
   precedent — never one folded value. Views choose the band: the navigation-surface view
   reads MIN, others read MEAN, COUNT is the parent's lineage. Measured on Massabesic: a mean
   fold hides the shoalest depth by more than its own σ in 56 % of 7.2 m cells (three fold
@@ -210,6 +215,17 @@ revisions concept are the later upstream contribution.
   folded MIN may serve as a conservative screen; decisions resolve at native level (R19).
   NBS's rule against averaging applies to the *compile* — our native level — not to derived
   summaries whose lineage is COUNT.
+  **The σ band's fold rule is OPEN** (Roland, 2026-09-22: "this seems like something that
+  should be thought about much more"). Rev 2's "mean and max of the children" named two
+  numbers without saying how they combine into one stored value, so it was never a decision.
+  Candidates: pooled variance (within-child σ² plus the spread of the child means,
+  count-weighted); max child σ; mean child σ; and the literal "mean and max" as two bands.
+  The rule is decided from a measurement over the Massabesic subset — how often each
+  candidate's σ covers the true spread of the native cells under the parent — in the style of
+  spine decision 2's own `fold_measure` evidence. Until then the 4-band schema is reserved and
+  **no σ band is written**: the band is nodata and the tile and Item record
+  `sigma_fold: undecided`, so the later decision is a new fingerprint, never a migration.
+  (uma#397 Group B.)
 - **Record and views**: STAC Items + Collection are the record (coverage manifest and
   fingerprint container included); a GTI index is *derived* from them for readers (GDAL ≥ 3.9,
   the 26.04 / lyrical platform); never sync a derived GTI, regenerate it. STACTA/STACIT were
@@ -297,8 +313,25 @@ consumer's.
 2. **Per-Item fields.** `state`, `origin`, the store frame (specific EPSG + epoch), inputs
    with their ids, fingerprint, uncertainty basis, time range, resolution and levels, a
    licence (machine-readable; CC0 where public), and for features the record version chain.
+   They are written with an `mws:` prefix (`mws:state`, `mws:origin`, …) because STAC
+   requires fields outside common metadata to be namespaced; the prefix is a spelling, not a
+   second vocabulary. Every *built* product is in the store frame (§4) — but a product that
+   is a byte-identical re-expression of an existing tile has not been transformed, so its
+   Item declares the georeferencing it actually carries plus the owed transformation. An
+   Item naming the store frame over unreframed pixels would be a false claim in the record,
+   which is worse than an honest gap.
 3. **Per-cell fields** in a field store: value, σ, contributor (RAT), measured-vs-
-   interpolated. Overview levels carry MIN, MEAN, COUNT and σ.
+   interpolated. Overview levels carry MIN, MEAN, COUNT and σ. An Item lists only the
+   per-cell fields its container actually holds — a field named but absent is a promise the
+   store cannot keep.
+   *Per-tile geometric error*: every tile Item, native or folded, also carries
+   `geometric_error_m` — the error introduced if the tile is rendered and its children are
+   not — and a parent's is never smaller than its children's. This is a **producer**
+   obligation (uma-ADR-0013 D1/D2), recorded in the `marine_tiled_raster_store` coverage
+   manifest the writers already keep (D3) and copied into the Item; one selection core
+   (D7, uma#395) can then select a rev-3 overview tile with no special case. Absent means
+   *absent*, never zero: a consumer falls back to level-as-resolution, and zero would claim
+   a perfect tile.
 4. **Kinds** on a navigable boundary's segments; `origin_kind`/`status` on a contact; QC
    flags on a sound-speed sample.
 5. **No ordering.** The store never says which of two products to prefer. A documented
@@ -354,10 +387,25 @@ producer versions in bags; the Sound Speed Manager study, then cast-file decisio
 Shoals tidal water-level series and navigable boundary; the segmentation-derived shore;
 the Wyllie 2017 quality-score paper; the contacts redesign issue; a decision on annexing
 salmon's logs in place; the reference-frame EPSG codes verified in PROJ before they are
-written; ADR cuts for the decided sections, and the amendments to ADR-0002, -0004, -0006,
+written (the **store frame's** code is now verified — EPSG:9989, §4, 2026-09-22; the
+product and source frames a given import declares are still verified case by case); ADR cuts for the decided sections, and the amendments to ADR-0002, -0004, -0006,
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-09-22 — **proposed, from implementing rev 3** (uma#397 Group A; process-derived
+  corrections, recorded here rather than worked around in code): (a) Part 2 line 3 gains the per-tile
+  geometric error — every tile Item carries a nested per-tile `geometric_error_m`, a producer obligation under
+  uma-ADR-0013 D1/D2 read from the `marine_tiled_raster_store` coverage manifest (D3), which
+  rev 3 did not mention at all; (b) §7's σ fold rule is marked **open** with its candidates
+  listed and no σ band written until it is decided from the Group B measurement — rev 2's
+  "mean and max of the children" named two numbers without saying how they combine, so it was
+  never a decision; (c) Part 2 line 2 — Item fields are spelled with an `mws:` prefix, because
+  STAC namespaces fields outside common metadata; (d) §4 — the store EPSG code is
+  9989 (ITRF2020 geographic 3D), verified in PROJ, and the 2020.0 in §4 is the *coordinate*
+  epoch, distinct from ITRF2020's own 2015.0 frame epoch; (e) Part 2 line 2 — a product that is a
+  byte-identical re-expression of an existing tile declares the frame it actually holds
+  and names the owed transformation, rather than claiming the store frame.
 
 - 2026-09-21 — **rev 3**: written after spine decisions 0–5 and the prototype (components
   1–11, sound-speed, sidescan, contacts, shoreline). Purpose opens with Roland's 2026-09-21
