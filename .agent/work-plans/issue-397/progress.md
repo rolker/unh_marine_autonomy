@@ -96,3 +96,22 @@ level concerns; no hard blocking dependency identified.
 ---
 **Authored-By**: `Claude Code Agent`
 **Model**: `Claude Sonnet`
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-09-22 08:51 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-397/plan.md` at `cd673fd`
+**Branch**: feature/issue-397 at `cd673fd`
+**Phases**: single PR, two staged commit groups (A: store root + rev-3 layout/Items/source identity; B: multi-band overview writer + Snakemake regenerate)
+
+### Open questions
+- [ ] Compare-by-value test shape: MIN-band-equals-legacy-fold against the existing golden fixture + property checks, proposed as the CI-safe substitute for a live-subset diff — confirm, or ask for an additional uncommitted manual verification script against the live subset.
+- [ ] `mws_link_depth_subset`'s bag/source lookup: confirm exact bag paths for "one Massabesic day" and "the Appledore shallow work" reachable on this dev host, or fall back to a synthetic fixture bag directory for the automated test.
+- [ ] σ combination for the overview's fourth band: design draft §7 says "mean σ + max σ of the children" without specifying how the two combine into one stored value — needs a one-line confirmation.
+- [ ] Store frame EPSG code: written from a PROJ-database verification at implementation time rather than assumed now (Part 4's "owed" item).
+
+---
+**Authored-By**: `Claude Code Agent`
+**Model**: `Claude Sonnet`
