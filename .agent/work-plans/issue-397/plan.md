@@ -315,6 +315,62 @@ operator's "amend plan, then implement" decision: (1) common-library reuse secti
 Part 2 amendment; suggestions (3) rev-3 amendment rather than code-only fix — folded into (2);
 (4) `marine_tiled_raster_store/README.md` row corrected to a real, present dependency.
 
+## Implementation notes — Group A (2026-09-22)
+
+Recorded inline as the plan-task "during implementation" rules ask. Everything
+below is a departure from, or an addition to, what this plan wrote; Group B is
+unaffected.
+
+- **More library modules than the plan named.** The plan listed six modules;
+  Group A landed nine, because of its own rule that "anything a second consumer
+  would also need ... lives in `marine_world_store` as library functions, not
+  in a CLI's `main`":
+  - `coverage.py` — reads `marine_tiled_raster_store`'s `coverage.json`
+    (`coverage-manifest/1`) so the per-tile `geometric_error_m` comes from the
+    existing convention rather than a parallel one (the plan's reuse constraint);
+  - `footprint.py` — a tile's geometry/bbox from the raster's own
+    georeferencing, so no second Python implementation of the GGGS grid maths;
+  - `item_schema.py` — the Item/Collection documents as plain dicts, split out
+    of `stac_catalog.py` so the *schema* is testable on a host where `pystac`
+    is not installed yet (which is this host until `rosdep install` runs);
+  - `depth_subset.py` — the adapter's logic, with
+    `cli/mws_link_depth_subset.py` as the thin shell over it;
+  - `cli/_common.py` — one `--store-root` flag and one lazy `pystac` import for
+    every CLI.
+- **`python3-gdal` is a fourth dependency** (`GDAL` in `install_requires`),
+  for the footprints above. The plan named pystac/snakemake/PyYAML only.
+- **The guard test's allowlist has three pre-existing entries, not one.** The
+  plan named `s102_import`'s import-cache literal; the repo also carries a
+  comment in `bathymetry_layer/src/bathymetry_layer.cpp` and the legacy imagery
+  tree's launch default in `marine_sidescan_mosaic`. Each is a different
+  setting, already overridable, and is allowlisted with its reason rather than
+  silently rewritten. Two further tests keep the allowlist from rotting: an
+  entry whose file is gone, or which no longer contains the literal, fails.
+- **`setup.cfg` declares no `python_requires`.** colcon's setup.py
+  introspection `literal_eval`s the parsed options and a `SpecifierSet` is not
+  a literal, so declaring it fails the colcon build outright. `setup.py` gains
+  `tests_require=['pytest']`, which is how colcon's python test task picks the
+  pytest runner instead of collecting nothing under unittest.
+- **Module-level `pytest.importorskip` is avoided** in the two optional-import
+  test modules: under the ament pytest plugin set it aborts the whole session
+  rather than skipping its module. They guard the import by hand and skip with
+  a `pytestmark`.
+- **Three more rev-3 amendments than the two the plan named** — all
+  process-derived corrections found while implementing, logged in the design
+  draft's change log with (a) and (b): (c) Item fields are spelled with an
+  `mws:` prefix, because STAC namespaces fields outside common metadata;
+  (d) §4's store EPSG code is 9989 (ITRF2020 *geographic 3D*), verified against
+  this host's PROJ, and §4's "reference epoch 2020.0" is the **coordinate**
+  epoch — ITRF2020's own frame epoch is 2015.0; (e) a product that is a
+  byte-identical re-expression of an existing tile declares the frame it
+  actually holds plus the owed transformation, rather than the store frame.
+  (e) is what the adapter does: an Item claiming ITRF2020 over unreframed
+  pixels would be a false claim in the record.
+- **Not done in Group A, as scoped**: the multi-band fold, the per-parent CLI,
+  the Snakemake rules and the σ-fold measurement (steps 4–6), and the live
+  compare-by-value test against the real subset — its inputs are the adapter's
+  CLI arguments, and no run against `~/data/world` was made from this pass.
+
 ## Estimated Scope
 
 Single PR, two commit groups (A then B), stacked on `feature/issue-391` / draft PR #392, per
