@@ -1,0 +1,475 @@
+// Copyright 2026 Center for Coastal and Ocean Mapping & NOAA-UNH Joint
+// Hydrographic Center, University of New Hampshire
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+// [uma#397 / docs/world_store_design.md §7, spine decision 2] Tests for the
+// rev-3 MULTI-BAND depth overview writer: the MIN/MEAN/COUNT/σ fold, the batch
+// pyramid, the per-parent work unit, and the guards that keep the two tile
+// schemas from being written over one another.
+//
+// The load-bearing assertion is MinBandMatchesTheLegacyGolden: the MIN band of
+// a multi-band pyramid must be bit-identical to the single-band pyramid's depth
+// band over the same inputs, because "shoalest" is the same selection in both.
+// It is checked against the SAME committed golden digest the single-band
+// regression guard uses — a value the pre-#331 binary produced — so the two
+// writers are pinned to one reference rather than to each other.
+
+#include <gtest/gtest.h>
+
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <limits>
+#include <map>
+#include <optional>
+#include <sstream>
+#include <string>
+#include <system_error>
+#include <vector>
+
+#include "depth_overview_regression_fixture.hpp"
+#include "marine_autonomy/gggs.h"
+#include "marine_autonomy/gggs/index_math.h"
+#include "marine_bathymetry_store/overview_pyramid.hpp"
+#include "marine_tiled_raster_store/coverage_manifest.hpp"
+#include "marine_tiled_raster_store/tile_io.hpp"
+#include "marine_tiled_raster_store/tiled_raster_tile.hpp"
+
+namespace
+{
+
+namespace fs = std::filesystem;
+namespace mtrs = marine_tiled_raster_store;
+namespace mbs = marine_bathymetry_store;
+namespace det = marine_bathymetry_store::detail;
+
+constexpr int kFineLevel = 13;                 // a non-polar native level
+constexpr double kLat = 43.07, kLon = -71.42;  // Lake Massabesic — non-polar
+constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+constexpr std::size_t kMB = det::kMultiBandCount;
+
+class ScratchDir
+{
+public:
+  explicit ScratchDir(const std::string & name)
+  : path_(fs::path(::testing::TempDir()) / ("mbs_mb_ovr_" + name))
+  {
+    fs::remove_all(path_);
+    fs::create_directories(path_);
+  }
+  ~ScratchDir()
+  {
+    std::error_code ec;
+    fs::remove_all(path_, ec);
+  }
+  const fs::path & path() const {return path_;}
+
+private:
+  fs::path path_;
+};
+
+// A 4-band contributor cell in the multi-band schema.
+std::vector<double> cell(double min_v, double mean_v, double count, double sigma)
+{
+  std::vector<double> c(kMB);
+  c[det::kMultiMinBand] = min_v;
+  c[det::kMultiMeanBand] = mean_v;
+  c[det::kMultiCountBand] = count;
+  c[det::kMultiSigmaBand] = sigma;
+  return c;
+}
+
+// Write a 2-band Float64 native depth tile filled uniformly.
+void writeUniformNativeTile(
+  const fs::path & dir, const gggs::GridIndex & grid, double depth, double unc)
+{
+  fs::create_directories(dir);
+  mtrs::TiledRasterTile<double> tile(grid, 2, kNaN);
+  for (uint16_t r = 0; r < tile.edge; ++r) {
+    for (uint16_t c = 0; c < tile.edge; ++c) {
+      tile.set(r, c, 0, depth);
+      tile.set(r, c, 1, unc);
+    }
+  }
+  mtrs::saveTile<double>(
+    tile, (dir / mtrs::tileFilename(grid)).string(),
+    {std::optional<double>(kNaN), std::optional<double>(kNaN)});
+}
+
+std::vector<gggs::GridIndex> fineSiblings()
+{
+  const gggs::GridIndex fine = gggs::Level(kFineLevel).gridIndex(kLat, kLon);
+  return gggs::children(gggs::parent(fine));
+}
+
+mtrs::TiledRasterTile<double> loadMultiBand(const fs::path & path, int level)
+{
+  return mtrs::loadTile<double>(
+    path.string(), gggs::Level(static_cast<uint8_t>(level)), kMB);
+}
+
+// The band-0 half of the committed golden digest, as a map name -> digest, so
+// the multi-band sidecar can be compared tile by tile against the value the
+// PRE-#331 single-band binary produced.
+std::map<std::string, std::string> goldenMinBandDigests()
+{
+  namespace dor = depth_overview_regression;
+  std::map<std::string, std::string> out;
+  std::istringstream lines(dor::readGolden(DEPTH_OVERVIEW_GOLDEN_FILE, "sidecar"));
+  std::string tag, name, band0, band1;
+  while (lines >> tag >> name >> band0 >> band1) {
+    out[name] = band0;
+  }
+  return out;
+}
+
+}  // namespace
+
+// --- the fold ---------------------------------------------------------------
+
+TEST(MultiBandFold, MinBandIsTheShoalestOfTheContributors)
+{
+  // Ellipsoidal height, so shoalest is the MAXIMUM. The design calls this band
+  // MIN because it is the min DEPTH; the number stored is the largest height.
+  const std::vector<std::vector<double>> contributors{
+    cell(-12.0, -12.0, 1.0, 0.4),
+    cell(-3.5, -3.5, 1.0, 0.9),
+    cell(-20.0, -20.0, 1.0, 0.1)};
+  const std::vector<double> folded = det::depthMultiBandFold(contributors);
+  EXPECT_DOUBLE_EQ(folded[det::kMultiMinBand], -3.5);
+}
+
+TEST(MultiBandFold, MinBandEqualsTheSingleBandFoldsDepth)
+{
+  // The one property that makes the two pyramids interchangeable for a
+  // navigation view: same contributors, same shoalest number.
+  const std::vector<std::vector<double>> pairs{
+    {-12.0, 0.4}, {-3.5, 0.9}, {-20.0, 0.1}, {-3.5, 0.2}};
+  std::vector<std::vector<double>> promoted;
+  for (const auto & p : pairs) {
+    promoted.push_back(det::promoteNativeDepthCell(p));
+  }
+  EXPECT_DOUBLE_EQ(
+    det::depthMultiBandFold(promoted)[det::kMultiMinBand],
+    det::depthShallowestFold(pairs)[0]);
+}
+
+TEST(MultiBandFold, MeanIsCountWeightedAndCountSums)
+{
+  // Two children summarising 3 and 1 native cells: the mean must follow the
+  // lineage, not the number of children.
+  const std::vector<std::vector<double>> contributors{
+    cell(-10.0, -10.0, 3.0, 0.5),
+    cell(-2.0, -2.0, 1.0, 0.5)};
+  const std::vector<double> folded = det::depthMultiBandFold(contributors);
+  EXPECT_DOUBLE_EQ(folded[det::kMultiCountBand], 4.0);
+  EXPECT_DOUBLE_EQ(folded[det::kMultiMeanBand], (-10.0 * 3 + -2.0 * 1) / 4.0);
+  EXPECT_DOUBLE_EQ(folded[det::kMultiMinBand], -2.0);
+}
+
+TEST(MultiBandFold, SigmaIsNodataWhileTheRuleIsUndecided)
+{
+  // §7's rule is open, so the band is reserved. Writing anything here — most of
+  // all a zero — would be a decision taken by code instead of by the design.
+  const std::vector<std::vector<double>> contributors{
+    cell(-10.0, -10.0, 1.0, 0.5), cell(-2.0, -2.0, 1.0, 0.7)};
+  EXPECT_TRUE(
+    std::isnan(
+      det::depthMultiBandFold(contributors)[det::kMultiSigmaBand]));
+  EXPECT_TRUE(
+    std::isnan(
+      det::depthMultiBandFold(
+        contributors, mbs::SigmaFold::kUndecided)[det::kMultiSigmaBand]));
+}
+
+TEST(MultiBandFold, CandidateRulesProduceDifferentSigmas)
+{
+  // The measurement that decides §7 compares these three; if two of them agreed
+  // on every input there would be nothing to decide.
+  const std::vector<std::vector<double>> contributors{
+    cell(-10.0, -10.0, 1.0, 0.2), cell(-2.0, -2.0, 1.0, 0.8)};
+  const double max_child =
+    det::depthMultiBandFold(
+    contributors, mbs::SigmaFold::kMaxChild)[det::kMultiSigmaBand];
+  const double mean_child =
+    det::depthMultiBandFold(
+    contributors, mbs::SigmaFold::kMeanChild)[det::kMultiSigmaBand];
+  const double pooled =
+    det::depthMultiBandFold(
+    contributors, mbs::SigmaFold::kPooled)[det::kMultiSigmaBand];
+  EXPECT_DOUBLE_EQ(max_child, 0.8);
+  EXPECT_DOUBLE_EQ(mean_child, 0.5);
+  // Pooled: within-child (0.2², 0.8²) plus the spread of the means about -6.
+  EXPECT_DOUBLE_EQ(pooled, std::sqrt((0.04 + 16.0 + 0.64 + 16.0) / 2.0));
+  EXPECT_GT(pooled, max_child) <<
+    "pooled must see the spread BETWEEN the children, which neither "
+    "per-child statistic can";
+}
+
+TEST(MultiBandFold, SigmaStaysNodataWhenNoContributorCarriesOne)
+{
+  // No uncertainty information must read as nodata, never as zero uncertainty —
+  // the most dangerous number this band could hold.
+  const std::vector<std::vector<double>> contributors{
+    cell(-10.0, -10.0, 1.0, kNaN), cell(-2.0, -2.0, 1.0, kNaN)};
+  for (const mbs::SigmaFold rule : {mbs::SigmaFold::kPooled,
+      mbs::SigmaFold::kMaxChild, mbs::SigmaFold::kMeanChild})
+  {
+    EXPECT_TRUE(
+      std::isnan(
+        det::depthMultiBandFold(contributors, rule)[det::kMultiSigmaBand])) <<
+      "rule " << mbs::sigmaFoldName(rule);
+  }
+}
+
+TEST(MultiBandFold, MalformedCountAndMeanSubstituteConservatively)
+{
+  // A NaN COUNT or MEAN means a malformed upstream tile. The parent must stay
+  // self-consistent — a COUNT that does not account for an existing MIN would
+  // corrupt the lineage every level above reads.
+  const std::vector<std::vector<double>> contributors{
+    cell(-10.0, kNaN, kNaN, 0.5),   // no mean, no count
+    cell(-2.0, -2.0, 1.0, 0.5)};
+  const std::vector<double> folded = det::depthMultiBandFold(contributors);
+  EXPECT_DOUBLE_EQ(folded[det::kMultiCountBand], 2.0);
+  EXPECT_DOUBLE_EQ(folded[det::kMultiMeanBand], -6.0) <<
+    "the malformed contributor's MIN stands in for its missing MEAN";
+}
+
+TEST(MultiBandFold, IsOrderIndependent)
+{
+  // The fold engine buckets contributors in filesystem-iteration order, which
+  // is not guaranteed; an order-sensitive fold would make the sidecar
+  // non-idempotent.
+  std::vector<std::vector<double>> a{
+    cell(-10.0, -11.0, 3.0, 0.2), cell(-2.0, -2.5, 1.0, 0.8),
+    cell(-7.0, -7.5, 2.0, 0.4)};
+  std::vector<std::vector<double>> b{a[2], a[0], a[1]};
+  for (const mbs::SigmaFold rule : {mbs::SigmaFold::kUndecided,
+      mbs::SigmaFold::kPooled, mbs::SigmaFold::kMaxChild,
+      mbs::SigmaFold::kMeanChild})
+  {
+    const std::vector<double> fa = det::depthMultiBandFold(a, rule);
+    const std::vector<double> fb = det::depthMultiBandFold(b, rule);
+    for (std::size_t band = 0; band < kMB; ++band) {
+      if (std::isnan(fa[band])) {
+        EXPECT_TRUE(std::isnan(fb[band])) << "band " << band;
+      } else {
+        EXPECT_DOUBLE_EQ(fa[band], fb[band]) << "band " << band;
+      }
+    }
+  }
+}
+
+TEST(PromoteNativeCell, IsAOneCellSummaryOfItself)
+{
+  const std::vector<double> promoted =
+    det::promoteNativeDepthCell({-4.25, 0.33});
+  ASSERT_EQ(promoted.size(), kMB);
+  EXPECT_DOUBLE_EQ(promoted[det::kMultiMinBand], -4.25);
+  EXPECT_DOUBLE_EQ(promoted[det::kMultiMeanBand], -4.25);
+  EXPECT_DOUBLE_EQ(promoted[det::kMultiCountBand], 1.0);
+  EXPECT_DOUBLE_EQ(promoted[det::kMultiSigmaBand], 0.33);
+}
+
+TEST(SigmaFoldName, IsStableForEveryEnumerator)
+{
+  // These strings travel into tile sidecars and STAC Items, so they are a
+  // contract: re-spelling one changes every fingerprint that quotes it.
+  EXPECT_EQ(mbs::sigmaFoldName(mbs::SigmaFold::kUndecided), "undecided");
+  EXPECT_EQ(mbs::sigmaFoldName(mbs::SigmaFold::kPooled), "pooled");
+  EXPECT_EQ(mbs::sigmaFoldName(mbs::SigmaFold::kMaxChild), "max_child");
+  EXPECT_EQ(mbs::sigmaFoldName(mbs::SigmaFold::kMeanChild), "mean_child");
+}
+
+// --- the batch pyramid ------------------------------------------------------
+
+TEST(MultiBandPyramid, WritesFourBandTilesWithCountLineageAndNodataSigma)
+{
+  ScratchDir dir("four_band");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  writeUniformNativeTile(dir.path(), fine[0], -10.0, 0.5);
+  writeUniformNativeTile(dir.path(), fine[1], -4.0, 0.7);
+  writeUniformNativeTile(dir.path(), fine[2], -20.0, 0.3);
+  writeUniformNativeTile(dir.path(), fine[3], -15.0, 0.9);
+
+  mbs::MultiBandOverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.min_level = kFineLevel - 1;
+  const mbs::DepthOverviewBuildResult r =
+    mbs::buildMultiBandDepthOverviewPyramid(opts);
+  ASSERT_TRUE(r.sidecar_replaced);
+  ASSERT_EQ(r.tiles_written, 1u);
+
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  const mtrs::TiledRasterTile<double> tile = loadMultiBand(
+    dir.path() / "overviews" / mtrs::tileFilename(parent), kFineLevel - 1);
+  ASSERT_EQ(tile.bandCount(), kMB);
+  // Every parent cell gathers native cells from one of the four children, so
+  // MIN is that child's depth and COUNT is how many of its cells landed here.
+  bool saw_shoalest = false;
+  for (uint16_t row = 0; row < tile.edge; ++row) {
+    for (uint16_t col = 0; col < tile.edge; ++col) {
+      const double min_v = tile.get(row, col, det::kMultiMinBand);
+      const double count = tile.get(row, col, det::kMultiCountBand);
+      ASSERT_FALSE(std::isnan(min_v));
+      EXPECT_GE(count, 1.0);
+      EXPECT_DOUBLE_EQ(tile.get(row, col, det::kMultiMeanBand), min_v) <<
+        "each parent cell here draws from ONE uniform child, so mean == min";
+      EXPECT_TRUE(std::isnan(tile.get(row, col, det::kMultiSigmaBand))) <<
+        "the sigma band is reserved while section 7's rule is open";
+      if (min_v == -4.0) {saw_shoalest = true;}
+    }
+  }
+  EXPECT_TRUE(saw_shoalest) << "the shoalest child's depth must survive";
+
+  // The schema record rides the same swap as the tiles it describes.
+  const fs::path schema = dir.path() / "overviews" / "overview_schema.json";
+  ASSERT_TRUE(fs::exists(schema));
+  std::ifstream in(schema);
+  const std::string text(
+    (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  EXPECT_NE(text.find("\"sigma_fold\": \"undecided\""), std::string::npos) << text;
+  EXPECT_NE(text.find("\"sigma_band_written\": false"), std::string::npos) << text;
+}
+
+TEST(MultiBandPyramid, MinBandMatchesTheSingleBandGolden)
+{
+  // The pin: over the committed fixture, every multi-band sidecar tile's MIN
+  // band must digest to the value the PRE-#331 single-band binary wrote into
+  // its depth band. Same tile names, same shoalest numbers, at every level.
+  namespace dor = depth_overview_regression;
+  ScratchDir dir("golden_min");
+  dor::writeFixture(dir.path());
+
+  const std::map<std::string, std::string> golden = goldenMinBandDigests();
+  ASSERT_FALSE(golden.empty()) <<
+    "golden data file missing or unreadable: " << DEPTH_OVERVIEW_GOLDEN_FILE;
+
+  mbs::MultiBandOverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.min_level = dor::kFixtureMinLevel;
+  const mbs::DepthOverviewBuildResult r =
+    mbs::buildMultiBandDepthOverviewPyramid(opts);
+  ASSERT_TRUE(r.sidecar_replaced);
+
+  std::size_t compared = 0;
+  for (const auto & entry : fs::directory_iterator(dir.path() / "overviews")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".tif") {continue;}
+    const std::string name = entry.path().filename().string();
+    const auto expected = golden.find(name);
+    ASSERT_NE(expected, golden.end()) <<
+      "the multi-band pyramid wrote a tile the single-band one did not: " << name;
+    const int level = std::stoi(name.substr(0, name.find('_')));
+    const mtrs::TiledRasterTile<double> tile = loadMultiBand(entry.path(), level);
+    EXPECT_EQ(
+      dor::hex16(dor::hashDoubles(tile.band(det::kMultiMinBand))),
+      expected->second) <<
+      "MIN band differs from the single-band fold for " << name;
+    ++compared;
+  }
+  EXPECT_EQ(compared, golden.size()) <<
+    "the two pyramids must cover exactly the same tiles";
+}
+
+TEST(MultiBandPyramid, CoverageManifestCarriesSaturatedGeometricError)
+{
+  // uma-ADR-0013 D2/D3: a rev-3 overview tile is useless to the D7 selection
+  // core (uma#395) without a nested per-tile error, and rev 3 did not mention
+  // the field at all — this is the producer obligation being met.
+  ScratchDir dir("manifest");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  mbs::MultiBandOverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.min_level = kFineLevel - 2;
+  ASSERT_TRUE(mbs::buildMultiBandDepthOverviewPyramid(opts).sidecar_replaced);
+
+  const std::optional<mtrs::CoverageManifest> loaded = mtrs::loadCoverageManifest(
+    (dir.path() / "overviews" / mtrs::coverageManifestFilename()).string());
+  ASSERT_TRUE(loaded.has_value());
+  const mtrs::CoverageManifest & manifest = *loaded;
+  ASSERT_FALSE(manifest.empty());
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  const gggs::GridIndex grandparent = gggs::parent(parent);
+  const std::optional<double> parent_error = manifest.geometricError(parent);
+  const std::optional<double> gp_error = manifest.geometricError(grandparent);
+  ASSERT_TRUE(parent_error.has_value());
+  ASSERT_TRUE(gp_error.has_value());
+  EXPECT_GE(*gp_error, *parent_error) <<
+    "error nesting is the producer obligation (uma-ADR-0013 D2): a parent's "
+    "error must be at least its children's";
+}
+
+TEST(MultiBandPyramid, RefusesToReplaceASingleBandSidecar)
+{
+  // Consumers read these tiles BY BAND INDEX, so a schema swapped in place is
+  // the one mistake nothing downstream can detect.
+  ScratchDir dir("cross_schema");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  mbs::DepthOverviewOptions single;
+  single.layer_dir = dir.path().string();
+  single.min_level = kFineLevel - 1;
+  ASSERT_TRUE(mbs::buildDepthOverviewPyramid(single).sidecar_replaced);
+
+  mbs::MultiBandOverviewOptions multi;
+  multi.layer_dir = dir.path().string();
+  multi.min_level = kFineLevel - 1;
+  EXPECT_THROW(mbs::buildMultiBandDepthOverviewPyramid(multi), std::runtime_error);
+  // The refusal must cost the existing sidecar nothing.
+  const mtrs::TiledRasterTile<double> survivor = mtrs::loadTile<double>(
+    (dir.path() / "overviews" /
+    mtrs::tileFilename(gggs::parent(fine.front()))).string(),
+    gggs::Level(kFineLevel - 1), 2);
+  EXPECT_EQ(survivor.bandCount(), 2u);
+}
+
+TEST(MultiBandPyramid, SingleBandWriterRefusesAMultiBandSidecar)
+{
+  // The guard is symmetric: the legacy batch writer must not wholesale-replace
+  // a rev-3 sidecar either.
+  ScratchDir dir("cross_schema_rev");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  mbs::MultiBandOverviewOptions multi;
+  multi.layer_dir = dir.path().string();
+  multi.min_level = kFineLevel - 1;
+  ASSERT_TRUE(mbs::buildMultiBandDepthOverviewPyramid(multi).sidecar_replaced);
+
+  mbs::DepthOverviewOptions single;
+  single.layer_dir = dir.path().string();
+  single.min_level = kFineLevel - 1;
+  EXPECT_THROW(mbs::buildDepthOverviewPyramid(single), std::runtime_error);
+}
+
+int main(int argc, char ** argv)
+{
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

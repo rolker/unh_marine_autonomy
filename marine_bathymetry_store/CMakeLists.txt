@@ -99,6 +99,7 @@ target_include_directories(import_geotiff PRIVATE ${GDAL_INCLUDE_DIRS})
 add_executable(build_depth_overviews src/build_depth_overviews.cpp)
 target_link_libraries(build_depth_overviews ${PROJECT_NAME})
 
+
 # S-102 importer core (#278): discover/fetch/convert/run stages as an internal
 # static library so the pipeline is testable without spawning the CLI. Its
 # headers live under src/s102/ and are NOT installed; nothing here is exported.
@@ -178,6 +179,19 @@ if(BUILD_TESTING)
   # assumption.
   target_include_directories(test_depth_overview PRIVATE test)
   target_compile_definitions(test_depth_overview PRIVATE
+    DEPTH_OVERVIEW_GOLDEN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/test/data/depth_overview_single_level_golden.txt")
+
+  # The rev-3 MULTI-BAND overview tests (uma#397): the MIN/MEAN/COUNT/sigma fold,
+  # the batch 4-band pyramid, the per-parent work unit, the cross-schema guards,
+  # and the pin that the MIN band equals the single-band fold's depth band over
+  # the committed golden fixture. Same TIMEOUT reasoning as test_depth_overview:
+  # these are integration tests over real 960x960 GeoTIFFs. They read the same
+  # fixture header and the same golden file, injected the same way.
+  ament_add_gtest(test_depth_overview_multiband
+    test/test_depth_overview_multiband.cpp TIMEOUT 300)
+  target_link_libraries(test_depth_overview_multiband ${PROJECT_NAME})
+  target_include_directories(test_depth_overview_multiband PRIVATE test)
+  target_compile_definitions(test_depth_overview_multiband PRIVATE
     DEPTH_OVERVIEW_GOLDEN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/test/data/depth_overview_single_level_golden.txt")
 
   # The GeoTIFF importer test writes fixture rasters with GDAL directly, so it

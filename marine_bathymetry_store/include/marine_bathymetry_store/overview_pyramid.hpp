@@ -23,6 +23,7 @@
 #define MARINE_BATHYMETRY_STORE__OVERVIEW_PYRAMID_HPP_
 
 #include <cstddef>
+#include <cstdint>
 #include <iosfwd>
 #include <map>
 #include <optional>
@@ -213,6 +214,87 @@ struct DepthOverviewBuildResult
 DepthOverviewBuildResult buildDepthOverviewPyramid(
   const DepthOverviewOptions & opts, std::ostream * progress = nullptr);
 
+// --- Multi-band (rev-3) overviews -------------------------------------------
+//
+// Everything below writes the **rev-3** world store's 4-band overview tile
+// (`docs/world_store_design.md` §7, spine decision 2): MIN, MEAN, COUNT and σ
+// per parent cell instead of one folded `{depth, σ}` pair. It is ADDITIVE —
+// `buildDepthOverviewPyramid` above and the `draft/processed/reference/chart`
+// tree it serves are untouched. The two schemas coexist deliberately: a changed
+// process is a new fingerprint, never a migration.
+
+/// @brief Which rule produces the overview tile's σ band.
+///
+/// **The rule is NOT decided** (Roland, 2026-09-22: "this seems like something
+/// that should be thought about much more"). Rev 2's "mean and max of the
+/// children" named two numbers without saying how they combine into one stored
+/// value, so it was never a decision — see `docs/world_store_design.md` §7.
+///
+/// Until it is decided the writers default to @c kUndecided: the fourth band is
+/// RESERVED and written as nodata, and the rule name is recorded in the tile's
+/// sidecar metadata (and from there in its STAC Item) so the later decision is a
+/// new fingerprint rather than a migration. The candidates are implemented here
+/// because the measurement that decides between them must exercise the same
+/// arithmetic the writer would — not a second copy of it.
+enum class SigmaFold
+{
+  /// Write nodata. The default, and the only rule the CLI can select.
+  kUndecided,
+  /// Within-child variance plus the spread of the child means, count-weighted.
+  kPooled,
+  /// The largest child σ.
+  kMaxChild,
+  /// The count-weighted mean of the child σ.
+  kMeanChild,
+};
+
+/// @brief The rule's stable name, as recorded on disk and in Items
+///        (`"undecided"`, `"pooled"`, `"max_child"`, `"mean_child"`).
+///
+/// The string is part of the tile's recorded provenance, so it is a contract:
+/// changing a spelling changes every fingerprint that quotes it.
+std::string sigmaFoldName(SigmaFold rule);
+
+/// @brief Parsed options for one multi-band overview-pyramid build.
+struct MultiBandOverviewOptions
+{
+  std::string layer_dir;   ///< a rev-3 quantity layer (`<root>/depths/<state>/<origin>/`)
+  int min_level = 0;       ///< coarsest level to build (0 = apex)
+  bool dry_run = false;    ///< run the guards, report, write nothing
+  /// Which σ rule to apply. Left at @c kUndecided the σ band is nodata.
+  SigmaFold sigma_fold = SigmaFold::kUndecided;
+};
+
+/// @brief Rebuild `<layer_dir>/overviews/` as a 4-band MIN/MEAN/COUNT/σ pyramid.
+///
+/// Same level discovery, native-wins rule, staging directory, run lock and
+/// atomic swap as `buildDepthOverviewPyramid` — only the tile schema and the
+/// fold policy differ. Native children are 2-band `{depth, σ}` and are PROMOTED
+/// to `{depth, depth, 1, σ}` as they are read, so one fold serves both the
+/// first derived level and every level above it (see
+/// `detail::promoteNativeDepthCell`).
+///
+/// **The σ band is reserved, not written**, unless
+/// @c MultiBandOverviewOptions::sigma_fold names a decided rule. The sidecar
+/// records the schema and the rule name in `overview_schema.json` beside the
+/// tiles, so a reader never has to infer which of the four bands is meaningful.
+///
+/// **Geometric error** (`uma-ADR-0013` D1/D2/D3) is recorded per tile in the
+/// staged `coverage.json` exactly as the single-band writer records it —
+/// `max(level GSD, max child ε)`, saturated, so a rev-3 overview tile satisfies
+/// the nesting condition the D7 selection core (uma#395) will rely on.
+///
+/// **Cross-schema guard**: if `<layer_dir>/overviews/` already holds tiles of a
+/// DIFFERENT band count, the build is refused rather than silently replacing a
+/// single-band pyramid with a multi-band one (and vice versa in the single-band
+/// writer). Consumers read the sidecar by band index; swapping the schema under
+/// them is the one mistake neither writer can detect after the fact.
+///
+/// @throws Everything `buildDepthOverviewPyramid` throws, plus
+///   `std::runtime_error` on the cross-schema guard.
+DepthOverviewBuildResult buildMultiBandDepthOverviewPyramid(
+  const MultiBandOverviewOptions & opts, std::ostream * progress = nullptr);
+
 /// @brief Internals exposed for unit testing — not a stable public API.
 namespace detail
 {
@@ -230,6 +312,72 @@ namespace detail
 /// contributor, each with a non-NaN depth (the engine's valid-cell gate).
 std::vector<double> depthShallowestFold(
   const std::vector<std::vector<double>> & contributors);
+
+
+/// @brief Band order of the rev-3 multi-band overview tile (§7, spine 2).
+///
+/// Named constants rather than bare 0..3 because every consumer of the sidecar
+/// reads it BY INDEX: a silent reordering is the one change no reader could
+/// detect. The names are also what `overview_schema.json` records on disk.
+enum MultiBandIndex : std::size_t
+{
+  /// The shoalest depth — the design's MIN. In this store's ellipsoidal-height
+  /// convention (positive up) shoalest is the MAXIMUM height, so "MIN" is the
+  /// min of DEPTH, not of the stored number. The value is bit-identical to
+  /// `depthShallowestFold`'s band 0 for the same contributor set.
+  kMultiMinBand = 0,
+  kMultiMeanBand = 1,    ///< count-weighted mean of the contributors' means
+  kMultiCountBand = 2,   ///< how many NATIVE cells this cell summarises (lineage)
+  kMultiSigmaBand = 3,   ///< RESERVED — nodata until §7's σ rule is decided
+};
+
+/// @brief Band count of the multi-band overview tile.
+constexpr std::size_t kMultiBandCount = 4;
+
+/// @brief Promote one native `{depth, σ}` cell to the 4-band schema:
+///        `{depth, depth, 1, σ}`.
+///
+/// A native cell IS a one-cell summary of itself: its min and its mean are the
+/// depth, its lineage count is 1, and its σ is its own. Promoting on read is
+/// what lets ONE fold serve the first derived level (native children) and every
+/// level above it (derived children) — the alternative, a second fold for the
+/// native step, is two implementations of the same rule that drift apart.
+std::vector<double> promoteNativeDepthCell(const std::vector<double> & native);
+
+/// @brief The rev-3 multi-band fold (`docs/world_store_design.md` §7, spine 2).
+///
+/// Each contributor is one child cell in the 4-band schema (a native cell
+/// arrives already promoted). Returns the parent cell's four bands:
+/// - MIN: the maximum of the contributors' MIN band — shoalest wins, exactly as
+///   `depthShallowestFold` selects, so the MIN band of a multi-band pyramid is
+///   bit-identical to a single-band pyramid's depth band over the same inputs.
+///   (No σ tie-break is needed or possible here: only the number is carried,
+///   not a pair, so an equal-depth tie is already the same value.)
+/// - MEAN: `Σ(mean_i × count_i) / Σ count_i`.
+/// - COUNT: `Σ count_i` — the parent's lineage, the thing that makes a mean
+///   readable as evidence rather than as a measurement.
+/// - σ: per @p rule; @c SigmaFold::kUndecided writes NaN.
+///
+/// **Defensive substitution, and why.** A contributor whose COUNT is not a
+/// finite number ≥ 1 is counted as 1, and one whose MEAN is NaN contributes its
+/// MIN. Both cases mean an upstream tile is malformed; emitting a parent cell
+/// whose COUNT disagrees with the existence of its MIN would corrupt the
+/// lineage a consumer reads to decide whether to trust the MEAN at all, which
+/// is worse than a conservative substitution that is at least self-consistent.
+///
+/// **σ beyond the first derived level.** Only the first fold above the native
+/// level sees real per-cell σ: from there up the σ band is whatever the rule
+/// wrote, which under @c kUndecided is NaN. @c kPooled therefore degenerates to
+/// the spread of the child means alone at level 2 and above. That is a property
+/// of leaving the rule open, not a defect of the arithmetic, and it is exactly
+/// why the measurement that decides the rule reads NATIVE cells rather than
+/// re-folding the pyramid.
+///
+/// Precondition: at least one contributor, each with a non-NaN MIN band (the
+/// engine's valid-cell gate) and exactly @c kMultiBandCount bands.
+std::vector<double> depthMultiBandFold(
+  const std::vector<std::vector<double>> & contributors,
+  SigmaFold rule = SigmaFold::kUndecided);
 
 /// @brief The conservative per-tile geometric error for a tile at @p level whose
 ///        children carry @p child_errors (`uma-ADR-0013` D1/D2).

@@ -77,6 +77,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -85,6 +86,8 @@
 #include <string>
 #include <system_error>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "marine_autonomy/gggs.h"
 #include "marine_autonomy/gggs/index_math.h"
@@ -159,6 +162,139 @@ Cell depthShallowestFold(const std::vector<Cell> & contributors)
     }
   }
   return *best;   // the whole pair, depth AND its paired uncertainty
+}
+
+
+// --- Multi-band (rev-3) fold -------------------------------------------------
+//
+// docs/world_store_design.md §7, spine decision 2 (BAG VR RESAMPLED_GRID
+// precedent): a folded level stores MIN, MEAN, COUNT and σ per parent cell
+// rather than one folded value, so a view can choose the band — navigation
+// reads MIN, others read MEAN, and COUNT is the lineage that says how much
+// evidence the MEAN rests on. The σ band's RULE is deliberately open (§7); see
+// SigmaFold in the header.
+
+std::vector<double> promoteNativeDepthCell(const std::vector<double> & native)
+{
+  // A native cell is a one-cell summary of itself: min = mean = its depth, one
+  // contributing native cell, its own σ. Promoting on READ is what lets one
+  // fold serve the native step and every derived step above it.
+  return {native[kDepthBand], native[kDepthBand], 1.0, native[kSigmaBand]};
+}
+
+namespace
+{
+
+// Weight of one contributor's lineage. A COUNT that is not a finite number >= 1
+// means the contributing tile is malformed; substituting 1 keeps the parent's
+// COUNT consistent with the fact that a MIN exists at all, which is what a
+// consumer reads to decide whether the MEAN is evidence or noise. Silently
+// propagating a NaN or a 0 would corrupt that reading for every level above.
+double contributorCount(const std::vector<double> & cell)
+{
+  const double n = cell[kMultiCountBand];
+  return (std::isfinite(n) && n >= 1.0) ? n : 1.0;
+}
+
+// Representative value of one contributor for the MEAN accumulation. A NaN MEAN
+// on a cell that passed the valid gate (its MIN is finite) is likewise a
+// malformed upstream tile; its MIN is the one value known to be real.
+double contributorMean(const std::vector<double> & cell)
+{
+  const double m = cell[kMultiMeanBand];
+  return std::isnan(m) ? cell[kMultiMinBand] : m;
+}
+
+// The σ band, per rule. Returns NaN for kUndecided and whenever no contributor
+// carries a σ at all — "no uncertainty information" must read as nodata, never
+// as zero uncertainty, which is the most dangerous number this band could hold.
+double foldSigma(
+  const std::vector<std::vector<double>> & contributors, SigmaFold rule,
+  double pooled_mean, double total_count)
+{
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  if (rule == SigmaFold::kUndecided) {
+    return nan;
+  }
+  bool any_sigma = false;
+  for (const std::vector<double> & c : contributors) {
+    if (!std::isnan(c[kMultiSigmaBand])) {
+      any_sigma = true;
+      break;
+    }
+  }
+  if (!any_sigma) {
+    return nan;
+  }
+  switch (rule) {
+    case SigmaFold::kMaxChild: {
+        double best = nan;
+        for (const std::vector<double> & c : contributors) {
+          const double s = c[kMultiSigmaBand];
+          if (!std::isnan(s) && (std::isnan(best) || s > best)) {best = s;}
+        }
+        return best;
+      }
+    case SigmaFold::kMeanChild: {
+        double weighted = 0.0, weight = 0.0;
+        for (const std::vector<double> & c : contributors) {
+          const double s = c[kMultiSigmaBand];
+          if (std::isnan(s)) {continue;}
+          const double n = contributorCount(c);
+          weighted += s * n;
+          weight += n;
+        }
+        return weight > 0.0 ? weighted / weight : nan;
+      }
+    case SigmaFold::kPooled: {
+        // Within-child variance plus the spread of the child means, weighted by
+        // lineage: σ² = Σ n_i (σ_i² + (μ_i − μ)²) / Σ n_i. A contributor with no
+        // σ still contributes its mean's distance from the pooled mean (its
+        // within-variance counts as 0) — dropping it entirely would understate
+        // the spread the band exists to report.
+        double accum = 0.0;
+        for (const std::vector<double> & c : contributors) {
+          const double n = contributorCount(c);
+          const double s = c[kMultiSigmaBand];
+          const double within = std::isnan(s) ? 0.0 : s * s;
+          const double d = contributorMean(c) - pooled_mean;
+          accum += n * (within + d * d);
+        }
+        return total_count > 0.0 ? std::sqrt(accum / total_count) : nan;
+      }
+    case SigmaFold::kUndecided:
+    default:
+      return nan;
+  }
+}
+
+}  // namespace
+
+std::vector<double> depthMultiBandFold(
+  const std::vector<std::vector<double>> & contributors, SigmaFold rule)
+{
+  // MIN: shoalest wins — the maximum ellipsoidal height, the same selection
+  // depthShallowestFold makes on band 0, so the two pyramids agree bit for bit
+  // on the navigation band. Only a number travels here, not a {depth, σ} pair,
+  // so there is no tie to break: equal depths are the same value.
+  double min_band = contributors.front()[kMultiMinBand];
+  double weighted_mean = 0.0;
+  double total_count = 0.0;
+  for (const std::vector<double> & c : contributors) {
+    if (c[kMultiMinBand] > min_band) {min_band = c[kMultiMinBand];}
+    const double n = contributorCount(c);
+    weighted_mean += contributorMean(c) * n;
+    total_count += n;
+  }
+  const double mean_band =
+    total_count > 0.0 ? weighted_mean / total_count :
+    std::numeric_limits<double>::quiet_NaN();
+  std::vector<double> out(kMultiBandCount);
+  out[kMultiMinBand] = min_band;
+  out[kMultiMeanBand] = mean_band;
+  out[kMultiCountBand] = total_count;
+  out[kMultiSigmaBand] = foldSigma(contributors, rule, mean_band, total_count);
+  return out;
 }
 
 // Saturated conservative per-tile geometric error (uma-ADR-0013 D1/D2).
@@ -243,6 +379,105 @@ constexpr std::size_t kBands = BathymetryTile::value_band_count;   // 2
 // matches how the store itself distinguishes surveyed from unsurveyed cells.
 bool validCell(const Cell & cell) {return !std::isnan(cell[detail::kDepthBand]);}
 
+
+// Promote a native 2-band {depth, σ} tile to the multi-band schema, cell by
+// cell (detail::promoteNativeDepthCell is the per-cell rule). Kept here rather
+// than in the fold because it is an I/O-shaped concern: the fold must see one
+// band count, and this is where the two schemas meet.
+TiledRasterTile<double> promoteNativeTile(
+  const TiledRasterTile<double> & native, std::size_t bands)
+{
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  TiledRasterTile<double> out(native.index(), std::vector<double>(bands, nan));
+  std::vector<double> cell(kBands);
+  for (uint16_t row = 0; row < TiledRasterTile<double>::edge; ++row) {
+    for (uint16_t col = 0; col < TiledRasterTile<double>::edge; ++col) {
+      for (std::size_t b = 0; b < kBands; ++b) {
+        cell[b] = native.get(row, col, b);
+      }
+      const std::vector<double> promoted = detail::promoteNativeDepthCell(cell);
+      for (std::size_t b = 0; b < bands && b < promoted.size(); ++b) {
+        out.set(row, col, b, promoted[b]);
+      }
+    }
+  }
+  return out;
+}
+
+// Band count of the tiles already in @p dir, or nullopt when the directory
+// holds no readable tile. Probes ONE tile: a sidecar with mixed band counts is
+// not a state either writer can produce, and the cross-schema guard only needs
+// to know which schema is in residence.
+std::optional<int> sidecarBandCount(const fs::path & dir)
+{
+  if (!fs::is_directory(dir)) {
+    return std::nullopt;
+  }
+  std::size_t skipped = 0;
+  const std::vector<gggs::GridIndex> grids =
+    marine_tiled_raster_store::gridsInDir(dir.string(), std::nullopt, skipped);
+  if (grids.empty()) {
+    return std::nullopt;
+  }
+  try {
+    return marine_tiled_raster_store::tileRasterCount(
+      (dir / marine_tiled_raster_store::tileFilename(grids.front())).string());
+  } catch (const std::exception &) {
+    // An unreadable tile is not evidence of a schema either way; the build's
+    // own I/O will fail loudly on it if it matters.
+    return std::nullopt;
+  }
+}
+
+// Refuse to replace a sidecar written under the OTHER tile schema.
+//
+// Consumers read the sidecar BY BAND INDEX, so a single-band pyramid replaced
+// in place by a multi-band one (or the reverse) is the one mistake nothing
+// downstream can detect: every read succeeds and every number means something
+// else. The two writers target different trees by design, so reaching this is
+// always a mis-pointed path — say so, and touch nothing.
+void refuseCrossSchemaSidecar(
+  const fs::path & overviews, std::size_t writing_bands, const char * schema_name)
+{
+  const std::optional<int> existing = sidecarBandCount(overviews);
+  if (existing.has_value() &&
+    *existing != static_cast<int>(writing_bands))
+  {
+    throw std::runtime_error(
+      "refusing to replace " + overviews.string() + ": it holds " +
+      std::to_string(*existing) + "-band tiles and this is the " + schema_name +
+      " writer (" + std::to_string(writing_bands) + " bands). Consumers read "
+      "these tiles by band index, so swapping the schema under them would be "
+      "silently wrong — check the layer path");
+  }
+}
+
+// The band schema and the σ rule, recorded beside the tiles.
+//
+// A reader must never have to INFER which of the four bands carries meaning.
+// While §7's σ rule is open the fourth band is nodata, and `sigma_fold` says so
+// by name — so the later decision produces a different recorded value and
+// therefore a different fingerprint, which is the whole point of writing it
+// down rather than leaving the band blank.
+void writeOverviewSchema(const fs::path & dir, SigmaFold rule)
+{
+  nlohmann::json doc{
+    {"schema", "depth-overview-multiband/1"},
+    {"bands", nlohmann::json::array({"min", "mean", "count", "sigma"})},
+    {"sigma_fold", sigmaFoldName(rule)},
+    {"sigma_band_written", rule != SigmaFold::kUndecided}};
+  const fs::path path = dir / "overview_schema.json";
+  const fs::path tmp = fs::path(path).concat(".tmp");
+  {
+    std::ofstream out(tmp);
+    out << doc.dump(2) << "\n";
+    if (!out) {
+      throw std::runtime_error("cannot write " + tmp.string());
+    }
+  }
+  fs::rename(tmp, path);
+}
+
 // One level's tile counts: how many child tiles were read, how many parents were
 // written, and how many parents were left to a native tile. The IN count is the
 // diagnostic one for a partial store — an operator seeing "40 in" for a
@@ -264,6 +499,12 @@ struct SourceTile
 {
   gggs::GridIndex grid;
   const fs::path * dir;
+  /// True for a tile in the layer's own directory (a compiled native tile),
+  /// false for one this run derived into staging. Under the multi-band schema
+  /// the two differ in BAND COUNT — a native tile is the 2-band {depth, σ} pair
+  /// and is promoted on read — so the distinction has to travel with the tile
+  /// rather than being re-derived from its path by the reader.
+  bool native = true;
 };
 
 // Build one coarser level. @p children are the contributor tiles at
@@ -276,7 +517,9 @@ LevelCounts buildLevel(
   const std::vector<SourceTile> & children, const fs::path & out_dir,
   uint8_t child_level,
   const marine_tiled_raster_store::CoverageManifest & native,
-  marine_tiled_raster_store::CoverageManifest & derived)
+  marine_tiled_raster_store::CoverageManifest & derived,
+  std::size_t bands,
+  const marine_tiled_raster_store::CellFoldPolicy<double> & fold)
 {
   LevelCounts counts;
   std::map<gggs::GridIndex, std::vector<SourceTile>> by_parent;
@@ -290,7 +533,7 @@ LevelCounts buildLevel(
 
   const double nan = std::numeric_limits<double>::quiet_NaN();
   const std::vector<std::optional<double>> nodata(
-    kBands, std::optional<double>(nan));
+    bands, std::optional<double>(nan));
   for (const auto & group : by_parent) {
     // NATIVE-WINS. Compiled data is never overwritten and never merged into, so
     // the "what should a fold of harbour data into an approach-band tile mean?"
@@ -325,9 +568,17 @@ LevelCounts buildLevel(
     for (const SourceTile & child : group.second) {
       const fs::path path =
         *child.dir / marine_tiled_raster_store::tileFilename(child.grid);
-      child_tiles.push_back(
+      // A native child is always the 2-band {depth, σ} tile the compile wrote.
+      // Under the multi-band schema it is PROMOTED to {depth, depth, 1, σ} here,
+      // so buildParentTile sees one band count and one fold policy across the
+      // whole pyramid instead of a special case for its bottom step.
+      marine_tiled_raster_store::TiledRasterTile<double> loaded =
         marine_tiled_raster_store::loadTile<double>(
-          path.string(), gggs::Level(child_level), kBands));
+        path.string(), gggs::Level(child_level),
+        child.native ? kBands : bands);
+      child_tiles.push_back(
+        (child.native && bands != kBands) ?
+        promoteNativeTile(loaded, bands) : std::move(loaded));
       child_ptrs.push_back(&child_tiles.back());
       // nullopt for a native child: no producer records an error for those yet,
       // and saturatedGeometricError substitutes the child level's GSD.
@@ -336,8 +587,8 @@ LevelCounts buildLevel(
     const TiledRasterTile<double> parent_tile =
       marine_tiled_raster_store::buildParentTile<double>(
       group.first, child_ptrs,
-      std::vector<double>(kBands, nan),
-      validCell, detail::depthShallowestFold);
+      std::vector<double>(bands, nan),
+      validCell, fold);
     marine_tiled_raster_store::saveTile<double>(
       parent_tile,
       (out_dir / marine_tiled_raster_store::tileFilename(group.first)).string(),
@@ -404,17 +655,43 @@ DepthArgStatus parseDepthOverviewArgs(
   return DepthArgStatus::kOk;
 }
 
-DepthOverviewBuildResult buildDepthOverviewPyramid(
-  const DepthOverviewOptions & opts, std::ostream * progress)
+namespace
 {
-  if (opts.min_level < 0 || opts.min_level > 20) {
+
+// The pyramid build, shared by the single-band (`draft/processed/reference`)
+// and multi-band (rev-3) writers.
+//
+// Level discovery, the native-wins rule, the guards, the staging run lock and
+// the atomic swap are IDENTICAL between the two — only the output tile's band
+// count and fold policy differ, plus the schema record the multi-band writer
+// leaves beside its tiles. Sharing one body is what keeps that true: two copies
+// of a swap this intricate would drift, and the half that drifted would be the
+// one with no golden-fixture pin on it.
+//
+// @param bands Output tile band count (2 = single-band, 4 = multi-band).
+// @param sigma_rule Set for the multi-band schema — also selects writing
+//   `overview_schema.json` into the staging directory. Unset = single-band.
+// @param fn_name The public entry point's name, for exception messages.
+DepthOverviewBuildResult buildPyramidCore(
+  const std::string & layer_dir_s, int min_level, bool dry_run,
+  std::size_t bands,
+  const marine_tiled_raster_store::CellFoldPolicy<double> & fold,
+  std::optional<SigmaFold> sigma_rule, const char * fn_name,
+  std::ostream * progress)
+{
+  if (min_level < 0 || min_level > 20) {
     throw std::invalid_argument(
-      "buildDepthOverviewPyramid: min_level out of bounds");
+      std::string(fn_name) + ": min_level out of bounds");
   }
-  const fs::path layer_dir(opts.layer_dir);
+  const fs::path layer_dir(layer_dir_s);
   if (!fs::is_directory(layer_dir)) {
-    throw std::runtime_error("not a directory: " + opts.layer_dir);
+    throw std::runtime_error("not a directory: " + layer_dir_s);
   }
+  // Cross-schema guard, BEFORE anything is scanned or staged: a mis-pointed
+  // path must cost nothing and destroy nothing.
+  refuseCrossSchemaSidecar(
+    layer_dir / "overviews", bands,
+    sigma_rule.has_value() ? "multi-band" : "single-band");
 
   // Level discovery (uma-ADR-0013 D3). One all-level scan yields the layer's
   // native coverage, which is both the guard below and the fold's input: a
@@ -441,7 +718,7 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
     // could be reconstructed" — the same message for both sends the operator
     // hunting a typo that does not exist.
     throw std::runtime_error(
-      "no usable native tiles under " + opts.layer_dir +
+      "no usable native tiles under " + layer_dir_s +
             (guard_skipped > 0 ?
             " (" + std::to_string(guard_skipped) + " tile name(s) were present "
             "but failed grid reconstruction — see the warnings above; not a path typo)" :
@@ -454,9 +731,9 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
   // No-upsample invariant, now against the DISCOVERED finest level: the coarsest
   // level built must be strictly coarser than the layer's finest native data, so
   // the build only ever produces coarser tiles.
-  if (opts.min_level >= finest) {
+  if (min_level >= finest) {
     throw std::invalid_argument(
-      "buildDepthOverviewPyramid: min_level " + std::to_string(opts.min_level) +
+      std::string(fn_name) + ": min_level " + std::to_string(min_level) +
       " is not below the layer's finest native level " + std::to_string(finest) +
       " (that would ask for an upsample)");
   }
@@ -491,16 +768,16 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
   // mistyped path or wrong layer, and nothing below this point is reached without
   // writing. Report the discovered coverage — the report that replaces
   // --fine-level's mis-pointed-path guard — and touch nothing.
-  if (opts.dry_run) {
+  if (dry_run) {
     if (progress != nullptr) {
       *progress << "dry run: " << native.size() << " usable native tile(s) under " <<
-        opts.layer_dir << " (" << guard_skipped << " unreconstructable)\n";
+        layer_dir_s << " (" << guard_skipped << " unreconstructable)\n";
       for (const uint8_t level : native_levels) {
         *progress << "  native level " << static_cast<unsigned>(level) << ": " <<
           native.countAt(level) << " tile(s)\n";
       }
       *progress << "  would build levels " << (finest - 1) << "..." <<
-        opts.min_level << " and replace " <<
+        min_level << " and replace " <<
         (layer_dir / "overviews").string() << "\n";
     }
     return result;
@@ -550,18 +827,19 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
     // at each child level are the NATIVE tiles there plus the DERIVED tiles this
     // run just wrote there — disjoint by construction, so no precedence rule is
     // needed between them.
-    for (int level = finest - 1; level >= opts.min_level; --level) {
+    for (int level = finest - 1; level >= min_level; --level) {
       const uint8_t child_level = static_cast<uint8_t>(level + 1);
       std::vector<SourceTile> children;
       for (const gggs::GridIndex & grid : native.gridsAt(child_level)) {
-        children.push_back(SourceTile{grid, &layer_dir});
+        children.push_back(SourceTile{grid, &layer_dir, true});
       }
       for (const gggs::GridIndex & grid : derived.gridsAt(child_level)) {
-        children.push_back(SourceTile{grid, &staging});
+        children.push_back(SourceTile{grid, &staging, false});
       }
 
       const LevelCounts counts =
-        buildLevel(children, staging, child_level, native, derived);
+        buildLevel(
+        children, staging, child_level, native, derived, bands, fold);
       const std::size_t native_here = native.countAt(static_cast<uint8_t>(level));
       if (progress != nullptr) {
         // child_level is uint8_t: without the cast it streams as a character.
@@ -602,6 +880,12 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
       derived,
       (staging / marine_tiled_raster_store::coverageManifestFilename()).string(),
       "derived");
+    // The multi-band schema record rides the same staging directory, so it is
+    // swapped in atomically with the tiles it describes — a sidecar that says
+    // which band is which must never be newer or older than those bands.
+    if (sigma_rule.has_value()) {
+      writeOverviewSchema(staging, *sigma_rule);
+    }
   } catch (...) {
     // Best-effort: cleanup must not throw here, or it would replace the original
     // exception with its own.
@@ -711,5 +995,42 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
   result.sidecar_replaced = true;
   return result;
 }
+
+}  // namespace
+
+DepthOverviewBuildResult buildDepthOverviewPyramid(
+  const DepthOverviewOptions & opts, std::ostream * progress)
+{
+  return buildPyramidCore(
+    opts.layer_dir, opts.min_level, opts.dry_run, kBands,
+    detail::depthShallowestFold, std::nullopt, "buildDepthOverviewPyramid",
+    progress);
+}
+
+std::string sigmaFoldName(SigmaFold rule)
+{
+  switch (rule) {
+    case SigmaFold::kPooled: return "pooled";
+    case SigmaFold::kMaxChild: return "max_child";
+    case SigmaFold::kMeanChild: return "mean_child";
+    case SigmaFold::kUndecided: return "undecided";
+  }
+  // Unreachable for a valid enumerator; a cast-in value is recorded as unknown
+  // rather than silently spelled "undecided", which is a claim about §7.
+  return "unknown";
+}
+
+DepthOverviewBuildResult buildMultiBandDepthOverviewPyramid(
+  const MultiBandOverviewOptions & opts, std::ostream * progress)
+{
+  const SigmaFold rule = opts.sigma_fold;
+  return buildPyramidCore(
+    opts.layer_dir, opts.min_level, opts.dry_run, detail::kMultiBandCount,
+    [rule](const std::vector<std::vector<double>> & contributors) {
+      return detail::depthMultiBandFold(contributors, rule);
+    },
+    rule, "buildMultiBandDepthOverviewPyramid", progress);
+}
+
 
 }  // namespace marine_bathymetry_store
