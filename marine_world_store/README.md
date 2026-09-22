@@ -59,17 +59,48 @@ which of the four decided the root it used.
 |---|---|
 | `store_root.py` | The resolver above, plus `StoreRoot` (path + where it came from) |
 | `layout.py` | `<root>/<quantity>/<state>/<origin>/` path builders; `State`/`Origin`/`Quantity` enums, so a typo'd directory name is an error rather than a new folder. `trajectories/` and `observations/` are surveyed-only, as §5 says |
+| `source_time.py` | The observation interval an Item is dated by: a bag's `metadata.yaml` start plus duration (or the union of its `files:` entries), the union over a product's sources, and a named refusal when neither is derivable |
 | `source_identity.py` | The Merkle bag id (§3, spine 1): sha256 over the sorted `<split filename>\t<file key>` lines of a bag's `.mcap` files, file key = git-annex `SHA256E`. `metadata.yaml` and every non-data file are excluded, so `ros2 bag reindex` is a repair rather than a new source. No git-annex dependency |
 | `fingerprint.py` | §9's input hash. Additive: an input a stage does not have is omitted, never nulled. Id collections are sorted; `consumer_ordering` is not, because its order *is* the input |
 | `coverage.py` | Reads `marine_tiled_raster_store`'s `coverage.json` (`coverage-manifest/1`) — the existing convention for per-tile `geometric_error_m` (uma-ADR-0013 D1–D3), not a parallel one. Tolerant, with the same filename-scan fallback |
 | `footprint.py` | A tile's geometry and bbox, read from the raster's own georeferencing with GDAL rather than from a second Python implementation of the GGGS grid maths |
-| `item_schema.py` | The Item and Collection documents, as plain dicts, with Part 2's consumer-contract fields. No `pystac`, so the schema is testable where the library is not installed |
+| `item_schema.py` | The Item and Collection documents, as plain dicts, with Part 2's consumer-contract fields. No `pystac`, so the schema is testable where the library is not installed. Every Item it builds is dated (below) |
 | `stac_catalog.py` | Validates those documents with `pystac` and writes them — **only the ones that changed** (§9's replica rule), gated on a canonical-JSON content hash, never an mtime |
 | `revisions.py` | Append-only `revisions/` records: geometry revisions and datum records. The id is the content hash, so an edited record is detected on read |
 | `depth_subset.py` | The native-tile **adapter** (see below) |
 | `sigma_fold_measure.py` | The evidence design §7's **open** σ-fold rule is decided from: what each candidate would write, against the true spread of the native cells under a parent. Decides nothing (see below) |
 | `fingerprint_sidecar.py` | The regenerate pre-step's `.fp` sidecar — a tile's **content** hash, which is *not* §9's input fingerprint; one answers "did this file change?", the other "was this built from the same things?" |
 | `overview_records.py` | Assembles the per-tile records the per-parent overview writer leaves into one `coverage-manifest/1` document (uma-ADR-0013 D3) |
+
+### Every Item is dated, from its sources
+
+Part 2 line 2 promises a time range, and STAC gives an Item exactly two legal
+shapes: one `datetime`, or a null `datetime` with **both** `start_datetime`
+and `end_datetime`. There is no third shape for "the time is unknown".
+
+So the rule (operator decision, 2026-09-22): **every Item carries the
+observation interval of the material it is made of, and it is derived from the
+sources.** A bag directory's `metadata.yaml` records the recording's start and
+its duration — that is the interval. A product (a tile, a revision where
+applicable) takes the **union** of its sources' intervals: a tile built from
+three bags was observed over all three.
+
+An Item with no derivable interval is a **provenance defect**, not a thin
+record: it could not be found by the time search line 1 promises. The writer
+raises a named error (`source_time.TimeIntervalError`, or the calling module's
+own) and writes nothing — `stac_catalog` refuses an undated Item at the point
+of writing rather than letting pystac report it as a schema error about a
+document the store should never have built.
+
+`metadata.yaml` is excluded from the Merkle source id on purpose (`ros2 bag
+reindex` rewrites it and must not mint a new source), which is exactly what
+makes it readable here: the **identity** is the sensor data, the **time** is
+lookup metadata about it.
+
+`--start`/`--end` (or `start:`/`end:` in a subset manifest) exist for material
+that has an interval but does not record one — a cast file, a prior grid. They
+are an operator statement, never a default, and a file's modification time is
+never used: when a file was copied is not when its data was observed.
 
 ### Field names are namespaced
 
@@ -83,7 +114,7 @@ vocabulary.
 
 | Command | Does |
 |---|---|
-| `mws_import_source PATH` | Compute a source's content id and write its `sources/` Item. `--dry-run` prints the id and writes nothing (and needs no `pystac`) |
+| `mws_import_source PATH` | Compute a source's content id, read its recorded interval out of the bag's `metadata.yaml`, and write its `sources/` Item. `--dry-run` prints the id and the interval and writes nothing (and needs no `pystac`); a source that cannot be dated is refused |
 | `mws_write_revision DESCRIPTION` | Append one `revisions/` record from a small YAML/JSON description |
 | `mws_regenerate_catalog` | Rebuild each present cell's `collection.json`, reporting only what changed |
 | `mws_link_depth_subset` | The adapter below |
@@ -118,6 +149,12 @@ demonstrates the layout, the identity and the Items end to end on real data
 without rebuilding the observation→link pipeline, which is future work
 (design Part 3/4).
 
+It requires its bag directories for two reasons, not one: they are what the
+tiles fingerprint over, and they are what the tiles are **dated** by. Each
+source's Item carries its own recording interval and the tile Items carry the
+union; a source whose interval cannot be read stops the run before anything is
+copied.
+
 Two things it deliberately does **not** claim:
 
 - **No reframing.** A byte-identical copy has not been transformed into the
@@ -142,6 +179,8 @@ sources:
   - path: /path/to/logs/bizzyboat_sonar/2026-06-22T13-22-29+00-00
     platform: bizzyboat
 levels: [12]
+# Optional, and only for a source that does not record its own interval:
+# stating it here overrides what would otherwise be read from the bag.
 start: '2026-06-22T13:22:29Z'
 end: '2026-06-22T15:00:00Z'
 ```

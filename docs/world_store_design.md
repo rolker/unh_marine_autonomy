@@ -225,12 +225,13 @@ revisions concept are the later upstream contribution.
   numbers without saying how they combine into one stored value, so it was never a decision.
   Candidates: pooled variance (within-child σ² plus the spread of the child means,
   count-weighted); max child σ; mean child σ; and the literal "mean and max" as two bands.
-  The rule is decided from a measurement over the Massabesic subset — how often each
+  The rule is decided from a measurement over the store's native depth tiles — how often each
   candidate's σ covers the true spread of the native cells under the parent — in the style of
   spine decision 2's own `fold_measure` evidence. Until then the 4-band schema is reserved and
   **no σ band is written**: the band is nodata and the tile and Item record
   `sigma_fold: undecided`, so the later decision is a new fingerprint, never a migration.
   (uma#397 Group B.)
+
 - **Record and views**: STAC Items + Collection are the record (coverage manifest and
   fingerprint container included); a GTI index is *derived* from them for readers (GDAL ≥ 3.9,
   the 26.04 / lyrical platform); never sync a derived GTI, regenerate it. STACTA/STACIT were
@@ -325,6 +326,19 @@ consumer's.
    Item declares the georeferencing it actually carries plus the owed transformation. An
    Item naming the store frame over unreframed pixels would be a false claim in the record,
    which is worse than an honest gap.
+   *Time range*: every Item carries the **observation interval of the material it is made
+   of**, and that interval is **derived from the sources** — a bag's `metadata.yaml` records
+   the recording's start and duration; a product takes the **union** of its sources'
+   intervals (a tile built from three bags was observed over all three). STAC gives an Item
+   two legal shapes, a single `datetime` or a null one with both ends of a range, and none
+   for "unknown", so an Item with no derivable interval is a **provenance defect**, not a
+   thin record: it could not be found by the time search line 1 promises. The writer raises
+   a named error and **writes nothing** — a producer that cannot date a product does not
+   publish it. `metadata.yaml` is outside the source id (§3) precisely so it can be read
+   for this: the identity is the sensor data, the time is lookup metadata about it. An
+   interval stated by an operator is allowed for material that has one but does not record
+   it (a cast file, a prior grid); a file's modification time is never used, because when a
+   file was copied is not when its data was observed. (uma#397.)
 3. **Per-cell fields** in a field store: value, σ, contributor (RAT), measured-vs-
    interpolated. Overview levels carry MIN, MEAN, COUNT and σ. An Item lists only the
    per-cell fields its container actually holds — a field named but absent is a promise the
@@ -397,6 +411,17 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-09-22 (fix pass) — **decided by the operator** (Roland, 2026-09-22), from the
+  `datetime` defect implementing rev 3 exposed: (h) Part 2 line 2 — the promised *time
+  range* is the **observation interval, derived from the sources**, and an Item with no
+  derivable interval is a provenance defect the writer refuses rather than a null the
+  record absorbs. Rev 3 promised a time range without saying where it comes from or what
+  a producer does without one; the implementation wrote `"datetime": null` with nothing
+  beside it, which is not a STAC Item at all. Consequences: `mws_import_source` reads the
+  interval out of the bag, product Items take the union of their sources', and
+  `mws_link_depth_subset` requires its bag directories — for their time as well as their
+  identity — and refuses a tile it cannot date.
 
 - 2026-09-22 (Group B) — **proposed, from implementing §7's overview fold**
   (uma#397 Group B; two things §7 leaves a reader to infer, and an
