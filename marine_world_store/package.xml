@@ -25,6 +25,10 @@
        georeferencing, read with GDAL, rather than from a second Python
        implementation of the GGGS grid maths. -->
   <exec_depend>python3-gdal</exec_depend>
+  <!-- The sigma-fold measurement (uma#397) reduces whole tile rasters
+       band-by-band; numpy is what makes that a few array operations rather
+       than a per-cell Python loop over a million cells. -->
+  <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-pystac</exec_depend>
   <!-- The regenerate driver: marine_world_store/snakemake/ holds the rules,
        snakemake itself runs them (design section 9). -->

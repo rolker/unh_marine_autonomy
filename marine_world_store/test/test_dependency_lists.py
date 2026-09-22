@@ -45,6 +45,7 @@ import xml.etree.ElementTree as ET
 KEY_TO_DISTRIBUTION = {
     'python3-yaml': 'PyYAML',
     'python3-gdal': 'GDAL',
+    'python3-numpy': 'numpy',
     'python3-pystac': 'pystac',
     'snakemake': 'snakemake',
 }
