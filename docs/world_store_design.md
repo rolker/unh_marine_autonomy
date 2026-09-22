@@ -232,6 +232,39 @@ revisions concept are the later upstream contribution.
   `sigma_fold: undecided`, so the later decision is a new fingerprint, never a migration.
   (uma#397 Group B.)
 
+  **Evidence** (`mws_measure_sigma_fold`, 2026-09-22, 140 processed tiles — Massabesic and
+  Shoals **blended**, 3 fold steps). *Truth* is the population standard deviation of the
+  native depth cells under a parent cell; a rule *covers* a cell when its σ is at least that
+  spread. Rev 2's literal "mean and max of the children" is the `mean_child` and `max_child`
+  columns read together — two numbers, which is exactly why it was never a decision.
+
+  | step | level | parent cells | with a spread | mean true spread (m) | mean σ pooled (m) | mean σ max_child (m) | mean σ mean_child (m) | covers pooled | covers max_child | covers mean_child | σ/spread pooled | σ/spread max_child | σ/spread mean_child |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | 1 | 9 | 3459403 | 3426861 | 0.08042 | 0.4655 | 0.5435 | 0.4274 | 0.9999 | 0.9977 | 0.996 | 13.59 | 15.54 | 13.24 |
+  | 2 | 8 | 886810 | 880768 | 0.1702 | 0.5543 | 0.7837 | 0.4542 | 0.9998 | 0.9961 | 0.985 | 5.933 | 8.115 | 5.481 |
+  | 3 | 7 | 230283 | 229195 | 0.3089 | 0.696 | 1.176 | 0.4961 | 0.9998 | 0.9815 | 0.8466 | 3.447 | 5.754 | 2.908 |
+
+  Reading, one line per candidate:
+  - **pooled** — covers essentially every parent at every step (99.98 %+), at 3.4–13.6× the
+    true spread: it never under-claims, and it over-claims least of the three by the third
+    step.
+  - **max_child** — also covers almost everywhere (98.2 % by step 3) but is the loosest
+    number at every step (5.8–15.5×): it inflates fastest as the fold climbs.
+  - **mean_child** — the only candidate whose coverage *degrades* with depth of fold
+    (99.6 % → 84.7 %): by three steps it under-claims the spread in one parent cell in six,
+    which is the failure mode that matters for a σ a consumer trusts.
+
+  All three ratios are far above 1 at step 1 because the per-cell σ the native tiles carry
+  (the ingest's own uncertainty — median 0.15 m on the Massabesic tiles measured for spine
+  decision 2, Appendix B) is much larger than the *spread between*
+  neighbouring cells on a smooth lake bed — so the σ of a folded cell is dominated by its
+  children's uncertainty, not by their disagreement. That is a property of the data, not of
+  any rule, and it is one of the things the decision has to weigh.
+
+  **The rule is OPEN** (Roland, 2026-09-22); writers emit σ as nodata with
+  `sigma_fold: undecided`, and the decision is a new fingerprint, never a migration. The run
+  blended Massabesic and Shoals tiles — a deliberately mixed population, and one reason these
+  numbers describe the candidates rather than settle between them.
 - **Record and views**: STAC Items + Collection are the record (coverage manifest and
   fingerprint container included); a GTI index is *derived* from them for readers (GDAL ≥ 3.9,
   the 26.04 / lyrical platform); never sync a derived GTI, regenerate it. STACTA/STACIT were
@@ -421,7 +454,10 @@ product and source frames a given import declares are still verified case by cas
   beside it, which is not a STAC Item at all. Consequences: `mws_import_source` reads the
   interval out of the bag, product Items take the union of their sources', and
   `mws_link_depth_subset` requires its bag directories — for their time as well as their
-  identity — and refuses a tile it cannot date.
+  identity — and refuses a tile it cannot date. (i) §7 — the σ-fold candidate measurement
+  is recorded as evidence with a reading per rule, and the rule **stays open**: the
+  writers emit σ as nodata with `sigma_fold: undecided`, so the decision when it comes is
+  a new fingerprint rather than a migration.
 
 - 2026-09-22 (Group B) — **proposed, from implementing §7's overview fold**
   (uma#397 Group B; two things §7 leaves a reader to infer, and an
