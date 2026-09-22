@@ -430,3 +430,145 @@ operator rather than being decided here.
 ---
 **Authored-By**: `Claude Code Agent`
 **Model**: `Claude Opus`
+
+## Implementation
+**Status**: complete (the fix pass: the two operator decisions of 2026-09-22 —
+the Item time interval, and recording the σ-fold evidence with the rule left
+open)
+**When**: 2026-09-22 15:00 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: `feature/issue-397` at `64c75c8` (7 commits on top of Group B's
+`1dd7da9`). Not pushed; no PR from this dispatch.
+
+### Decision 1 — every Item carries the interval its sources were observed over
+
+The defect Group B found and left for the operator: every Item was built with
+`"datetime": null` and no range beside it, which is not a STAC Item at all —
+pystac refused two of them at write time.
+
+- **`source_time.py`** (new) — where the time comes from. A bag directory's
+  `metadata.yaml` records the recording's start and its duration; when those
+  are absent the per-split `files:` entries are the fallback reading.
+  `union_intervals` is what a product takes over its sources. Everything that
+  cannot be derived raises `TimeIntervalError`, named, with its own remedy in
+  the message. `metadata.yaml` is outside the Merkle source id on purpose (a
+  reindex must not mint a new source), which is exactly what makes it readable
+  here: the identity is the sensor data, the time is lookup metadata about it.
+- **`item_schema`** requires both ends of the interval of every Item it builds,
+  tile and source alike; `validate_contract` checks the shape on a hand-built
+  Item too. **`stac_catalog`** refuses an undated Item at the point of writing
+  and names the rule, rather than letting it surface as a pystac schema error
+  about a document the store should never have built. A single `datetime`
+  stays legal, since it is STAC's other legal shape.
+- **`mws_import_source`** reads the interval out of the bag and prints it.
+  **`mws_link_depth_subset`** reads one per source and dates the tiles by the
+  **union** — its bag directories are now required for their time as well as
+  their identity, and it refuses a tile it cannot date. `--start`/`--end` (and
+  `start:`/`end:` in a subset manifest) remain for material that has an
+  interval but does not record one — an operator statement, never a default.
+  A file's mtime is never used: when a file was copied is not when its data
+  was observed.
+- **`adapt_depth_tiles`** requires the interval and raises `AdapterError`
+  before it copies anything.
+
+The two failing tests pass by giving their fixtures a bag `metadata.yaml` with
+a real recording's numbers, which is what the tools now read.
+
+### Decision 2 — the σ-fold evidence, with the rule left open
+
+The measurement is now in the design where the rule is stated: §7 gains the
+table with a one-line reading per candidate, and Appendix B
+(`world_store_prototype_log.md`) gains the run's own record beside spine
+decision 2's fold evidence — that is where §7's earlier fold evidence lives.
+Both say the run blended Massabesic and Shoals tiles (140 processed tiles,
+3 steps), because a mixed population is part of what the numbers do and do not
+say. The rule is **OPEN** (Roland, 2026-09-22); writers emit σ as nodata with
+`sigma_fold: undecided`; the decision is a new fingerprint, never a migration.
+
+### Commits (7, oldest first)
+
+| SHA | Subject |
+|---|---|
+| `9e10af7` | marine_world_store: derive a source's observation interval from its bag |
+| `15100bf` | marine_world_store: an Item with no time interval is not written |
+| `58e98af` | marine_world_store: read the interval from the bags, or refuse the tiles |
+| `bd1a4d9` | docs: the time range a consumer is promised comes from the sources |
+| `b93df98` | docs: the sigma-fold measurement as evidence, with the rule left open |
+| `d3751e7` | plan: the Item time-interval question is resolved; sigma stays open |
+| `64c75c8` | marine_world_store: docstring mood the ament lint asks for |
+
+### Tests run
+
+- `./core_ws/build.sh marine_bathymetry_store marine_world_store` — finished,
+  2 packages, no errors.
+- `./core_ws/test.sh marine_bathymetry_store marine_world_store` —
+  **640 tests, 0 errors, 0 failures, 45 skipped**. `marine_world_store`'s own
+  file is **227 tests, 0 skipped** (with ROS sourced, `pystac` and `snakemake`
+  are both importable, so the previously-skipping pystac tests and the
+  Snakemake `--dry-run` test all run). Every one of the 45 skips is
+  `marine_bathymetry_store`'s **cppcheck** linter, which skips file by file
+  because the tool is not installed on this host — pre-existing, unrelated to
+  this pass, and the only skip reason in either package.
+- `python3 -m pytest test/` from `marine_world_store`, no ROS sourced —
+  **224 passed, 3 skipped**; the three are the ament lint tests
+  (`copyright`/`flake8`/`pep257`), which state that they have nothing to run
+  off a sourced ROS environment and are covered by the `colcon test` run above.
+- ament `flake8`, `pep257`, `copyright` all pass under `colcon test`. Note for
+  anyone lint-checking by hand: **ament_flake8 enforces D401/D403** and plain
+  `python3 -m flake8` here does not, which cost a round trip (`64c75c8`).
+- New tests: `test_source_time.py` (18) covers both readings of the bag
+  metadata, the union, and every refusal — no metadata, non-rosbag2 metadata,
+  unparseable YAML, an empty bag, a zero start, a single-file source, half an
+  interval, an unordered one, a naive timestamp, a YAML `date` rather than a
+  time. Plus the refusal path and the interval union at every other level: the
+  schema builders, `validate_contract`, `stac_catalog.write_item`, the adapter,
+  and both CLIs end to end (two bags an hour apart → each source Item carries
+  its own interval, the tiles carry the union).
+
+### Found, not fixed
+
+- **STAC schema validation never actually runs on this host.** `pystac` is
+  installed, but its `JsonSchemaSTACValidator` needs `referencing`, which
+  Ubuntu's `python3-jsonschema` 4.10.3 predates, so every write logs
+  `ValidatorUnavailable: ... requires jsonschema package` and proceeds — the
+  deliberate graceful degradation in `stac_catalog._validate` ("a validator
+  that could not run reports no verdict"). What *is* running is pystac's
+  `Item.from_dict` construction check, which is what caught the `datetime`
+  defect in the first place. Worth a rosdep decision (a `python3-referencing`
+  key, or pinning the pystac validation extra) so the schema gate is real
+  rather than warned-past; not touched here, since it needs a package
+  installed and this pass installs nothing.
+- **`revisions` now require `valid_from`.** Not named in the operator's
+  decision, which said "revisions where applicable": a revision record is an
+  Item, and it was producing the same illegal shape — a null `datetime` with
+  no range, or (with `valid_from` alone) a half range whose `end_datetime` was
+  `None`. It now writes a range when both ends are given and STAC's
+  single-instant shape when only `valid_from` is, and refuses a record with no
+  stated validity start, which could not be applied to a given day's data
+  anyway. Three CLI test fixtures gained a `valid_from`. Flagged here because
+  it is a small widening of the decision, not a consequence of it.
+- **Timestamps are canonicalised to UTC `Z`** by `check_interval`, so two
+  Items covering the same interval carry the same string and a fingerprint
+  over them is stable. A YAML reader's `datetime` is accepted (PyYAML parses
+  an unquoted `start:` into one) and a bare `date` refused, since a day is not
+  an instant and midnight UTC would be an assumption.
+- **No pre-commit run**: this project repo carries no `.pre-commit-config.yaml`
+  and no hooks are installed in the worktree, so there was nothing to run;
+  `--no-verify` was never used. The lint gate that did run is `colcon test`'s
+  ament linters.
+
+### Left for later
+
+- [ ] **Choose §7's σ rule** and write the σ band. Still the pause; the
+      evidence is now in the design rather than only in a run's output.
+- [ ] The **live** compare-by-value run against the real subset. Nothing in
+      this pass touched `~/data/world`, `~/data/logs` or the NAS, and no store
+      or bag path is in the code — the fixtures are synthetic bag directories
+      and GDAL-built tiles under `tmp_path`.
+- [ ] The STAC-validator gap above.
+- [ ] Not pushed: no `git push`, no PR from this dispatch.
+
+---
+**Authored-By**: `Claude Code Agent`
+**Model**: `Claude Opus`
