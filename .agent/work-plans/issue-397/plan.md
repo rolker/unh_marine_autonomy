@@ -376,3 +376,80 @@ unaffected.
 Single PR, two commit groups (A then B), stacked on `feature/issue-391` / draft PR #392, per
 the operator's decision. Each group is independently reviewable in the diff even though they
 share one PR. No sub-issues.
+
+## Implementation notes — Group B (2026-09-22)
+
+Recorded inline as the plan-task "during implementation" rules ask. Everything
+below is a departure from, or an addition to, what this plan wrote. Group B
+covers steps 4–6 **up to and including the σ-fold measurement**, and stops
+there: no rule is chosen and no σ band is written.
+
+- **The measurement lives in `marine_world_store`, not
+  `marine_bathymetry_store/test/`.** The plan's file table put
+  `sigma_fold_measure.py` beside the C++ tests. It is Python, and step 8's
+  package-shape discipline (plain Python package, `console_scripts`, tests
+  under plain `pytest` and `colcon test` alike) applies to anything Python in
+  this repo — a Python module inside an `ament_cmake` package would have none
+  of it. It is `marine_world_store/sigma_fold_measure.py` plus the
+  `mws_measure_sigma_fold` CLI, with the arithmetic in an array-level entry
+  point so the test needs no GDAL and no GeoTIFF fixture.
+- **A parent-enumeration entry point the plan did not name.**
+  `listMultiBandOverviewParents` + `build_depth_overview_parent
+  --list-parents`. Snakemake cannot schedule a level without knowing its
+  parents, and the parent↔child mapping is GGGS, whose column counts vary by
+  latitude band. The plan's own rule ("no second Python implementation of the
+  GGGS grid maths", from Group A's `footprint.py` note) decides where it goes.
+- **Per-tile records instead of a shared manifest, in per-parent mode.** The
+  plan said the multi-band writer records `geometric_error_m` in the
+  `CoverageManifest` "exactly as the existing single-band writer does". The
+  BATCH writer does. The PER-PARENT writer cannot: a DAG folds many parents at
+  once over one directory, and a shared `coverage.json` would be a write race
+  whose only fix is a lock that serialises the DAG back into the batch build
+  per-parent mode exists to replace. It writes `<level>_<row>_<col>.json`
+  beside each tile, and `mws_assemble_coverage` (new, in `marine_world_store`)
+  turns those into the same `coverage-manifest/1` document once, after the DAG.
+  A derived child's ε is read back out of that record, so D2's nesting holds
+  across levels built by separate invocations.
+- **`.fp` fingerprint sidecars are new.** Step 6 named the pre-step but Group A
+  wrote no `.fp` anywhere — the §9 fingerprint lives in the Item.
+  `fingerprint_sidecar.py` + `mws_refresh_fingerprints` add a **content** hash
+  sidecar, named in its own schema as such so it cannot be mistaken for §9's
+  input fingerprint. They answer different questions.
+- **Cross-schema guards in BOTH writers.** The plan had the multi-band writer
+  leave the single-band one alone. That is not symmetric enough: the legacy
+  batch writer would have wholesale-replaced a rev-3 sidecar just as happily.
+  Consumers read these tiles by band index, so either direction is a mistake
+  nothing downstream could detect. Both now refuse, with a test each. This
+  changes existing behaviour only in a case that could not previously arise
+  (no 4-band sidecar existed).
+- **One shared pyramid body.** The two batch writers share
+  `buildPyramidCore`; only the band count, the fold and the schema record
+  differ. Two copies of the staging/exchange/rename-aside swap would drift, and
+  the copy that drifted would be the one with no golden-fixture pin on it.
+- **The MIN-equals-legacy test is stronger than the plan proposed.** Rather
+  than a value comparison on one level, the multi-band pyramid is built over
+  the committed golden fixture and **every** sidecar tile's MIN band is
+  digested and compared with the band-0 digest the PRE-#331 single-band binary
+  produced. The two writers are pinned to one external reference, not to each
+  other.
+- **`numpy` is a fifth dependency** (`python3-numpy`, an upstream rosdep key —
+  no local entry needed), for the measurement's whole-raster reductions.
+- **Two more rev-3 amendments** (f) and (g) — §7's MIN/MEAN are in the depth
+  sense while the tiles hold ellipsoidal height, and the 4-band schema is a
+  *folded* level's only. Both logged in the change log and written into §7.
+- **Found, not fixed — a Group A defect.** With `pystac` now importable on this
+  host, two Group A tests fail: every Item built with no time gets
+  `"datetime": null` with no `start_datetime`/`end_datetime`, which is not a
+  legal STAC Item, and pystac refuses it at write time. It is pre-existing on
+  this branch (it fails identically at Group A's last commit) and unrelated to
+  Group B. A fix is a **design** question, not a mechanical one — STAC has no
+  shape for "the time is unknown", so either every producer must supply a time
+  (the adapter currently has none to supply) or the store decides what a
+  timeless product claims. Attempted and reverted: raising at build time is
+  correct but cascades to 18 tests, because the adapter genuinely has no time.
+  Left for the operator with the diagnosis, per "upstream/shared-interface
+  changes: design thinking first".
+- **Not done, as scoped**: choosing the σ rule, writing any σ band, and the
+  live compare-by-value run against the real subset. No run was made against
+  `~/data/world`, `~/data/logs` or the NAS in this pass, and no bag or store
+  path is in the code.
