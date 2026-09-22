@@ -50,6 +50,11 @@ LITERAL = 'data/world'
 #: File kinds that can carry a path into the running system.
 SUFFIXES = ('.py', '.cpp', '.hpp', '.h', '.smk')
 
+#: Extensionless files that are code all the same. A Snakefile is a Python
+#: file wearing no suffix, and it names paths for a living -- leaving it out of
+#: the scan would leave the one file most likely to carry a literal unscanned.
+FILENAMES = ('Snakefile',)
+
 #: Directories whose content is prose or fixtures, not running code.
 EXCLUDED_DIRS = ('docs', 'build', 'install', 'log', '.git')
 
@@ -102,7 +107,7 @@ def _tracked_files(repo_root: Path):
             # Tests legitimately build under a fake home; they are not the
             # running system. The guard test itself is allowlisted above.
             continue
-        if name.endswith(SUFFIXES):
+        if name.endswith(SUFFIXES) or Path(name).name in FILENAMES:
             yield name
 
 

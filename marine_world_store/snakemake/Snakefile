@@ -1,0 +1,109 @@
+# Copyright 2026 University of New Hampshire
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+#    * Redistributions of source code must retain the above copyright
+#      notice, this list of conditions and the following disclaimer.
+#
+#    * Redistributions in binary form must reproduce the above copyright
+#      notice, this list of conditions and the following disclaimer in the
+#      documentation and/or other materials provided with the distribution.
+#
+#    * Neither the name of the University of New Hampshire nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+"""Regenerate one rev-3 quantity layer's overviews, catalog and GTI index.
+
+Design section 9: a regenerate is a general store process, driven by
+fingerprints rather than mtimes, rebuilding only what changed. This is that
+process for ``depths/``, as a Snakemake workflow over the per-parent work unit
+`build_depth_overview_parent` provides.
+
+Run it as::
+
+    snakemake -s marine_world_store/snakemake/Snakefile \\
+        --config layer_dir=<a quantity layer> min_level=8 -j8
+
+``layer_dir`` is REQUIRED and has no default. The store root is resolved by
+``marine_world_store.store_root`` wherever a tool needs it; nothing here writes
+a path down, which is what the repo's literal-path guard test enforces.
+
+Shape of the DAG, and why it is shaped that way:
+
+1. ``refresh_fingerprints`` runs FIRST, over the whole layer. Snakemake decides
+   from mtimes; section 9 decides from fingerprints. The pre-step resets an
+   unchanged tile's mtime to its ``.fp`` sidecar's, so a rebuild that rewrote a
+   tile byte for byte stops looking like a change. Without it every rule above
+   a re-written-but-identical tile re-runs for nothing, which is precisely the
+   behaviour the prototype found in the batch builder.
+
+2. Each level is a ``checkpoint``, not a plain rule. The parents that exist at
+   level N cannot be known until level N+1 has been built, because a derived
+   tile at N+1 is itself a contributor. A checkpoint is Snakemake's mechanism
+   for a DAG whose shape depends on a previous step's output, and enumerating
+   the parents any other way would mean re-implementing the GGGS parent/child
+   mapping here -- see ``build_depth_overview_parent --list-parents``.
+
+3. ``assemble_coverage`` is a single serialised step AFTER every parent. The
+   per-parent writer deliberately leaves a per-tile record instead of touching
+   a shared ``coverage.json``, because parallel writers would race over that one
+   file; this turns the records into the manifest uma-ADR-0013 D3 expects.
+
+4. ``catalog`` rewrites only changed Items (section 9's replica rule), and
+   ``gti`` regenerates the derived index. The GTI is NEVER synced -- it is
+   regenerated locally from the Collection, which is the record.
+"""
+
+import os
+from pathlib import Path
+
+configfile_layer = config.get("layer_dir")
+if not configfile_layer:
+    raise WorkflowError(
+        "layer_dir is required: --config layer_dir=<quantity layer>. There is "
+        "no default, because the store root is resolved by "
+        "marine_world_store.store_root and a path written down here would be "
+        "the hard-coded path the guard test forbids."
+    )
+
+LAYER_DIR = Path(configfile_layer).expanduser().resolve()
+OVERVIEWS = LAYER_DIR / "overviews"
+
+#: Coarsest level to build (0 = apex). The finest level is DISCOVERED from the
+#: layer; asserting it would be meaningless for a mixed-level layer.
+MIN_LEVEL = int(config.get("min_level", 0))
+
+#: The layer's finest native level, needed to know where the ladder starts.
+#: Supplied by the caller: reading it here would mean a scan at DAG-build time,
+#: and `build_depth_overviews --dry-run` already reports it for an operator who
+#: does not know it.
+FINE_LEVEL = config.get("fine_level")
+
+#: Where the run's own bookkeeping goes. Inside the layer, so a layer carries
+#: its regenerate state with it and two layers never share a DAG's scratch.
+WORK = LAYER_DIR / ".regenerate"
+
+include: "rules/fingerprints.smk"
+include: "rules/overviews.smk"
+include: "rules/catalog.smk"
+include: "rules/gti.smk"
+
+
+rule all:
+    input:
+        WORK / "catalog.done",
+        WORK / "gti.done",

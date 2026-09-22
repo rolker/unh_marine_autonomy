@@ -26,36 +26,30 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+"""Regenerate the derived GTI index from the Collection.
+
+Design section 7: STAC Items plus the Collection are the RECORD; a GTI index is
+*derived* from them for readers. A derived index is never synced between
+replicas -- it is regenerated locally, which is why this rule exists at all
+rather than the index being a product the store ships.
+
+GDAL >= 3.9 is what reads a GTI. The rule shells out to `gdal` rather than
+building the index in Python so that the tool that will read it is the tool
+that wrote it.
 """
-Install marine_world_store.
 
-Metadata, dependencies and entry points are declarative (``setup.cfg``) so that
-``pip install .`` works unchanged off a ROS host. This file carries only the
-ament index marker and ``package.xml``, which are what make the same package
-installable by colcon into the ROS install space.
-"""
 
-from glob import glob
-
-from setuptools import setup
-
-package_name = 'marine_world_store'
-
-setup(
-    # colcon's python test task picks the pytest runner from this list; with
-    # it unset it falls back to unittest and collects nothing at all.
-    tests_require=['pytest'],
-    data_files=[
-        ('share/ament_index/resource_index/packages',
-            ['resource/' + package_name]),
-        ('share/' + package_name, ['package.xml']),
-        # The regenerate workflow, installed so `snakemake -s
-        # $(ros2 pkg prefix marine_world_store)/share/marine_world_store/
-        # snakemake/Snakefile` works off an install space rather than only
-        # from a checkout.
-        ('share/' + package_name + '/snakemake',
-            [p for p in glob('snakemake/*') if p.endswith('Snakefile')]),
-        ('share/' + package_name + '/snakemake/rules',
-            glob('snakemake/rules/*.smk')),
-    ],
-)
+rule gti:
+    input:
+        WORK / "catalog.done",
+    output:
+        touch(WORK / "gti.done"),
+    params:
+        overviews=lambda wildcards: str(OVERVIEWS),
+        index=lambda wildcards: str(OVERVIEWS / "index.gti.fgb"),
+    shell:
+        # `gdaltindex -gti_filename` writes the GTI GeoPackage/FlatGeobuf the
+        # readers open. Regenerated wholesale every time: the index is derived,
+        # so there is nothing in it worth merging into.
+        "gdaltindex -f FlatGeobuf -gti_filename {params.index} -overwrite "
+        "{params.overviews}/*.tif"

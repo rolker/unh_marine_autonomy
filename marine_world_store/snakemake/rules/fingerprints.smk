@@ -26,36 +26,24 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+"""The pre-step that makes an mtime-driven DAG agree with section 9.
+
+Fingerprints, not mtimes, are the trigger for a regenerate (design section 9).
+Snakemake decides from mtimes. `mws_refresh_fingerprints` resets an unchanged
+tile's mtime to its `.fp` sidecar's, so the two agree: a tile a rebuild
+rewrote byte for byte is not a change, and nothing above it re-runs.
+
+It runs over the WHOLE layer in one invocation rather than per tile. The pass
+is a sha256 per file and the alternative -- a rule per tile -- would put the
+reconciliation INSIDE the DAG whose mtimes it exists to correct, which is a
+cycle dressed up as a dependency.
 """
-Install marine_world_store.
 
-Metadata, dependencies and entry points are declarative (``setup.cfg``) so that
-``pip install .`` works unchanged off a ROS host. This file carries only the
-ament index marker and ``package.xml``, which are what make the same package
-installable by colcon into the ROS install space.
-"""
 
-from glob import glob
-
-from setuptools import setup
-
-package_name = 'marine_world_store'
-
-setup(
-    # colcon's python test task picks the pytest runner from this list; with
-    # it unset it falls back to unittest and collects nothing at all.
-    tests_require=['pytest'],
-    data_files=[
-        ('share/ament_index/resource_index/packages',
-            ['resource/' + package_name]),
-        ('share/' + package_name, ['package.xml']),
-        # The regenerate workflow, installed so `snakemake -s
-        # $(ros2 pkg prefix marine_world_store)/share/marine_world_store/
-        # snakemake/Snakefile` works off an install space rather than only
-        # from a checkout.
-        ('share/' + package_name + '/snakemake',
-            [p for p in glob('snakemake/*') if p.endswith('Snakefile')]),
-        ('share/' + package_name + '/snakemake/rules',
-            glob('snakemake/rules/*.smk')),
-    ],
-)
+rule refresh_fingerprints:
+    output:
+        touch(WORK / "fingerprints.done"),
+    params:
+        layer=lambda wildcards: str(LAYER_DIR),
+    shell:
+        "mws_refresh_fingerprints {params.layer}"

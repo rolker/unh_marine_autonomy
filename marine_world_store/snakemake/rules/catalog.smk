@@ -26,36 +26,38 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+"""Assemble the coverage manifest, then rewrite only the changed Items.
+
+Two steps, in this order, and both AFTER every parent is folded.
+
+`assemble_coverage` is a single serialised step by design. The per-parent
+writer leaves a per-tile record rather than touching a shared coverage.json,
+because parallel writers would race over that one file, and the only lock that
+would fix it is one that serialises the DAG back into the batch build the
+per-parent mode exists to replace. uma-ADR-0013 D3 wants the manifest; this is
+where it is written, once, from records each written by exactly one process.
+
+`regenerate_catalog` writes ONLY changed Items -- design section 9's replica
+rule, so an unchanged store leaves every file's bytes and mtime alone and a
+replica sync moves nothing.
 """
-Install marine_world_store.
 
-Metadata, dependencies and entry points are declarative (``setup.cfg``) so that
-``pip install .`` works unchanged off a ROS host. This file carries only the
-ament index marker and ``package.xml``, which are what make the same package
-installable by colcon into the ROS install space.
-"""
 
-from glob import glob
+rule assemble_coverage:
+    input:
+        WORK / "overviews.done",
+    output:
+        touch(WORK / "coverage.done"),
+    params:
+        layer=lambda wildcards: str(LAYER_DIR),
+    shell:
+        "mws_assemble_coverage {params.layer}"
 
-from setuptools import setup
 
-package_name = 'marine_world_store'
-
-setup(
-    # colcon's python test task picks the pytest runner from this list; with
-    # it unset it falls back to unittest and collects nothing at all.
-    tests_require=['pytest'],
-    data_files=[
-        ('share/ament_index/resource_index/packages',
-            ['resource/' + package_name]),
-        ('share/' + package_name, ['package.xml']),
-        # The regenerate workflow, installed so `snakemake -s
-        # $(ros2 pkg prefix marine_world_store)/share/marine_world_store/
-        # snakemake/Snakefile` works off an install space rather than only
-        # from a checkout.
-        ('share/' + package_name + '/snakemake',
-            [p for p in glob('snakemake/*') if p.endswith('Snakefile')]),
-        ('share/' + package_name + '/snakemake/rules',
-            glob('snakemake/rules/*.smk')),
-    ],
-)
+rule catalog:
+    input:
+        WORK / "coverage.done",
+    output:
+        touch(WORK / "catalog.done"),
+    shell:
+        "mws_regenerate_catalog --quantity depths"
