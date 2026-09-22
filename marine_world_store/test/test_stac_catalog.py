@@ -148,3 +148,30 @@ def test_a_malformed_item_is_refused(tmp_path):
     """Not a STAC object at all -- that is invalidity, not an unchecked box."""
     with pytest.raises(stac_catalog.CatalogError):
         stac_catalog.validate_item({'id': 'x', 'type': 'Feature'})
+
+
+def test_an_undated_item_never_reaches_the_store(tmp_path):
+    """
+    The rule named at the point of writing, not as a schema error.
+
+    An Item with a null ``datetime`` and no range is not a STAC Item, and
+    pystac rejects it -- but as a message about a document the store should
+    never have built. This refusal names what is actually wrong.
+    """
+    item = a_tile_item()
+    item['properties'].pop('start_datetime')
+    item['properties'].pop('end_datetime')
+    with pytest.raises(stac_catalog.CatalogError) as caught:
+        stac_catalog.write_item(tmp_path, item, validate=False)
+    assert 'observation interval' in str(caught.value)
+    assert not list(tmp_path.glob('*.json'))
+
+
+def test_an_item_with_a_single_datetime_is_written(tmp_path):
+    """STAC's other legal shape: an instant rather than a range."""
+    item = a_tile_item()
+    item['properties'].pop('start_datetime')
+    item['properties'].pop('end_datetime')
+    item['properties']['datetime'] = '2026-06-22T13:22:29Z'
+    path, written = stac_catalog.write_item(tmp_path, item)
+    assert written and path.is_file()

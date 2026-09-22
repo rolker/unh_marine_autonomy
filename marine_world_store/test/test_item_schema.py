@@ -60,6 +60,16 @@ def a_tile_item(**overrides):
     return build_tile_item(**kwargs)
 
 
+def a_source_item(**overrides):
+    """Build a minimal valid source Item: dated, like every Item."""
+    kwargs = {
+        'source_id': 'abc123', 'kind': 'bag', 'name': 'a-bag',
+        'start_datetime': '2026-06-22T13:22:29Z',
+        'end_datetime': '2026-06-22T15:00:00Z'}
+    kwargs.update(overrides)
+    return item_schema.build_source_item(**kwargs)
+
+
 def test_contract_fields_are_present():
     """Part 2 line 2, field by field."""
     properties = a_tile_item()['properties']
@@ -135,6 +145,32 @@ def test_time_range_is_written_as_a_range():
     assert properties['datetime'] is None
 
 
+def test_an_undated_item_is_refused(tmp_path):
+    """
+    STAC has no shape for "the time is unknown".
+
+    An Item may carry a datetime, or a null one with both ends of a range.
+    A product with neither cannot be found by the time search Part 2 line 1
+    promises, so it is a provenance defect rather than a thin record, and
+    nothing is written.
+    """
+    with pytest.raises(ItemSchemaError) as caught:
+        a_tile_item(start_datetime=None, end_datetime=None)
+    assert 'observation interval' in str(caught.value)
+    with pytest.raises(ItemSchemaError):
+        a_tile_item(end_datetime=None)
+    with pytest.raises(ItemSchemaError):
+        a_source_item(start_datetime=None, end_datetime=None)
+
+
+def test_an_item_that_lost_its_interval_fails_validation():
+    """The same rule on a hand-built Item, not only on the builders'."""
+    item = a_tile_item()
+    item['properties'].pop('start_datetime')
+    with pytest.raises(ItemSchemaError):
+        validate_contract(item)
+
+
 def test_license_is_machine_readable():
     """Part 2 line 2: a licence, machine-readable, CC0 where public."""
     assert a_tile_item()['properties']['license'] == 'CC0-1.0'
@@ -179,7 +215,7 @@ def test_an_empty_collection_declares_an_honest_extent():
 
 def test_source_item_keeps_identity_and_lookup_metadata_apart():
     """Design section 3: platform is lookup metadata, never identity."""
-    item = item_schema.build_source_item(
+    item = a_source_item(
         source_id='abc123', kind='bag', name='2026-06-22T13-22-29+00-00',
         file_keys=['rosbag2_0.mcap\tSHA256E-s1--ff'], platform='bizzyboat')
     assert item['id'] == 'abc123'
@@ -189,10 +225,10 @@ def test_source_item_keeps_identity_and_lookup_metadata_apart():
 
 def test_engineering_material_is_labelled_as_such():
     """Design section 2: indexed beside the sources, never an input."""
-    item = item_schema.build_source_item(
+    item = a_source_item(
         source_id='abc', kind='all', name='m3.all', role='engineering')
     assert item['properties'][CONTRACT_FIELDS['source']]['role'] == \
         'engineering'
     with pytest.raises(ItemSchemaError):
-        item_schema.build_source_item(
-            source_id='abc', kind='all', name='m3.all', role='input')
+        a_source_item(source_id='abc', kind='all', name='m3.all',
+                      role='input')

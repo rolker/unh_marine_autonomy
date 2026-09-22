@@ -56,7 +56,7 @@ ending a few hundred nanoseconds before it.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple, Union
 
@@ -115,13 +115,39 @@ def parse_rfc3339(text: str, *, what: str = 'time') -> datetime:
     return moment
 
 
-def check_interval(start: Optional[str], end: Optional[str], *,
+def as_rfc3339(value: Any, *, what: str = 'time') -> str:
+    """
+    Spell ``value`` canonically, whatever a reader handed over.
+
+    YAML is the reason this exists: ``start: 2026-06-22T13:22:29Z`` in a
+    manifest arrives as a :class:`~datetime.datetime`, not a string, and a
+    bare ``2026-06-22`` arrives as a :class:`~datetime.date`. A date is
+    **not** an interval endpoint -- it names a day, in no particular time
+    zone -- so it is refused rather than assumed to mean midnight UTC.
+
+    :raises TimeIntervalError: on a date, a naive datetime, or anything that
+        is not an RFC 3339 time.
+    """
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            raise TimeIntervalError(
+                f'{what} {value!r} has no time zone; the store records UTC')
+        return format_rfc3339(value)
+    if isinstance(value, date):
+        raise TimeIntervalError(
+            f'{what} {value!r} is a date, not a time: quote it in the '
+            'manifest ("2026-06-22T13:22:29Z") so it names an instant')
+    return format_rfc3339(parse_rfc3339(value, what=what))
+
+
+def check_interval(start: Any, end: Any, *,
                    what: str = 'this Item') -> Tuple[str, str]:
     """
     Check an interval is present, parseable and ordered.
 
-    :returns: the two timestamps, unchanged, so a caller can write exactly
-        what it checked.
+    :returns: the two timestamps, canonically spelled (UTC, ``Z``-suffixed),
+        so that two Items covering the same interval carry the same strings
+        and a fingerprint over them is stable.
     :raises TimeIntervalError: when either end is missing, unparseable, or the
         end precedes the start.
     """
@@ -132,12 +158,12 @@ def check_interval(start: Optional[str], end: Optional[str], *,
             f'{what} has no observation interval ({", ".join(missing)} '
             f'missing). Every Item is dated from its sources; '
             f'{OVERRIDE_HINT}.')
-    first = parse_rfc3339(start, what=f'{what} start')
-    last = parse_rfc3339(end, what=f'{what} end')
-    if last < first:
+    first = as_rfc3339(start, what=f'{what} start')
+    last = as_rfc3339(end, what=f'{what} end')
+    if parse_rfc3339(last) < parse_rfc3339(first):
         raise TimeIntervalError(
-            f'{what} ends ({end}) before it starts ({start})')
-    return start, end
+            f'{what} ends ({last}) before it starts ({first})')
+    return first, last
 
 
 def interval_from_nanoseconds(start_ns: int, duration_ns: int
@@ -265,7 +291,7 @@ def source_interval(path: PathLike) -> Tuple[str, str]:
         f'modification time is not an observation time); {OVERRIDE_HINT}.')
 
 
-def union_intervals(intervals: Iterable[Sequence[Optional[str]]], *,
+def union_intervals(intervals: Iterable[Sequence[Any]], *,
                     what: str = 'this product') -> Tuple[str, str]:
     """
     The interval covering every one of ``intervals`` -- earliest to latest.

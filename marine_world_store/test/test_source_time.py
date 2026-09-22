@@ -189,8 +189,26 @@ def test_a_naive_timestamp_is_refused():
                                    '2026-06-22T16:00:00Z')
 
 
-def test_an_offset_timestamp_is_accepted_as_written():
-    """The season's bag directories are named with a +00-00 offset."""
-    start, end = source_time.check_interval('2026-06-22T13:22:29+00:00',
+def test_an_offset_timestamp_is_canonicalised_to_utc():
+    """Two Items over the same interval must carry the same string."""
+    start, end = source_time.check_interval('2026-06-22T09:22:29-04:00',
                                             '2026-06-22T15:00:00Z')
-    assert start == '2026-06-22T13:22:29+00:00'
+    assert start == '2026-06-22T13:22:29Z'
+    assert end == '2026-06-22T15:00:00Z'
+
+
+def test_a_yaml_timestamp_is_accepted():
+    """A YAML reader hands over a datetime, not the written string."""
+    from datetime import datetime, timezone
+    start, end = source_time.check_interval(
+        datetime(2026, 6, 22, 13, 22, 29, tzinfo=timezone.utc),
+        '2026-06-22T15:00:00Z')
+    assert start == '2026-06-22T13:22:29Z'
+
+
+def test_a_yaml_date_is_refused():
+    """A day is not an instant, and midnight UTC would be an assumption."""
+    from datetime import date
+    with pytest.raises(TimeIntervalError) as caught:
+        source_time.check_interval(date(2026, 6, 22), '2026-06-22T15:00:00Z')
+    assert 'is a date, not a time' in str(caught.value)

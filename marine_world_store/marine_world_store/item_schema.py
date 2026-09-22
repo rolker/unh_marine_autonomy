@@ -40,6 +40,14 @@ against the STAC spec and writes them.
 prefixed, so they are written as ``mws:state``, ``mws:origin``, ... The
 prefix is the spelling, not a second vocabulary -- :data:`CONTRACT_FIELDS`
 maps one to the other, and a proposed rev-3 note records the spelling.
+
+**Every Item is dated.** Part 2 line 2 promises a time range, and STAC gives
+an Item exactly two legal shapes -- one ``datetime``, or a null ``datetime``
+with both ends of a range. There is no third shape for "unknown", so an Item
+with no derivable interval is a provenance defect rather than an
+under-specified document: these builders raise and write nothing. The
+interval comes from the sources (:mod:`marine_world_store.source_time`);
+a product takes the union of its sources'.
 """
 
 from __future__ import annotations
@@ -48,6 +56,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from marine_world_store import fingerprint as fingerprint_module
+from marine_world_store import source_time
 from marine_world_store.layout import Origin, Quantity, State
 
 #: STAC version these documents declare.
@@ -115,6 +124,25 @@ class CellField:
     def to_dict(self) -> Dict[str, Any]:
         """Spell this field the way the Item carries it."""
         return {k: v for k, v in asdict(self).items() if v is not None}
+
+
+def dated(start_datetime: Optional[str], end_datetime: Optional[str], *,
+          what: str) -> Dict[str, Any]:
+    """
+    Spell an Item's observation interval, or refuse to build the Item.
+
+    :returns: the three time properties, in the one legal STAC shape for a
+        range: a null ``datetime`` with both ends beside it.
+    :raises ItemSchemaError: when either end is missing or unusable. The
+        writer stops here rather than emitting ``"datetime": null`` with
+        nothing beside it, which is not a STAC Item at all.
+    """
+    try:
+        start, end = source_time.check_interval(
+            start_datetime, end_datetime, what=what)
+    except source_time.TimeIntervalError as exc:
+        raise ItemSchemaError(str(exc)) from exc
+    return {'datetime': None, 'start_datetime': start, 'end_datetime': end}
 
 
 def store_frame() -> Dict[str, Any]:
@@ -186,6 +214,12 @@ def build_tile_item(
     """
     Build the Item for one tile of a field quantity store.
 
+    :param start_datetime: start of the observation interval the tile's
+        material was recorded over, RFC 3339. **Required**, with
+        ``end_datetime``: a product nobody can date cannot be found by the
+        time search Part 2 line 1 promises. A product takes the union of its
+        sources' intervals (:func:`marine_world_store.source_time.
+        union_intervals`).
     :param fingerprint_inputs: the inputs of
         :func:`marine_world_store.fingerprint.fingerprint_document`; both the
         hash and the inputs are written, so a consumer that disagrees can see
@@ -204,10 +238,10 @@ def build_tile_item(
         it actually holds plus the owed transformation -- an Item that named
         the store frame there would be a false claim in the record.
     """
+    identifier = tile_item_id(quantity, state, origin, level, row, col)
     document = fingerprint_module.fingerprint_document(**dict(
         fingerprint_inputs))
     properties: Dict[str, Any] = {
-        'datetime': start_datetime if end_datetime is None else None,
         'license': license_id,
         'proj:epsg': STORE_EPSG,
         CONTRACT_FIELDS['quantity']: Quantity(quantity).value,
@@ -222,9 +256,8 @@ def build_tile_item(
         CONTRACT_FIELDS['levels']: list(levels) if levels else [level],
         CONTRACT_FIELDS['tile']: {'level': level, 'row': row, 'col': col},
     }
-    if start_datetime and end_datetime:
-        properties['start_datetime'] = start_datetime
-        properties['end_datetime'] = end_datetime
+    properties.update(dated(start_datetime, end_datetime,
+                            what=f'tile Item {identifier!r}'))
     if cell_fields is not None:
         properties[CONTRACT_FIELDS['cell_fields']] = [
             f.to_dict() for f in cell_fields]
@@ -239,7 +272,7 @@ def build_tile_item(
     item = {
         'type': 'Feature',
         'stac_version': STAC_VERSION,
-        'id': tile_item_id(quantity, state, origin, level, row, col),
+        'id': identifier,
         'collection': collection_id(quantity, state, origin),
         'geometry': dict(geometry) if geometry else None,
         'properties': properties,
@@ -320,10 +353,18 @@ def validate_contract(item: Mapping[str, Any]) -> None:
     tile's ground resolution says so rather than inventing one -- but the key
     itself must be there, so the absence is a statement rather than a gap.
 
+    The time range is checked too, in the shape STAC allows: an Item either
+    carries a ``datetime``, or a null one with **both** ends of a range. An
+    Item with neither is not under-specified, it is invalid.
+
     :raises ItemSchemaError: naming every missing field at once; a writer
         fixing them one at a time learns the schema one round trip at a time.
     """
     properties = item.get('properties') or {}
+    if properties.get('datetime') is None:
+        dated(properties.get('start_datetime'),
+              properties.get('end_datetime'),
+              what=f'Item {item.get("id")!r}')
     absent = [name for name in REQUIRED_CONTRACT_FIELDS
               if CONTRACT_FIELDS[name] not in properties]
     empty = [name for name in REQUIRED_CONTRACT_FIELDS
@@ -358,6 +399,9 @@ def build_source_item(
 
     :param source_id: the content id from
         :mod:`marine_world_store.source_identity`.
+    :param start_datetime: start of the interval the source was recorded
+        over, from :func:`marine_world_store.source_time.source_interval`.
+        **Required**, with ``end_datetime``.
     :param file_keys: the ``<filename>\\t<file key>`` lines the id was taken
         over, so the id is checkable against the files without recomputing it.
     :param platform: lookup metadata, **never** identity (design section 3) --
@@ -375,7 +419,6 @@ def build_source_item(
         raise ItemSchemaError(
             f'role must be "data" or "engineering", got {role!r}')
     properties: Dict[str, Any] = {
-        'datetime': start_datetime,
         'license': license_id,
         CONTRACT_FIELDS['source']: {
             'id': source_id,
@@ -385,13 +428,11 @@ def build_source_item(
             'file_keys': list(file_keys or []),
         },
     }
+    properties.update(dated(start_datetime, end_datetime,
+                            what=f'source Item {source_id!r}'))
     for key, value in (('platform', platform), ('recorder', recorder)):
         if value:
             properties[f'{PREFIX}:{key}'] = value
-    if start_datetime and end_datetime:
-        properties['start_datetime'] = start_datetime
-        properties['end_datetime'] = end_datetime
-        properties['datetime'] = None
     if frame:
         properties[CONTRACT_FIELDS['frame']] = dict(frame)
     if notes:

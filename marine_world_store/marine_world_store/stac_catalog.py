@@ -35,6 +35,13 @@ to disk. The split is deliberate -- the schema is the contract and must be
 testable where ``pystac`` is not installed, while validation at write time is
 what keeps a hand-built Item from entering the store malformed.
 
+**An undated Item is never written.** A null ``datetime`` with no range
+beside it is not a STAC Item, and pystac refuses it -- but the refusal comes
+out as a schema error about a document the store should never have built. The
+check here names the rule instead: every Item carries its observation
+interval, derived from its sources (design draft Part 2 line 2, operator
+decision 2026-09-22).
+
 **Only changed Items are rewritten** (design section 9's replica rule: "write
 only changed Items"). A rewrite is gated on the canonical-JSON content hash of
 the document, not on an mtime, so regenerating an unchanged store touches
@@ -106,6 +113,29 @@ def validate_collection(collection: Mapping[str, Any]) -> None:
     _validate(collection, pystac.Collection)
 
 
+def check_dated(item: Mapping[str, Any]) -> None:
+    """
+    Refuse an Item with no time a consumer could search it by.
+
+    STAC allows two shapes: a ``datetime``, or a null one with **both**
+    ``start_datetime`` and ``end_datetime``. Anything else is invalid, and an
+    Item that reached this point undated means a producer had no interval and
+    wrote one anyway.
+
+    :raises CatalogError: naming the Item and the rule.
+    """
+    properties = item.get('properties') or {}
+    if properties.get('datetime') is not None:
+        return
+    if properties.get('start_datetime') and properties.get('end_datetime'):
+        return
+    raise CatalogError(
+        f'Item {item.get("id")!r} has no observation interval: its datetime '
+        'is null and it carries no start_datetime/end_datetime pair. Every '
+        'Item is dated from its sources; a product that cannot be dated is '
+        'not written (design draft Part 2 line 2).')
+
+
 def write_item(
     directory: PathLike,
     item: Mapping[str, Any],
@@ -121,6 +151,7 @@ def write_item(
     identifier = item.get('id')
     if not identifier:
         raise CatalogError('an Item with no id cannot be written')
+    check_dated(item)
     if validate:
         validate_item(item)
     directory = Path(directory)

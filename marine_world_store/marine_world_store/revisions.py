@@ -56,7 +56,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Union
 
-from marine_world_store import item_schema, layout
+from marine_world_store import item_schema, layout, source_time
 from marine_world_store.fingerprint import canonical_json, content_hash
 
 PathLike = Union[str, Path]
@@ -99,6 +99,12 @@ def build_revision(
     :param evidence: what the reviewer looked at. Required: a record with no
         evidence cannot be re-examined, and section 2 calls these *reviewed*
         records.
+    :param valid_from: when the record starts applying. **Required**: a
+        record is an Item, every Item is dated, and a correction with no
+        stated validity start cannot be applied to a given day's data. With
+        ``valid_to`` it is written as a range; alone it is the single
+        ``datetime`` STAC's other legal shape allows -- a record that still
+        applies has no end, which is not the same as an unknown one.
     :raises RevisionError: on a missing or empty required field.
     """
     try:
@@ -115,9 +121,22 @@ def build_revision(
     for name, value in (('evidence', evidence), ('reviewer', reviewer)):
         if not isinstance(value, str) or not value.strip():
             raise RevisionError(f'{name} must be a non-empty string')
+    if not valid_from:
+        raise RevisionError(
+            'valid_from is required: a record with no stated validity start '
+            'cannot be applied to a given day of data, and an Item with no '
+            'time is not a STAC Item')
+    try:
+        if valid_to:
+            valid_from, valid_to = source_time.check_interval(
+                valid_from, valid_to, what='this revision')
+        else:
+            valid_from = source_time.as_rfc3339(valid_from, what='valid_from')
+    except source_time.TimeIntervalError as exc:
+        raise RevisionError(str(exc)) from exc
 
     properties: Dict[str, Any] = {
-        'datetime': valid_from,
+        'datetime': None if valid_to else valid_from,
         item_schema.CONTRACT_FIELDS['revision']: {
             'kind': kind.value,
             'applies_to': dict(applies_to),
@@ -126,10 +145,9 @@ def build_revision(
             'reviewer': reviewer,
         },
     }
-    if valid_from:
+    if valid_to:
         properties['start_datetime'] = valid_from
         properties['end_datetime'] = valid_to
-        properties['datetime'] = None
     if notes:
         properties[f'{item_schema.PREFIX}:notes'] = notes
 
