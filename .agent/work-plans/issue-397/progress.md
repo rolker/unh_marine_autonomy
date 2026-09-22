@@ -257,3 +257,176 @@ transformation. Part 4's "owed" EPSG line is narrowed accordingly.
 ---
 **Authored-By**: `Claude Code Agent`
 **Model**: `Claude Opus`
+
+## Implementation
+**Status**: complete (Group B, up to and including the σ-fold measurement — the
+scope this dispatch was given; the rule itself is NOT chosen and no σ band is
+written)
+**When**: 2026-09-22 14:11 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: `feature/issue-397` at `89a2d8e` (7 commits on top of Group A's
+`628a225`). Not pushed; no PR from this dispatch.
+
+### What landed
+
+Plan steps 4–6 plus the evidence step 4 asks for first.
+
+- **The 4-band fold** (`marine_bathymetry_store/overview_pyramid.{hpp,cpp}`):
+  `detail::depthMultiBandFold` over MIN / MEAN / COUNT / σ,
+  `detail::promoteNativeDepthCell` (`{depth, σ}` → `{depth, depth, 1, σ}`) so
+  one fold serves the native step and every step above it, and
+  `buildMultiBandDepthOverviewPyramid` writing 4-band tiles with the staged
+  `coverage.json` the single-band writer already writes. Additive: the existing
+  writer and the `draft/processed/reference/chart` tree are untouched, and the
+  two batch writers now share one `buildPyramidCore` so the staging /
+  `RENAME_EXCHANGE` / rename-aside swap exists once.
+- **σ is reserved, not written.** `SigmaFold::{kUndecided, kPooled, kMaxChild,
+  kMeanChild}`; the writers default to `kUndecided`, the band is nodata, and
+  the rule name is recorded by name — `overviews/overview_schema.json` for the
+  batch sidecar, `<level>_<row>_<col>.json` per tile for the per-parent writer.
+  **No CLI exposes a rule**, deliberately: a flag would make choosing §7's open
+  rule an operator decision taken one invocation at a time.
+- **Per-parent mode** + `build_depth_overview_parent` CLI: one parent from ≤4
+  children, per-tile atomic (write beside, rename over), no `overviews.tmp/`
+  and no run lock, so a DAG can fold many at once. Native-wins checked first; a
+  child present both natively and as a derived overview throws; no children yet
+  is not an error.
+- **`--list-parents`** (`listMultiBandOverviewParents`): what a DAG enumerates,
+  kept on the C++ side because the parent↔child mapping is GGGS.
+- **Cross-schema guards, both directions.** Either batch writer refuses a
+  sidecar of the other's band count. Consumers read by band index, so a schema
+  swapped in place is the one mistake nothing downstream detects.
+- **The σ-fold measurement** (`marine_world_store/sigma_fold_measure.py` +
+  `mws_measure_sigma_fold`): per fold step, what each candidate would have
+  written and how often it **covers the true spread of the native cells under
+  the parent** (the exact population σ, accumulated through every step, so the
+  candidates are scored against the data, not against a fold of themselves).
+  Each candidate is carried forward in its own right. Rev 2's literal "mean and
+  max" is printed as the two numbers it is. The report recommends nothing and a
+  test asserts it does not.
+- **The §9 regenerate workflow** (`marine_world_store/snakemake/Snakefile` +
+  `rules/{fingerprints,overviews,catalog,gti}.smk`) with the two pieces it
+  needs: `fingerprint_sidecar.py`/`mws_refresh_fingerprints` (the `.fp`
+  content-hash pre-step that makes an mtime DAG agree with a fingerprint
+  trigger) and `overview_records.py`/`mws_assemble_coverage` (per-tile records
+  → one `coverage-manifest/1`, once, after the DAG).
+- **Docs**: both package READMEs, `.agents/README.md`, and two rev-3 §7
+  amendments (f) and (g) with change-log entries.
+
+### Commits (7, oldest first)
+
+| SHA | Subject |
+|---|---|
+| `150eb93` | marine_bathymetry_store: the rev-3 four-band overview fold |
+| `764fbfa` | marine_bathymetry_store: fold one overview parent at a time |
+| `7702f17` | marine_world_store: measure the candidate sigma-fold rules |
+| `743af71` | marine_bathymetry_store: enumerate the parents a DAG should schedule |
+| `38255b0` | marine_world_store: the fingerprint-driven regenerate workflow |
+| `280f929` | docs: the rev-3 overview schema, where its consequences land |
+| `89a2d8e` | plan: record Group B's departures from what it planned |
+
+### Tests run
+
+- `./core_ws/build.sh marine_bathymetry_store marine_world_store` — finished,
+  2 packages, no errors.
+- `./core_ws/test.sh marine_bathymetry_store marine_world_store` —
+  **609 tests, 0 errors, 2 failures, 45 skipped**. `marine_bathymetry_store` is
+  fully green (411 tests incl. cpplint/uncrustify/copyright); the 2 failures
+  are `marine_world_store`'s and are **pre-existing Group A** — see below.
+- `test_depth_overview_multiband` — **24 tests**, all passing: the fold's MIN /
+  MEAN / COUNT arithmetic and order-independence, the three candidate σ rules
+  (and that they differ), σ-is-nodata under `kUndecided` and when no
+  contributor carries one, the defensive substitutions, promotion, the schema
+  sidecar, the manifest's saturated nested error, both cross-schema refusals,
+  per-parent-equals-batch for the same parent, the per-tile record, error
+  nesting across two separate per-parent invocations, native suppression, the
+  both-native-and-derived refusal, bad indices, and parent enumeration
+  (dedup, native-omission, the climb to the next level).
+- `test_depth_overview` — **28 tests**, unchanged and passing, including the
+  pre-#331 golden regression, so the shared `buildPyramidCore` refactor is
+  value-identical.
+- **The MIN pin**: the multi-band pyramid is built over the same committed
+  fixture and every sidecar tile's MIN band is digested against the band-0
+  digest the PRE-#331 single-band binary produced. Same tile set, same numbers.
+- `python3 -m pytest test/` from `marine_world_store`, no ROS sourced —
+  **194 passed, 2 failed** (the same two).
+- ament `flake8`, `pep257`, `copyright`, `cpplint`, `uncrustify` — all clean.
+- Snakemake's own `--dry-run` **did not run**: snakemake is not installed on
+  this host (it resolves through the repo-root `rosdep.yaml` local key). The
+  test skips with that reason; the other rule checks are static and did run.
+
+### Running the σ measurement on the real subset
+
+Nothing in this pass touched `~/data/world`, `~/data/logs` or the NAS, and no
+store or bag path is in the code — tile paths are arguments. To produce the
+numbers the §7 decision is taken from:
+
+```bash
+source .agent/scripts/setup.bash
+cd layers/worktrees/issue-unh_marine_autonomy-397
+./core_ws/build.sh marine_world_store
+source core_ws/install/setup.bash
+
+# Native depth tiles: a directory, or individual files. --steps 3 is what
+# spine decision 2's own Massabesic measurement used.
+ros2 run marine_world_store mws_measure_sigma_fold \
+  ~/data/world/depths/reviewed/surveyed --steps 3 \
+  --output /tmp/sigma_fold_massabesic.md
+```
+
+If the rev-3 tree has not been populated yet, the same command runs over the
+**existing** store's Massabesic `processed/` tiles — they are the same 2-band
+`{depth, σ}` shape, and the measurement reads native truth, not a fold:
+
+```bash
+ros2 run marine_world_store mws_measure_sigma_fold \
+  <existing store>/processed --steps 3 --output /tmp/sigma_fold_massabesic.md
+```
+
+Read the report's three `covers <rule>` columns together with `sigma/spread
+<rule>`: a rule that rarely covers is claiming a tighter uncertainty than the
+data supports, and a rule whose ratio is far above 1 is claiming a looser one.
+Neither is automatically right — that is the design thinking §7 is waiting for.
+
+### Found, not fixed — a pre-existing Group A defect
+
+`pystac` is importable on this host now (it was not when Group A ran, which is
+why Group A's run showed 13 skips instead). With it present, two Group A tests
+fail:
+
+- `test/test_cli.py::test_import_source_writes_the_source_item`
+- `test/test_depth_subset.py::test_writing_the_items_needs_pystac`
+
+Both with `Invalid Item: If datetime is None, a start_datetime and
+end_datetime must be supplied.` `item_schema.build_source_item` and
+`build_tile_item` set `"datetime": None` whenever no time is supplied, and STAC
+gives an Item exactly two legal shapes — a single `datetime`, or a null
+`datetime` with **both** ends of a range. There is no third shape for "unknown",
+so the document is invalid, not under-specified, and pystac refuses it at write
+time. **Confirmed pre-existing**: both fail identically at Group A's last commit
+(`628a225`) with Group B's changes stashed.
+
+A fix was attempted and **reverted**: raising a named `ItemSchemaError` at build
+time is the right failure direction, but it cascades to 18 tests, because
+`depth_subset`'s adapter genuinely has no time to supply — its inputs are
+existing COG tiles and a source list with no time in it. Deciding what a
+timeless product claims (require a time from every producer? derive it from the
+source bag? record an explicit "time unknown" outside `datetime`?) is a design
+question about the Part 2 contract, not a mechanical fix, so it goes to the
+operator rather than being decided here.
+
+### Left for later
+
+- [ ] **Choose §7's σ rule** from the measurement, then write the σ band. That
+      is the pause this dispatch stops at; nothing above presumes an answer.
+- [ ] The Group A `datetime` defect above — a Part 2 design decision.
+- [ ] The **live** compare-by-value run against the real subset (plan's
+      resolved open question), which needs the adapter pointed at real tiles.
+- [ ] `snakemake --dry-run` over the rules, once `rosdep install` has run for
+      this repo on a host; the test is written and skipping.
+- [ ] Not pushed: no `git push`, no PR from this dispatch.
+
+---
+**Authored-By**: `Claude Code Agent`
+**Model**: `Claude Opus`
