@@ -115,3 +115,38 @@ level concerns; no hard blocking dependency identified.
 ---
 **Authored-By**: `Claude Code Agent`
 **Model**: `Claude Sonnet`
+
+## Plan Review
+**Status**: complete
+**When**: 2026-09-22 08:54 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-397/plan.md` at `cd673fd`
+**PR**: PR-less (worktree review; no plan PR opened)
+**Verdict**: changes-requested
+
+### Findings
+- [ ] (must-fix) The issue's arc-wide constraint — "use common libraries where practical (the LOD libraries: ADR-0013 D7, uma#395, mpt#36) rather than per-consumer code" — is not addressed anywhere in the plan; no mention of ADR-0013, uma#395, or mpt#36. — `plan.md` (whole document)
+- [ ] (must-fix) ADR-0013 D2 ("Error nesting is a producer obligation... the writers must bake it: `overview_builder`, the depth pyramid builder, `s102_import` and `s57_to_geotiff` each record a per-tile geometric error when they emit a tile") names the depth pyramid builder explicitly. The plan's Group B step (`buildMultiBandDepthOverviewPyramid`/`buildMultiBandDepthOverviewParent` in `overview_pyramid.cpp`) never mentions `marine_tiled_raster_store::CoverageManifest`/`geometricError` — even though the *existing* single-band `buildDepthOverviewPyramid` in the same file already populates a `CoverageManifest` with per-tile geometric error (`overview_pyramid.cpp:334`, `:547`, `:601`). ADR-0013 is entirely absent from the plan's "ADR Compliance" table (`plan.md:180-186`), which lists ADR-0002/0010/0011/0008/0009 but skips it. — `plan.md:100-121`, `plan.md:180-186`
+- [ ] (suggestion) Rev 3 (`docs/world_store_design.md`) itself never mentions `geometric_error_m` or a coverage manifest carrying it — §7/§9 describe STAC Items + Collection as "the record (coverage manifest ... included)" but don't say how per-tile geometric error (an ADR-0013 D2 requirement on this exact writer) is expressed in that record. Per the issue's own instruction ("a mismatch found here becomes a change to rev 3 ... never a local workaround"), resolving the must-fix above should come with a small rev-3 amendment (or an explicit Appendix A open-question entry) stating where geometric error lives in the STAC-based record, not just a code fix.
+- [ ] (suggestion) `plan.md`'s Files-to-Change row for `marine_tiled_raster_store/README.md` (`plan.md:166`) frames the coupling as speculative and Group-A-only ("current plan: pure Python, so likely no code change, doc cross-reference only") — it misses that Group B's C++ overview writer already depends on `marine_tiled_raster_store` today. Once the must-fix above is addressed, this row should say "Yes" definitely, not "verify during implementation."
+
+### Other dimensions checked, no findings
+- **Layout/Items/source-identity fidelity (§2, §3, §5, §9)**: plan's `layout.py`/`source_identity.py`/`stac_catalog.py`/`revisions.py` descriptions track rev 3 closely — quantity/state/origin directory shape, Merkle bag id (sorted `filename\tfile-key` lines, `metadata.yaml` excluded, git-annex `SHA256E` key), STAC Item consumer-contract fields, append-only `revisions/` Items, "write only changed Items" on regenerate. No mismatch found.
+- **Spine decision 2 (MIN/MEAN/COUNT/σ)**: plan proposes MIN = existing shallowest fold (bit-identical), MEAN/COUNT over valid contributors, σ = `max(mean σ, max child σ)`, and correctly flags the exact σ-combination as an Open Question needing a one-line confirmation (design text is genuinely ambiguous on this point) — appropriate to leave open rather than silently decide.
+- **Compare-by-value test**: genuinely automated (MIN-band-equals-legacy-fold against the existing golden fixture, plus property checks on MEAN/COUNT/σ), not a manual/live diff — satisfies "compared by value" as an automated, CI-safe check. Correctly surfaced as an Open Question for operator confirmation rather than silently substituted.
+- **Store-root guard**: real and mechanical — a grep-based test over tracked source files for the literal `data/world`, with a named, narrow allowlist (`s102_import`'s pre-existing, distinct import-cache literal) rather than a blanket exemption.
+- **Snakemake/pystac apt-tier decision vs ADR-0009**: ADR-0009 governs the workspace repo only (its own "Project repos are independent" clause); the plan's apt-not-venv reasoning by analogy to Tier 1's criteria is reasonable and, per AGENTS.md's consequences discipline, named explicitly as a rosdep-key gap rather than silently worked around. No violation.
+- **Two-commit-group / one-PR staging, stacking on #392**: matches the operator's 2026-09-22 decision.
+
+### Summary
+Plan is well-aligned with rev 3's structural decisions (layout, source identity, Items/Collection, spine decision 2) and handles its own open questions (σ combination, compare-by-value shape, bag paths, EPSG code) appropriately by surfacing rather than silently deciding them. However it misses the issue's own explicit "use common libraries" constraint and the concrete ADR-0013 D2 obligation on the exact writer (`overview_pyramid.cpp`'s new multi-band entry points) it is building — the existing single-band writer in the same file already does this via `marine_tiled_raster_store::CoverageManifest`, so the fix is small (extend the new fold/writer to populate the same manifest) but should be stated in the plan before implementation, not discovered mid-Group-B.
+
+### Recommended Actions
+- [ ] Add an ADR-0013 row to the ADR Compliance table; state explicitly that Group B's multi-band overview writer will populate `marine_tiled_raster_store::CoverageManifest` with per-tile `geometric_error_m`, reusing the existing single-band writer's mechanism.
+- [ ] Add a line to the Open Questions (or Consequences) section proposing how rev 3 should record geometric error in its STAC-based record, since the design draft is currently silent on this ADR-0013-required field.
+- [ ] Firm up the `marine_tiled_raster_store/README.md` Files-to-Change row from speculative to definite.
+
+---
+**Authored-By**: `Claude Code Agent`
+**Model**: `Claude Sonnet`
