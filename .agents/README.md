@@ -17,6 +17,7 @@
 | `marine_sidescan_mosaic` | C++ | Georeferenced sidescan backscatter mosaicking, live **and** offline: the live node projects GCV port/stbd RawSonarImage samples to GGGS-tiled uint16 GeoTIFF tiles for CAMP / web display (#173 / #171 / #166); the offline chain archives Tier-1 `.sst1` (#208), builds the durable Tier-2 `flat` / `processed` stores with best-source compositing + registry (#184 / #253), DEM-orthorectifies the `processed` build against a bathy store (#297, `--bathy-store`), and folds overview pyramids (#188 / ADR-0011) |
 | `marine_survey_index` | C++ | Offline survey indexer + query CLI: bags → per-GGGS-tile pass intervals in a regenerable SQLite sidecar; answers "which bags/time-ranges saw this location" (#258 stage 1 / #259; schema contract in `docs/survey_index_schema.md`) |
 | `marine_tiled_raster_store` | C++ | Generic GGGS-tiled raster store core: band/dtype-parametrized `TiledRasterTile<T>` + per-tile GeoTIFF persistence, shared by bathymetry and sidescan (#172); also owns the **coverage manifest** — `scanCoverage` / `CoverageManifest` / `coverage.json`, per-tile geometric error, and the shared `gridsInDir` / `gridFromTileName` tile-name helpers (uma-ADR-0013 D3, #331). Depends on `nlohmann_json`. |
+| `marine_world_store` | Python | World store (rev 3, `docs/world_store_design.md`) foundation: store-root resolution (one `_DEFAULT_ROOT`, grep-enforced), the `<quantity>/<state>/<origin>/` layout, content-based source identity (Merkle bag id, §3), product fingerprints (§9), STAC Items/Collections with the Part 2 consumer-contract fields, append-only `revisions/` records, and the `mws_*` CLIs including the byte-identical native-tile adapter `mws_link_depth_subset` (#397). A **plain Python package with a `package.xml` shim** — no `rclpy`/`ament` imports, enforced by tests; declares repo-local rosdep keys in the root `rosdep.yaml`. |
 | `mission_manager` | Python | Converts mission plans from CAMP GCS into navigation tasks and manages task execution |
 | `mission_manager_interfaces` | C++ (IDL) | Service definitions for task manipulation (3 srv types) |
 
@@ -52,12 +53,18 @@ unh_marine_autonomy/
 ├── marine_interfaces/
 │   ├── msg/                    # 46 message definitions
 │   └── bmr/                    # Bag migration rules
+├── marine_world_store/
+│   ├── marine_world_store/     # Python: store root, layout, identity,
+│   │   │                       #   fingerprints, Items, revisions
+│   │   └── cli/                # mws_* console_scripts
+│   └── test/                   # pytest: unit + package-shape guards
 ├── mission_manager/
 │   ├── mission_manager/
 │   │   ├── mission_manager/    # Python: core node, CAMP interface, coverage adapter
 │   │   └── test/               # Unit tests
 │   └── mission_manager_interfaces/
 │       └── srv/                # 3 service definitions
+├── rosdep.yaml                 # Repo-local rosdep keys (ws#654 policy)
 ├── PRINCIPLES.md               # Project principles
 ├── VISION.md                   # Strategic vision and objectives
 └── README.md
