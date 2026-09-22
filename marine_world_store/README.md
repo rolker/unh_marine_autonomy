@@ -67,6 +67,9 @@ which of the four decided the root it used.
 | `stac_catalog.py` | Validates those documents with `pystac` and writes them — **only the ones that changed** (§9's replica rule), gated on a canonical-JSON content hash, never an mtime |
 | `revisions.py` | Append-only `revisions/` records: geometry revisions and datum records. The id is the content hash, so an edited record is detected on read |
 | `depth_subset.py` | The native-tile **adapter** (see below) |
+| `sigma_fold_measure.py` | The evidence design §7's **open** σ-fold rule is decided from: what each candidate would write, against the true spread of the native cells under a parent. Decides nothing (see below) |
+| `fingerprint_sidecar.py` | The regenerate pre-step's `.fp` sidecar — a tile's **content** hash, which is *not* §9's input fingerprint; one answers "did this file change?", the other "was this built from the same things?" |
+| `overview_records.py` | Assembles the per-tile records the per-parent overview writer leaves into one `coverage-manifest/1` document (uma-ADR-0013 D3) |
 
 ### Field names are namespaced
 
@@ -84,6 +87,9 @@ vocabulary.
 | `mws_write_revision DESCRIPTION` | Append one `revisions/` record from a small YAML/JSON description |
 | `mws_regenerate_catalog` | Rebuild each present cell's `collection.json`, reporting only what changed |
 | `mws_link_depth_subset` | The adapter below |
+| `mws_measure_sigma_fold TILE…` | Measure the candidate σ-fold rules over native depth tiles and print a markdown table. Tile paths are **arguments** |
+| `mws_refresh_fingerprints LAYER_DIR` | The regenerate pre-step: reconcile `.fp` sidecars with the tiles, resetting an unchanged tile's mtime |
+| `mws_assemble_coverage LAYER_DIR` | Write `overviews/coverage.json` from the per-tile overview records, once, after the DAG |
 
 A revision description (the fields are `revisions.build_revision`'s arguments):
 
@@ -151,7 +157,8 @@ to the uma#395 selection core — and the run says how many.
 | `python3-yaml` | `PyYAML` | The config file and the revision/subset descriptions |
 | `python3-gdal` | `GDAL` | Tile footprints, read from the raster itself |
 | `python3-pystac` | `pystac` | STAC validation at write time. The Items are plain JSON, so it is droppable if it ever becomes a burden |
-| `snakemake` | `snakemake` | The regenerate driver (§9); the rules themselves are Group B of #397 |
+| `snakemake` | `snakemake` | The regenerate driver (§9); the rules are in `snakemake/` |
+| `python3-numpy` | `numpy` | The σ-fold measurement reduces whole tile rasters band by band |
 
 `python3-pystac` and `snakemake` have no upstream `ros/rosdistro` key yet, so
 they resolve through this repo's root `rosdep.yaml` local keys — see the
@@ -170,11 +177,80 @@ that reason; nothing here pip-installs anything.
 python3 -m pytest test/
 ```
 
-## Still to come (Group B of #397)
+## The σ-fold measurement decides nothing
 
-The multi-band (MIN/MEAN/COUNT/σ) overview writer, `build_depth_overviews`
-per-parent mode, and the Snakemake regenerate rules under
-`marine_world_store/snakemake/`. The hooks they need are already here: an Item
-can carry a nested `geometric_error_m` and a `sigma_fold` rule name. **The σ
-fold rule is deliberately open** (design §7 as amended) — no σ band is written
-until it is decided from Group B's measurement.
+`docs/world_store_design.md` §7 leaves the overview tile's σ band's fold rule
+**open** (Roland, 2026-09-22: "this seems like something that should be thought
+about much more"). Rev 2's "mean and max of the children" named two numbers
+without saying how they combine into one stored value, so it was never a
+decision.
+
+`mws_measure_sigma_fold` produces the evidence the decision is taken from, in
+the style of spine decision 2's own `fold_measure`:
+
+```bash
+# The Massabesic subset's native depth tiles — a path on the operator's disk,
+# passed in, never written into this repo.
+ros2 run marine_world_store mws_measure_sigma_fold \
+  "$WORLD_STORE/depths/reviewed/surveyed" --steps 3 --output sigma_fold.md
+```
+
+Per fold step it reports what each candidate (`pooled`, `max_child`,
+`mean_child`) would have written, and how often that σ **covers the true spread
+of the native cells under the parent** — the population standard deviation,
+accumulated exactly through every step, so the candidates are scored against the
+data rather than against a fold of themselves. Rev 2's literal "mean and max" is
+printed as the two numbers it is, side by side.
+
+Each candidate is carried forward in its own right: step two folds the σ step
+one would have *written* under that rule. Anything else would say nothing about
+what a pyramid built under each rule actually holds, and the multi-step
+behaviour is what the decision turns on — a per-child statistic cannot grow,
+while pooled compounds.
+
+The report ends with no recommendation, and a test asserts it does not. §7's
+rule is chosen by a person reading these numbers; a "suggested rule" line would
+be that decision taken by the measurement instead. Until one is chosen, the
+overview writers emit the σ band as nodata and record `sigma_fold: undecided`.
+
+One approximation, stated: cells are aggregated in aligned 2×2 blocks within a
+tile rather than through the GGGS geographic parent mapping. In the non-polar
+envelope the two agree away from tile edges, every statistic is per-parent-cell,
+and a measurement is not a writer.
+
+## The regenerate workflow (`snakemake/`)
+
+Design §9's regenerate for one rev-3 `depths/` layer, over the per-parent work
+unit `marine_bathymetry_store`'s `build_depth_overview_parent` provides:
+
+```bash
+snakemake -s "$(ros2 pkg prefix marine_world_store)"/share/marine_world_store/snakemake/Snakefile \
+  --config layer_dir="$WORLD_STORE/depths/reviewed/surveyed" fine_level=13 min_level=8 -j8
+```
+
+`layer_dir` is required and has no default: the store root is resolved by
+`store_root.py`, and a path written into the workflow would be the hard-coded
+path the guard test forbids (which now scans `Snakefile` too).
+
+- **The pre-step is the load-bearing part.** §9 makes fingerprints, not mtimes,
+  the trigger; Snakemake's DAG decides from mtimes. `mws_refresh_fingerprints`
+  resets an unchanged tile's mtime to its `.fp` sidecar's, so a rebuild that
+  produced the same bytes stops looking like a change — without it, everything
+  above a rewritten-but-identical tile re-runs, which is the behaviour the
+  prototype found in the batch builder.
+- **One `checkpoint` per level.** The parents at level N cannot be enumerated
+  until N+1 exists, because a derived tile is itself a contributor; a DAG whose
+  shape depends on a previous step's output is what a checkpoint is for. The
+  enumeration is `build_depth_overview_parent --list-parents`, never Python in
+  the rules: the parent/child mapping is GGGS, whose column counts vary by
+  latitude band, and a test asserts it is not reimplemented there.
+- **`mws_assemble_coverage` is a single serialised step after every parent.**
+  The per-parent writer leaves a per-tile record instead of touching a shared
+  `coverage.json`, because parallel folds would race over that one file and the
+  only lock that would fix it is one that serialises the DAG.
+- **The GTI index is derived and never synced** (§7) — regenerated locally from
+  the Collection, which is the record.
+
+Snakemake is not installed on the development host (it resolves through the
+repo-root `rosdep.yaml` local key), so the `--dry-run` test skips with that
+reason; the remaining rule checks are static and run today.

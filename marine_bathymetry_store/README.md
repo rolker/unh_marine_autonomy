@@ -309,6 +309,78 @@ ros2 run marine_bathymetry_store build_depth_overviews /path/to/store/reference 
   data (uma-ADR-0011 Consequences). `coverage.json` is not a `.tif`, so the
   flat-layout loaders already skip it silently too.
 
+#### Rev-3 multi-band overviews (`build_depth_overview_parent`, uma#397)
+
+The world store's rev 3 (`docs/world_store_design.md` §7, spine decision 2)
+folds a level into **four bands — MIN, MEAN, COUNT and σ — per parent cell**
+rather than one `{depth, σ}` pair, so a view chooses its band: the navigation
+surface reads MIN, others read MEAN, and COUNT is the parent's lineage. That
+schema is written by `buildMultiBandDepthOverviewPyramid` (batch) and
+`build_depth_overview_parent` (one tile), and is **additive**: the
+single-band writer above and the `draft/processed/reference/chart` tree it
+serves are untouched, and the two schemas coexist deliberately — a changed
+process is a new fingerprint, never a migration.
+
+```bash
+# One parent tile of a rev-3 quantity layer, from its up-to-four children.
+ros2 run marine_bathymetry_store build_depth_overview_parent \
+  "$WORLD_STORE/depths/reviewed/surveyed" 12 71203 55592
+# What a regenerate should schedule at level 12 (one `<level>_<row>_<col>` per
+# line): the parents that have a child and are not already native.
+ros2 run marine_bathymetry_store build_depth_overview_parent --list-parents \
+  "$WORLD_STORE/depths/reviewed/surveyed" 12
+```
+
+- **Which tree.** These write a **rev-3 quantity layer**
+  (`<store root>/depths/<state>/<origin>/`), never `draft/processed/reference/
+  chart`. Both writers refuse to replace a sidecar written under the other's
+  band count: consumers read these tiles **by band index**, so a schema swapped
+  in place is the one mistake nothing downstream could detect — every read would
+  succeed and every number would mean something else.
+- **"MIN" is the minimum DEPTH.** The tiles hold ellipsoidal height (positive
+  up), so the shoalest cell is the **maximum** stored number. Band 0 is
+  bit-identical to the single-band fold's depth band over the same inputs — the
+  same "shoalest wins" selection — and a regression test pins it, tile by tile,
+  against the same committed golden digest the single-band guard uses.
+- **The pyramid is heterogeneous by design.** The native level stays the 2-band
+  `{depth, σ}` compile; only *folded* levels are 4-band. Native children are
+  promoted to `{depth, depth, 1, σ}` as they are read, so one fold serves the
+  first derived level and every level above it. A reader switches band schema
+  at the native/derived boundary, which is what `overviews/overview_schema.json`
+  exists to state rather than leave to be inferred.
+- **The σ band is RESERVED and written as nodata.** §7's fold rule is **open**
+  (Roland, 2026-09-22): rev 2's "mean and max of the children" named two numbers
+  without saying how they combine, so it was never a decision. Every tile
+  records `sigma_fold: undecided` by name — in `overview_schema.json` for the
+  batch sidecar and in a per-tile `<level>_<row>_<col>.json` for the per-parent
+  writer — so the later decision produces a different record, a different
+  fingerprint, and no migration. The candidate rules (`pooled`, `max_child`,
+  `mean_child`) are implemented but no CLI can select one; the evidence for
+  choosing comes from `mws_measure_sigma_fold` in `marine_world_store`.
+- **Per-parent, and why.** `build_depth_overviews` is one batch call, so
+  refreshing one tile re-folds a whole layer. `build_depth_overview_parent`
+  folds exactly one parent, which is what lets a Snakemake DAG
+  (`marine_world_store/snakemake/`) decide what is stale. Atomicity is per
+  **tile** — write beside the destination, then rename over it — with no
+  `overviews.tmp/` staging and no run lock: one tile has no partial-pyramid
+  hazard, and a lock over the whole sidecar would serialise the DAG straight
+  back into the batch build it replaces.
+- **Native-wins, unchanged.** A parent already covered by a native tile is left
+  alone and reported, in both writers and in `--list-parents`. A child found
+  *both* natively and as a derived overview throws: the two sets are disjoint by
+  construction, so that is a corrupted layer rather than a precedence question,
+  and resolving it silently would make the pyramid depend on which rule ran
+  last.
+- **Geometric error, still a producer obligation (uma-ADR-0013 D1/D2/D3).** The
+  batch writer stages `overviews/coverage.json` exactly as the single-band one
+  does. The per-parent writer instead records each tile's error in that tile's
+  own JSON, and `mws_assemble_coverage` turns those records into the manifest
+  once, after the DAG — a shared `coverage.json` written by parallel folds would
+  be a race whose only fix is a lock that undoes the parallelism.
+- **A parent with no children yet is not an error.** A per-parent DAG
+  legitimately enumerates sparse regions; throwing there would turn one into a
+  failed run.
+
 ### Depth-adaptive level selection (`depth_adaptive_level.hpp`, uma-ADR-0010 D9 / uma#369)
 
 `depthAdaptiveLevel(depth_m)` chooses the GGGS level a `processed` store tile

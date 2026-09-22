@@ -209,7 +209,12 @@ revisions concept are the later upstream contribution.
 - **Overview levels — *decided* (spine 2, 2026-09-21)**: a folded level stores **MIN, MEAN,
   COUNT and σ** per parent cell — BAG VR's `RESAMPLED_GRID`
   precedent — never one folded value. Views choose the band: the navigation-surface view
-  reads MIN, others read MEAN, COUNT is the parent's lineage. Measured on Massabesic: a mean
+  reads MIN, others read MEAN, COUNT is the parent's lineage. **MIN and MEAN are in the
+  DEPTH sense**: the tiles hold ellipsoidal height (positive up), so the MIN band stores
+  the *maximum* number — the shoalest cell (uma#397 Group B). The four bands are a
+  **folded** level's schema; the native level stays the 2-band `{value, σ}` pair above,
+  so a pyramid is heterogeneous by design and a native cell is promoted to
+  `{depth, depth, 1, σ}` when it is folded. Measured on Massabesic: a mean
   fold hides the shoalest depth by more than its own σ in 56 % of 7.2 m cells (three fold
   steps), so this is evidence, not principle. Safety never *decides* from a folded level; a
   folded MIN may serve as a conservative screen; decisions resolve at native level (R19).
@@ -392,6 +397,23 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-09-22 (Group B) — **proposed, from implementing §7's overview fold**
+  (uma#397 Group B; two things §7 leaves a reader to infer, and an
+  implementation that inferred either one differently would be wrong in a way
+  nothing downstream could detect): (f) §7's band names **MIN** and **MEAN** are
+  in the DEPTH sense, while the tiles hold **ellipsoidal height** (positive up),
+  so the MIN band stores the *maximum* number — the shoalest cell. A view that
+  read "MIN" as the minimum stored value would invert the navigation band, which
+  is the one band §7 says safety may use as a conservative screen. (g) The
+  4-band schema applies to **folded levels only**: the native level stays the
+  2-band `{value, σ}` pair §7's first bullet describes, so a pyramid is
+  heterogeneous by design and a reader switches band schema at the
+  native/derived boundary. The implementation states it on disk
+  (`overviews/overview_schema.json`) rather than leaving it to be inferred, and
+  promotes a native cell to `{depth, depth, 1, σ}` on read so one fold serves
+  every level. Neither is a change of decision; both are what spine 2 already
+  implies, written down.
 
 - 2026-09-22 — **proposed, from implementing rev 3** (uma#397 Group A; process-derived
   corrections, recorded here rather than worked around in code): (a) Part 2 line 3 gains the per-tile
