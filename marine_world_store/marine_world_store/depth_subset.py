@@ -44,6 +44,11 @@ real data. What it deliberately does **not** claim:
   store frame, so the Item declares the georeferencing the tile actually
   carries and names the transformation as owed. Declaring ITRF2020 over tiles
   that were written in WGS84 would put a false claim in the record.
+* **No date of its own.** A re-expressed tile was observed when its source
+  bags were, so the interval comes from them (``source_time``) and the
+  adapter refuses a tile it cannot date: an Item with no time could not be
+  found by the time search Part 2 line 1 promises, and the adapter has no
+  honest time of its own to put there.
 * **No re-link.** The datum and geometry records in ``revisions/`` are applied
   at link; this adapter does not link, so a record that would change these
   cells is listed in the fingerprint inputs only when the caller names it.
@@ -60,6 +65,7 @@ import shutil
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 from marine_world_store import coverage, footprint, item_schema, layout
+from marine_world_store import source_time
 from marine_world_store.layout import Origin, Quantity, State
 
 PathLike = Union[str, Path]
@@ -135,8 +141,13 @@ def adapt_depth_tiles(
         Required, and required to be non-empty: a product whose inputs are
         unrecorded has no fingerprint worth writing.
     :param levels: when given, only tiles at these levels are adapted.
-    :raises AdapterError: when the source layer holds no tile, or a copy does
-        not compare byte-identical.
+    :param start_datetime: the observation interval the tiles' material was
+        recorded over -- the union of the source bags' intervals, which
+        :mod:`marine_world_store.cli.mws_link_depth_subset` reads from the
+        bags themselves. **Required**, with ``end_datetime``.
+    :raises AdapterError: when the source layer holds no tile, when no
+        observation interval was supplied, or when a copy does not compare
+        byte-identical.
     """
     source_layer_dir = Path(source_layer_dir)
     if not source_layer_dir.is_dir():
@@ -145,6 +156,15 @@ def adapt_depth_tiles(
         raise AdapterError(
             'name the source bag id(s) these tiles were built from; a product '
             'with no recorded inputs cannot be fingerprinted')
+    try:
+        start_datetime, end_datetime = source_time.check_interval(
+            start_datetime, end_datetime,
+            what='an adapted tile')
+    except source_time.TimeIntervalError as exc:
+        raise AdapterError(
+            f'{exc} The interval of a re-expressed tile is the union of '
+            "its source bags' intervals, read from their metadata.yaml."
+        ) from exc
 
     tiles = layout.tiles_in_dir(source_layer_dir)
     if levels is not None:

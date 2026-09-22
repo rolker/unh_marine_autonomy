@@ -97,11 +97,18 @@ def source_layer(tmp_path):
     return layer
 
 
+#: The interval the adapted tiles' source bag recorded over. Every Item is
+#: dated, and an adapter has no time of its own: this is what the CLI reads
+#: out of the bag's metadata.yaml and hands over.
+INTERVAL = ('2026-06-22T13:22:29Z', '2026-06-22T15:00:00Z')
+
+
 def adapt(source_layer, root, **overrides):
     """Run the adapter with the arguments every test shares."""
     kwargs = {
         'source_layer_dir': source_layer, 'root': root,
-        'source_ids': ['abc123'], 'builder_version': 'test/1'}
+        'source_ids': ['abc123'], 'builder_version': 'test/1',
+        'start_datetime': INTERVAL[0], 'end_datetime': INTERVAL[1]}
     kwargs.update(overrides)
     return depth_subset.adapt_depth_tiles(**kwargs)
 
@@ -193,6 +200,29 @@ def test_unnamed_sources_are_refused(source_layer, tmp_path):
         adapt(source_layer, tmp_path / 'rev3', source_ids=[])
 
 
+def test_a_tile_that_cannot_be_dated_is_refused(source_layer, tmp_path):
+    """An undated product could not be found by Part 2 line 1's time search."""
+    root = tmp_path / 'rev3'
+    with pytest.raises(AdapterError) as caught:
+        adapt(source_layer, root, start_datetime=None, end_datetime=None)
+    assert 'observation interval' in str(caught.value)
+    assert not root.exists()
+
+
+def test_half_an_interval_is_refused(source_layer, tmp_path):
+    """One end of a range is not a range; STAC has no shape for it."""
+    with pytest.raises(AdapterError):
+        adapt(source_layer, tmp_path / 'rev3', end_datetime=None)
+
+
+def test_items_carry_the_interval_they_were_given(source_layer, tmp_path):
+    """The union of the source bags' intervals, as the CLI computed it."""
+    properties = adapt(source_layer, tmp_path / 'rev3').items[0]['properties']
+    assert properties['start_datetime'] == INTERVAL[0]
+    assert properties['end_datetime'] == INTERVAL[1]
+    assert properties['datetime'] is None
+
+
 def test_a_level_filter_selects_a_subset(source_layer, tmp_path):
     """The subset is the point; a level nobody holds is a loud error."""
     assert adapt(source_layer, tmp_path / 'a', levels=[12]).tiles_seen == 2
@@ -269,3 +299,91 @@ def test_subset_manifest_sources_are_inputs_not_literals():
     assert entries[0] == {'path': '/nas/bag'}
     with pytest.raises(AdapterError):
         depth_subset.sources_from_manifest({'sources': []})
+
+
+# --- the CLI: where the interval actually comes from --------------------
+
+#: Two recordings, an hour apart, in rosbag2's own units.
+FIRST_BAG_NS = 1782134549000000000
+SECOND_BAG_NS = FIRST_BAG_NS + 3600 * 10 ** 9
+ONE_MINUTE_NS = 60 * 10 ** 9
+
+
+def make_bag(directory, start_ns, duration_ns=ONE_MINUTE_NS, dated=True):
+    """A bag-shaped directory rosbag2 would have written."""
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / 'rosbag2_0.mcap').write_bytes(
+        f'ping {start_ns}'.encode('utf-8'))
+    body = 'rosbag2_bagfile_information:\n  version: 9\n'
+    if dated:
+        body += (
+            f'  duration:\n    nanoseconds: {duration_ns}\n'
+            f'  starting_time:\n'
+            f'    nanoseconds_since_epoch: {start_ns}\n'
+            f'  message_count: 42\n')
+    (directory / 'metadata.yaml').write_text(body)
+    return directory
+
+
+def test_the_cli_dates_the_tiles_from_the_bags(source_layer, tmp_path):
+    """
+    The adapter's interval is read, never asked for.
+
+    Two bags an hour apart: each source Item carries its own recording
+    interval, and the tiles carry the union -- they were built from both.
+    """
+    pytest.importorskip('pystac', reason='declared dependency; run rosdep')
+    from marine_world_store import stac_catalog
+    from marine_world_store.cli import mws_link_depth_subset
+    from marine_world_store import layout as layout_module
+    root = tmp_path / 'rev3'
+    first = make_bag(tmp_path / 'bags' / 'first', FIRST_BAG_NS)
+    second = make_bag(tmp_path / 'bags' / 'second', SECOND_BAG_NS)
+    assert mws_link_depth_subset.main([
+        '--source-store', str(source_layer.parent), '--layer', 'processed',
+        '--store-root', str(root),
+        '--source', str(first), '--source', str(second)]) == 0
+
+    tiles = stac_catalog.read_items(
+        layout_module.quantity_dir(root, Quantity.DEPTHS, State.REVIEWED,
+                                   Origin.SURVEYED))
+    assert tiles, 'the adapter wrote no tile Items'
+    for item in tiles:
+        assert item['properties']['start_datetime'] == \
+            '2026-06-22T13:22:29Z'
+        assert item['properties']['end_datetime'] == '2026-06-22T14:23:29Z'
+        assert item['properties']['datetime'] is None
+
+    sources = stac_catalog.read_items(layout_module.sources_dir(root))
+    spans = sorted((i['properties']['start_datetime'],
+                    i['properties']['end_datetime']) for i in sources)
+    assert spans == [('2026-06-22T13:22:29Z', '2026-06-22T13:23:29Z'),
+                     ('2026-06-22T14:22:29Z', '2026-06-22T14:23:29Z')]
+
+
+def test_the_cli_refuses_a_tile_it_cannot_date(source_layer, tmp_path):
+    """An undated bag stops the run before anything is copied."""
+    from marine_world_store.cli import mws_link_depth_subset
+    from marine_world_store.source_time import TimeIntervalError
+    root = tmp_path / 'rev3'
+    bag = make_bag(tmp_path / 'bags' / 'undated', FIRST_BAG_NS, dated=False)
+    with pytest.raises(TimeIntervalError):
+        mws_link_depth_subset.main([
+            '--source-store', str(source_layer.parent),
+            '--store-root', str(root), '--source', str(bag)])
+    assert not root.exists()
+
+
+def test_the_cli_takes_a_stated_interval_for_an_undated_source(
+        source_layer, tmp_path):
+    """The override, for material with a time it does not record."""
+    pytest.importorskip('pystac', reason='declared dependency; run rosdep')
+    from marine_world_store.cli import mws_link_depth_subset
+    root = tmp_path / 'rev3'
+    bag = make_bag(tmp_path / 'bags' / 'undated', FIRST_BAG_NS, dated=False)
+    assert mws_link_depth_subset.main([
+        '--source-store', str(source_layer.parent),
+        '--store-root', str(root), '--source', str(bag),
+        '--start', '2026-06-22T13:00:00Z',
+        '--end', '2026-06-22T16:00:00Z']) == 0
+    assert (root / 'depths' / 'reviewed' / 'surveyed').is_dir()

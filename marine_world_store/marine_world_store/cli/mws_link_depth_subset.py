@@ -34,8 +34,16 @@ exactly what it claims and what it does not. In one line -- it copies existing
 ``marine_bathymetry_store`` tiles byte-identical under
 ``<root>/depths/<state>/<origin>/`` and writes the rev-3 record for them.
 
-The bag paths are arguments or entries in a subset manifest, never literals:
-they name read-only material on one particular host.
+The bag directories are **required** arguments (``--source``, repeatable, or
+a ``--subset`` manifest listing them), never literals: they name read-only
+material on one particular host. They are required for two reasons, not one:
+they are what the tiles fingerprint over, and they are what the tiles are
+**dated** by. Each bag's ``metadata.yaml`` gives its recording interval, and
+the tile Items carry the union of them. A source whose interval cannot be
+read is refused and nothing is written -- ``--start``/``--end`` (or
+``start:``/``end:`` in the manifest) state an interval for the sources that
+have one but do not record it, and are an operator statement rather than a
+default.
 
 Typical use, with a subset manifest::
 
@@ -60,7 +68,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from marine_world_store import depth_subset, item_schema, layout
-from marine_world_store import source_identity
+from marine_world_store import source_identity, source_time
 from marine_world_store.cli._common import (
     add_store_root_argument, resolved_root, run, stac_catalog,
 )
@@ -82,7 +90,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--source', action='append', default=[],
                         metavar='PATH',
                         help='a bag directory or file these tiles came from '
-                             '(repeatable; or use --subset)')
+                             '(repeatable; or use --subset). Required: it is '
+                             'what the tiles fingerprint over and what they '
+                             'are dated by')
     parser.add_argument('--subset', default=None, metavar='FILE',
                         help='YAML/JSON subset manifest naming the sources')
     parser.add_argument('--level', action='append', type=int, default=None,
@@ -92,7 +102,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--revision', action='append', default=[],
                         metavar='ID',
                         help='revision id that applies (repeatable)')
-    parser.add_argument('--start', default=None, metavar='RFC3339')
+    parser.add_argument(
+        '--start', default=None, metavar='RFC3339',
+        help="state the sources' interval instead of reading it from their "
+             'metadata.yaml; both ends or neither')
     parser.add_argument('--end', default=None, metavar='RFC3339')
     parser.add_argument('--no-validate', action='store_true',
                         help='skip STAC validation of the written Items')
@@ -125,7 +138,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not entries:
         raise ValueError(
             'name at least one --source bag, or a --subset manifest listing '
-            'them: the tiles fingerprint over the sources they came from')
+            'them: the tiles fingerprint over the sources they came from, '
+            'and are dated from their recorded intervals')
 
     levels = args.level or document.get('levels')
     start = args.start or document.get('start')
@@ -134,10 +148,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     root = resolved_root(args)
     source_ids = []
     source_items = []
+    intervals = []
     for entry in entries:
         path = Path(entry['path']).expanduser()
         if not path.exists():
             raise FileNotFoundError(f'{path}: no such file or directory')
+        stated_start = entry.get('start') or start
+        stated_end = entry.get('end') or end
+        if stated_start or stated_end:
+            # An operator statement about this source, for material that has
+            # an interval but does not record one.
+            entry_start, entry_end = source_time.check_interval(
+                stated_start, stated_end, what=f'source {path.name}')
+        else:
+            entry_start, entry_end = source_time.source_interval(path)
+        intervals.append((entry_start, entry_end))
         identifier = source_identity.source_id(path)
         source_ids.append(identifier)
         keys = (source_identity.merkle_lines(path) if path.is_dir()
@@ -149,11 +174,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             file_keys=keys,
             platform=entry.get('platform'),
             recorder=entry.get('recorder'),
-            start_datetime=entry.get('start') or start,
-            end_datetime=entry.get('end') or end,
+            start_datetime=entry_start,
+            end_datetime=entry_end,
             href=str(path),
         ))
-        print(f'source {path.name}: {identifier}')
+        print(f'source {path.name}: {identifier} '
+              f'({entry_start} .. {entry_end})')
+
+    # A product is dated by everything that went into it: a tile built from
+    # three bags was observed over all three.
+    tile_start, tile_end = source_time.union_intervals(
+        intervals, what='the adapted tiles')
+    print(f'tiles observed: {tile_start} .. {tile_end}')
 
     report = depth_subset.adapt_depth_tiles(
         source_layer_dir=Path(args.source_store).expanduser() / args.layer,
@@ -164,8 +196,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         origin=args.origin,
         revision_ids=args.revision or None,
         levels=levels,
-        start_datetime=start,
-        end_datetime=end,
+        start_datetime=tile_start,
+        end_datetime=tile_end,
         dry_run=args.dry_run,
     )
     print(f'{report.tiles_seen} tile(s) in scope -> {report.destination}')

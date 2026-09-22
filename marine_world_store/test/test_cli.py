@@ -40,6 +40,7 @@ from marine_world_store import layout, source_identity
 from marine_world_store.cli import (
     mws_import_source, mws_regenerate_catalog, mws_write_revision,
 )
+from marine_world_store.source_time import TimeIntervalError
 from marine_world_store.store_root import ENV_VAR
 import pytest
 
@@ -52,11 +53,28 @@ def store_root(tmp_path, monkeypatch):
     return root
 
 
-def make_bag(directory):
-    """Build a bag-shaped directory with one mcap split."""
+#: One real recording's numbers, as rosbag2 writes them.
+START_NS = 1781451538661123281
+DURATION_NS = 68947054668
+
+
+def make_bag(directory, start_ns=START_NS, dated=True):
+    """
+    Build a bag-shaped directory with one mcap split.
+
+    Dated by default, because an undated bag is now a refusal: the Items the
+    tools write carry the interval this metadata records.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     (directory / 'rosbag2_0.mcap').write_bytes(b'ping')
-    (directory / 'metadata.yaml').write_text('rosbag2_bagfile_information:\n')
+    body = 'rosbag2_bagfile_information:\n  version: 9\n'
+    if dated:
+        body += (
+            f'  duration:\n    nanoseconds: {DURATION_NS}\n'
+            f'  starting_time:\n'
+            f'    nanoseconds_since_epoch: {start_ns}\n'
+            f'  message_count: 10555\n')
+    (directory / 'metadata.yaml').write_text(body)
     return directory
 
 
@@ -76,8 +94,41 @@ def test_import_source_writes_the_source_item(tmp_path, store_root):
         [str(bag), '--platform', 'bizzyboat']) == 0
     identifier = source_identity.bag_source_id(bag)
     path = layout.sources_dir(store_root) / f'{identifier}.json'
-    assert json.loads(path.read_text())['properties']['mws:platform'] == \
-        'bizzyboat'
+    properties = json.loads(path.read_text())['properties']
+    assert properties['mws:platform'] == 'bizzyboat'
+    assert properties['start_datetime'] == '2026-06-14T15:38:58.661123Z'
+    assert properties['end_datetime'] == '2026-06-14T15:40:07.608178Z'
+    assert properties['datetime'] is None
+
+
+def test_import_source_refuses_an_undated_bag(tmp_path, store_root):
+    """A source nobody can date is a provenance defect; nothing is written."""
+    bag = make_bag(tmp_path / 'bag', dated=False)
+    with pytest.raises(TimeIntervalError) as caught:
+        mws_import_source.main([str(bag)])
+    assert '--start/--end' in str(caught.value)
+    assert not store_root.exists()
+
+
+def test_import_source_takes_a_stated_interval_when_the_bag_has_none(
+        tmp_path, store_root):
+    """The override for material that has a time but does not record it."""
+    pytest.importorskip('pystac', reason='declared dependency; run rosdep')
+    bag = make_bag(tmp_path / 'bag', dated=False)
+    assert mws_import_source.main([
+        str(bag), '--start', '2026-06-22T13:22:29Z',
+        '--end', '2026-06-22T15:00:00Z']) == 0
+    identifier = source_identity.bag_source_id(bag)
+    written = layout.sources_dir(store_root) / f'{identifier}.json'
+    assert json.loads(written.read_text())['properties']['end_datetime'] == \
+        '2026-06-22T15:00:00Z'
+
+
+def test_import_source_refuses_half_a_stated_interval(tmp_path, store_root):
+    """One end of a range is not a range, and STAC has no shape for it."""
+    bag = make_bag(tmp_path / 'bag', dated=False)
+    with pytest.raises(TimeIntervalError):
+        mws_import_source.main([str(bag), '--start', '2026-06-22T13:22:29Z'])
 
 
 def test_import_source_reports_a_missing_path(tmp_path, store_root):
@@ -94,7 +145,8 @@ def test_write_revision_round_trip(tmp_path, store_root):
         'applies_to:\n  source_id: abc123\n'
         'parameters:\n  height_offset_m: 1.19\n'
         'evidence: PROJ transformation measured 2026-09-16\n'
-        'reviewer: Roland Arsenault\n')
+        'reviewer: Roland Arsenault\n'
+        'valid_from: 2026-06-22T00:00:00Z\n')
     assert mws_write_revision.main([str(description)]) == 0
     written = list(layout.revisions_dir(store_root).glob('*.json'))
     assert len(written) == 1
@@ -107,7 +159,8 @@ def test_write_revision_refuses_an_unknown_field(tmp_path, store_root):
     description = tmp_path / 'datum.yaml'
     description.write_text(
         'kind: datum\napplies_to:\n  source_id: a\nparameters:\n  x: 1\n'
-        'evidence: e\nreviewer: r\nreviewd_by: typo\n')
+        'evidence: e\nreviewer: r\nvalid_from: 2026-06-22T00:00:00Z\n'
+        'reviewd_by: typo\n')
     with pytest.raises(ValueError):
         mws_write_revision.main([str(description)])
 
@@ -117,7 +170,8 @@ def test_write_revision_dry_run_writes_nothing(tmp_path, store_root):
     description = tmp_path / 'datum.json'
     description.write_text(json.dumps({
         'kind': 'datum', 'applies_to': {'source_id': 'a'},
-        'parameters': {'x': 1}, 'evidence': 'e', 'reviewer': 'r'}))
+        'parameters': {'x': 1}, 'evidence': 'e', 'reviewer': 'r',
+        'valid_from': '2026-06-22T00:00:00Z'}))
     assert mws_write_revision.main([str(description), '--dry-run']) == 0
     assert not store_root.exists()
 

@@ -34,6 +34,12 @@ data files, or a single file's git-annex key) and writes the ``sources/`` Item
 that carries it, together with the lookup metadata -- platform, recorder, time
 range -- that is deliberately *not* part of the identity.
 
+The **time range is read from the bag** (``metadata.yaml``: the recording's
+start plus its duration), never asked for and never guessed. A source that
+carries no readable interval is refused: ``--start``/``--end`` exist for the
+sources that have one but do not record it -- a cast file, a prior grid --
+and are an operator statement, not a default.
+
 The material itself is never copied, moved or modified: a source is immutable
 and stays where it is. Annexing it (prototype component 10) is future work.
 """
@@ -45,6 +51,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from marine_world_store import item_schema, layout, source_identity
+from marine_world_store import source_time
 from marine_world_store.cli._common import (
     add_store_root_argument, resolved_root, run, stac_catalog,
 )
@@ -67,7 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--platform', default=None,
                         help='lookup metadata, never identity')
     parser.add_argument('--recorder', default=None)
-    parser.add_argument('--start', default=None, metavar='RFC3339')
+    parser.add_argument(
+        '--start', default=None, metavar='RFC3339',
+        help='state the interval instead of reading it from the bag; both '
+             'ends or neither')
     parser.add_argument('--end', default=None, metavar='RFC3339')
     parser.add_argument('--notes', default=None)
     parser.add_argument(
@@ -84,10 +94,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise FileNotFoundError(f'{path}: no such file or directory')
 
     is_bag = path.is_dir()
+    if args.start or args.end:
+        start, end = source_time.check_interval(
+            args.start, args.end, what=f'source {path.name}')
+    else:
+        start, end = source_time.source_interval(path)
     identifier = source_identity.source_id(path)
     keys = source_identity.merkle_lines(path) if is_bag else [
         f'{path.name}\t{source_identity.file_key(path)}']
     print(f'source id: {identifier}')
+    print(f'observed: {start} .. {end}')
     if args.dry_run:
         return 0
 
@@ -100,8 +116,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         role=args.role,
         platform=args.platform,
         recorder=args.recorder,
-        start_datetime=args.start,
-        end_datetime=args.end,
+        start_datetime=start,
+        end_datetime=end,
         href=str(path),
         notes=args.notes,
     )
