@@ -297,11 +297,25 @@ would also need — root resolution, layout paths, fingerprints, Item reading �
   the boat between Appledore and Smuttynose). The paths are **inputs to the adapter CLI**
   (arguments / a subset manifest YAML under the test root), never literals in code; the
   automated tests use a synthetic fixture bag directory.
+- **Item time interval — RESOLVED** (operator, 2026-09-22, after the Group B fix pass
+  found every Item being written with `"datetime": null`): every Item carries the
+  **observation interval of the material it is made of**, derived from the sources —
+  a bag's `metadata.yaml` start plus duration; a product takes the union of its sources'
+  intervals. An Item with no derivable interval is a provenance defect: the writer raises
+  a named error and writes nothing. `mws_link_depth_subset` therefore requires its bag
+  directories for their *time* as well as their identity, and refuses a tile it cannot
+  date; `--start`/`--end` remain an operator statement for material that has an interval
+  but does not record one. Recorded in rev 3 (Part 2 line 2 + change-log entry (h)) and
+  in the package README.
+
 - **σ fold rule for the overview's fourth band — OPEN, deliberately**: operator (2026-09-22):
   "this seems like something that should be thought about much more". See step 4: rule is a
   named strategy parameter, no σ band is written until decided, Group B produces the
   measurement, the orchestrator pauses with the numbers. Rev 3 §7 is amended to say the rule
-  is open and list the candidates.
+  is open and list the candidates. **Still open after the measurement** (operator,
+  2026-09-22): the numbers are recorded as evidence in §7 and Appendix B with a reading per
+  candidate, and the writers keep emitting σ as nodata with `sigma_fold: undecided`, so the
+  decision when it comes is a new fingerprint rather than a migration.
 - **Store frame EPSG code**: Part 4 lists "the reference-frame EPSG codes verified in PROJ
   before they are written" as owed. This plan writes whatever code is verified at
   implementation time (ITRF2020 realization query against the local PROJ database) rather
