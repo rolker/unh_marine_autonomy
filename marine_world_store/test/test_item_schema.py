@@ -92,6 +92,28 @@ def test_frame_can_be_overridden_for_an_untransformed_product():
     assert item['properties'][CONTRACT_FIELDS['frame']]['epsg'] == 4326
 
 
+def test_proj_epsg_follows_the_declared_frame():
+    """proj:epsg and the frame are one claim; they must never disagree.
+
+    Regression: proj:epsg was hard-coded to the store frame's 9989, so an
+    adapter that declared an untransformed EPSG:4326 tile still claimed 9989.
+    """
+    assert a_tile_item()['properties']['proj:epsg'] == 9989
+    item = a_tile_item(frame={'name': 'WGS84 as written', 'epsg': 4326})
+    assert item['properties']['proj:epsg'] == 4326
+
+
+@pytest.mark.parametrize('frame', [
+    {'name': 'no code at all'},
+    {'name': 'a string code', 'epsg': '4326'},
+    {'name': 'a bool', 'epsg': True},
+])
+def test_a_frame_without_an_epsg_code_is_refused(frame):
+    """Design section 4: a specific EPSG code, always -- never a fallback."""
+    with pytest.raises(item_schema.ItemSchemaError, match='EPSG'):
+        a_tile_item(frame=frame)
+
+
 def test_fingerprint_and_its_inputs_are_both_written():
     """A consumer that disagrees can see which input it disagrees about."""
     properties = a_tile_item()['properties']

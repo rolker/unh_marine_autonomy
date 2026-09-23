@@ -155,6 +155,25 @@ def store_frame() -> Dict[str, Any]:
     }
 
 
+def frame_epsg(frame: Mapping[str, Any], *, what: str) -> int:
+    """
+    Return the EPSG code a frame declaration names, or refuse the frame.
+
+    Design section 4: a frame is a *specific* EPSG code, always. A declaration
+    without one could not be written to ``proj:epsg`` without either inventing
+    a code or silently falling back to the store frame's -- both of which are
+    false claims about where the tile's coordinates are.
+
+    :raises ItemSchemaError: when ``frame`` has no integer ``epsg``.
+    """
+    epsg = frame.get('epsg')
+    if not isinstance(epsg, int) or isinstance(epsg, bool) or epsg <= 0:
+        raise ItemSchemaError(
+            f'{what}: the frame declaration {dict(frame)!r} names no EPSG '
+            'code; design section 4 requires a specific one')
+    return epsg
+
+
 def depth_cell_fields(bands: int = 2) -> List[CellField]:
     """
     Per-cell fields of a native depth tile as this repo writes them.
@@ -241,13 +260,19 @@ def build_tile_item(
     identifier = tile_item_id(quantity, state, origin, level, row, col)
     document = fingerprint_module.fingerprint_document(**dict(
         fingerprint_inputs))
+    declared_frame = dict(frame) if frame else store_frame()
     properties: Dict[str, Any] = {
         'license': license_id,
-        'proj:epsg': STORE_EPSG,
+        # The projection extension's code and the frame declaration are the
+        # same claim written twice; they must never disagree. Hard-coding the
+        # store frame here put EPSG:9989 on tiles an adapter had just declared
+        # as untransformed EPSG:4326 -- the false frame claim `frame=` exists
+        # to avoid.
+        'proj:epsg': frame_epsg(declared_frame, what=identifier),
         CONTRACT_FIELDS['quantity']: Quantity(quantity).value,
         CONTRACT_FIELDS['state']: State(state).value,
         CONTRACT_FIELDS['origin']: Origin(origin).value,
-        CONTRACT_FIELDS['frame']: dict(frame) if frame else store_frame(),
+        CONTRACT_FIELDS['frame']: declared_frame,
         CONTRACT_FIELDS['inputs']: document,
         CONTRACT_FIELDS['fingerprint']:
             fingerprint_module.fingerprint_of(document),

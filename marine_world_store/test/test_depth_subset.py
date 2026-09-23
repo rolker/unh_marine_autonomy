@@ -175,6 +175,9 @@ def test_items_declare_the_frame_the_tiles_actually_carry(
     frame = report.items[0]['properties'][CONTRACT_FIELDS['frame']]
     assert frame['epsg'] == 4326
     assert 'not applied' in frame['transformation_to_store_frame']
+    # Regression: proj:epsg claimed the store frame (9989) regardless.
+    for item in report.items:
+        assert item['properties']['proj:epsg'] == 4326
 
 
 def test_items_carry_the_footprint(source_layer, tmp_path):
