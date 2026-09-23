@@ -228,3 +228,31 @@ def test_the_catalog_step_refuses_a_path_that_is_not_a_layer(tmp_path):
     bogus.mkdir(parents=True)
     with pytest.raises(LayoutError):
         mws_regenerate_catalog.main(['--layer-dir', str(bogus)])
+
+
+def test_the_index_inputs_come_from_the_items_by_kind(layer, capsys):
+    """
+    One list per band schema, from the Items, never from a glob.
+
+    An Item whose tile is missing is an error: the index would point at
+    nothing.
+    """
+    pytest.importorskip('pystac', reason='declared dependency; run rosdep')
+    from marine_world_store import stac_catalog
+    from marine_world_store.cli import mws_list_tiles, mws_regenerate_catalog
+    directory, natives = layer
+    stac_catalog.write_items(directory, natives)
+    (directory / '13_9_9.tif').write_bytes(b'')   # a tile no Item records
+    assert mws_regenerate_catalog.main(['--layer-dir', str(directory)]) == 0
+    capsys.readouterr()
+    assert mws_list_tiles.main([str(directory), '--kind', 'native']) == 0
+    assert capsys.readouterr().out.split() == [
+        str(directory / '13_2_2.tif'), str(directory / '13_2_3.tif')]
+    assert mws_list_tiles.main(
+        [str(directory), '--kind', 'overview', '--optfile']) == 0
+    assert capsys.readouterr().out.split() == [
+        f'"{directory / "overviews" / "11_0_0.tif"}"',
+        f'"{directory / "overviews" / "12_1_1.tif"}"']
+    (directory / '13_2_2.tif').unlink()
+    with pytest.raises(OSError, match='not on disk'):
+        mws_list_tiles.main([str(directory), '--kind', 'native'])
