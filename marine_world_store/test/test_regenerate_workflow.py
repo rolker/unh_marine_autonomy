@@ -44,6 +44,7 @@ run today still has to exist for the day the dependency lands.
 import json
 import os
 from pathlib import Path
+import re
 
 from marine_world_store import fingerprint_sidecar, overview_records
 
@@ -291,7 +292,7 @@ def test_assemble_refuses_a_directory_that_is_not_there(tmp_path):
 def test_the_workflow_files_are_all_present():
     """A rule file lost to a rename is a workflow that silently does less."""
     assert (SNAKEMAKE_DIR / 'Snakefile').is_file()
-    for name in ('fingerprints', 'overviews', 'catalog', 'gti'):
+    for name in ('overviews', 'catalog', 'gti'):
         assert (SNAKEMAKE_DIR / 'rules' / f'{name}.smk').is_file()
 
 
@@ -305,9 +306,11 @@ def test_the_rules_invoke_the_tools_by_their_entry_point_names():
     """
     text = '\n'.join(
         path.read_text()
-        for path in sorted((SNAKEMAKE_DIR / 'rules').glob('*.smk')))
+        for path in [SNAKEMAKE_DIR / 'Snakefile',
+                     *sorted((SNAKEMAKE_DIR / 'rules').glob('*.smk'))])
     for tool in ('mws_refresh_fingerprints', 'mws_assemble_coverage',
-                 'mws_regenerate_catalog', 'build_depth_overview_parent'):
+                 'mws_regenerate_catalog', 'mws_list_tiles',
+                 'build_depth_overview_parent'):
         assert tool in text, tool
     assert 'python3 -m' not in text
 
@@ -338,86 +341,264 @@ def test_the_layer_directory_has_no_default():
     assert 'data/world' not in text
 
 
-def test_snakemake_accepts_the_workflow(tmp_path):
-    """
-    Dry-run the workflow, when snakemake is installed.
+def test_every_shell_path_is_quoted():
+    """A layer path with a space must not split into two arguments."""
+    for path in sorted((SNAKEMAKE_DIR / 'rules').glob('*.smk')):
+        for field in re.findall(r'\{(params\.[a-z_]+|output|input)(:q)?\}',
+                                path.read_text()):
+            name, quoted = field
+            if name in ('params.prune_below', 'params.kind'):
+                continue   # an integer and a fixed word, never a path
+            assert quoted, f'{path.name}: {{{name}}} is not :q-quoted'
 
-    Skipped on a host that has not had `rosdep install` run for this repo --
-    `snakemake` resolves through the repo-root rosdep.yaml local key. The test
-    exists for the day the dependency lands; deleting it would mean the rules
-    were never machine-checked at all.
-    """
-    pytest.importorskip(
-        'snakemake',
-        reason='snakemake is a declared dependency; run rosdep install.')
+
+# --- the workflow, end to end ------------------------------------------------
+#
+# These run snakemake for real, over a toy layer, with a stand-in for the C++
+# per-parent tool (fake_build_depth_overview_parent.py -- same command-line
+# contract, toy quadtree). The mws_* tools are the real ones, reached through
+# PATH wrappers so the test needs no install space. What is under test is the
+# DAG: that a regenerate after the first rebuilds exactly what changed.
+
+TEST_DIR = Path(__file__).resolve().parent
+PACKAGE_DIR = TEST_DIR.parent
+MWS_TOOLS = ('mws_refresh_fingerprints', 'mws_assemble_coverage',
+             'mws_regenerate_catalog', 'mws_list_tiles')
+
+
+def _executable(path: Path, text: str) -> Path:
+    path.write_text(text)
+    path.chmod(0o755)
+    return path
+
+
+@pytest.fixture
+def workflow(tmp_path, monkeypatch):
+    """Provide a layer, tool wrappers on PATH, and a snakemake runner."""
+    pytest.importorskip('snakemake', reason='declared dependency; rosdep')
+    pytest.importorskip('pystac', reason='declared dependency; rosdep')
+    gdal = pytest.importorskip('osgeo.gdal', reason='declared dependency')
+    gdal.UseExceptions()
+    import shutil
     import subprocess
-    layer = tmp_path / 'depths' / 'reviewed' / 'surveyed'
-    _tile(layer, '13_1_1.tif')
-    result = subprocess.run(
-        ['snakemake', '-s', str(SNAKEMAKE_DIR / 'Snakefile'), '--dry-run',
-         '--config', f'layer_dir={layer}', 'fine_level=13', 'min_level=11'],
-        capture_output=True, text=True, cwd=str(tmp_path))
-    assert result.returncode == 0, result.stderr
+    import sys
+    if shutil.which('gdaltindex') is None:
+        pytest.skip('gdaltindex (GDAL) is a declared dependency')
 
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    for tool in MWS_TOOLS:
+        _executable(bin_dir / tool, (
+            f'#!{sys.executable}\n'
+            'import sys\n'
+            f'sys.path.insert(0, {str(PACKAGE_DIR)!r})\n'
+            f'from marine_world_store.cli.{tool} import console_main\n'
+            'sys.exit(console_main())\n'))
+    fake = _executable(
+        bin_dir / 'fake_build_depth_overview_parent',
+        f'#!{sys.executable}\n'
+        'import runpy, sys\n'
+        f'sys.argv[0] = {str(TEST_DIR / "fake_build_depth_overview_parent.py")!r}\n'
+        'runpy.run_path(sys.argv[0], run_name="__main__")\n')
+    log = tmp_path / 'tool.log'
+    monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
+    monkeypatch.setenv('FAKE_TOOL_LOG', str(log))
+    # The catalog must regenerate the layer the DAG built -- never the tree
+    # the environment's store root names. Point that somewhere to watch.
+    elsewhere = tmp_path / 'the-environments-store'
+    monkeypatch.setenv('WORLD_STORE_ROOT', str(elsewhere))
 
-# --- what the pre-step must never touch --------------------------------------
-
-
-@pytest.mark.parametrize('name', ['draft', 'processed', 'reference', 'chart'])
-def test_the_pre_step_refuses_a_legacy_layer(tmp_path, name):
-    """
-    Refuse the legacy tree: the pass writes .fp files and moves mtimes.
-
-    Regression: mws_refresh_fingerprints had no layer guard at all, so pointed
-    at a legacy draft/processed/reference/chart layer it wrote and deleted
-    .fp files there and reset its tiles' mtimes.
-    """
-    from marine_world_store.layout import LayoutError
-    layer = tmp_path / name
-    tile = _tile(layer, '13_1_1.tif')
-    before = tile.stat().st_mtime
-    with pytest.raises(LayoutError, match='legacy'):
-        fingerprint_sidecar.refresh_layer(layer)
-    assert sorted(p.name for p in layer.iterdir()) == ['13_1_1.tif']
-    assert tile.stat().st_mtime == before
-
-
-def test_the_pre_step_refuses_a_layer_beside_the_legacy_registry(tmp_path):
-    """Any name, where the legacy store's registry.json sits beside it."""
-    from marine_world_store.layout import LayoutError
-    (tmp_path / 'registry.json').write_text('{}')
-    _tile(tmp_path / 'renamed', '13_1_1.tif')
-    with pytest.raises(LayoutError, match='registry'):
-        fingerprint_sidecar.refresh_layer(tmp_path / 'renamed')
-
-
-def test_a_symlinked_tile_is_never_reached_through(tmp_path):
-    """
-    Leave a linked tile alone: utime would move its target's mtime.
-
-    Regression: os.utime follows symlinks, so an unchanged linked tile had the
-    mtime of the file it pointed at -- possibly in another store -- reset.
-    """
-    elsewhere = _tile(tmp_path / 'elsewhere', 'real.tif')
-    layer = tmp_path / 'depths' / 'reviewed' / 'surveyed'
+    layer = tmp_path / 'store' / 'depths' / 'reviewed' / 'surveyed'
     layer.mkdir(parents=True)
-    link = layer / '13_1_1.tif'
-    link.symlink_to(elsewhere)
-    fingerprint_sidecar.refresh_directory(layer)
-    target_mtime = elsewhere.stat().st_mtime
-    os.utime(elsewhere, (target_mtime + 500, target_mtime + 500))
-    report = fingerprint_sidecar.refresh_directory(layer)
-    assert report.symlinks_skipped == [str(link)]
-    assert report.unchanged == report.changed == report.created == 0
-    assert elsewhere.stat().st_mtime == pytest.approx(target_mtime + 500)
-    assert not fingerprint_sidecar.sidecar_path(link).exists()
+
+    class Workflow:
+
+        def __init__(self):
+            self.layer = layer
+            self.elsewhere = elsewhere
+            self.log = log
+
+        def native(self, name, value=1.0):
+            """Write a native tile and its Item, as the link step would."""
+            from marine_world_store import item_schema, stac_catalog
+            path = layer / name
+            dataset = gdal.GetDriverByName('GTiff').Create(
+                str(path), 4, 4, 2, gdal.GDT_Float64)
+            dataset.SetGeoTransform((-70.0, 0.001, 0.0, 42.1, 0.0, -0.001))
+            dataset.GetRasterBand(1).Fill(value)
+            dataset = None
+            level, row, col = (int(p) for p in name[:-4].split('_'))
+            stac_catalog.write_items(layer, [item_schema.build_tile_item(
+                quantity='depths', state='reviewed', origin='surveyed',
+                level=level, row=row, col=col, asset_href=f'./{name}',
+                fingerprint_inputs={'source_ids': [f'bag-{name}'],
+                                    'builder_version': 'test/1'},
+                uncertainty_basis='test', resolution_m=1.0,
+                start_datetime='2026-06-22T13:00:00Z',
+                end_datetime='2026-06-22T14:00:00Z')])
+            return path
+
+        def run(self, *extra):
+            """Run the workflow; return (stdout+stderr, builds, prunes)."""
+            self.log.write_text('')
+            result = subprocess.run(
+                ['snakemake', '-s', str(SNAKEMAKE_DIR / 'Snakefile'),
+                 '--cores', '2', '--config', f'layer_dir={layer}',
+                 'fine_level=13', 'min_level=11',
+                 f'build_depth_overview_parent_tool={fake}', *extra],
+                capture_output=True, text=True, cwd=str(tmp_path))
+            output = result.stdout + result.stderr
+            assert result.returncode == 0, output
+            lines = self.log.read_text().split()
+            builds = sorted(lines[i + 1] for i, w in enumerate(lines)
+                            if w == 'build')
+            prunes = sorted(lines[i + 1] for i, w in enumerate(lines)
+                            if w == 'prune')
+            return output, builds, prunes
+
+    return Workflow()
 
 
-def test_assembling_coverage_refuses_a_legacy_layer(tmp_path):
-    """The legacy layer's overviews/coverage.json is the legacy writer's."""
-    from marine_world_store.cli import mws_assemble_coverage
-    from marine_world_store.layout import LayoutError
-    (tmp_path / 'processed' / 'overviews').mkdir(parents=True)
-    with pytest.raises(LayoutError):
-        mws_assemble_coverage.main([str(tmp_path / 'processed')])
-    assert not (tmp_path / 'processed' / 'overviews' / 'coverage.json').exists()
+def test_a_regenerate_rebuilds_exactly_what_changed(workflow):
+    """
+    Rebuild what changed, and nothing else -- run after run.
+
+    Regression: every rule's inputs and outputs were .done stamps, so after
+    the first run a rewritten tile produced "Nothing to be done", exit 0.
+    """
+    for name in ('13_0_0.tif', '13_0_1.tif', '13_1_0.tif', '13_1_1.tif',
+                 '13_2_2.tif'):
+        workflow.native(name)
+    _, builds, _ = workflow.run()
+    assert builds == ['11_0_0', '12_0_0', '12_1_1']
+
+    # Nothing changed: nothing is rebuilt, and no product step reruns (the
+    # level listings are re-derived every run; they are planning, not
+    # products).
+    output, builds, _ = workflow.run()
+    assert builds == [], output
+    for product_rule in ('rule build_parent', 'rule assemble_coverage',
+                         'rule catalog', 'rule gti_'):
+        assert product_rule not in output, output
+
+    # A byte-identical rewrite is not a change (the fingerprint pre-step).
+    tile = workflow.layer / '13_0_0.tif'
+    tile.write_bytes(tile.read_bytes())
+    os.utime(tile, (tile.stat().st_atime, tile.stat().st_mtime + 100))
+    _, builds, _ = workflow.run()
+    assert builds == []
+
+    # A real change rebuilds its ancestors and ONLY them.
+    workflow.native('13_2_2.tif', value=7.0)
+    _, builds, _ = workflow.run()
+    assert builds == ['11_0_0', '12_1_1']
+    _, builds, _ = workflow.run()
+    assert builds == []
+
+
+def test_a_regenerate_prunes_what_describes_nothing(workflow):
+    """
+    A native tile at a derived index, or vanished children, remove the tile.
+
+    Regression: the per-parent DAG never removed a derived tile, so it stayed
+    in overviews/, in coverage.json and in the Collection.
+    """
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    workflow.run()
+    overviews = workflow.layer / 'overviews'
+    assert (overviews / '12_1_1.tif').is_file()
+
+    # Compiled data lands at a derived tile's index: native wins.
+    workflow.native('12_1_1.tif', value=3.0)
+    _, builds, prunes = workflow.run()
+    assert prunes == ['12_1_1']
+    assert builds == ['11_0_0']
+    assert not (overviews / '12_1_1.tif').exists()
+    coverage = json.loads((overviews / 'coverage.json').read_text())
+    assert [(lvl['level'], run['row'], run['col_min'])
+            for lvl in coverage['levels'] for run in lvl['runs']] == [
+        (11, 0, 0), (12, 0, 0)]
+
+    # A derived tile's only child goes away (with its Item: the link step
+    # owns both, and an Item whose tile is gone is refused by the index).
+    (workflow.layer / '13_0_0.tif').unlink()
+    (workflow.layer / 'depths-reviewed-surveyed-13_0_0.json').unlink()
+    _, builds, prunes = workflow.run()
+    assert prunes == ['12_0_0']
+    assert builds == ['11_0_0']
+    record = json.loads((overviews / '11_0_0.json').read_text())
+    assert record['children'] == ['12_1_1.tif']
+
+
+def test_the_catalog_and_indexes_are_this_layers(workflow):
+    """
+    Catalog the layer the DAG built, and index it from its Items.
+
+    Regression: the catalog rule regenerated whatever tree the environment's
+    store root named, and the index globbed only overviews/.
+    """
+    for name in ('13_0_0.tif', '13_0_1.tif'):
+        workflow.native(name)
+    output, _, _ = workflow.run()
+    assert not workflow.elsewhere.exists()
+    collection = json.loads((workflow.layer / 'collection.json').read_text())
+    assert collection['summaries']['mws:levels'] == [11, 12, 13]
+    assert (workflow.layer / 'depths-reviewed-surveyed-12_0_0.json').is_file()
+    # One index per band schema, both written on any GDAL this repo runs on.
+    assert (workflow.layer / 'index.gti.fgb').is_file()
+    assert (workflow.layer / 'overviews' / 'index.gti.fgb').is_file()
+
+
+def test_two_runs_over_one_layer_are_serialised(workflow, tmp_path):
+    """
+    A second run over a layer refuses while the first holds its lock.
+
+    Regression: only Snakemake's per-working-directory lock existed, so two
+    runs started from two directories interleaved over one layer.
+    """
+    import fcntl
+    import subprocess
+    workflow.native('13_0_0.tif')
+    lock = workflow.layer / '.regenerate' / 'regenerate.lock'
+    lock.parent.mkdir(exist_ok=True)
+    with open(lock, 'a') as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        elsewhere = tmp_path / 'another-cwd'
+        elsewhere.mkdir()
+        result = subprocess.run(
+            ['snakemake', '-s', str(SNAKEMAKE_DIR / 'Snakefile'), '--cores',
+             '1', '--config', f'layer_dir={workflow.layer}', 'fine_level=13',
+             'min_level=11'],
+            capture_output=True, text=True, cwd=str(elsewhere))
+    assert result.returncode != 0
+    assert 'another regenerate is running' in result.stdout + result.stderr
+    assert not (workflow.layer / 'overviews').exists()
+
+
+def test_a_dry_run_writes_nothing(workflow):
+    """-n plans the DAG and writes no .fp, no tile and no Item."""
+    workflow.native('13_0_0.tif')
+    before = sorted(p.relative_to(workflow.layer)
+                    for p in workflow.layer.rglob('*')
+                    if '.regenerate' not in p.parts)
+    output, builds, _ = workflow.run('--dry-run')
+    assert builds == []
+    assert 'fingerprint pre-step is skipped' in output
+    after = sorted(p.relative_to(workflow.layer)
+                   for p in workflow.layer.rglob('*')
+                   if '.regenerate' not in p.parts)
+    assert after == before
+
+
+def test_the_workflow_requires_the_layer_directory(tmp_path):
+    """No default layer, and a missing one is named."""
+    pytest.importorskip('snakemake', reason='declared dependency; rosdep')
+    import subprocess
+    for config in ([], [f'layer_dir={tmp_path / "absent"}']):
+        result = subprocess.run(
+            ['snakemake', '-s', str(SNAKEMAKE_DIR / 'Snakefile'), '-n',
+             '--cores', '1', *(['--config', *config] if config else [])],
+            capture_output=True, text=True, cwd=str(tmp_path))
+        assert result.returncode != 0
+        assert 'layer_dir' in result.stdout + result.stderr

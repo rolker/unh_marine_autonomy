@@ -26,21 +26,27 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-"""One checkpoint per level: fold every parent the level below now supports.
+"""One checkpoint per level: prune, then list every parent the level below supports.
 
 A level's parents cannot be enumerated until the level below it exists, because
 a derived tile is itself a contributor to the next fold. That is what a
 Snakemake `checkpoint` is for -- a DAG whose shape depends on a previous step's
 output.
 
-The enumeration itself is `build_depth_overview_parent --list-parents`, not
-Python here: the parent/child mapping is GGGS, whose column counts vary by
-latitude band, and a second implementation of that arithmetic in a workflow
-file would be a second thing to get wrong with no tests on it. The same CLI
-does the folding, one parent per invocation, so `-j` parallelises the level.
+The enumeration is `build_depth_overview_parent --list-parents`, not Python
+here: the parent/child mapping is GGGS, whose column counts vary by latitude
+band, and a second implementation of that arithmetic in a workflow file would
+be a second thing to get wrong with no tests on it. The listing names each
+parent's CHILDREN too, which is what lets a parent's job take the child tiles
+as its inputs without this file knowing which tiles those are.
 
-Native-wins is handled on the CLI side and needs no rule: a parent the compile
-already covers is not listed and, if it were invoked anyway, writes nothing.
+Before listing, the same checkpoint prunes the level (`--prune`): a derived
+tile that a native tile now covers, or whose children are all gone, is never
+listed, so no job would ever be scheduled to remove it.
+
+Every file a rule reads or writes is a real input or output -- never a stamp
+standing in for one -- so Snakemake's mtime and input-set triggers see a
+changed, added or vanished tile.
 """
 
 
@@ -55,56 +61,87 @@ def _levels():
     return list(range(int(FINE_LEVEL) - 1, MIN_LEVEL - 1, -1))
 
 
+def _listing(level):
+    """``{parent_name: [child paths]}`` from level ``level``'s checkpoint."""
+    listing = checkpoints.list_parents.get(level=level).output[0]
+    parents = {}
+    with open(listing) as handle:
+        for line in handle:
+            fields = line.rstrip("\n").split("\t")
+            if fields and fields[0]:
+                parents[fields[0]] = [LAYER_DIR / child for child in fields[1:]]
+    return parents
+
+
+def parent_tiles(level):
+    """The derived tiles the DAG builds at ``level`` (its jobs' outputs)."""
+    return [OVERVIEWS / f"{name}.tif" for name in _listing(level)]
+
+
+def _list_inputs(wildcards):
+    """
+    What a level's listing depends on: the tiles that can change it.
+
+    The native tiles at the child level and at the level itself (a native
+    tile arriving at a parent's index removes that parent), and the derived
+    tiles the level below produced. A tile added or removed changes this SET,
+    which reruns the listing; one rewritten reruns it by mtime.
+    """
+    level = int(wildcards.level)
+    inputs = native_tiles(level + 1) + native_tiles(level)
+    if level < int(FINE_LEVEL) - 1:
+        inputs += parent_tiles(level + 1)
+    return inputs
+
+
 checkpoint list_parents:
-    """Enumerate the parents at one level, once the level below is built."""
+    """Prune, then enumerate the parents at one level, with their children."""
     input:
-        # Level fine-1 folds native tiles, so it waits only on the pre-step;
-        # every coarser level waits on the level below it having been built.
-        lambda wildcards: (
-            [WORK / "fingerprints.done"]
-            if int(wildcards.level) == int(FINE_LEVEL) - 1
-            else [WORK / f"level_{int(wildcards.level) + 1}.done"]
-        ),
+        _list_inputs,
     output:
-        WORK / "parents_{level}.txt",
+        WORK / "parents_{level}.tsv",
     params:
-        layer=lambda wildcards: str(LAYER_DIR),
+        layer=str(LAYER_DIR),
+        tool=OVERVIEW_TOOL,
+        # The finest level can hold no valid derived tile (nothing native lies
+        # below it), so its leftovers are pruned with the first listing.
+        prune_below=lambda wildcards: (
+            int(wildcards.level) + 1
+            if int(wildcards.level) == int(FINE_LEVEL) - 1 else ""),
     shell:
-        "build_depth_overview_parent --list-parents {params.layer} "
-        "{wildcards.level} > {output}"
+        "if [ -n '{params.prune_below}' ]; then "
+        "{params.tool:q} --prune {params.layer:q} {params.prune_below}; fi; "
+        "{params.tool:q} --prune {params.layer:q} {wildcards.level} && "
+        "{params.tool:q} --list-parents {params.layer:q} {wildcards.level} "
+        "> {output:q}"
+
+
+def _children(wildcards):
+    """The child tiles one parent folds, from its level's listing."""
+    name = f"{wildcards.level}_{wildcards.row}_{wildcards.col}"
+    children = _listing(int(wildcards.level)).get(name)
+    if children is None:
+        raise WorkflowError(
+            f"{name} is not a parent the listing for level {wildcards.level} "
+            "schedules")
+    return children
 
 
 rule build_parent:
     """Fold ONE parent tile. Per-tile atomic, so `-j` may run many at once."""
     input:
-        WORK / "parents_{level}.txt",
+        _children,
     output:
-        touch(WORK / "parent_{level}_{row}_{col}.done"),
+        OVERVIEWS / "{level}_{row}_{col}.tif",
+        OVERVIEWS / "{level}_{row}_{col}.json",
     params:
-        layer=lambda wildcards: str(LAYER_DIR),
+        layer=str(LAYER_DIR),
+        tool=OVERVIEW_TOOL,
     shell:
-        "build_depth_overview_parent {params.layer} "
+        "{params.tool:q} {params.layer:q} "
         "{wildcards.level} {wildcards.row} {wildcards.col}"
 
 
-def parents_at(level):
-    """The parent stamps for `level`, read from its checkpoint's output."""
-    listing = checkpoints.list_parents.get(level=level).output[0]
-    names = [line.strip() for line in open(listing) if line.strip()]
-    return [WORK / f"parent_{name}.done" for name in names]
-
-
-rule level_done:
-    """A level is done when every parent it listed has been folded."""
-    input:
-        lambda wildcards: parents_at(wildcards.level),
-    output:
-        touch(WORK / "level_{level}.done"),
-
-
-rule overviews_done:
-    """Every level, coarsest last."""
-    input:
-        lambda wildcards: [WORK / f"level_{level}.done" for level in _levels()],
-    output:
-        touch(WORK / "overviews.done"),
+def overview_tiles(wildcards=None):
+    """Every derived tile the DAG builds, every level."""
+    return [tile for level in _levels() for tile in parent_tiles(level)]

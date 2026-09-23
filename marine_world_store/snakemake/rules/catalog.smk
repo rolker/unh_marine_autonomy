@@ -36,28 +36,56 @@ because parallel writers would race over that one file, and the only lock that
 would fix it is one that serialises the DAG back into the batch build the
 per-parent mode exists to replace. uma-ADR-0013 D3 wants the manifest; this is
 where it is written, once, from records each written by exactly one process.
+Its inputs are the derived tiles themselves, so a rebuilt, added or pruned
+tile reassembles it.
 
-`regenerate_catalog` writes ONLY changed Items -- design section 9's replica
-rule, so an unchanged store leaves every file's bytes and mtime alone and a
-replica sync moves nothing.
+`catalog` builds the overview tiles' Items and writes ONLY changed ones --
+design section 9's replica rule, so an unchanged store leaves every file's
+bytes and mtime alone and a replica sync moves nothing. It runs over THIS
+layer (`--layer-dir`): the first version ran `mws_regenerate_catalog` with no
+root at all, which regenerated whatever tree $WORLD_STORE_ROOT, the config
+file or the default named -- not the layer this DAG had just built.
 """
+
+
+def native_items(wildcards=None):
+    """
+    The native tiles' Items in the layer: what the adapter/link step wrote.
+
+    An Item file is ``<collection id>-<level>_<row>_<col>.json``; it is a
+    NATIVE tile's when that tile is in the layer itself. The overview Items
+    are this rule's own output, so they are not its input.
+    """
+    items = []
+    for path in sorted(LAYER_DIR.glob("*-*_*_*.json")):
+        tile = path.name.rsplit("-", 1)[-1][: -len(".json")] + ".tif"
+        if (LAYER_DIR / tile).is_file():
+            items.append(path)
+    return items
 
 
 rule assemble_coverage:
     input:
-        WORK / "overviews.done",
+        overview_tiles,
     output:
-        touch(WORK / "coverage.done"),
+        OVERVIEWS / "coverage.json",
     params:
-        layer=lambda wildcards: str(LAYER_DIR),
+        layer=str(LAYER_DIR),
+        overviews=str(OVERVIEWS),
+        tool=ASSEMBLE_TOOL,
     shell:
-        "mws_assemble_coverage {params.layer}"
+        "mkdir -p {params.overviews:q} && "
+        "{params.tool:q} {params.layer:q}"
 
 
 rule catalog:
     input:
-        WORK / "coverage.done",
+        OVERVIEWS / "coverage.json",
+        native_items,
     output:
         touch(WORK / "catalog.done"),
+    params:
+        layer=str(LAYER_DIR),
+        tool=CATALOG_TOOL,
     shell:
-        "mws_regenerate_catalog --quantity depths"
+        "{params.tool:q} --layer-dir {params.layer:q}"
