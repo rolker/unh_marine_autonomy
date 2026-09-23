@@ -1212,37 +1212,9 @@ std::string sigmaFoldName(SigmaFold rule)
   return "unknown";
 }
 
-void refuseLegacyDepthLayer(const std::string & layer_dir_s)
-{
-  fs::path layer = fs::absolute(fs::path(layer_dir_s)).lexically_normal();
-  if (layer.filename().empty()) {
-    layer = layer.parent_path();   // a trailing separator names no directory
-  }
-  const std::string name = layer.filename().string();
-  for (const SourceLayer legacy :
-    {SourceLayer::Processed, SourceLayer::Draft, SourceLayer::Reference,
-      SourceLayer::Chart})
-  {
-    if (name == layerDirName(legacy)) {
-      throw std::runtime_error(
-        "refusing " + layer_dir_s + ": '" + name + "' is a legacy "
-        "marine_bathymetry_store layer, whose pyramid is the 2-band one "
-        "build_depth_overviews writes. The 4-band rev-3 schema belongs to a "
-        "world-store quantity layer (<root>/depths/<state>/<origin>/)");
-    }
-  }
-  if (fs::exists(layer.parent_path() / "registry.json")) {
-    throw std::runtime_error(
-      "refusing " + layer_dir_s + ": its parent holds the legacy store's "
-      "registry.json, so this is a legacy marine_bathymetry_store layer, not a "
-      "world-store quantity layer (<root>/depths/<state>/<origin>/)");
-  }
-}
-
 DepthOverviewBuildResult buildMultiBandDepthOverviewPyramid(
   const MultiBandOverviewOptions & opts, std::ostream * progress)
 {
-  refuseLegacyDepthLayer(opts.layer_dir);
   const SigmaFold rule = opts.sigma_fold;
   // A dry run writes nothing, so it needs no writer lock (and must not create
   // the lock file in a layer it only inspects).
@@ -1307,7 +1279,6 @@ std::vector<MultiBandOverviewParent> listMultiBandOverviewParentInputs(
   if (!fs::is_directory(layer_dir)) {
     throw std::runtime_error("not a directory: " + layer_dir_s);
   }
-  refuseLegacyDepthLayer(layer_dir_s);
   if (parent_level < 0 ||
     static_cast<std::size_t>(parent_level) + 1 >= gggs::levels.size())
   {
@@ -1383,7 +1354,6 @@ std::vector<gggs::GridIndex> removeDerivedTilesAtLevel(
       std::string(caller) + ": " + std::to_string(level) +
       " is not a GGGS level");
   }
-  refuseLegacyDepthLayer(layer_dir_s);
   const LayerWriterLock lock(layer_dir, false);
   refuseBatchDebris(layer_dir);
   const fs::path overviews = layer_dir / "overviews";
@@ -1444,7 +1414,6 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
       "buildMultiBandDepthOverviewParent: level " + std::to_string(level) +
       " has no child level to fold from");
   }
-  refuseLegacyDepthLayer(layer_dir_s);
   const LayerWriterLock lock(layer_dir, false);
   refuseBatchDebris(layer_dir);
   // gridFromTileName round-trips its answer through tileFilename and compares

@@ -354,8 +354,6 @@ struct MultiBandOverviewParent
 /// `pruneMultiBandOverviewLevel`, which finds such tiles without being told
 /// their index.
 ///
-/// **Refuses a legacy layer**: see `refuseLegacyDepthLayer`.
-///
 /// **Atomicity is per tile**, not wholesale: the tile is written to a unique
 /// temporary beside its destination and renamed over it, which `rename(2)` makes
 /// atomic within a directory. There is no `overviews.tmp/` staging copy and no
@@ -426,8 +424,8 @@ std::vector<MultiBandOverviewParent> listMultiBandOverviewParentInputs(
 ///
 /// @return The indices removed, in GGGS order.
 /// @throws std::invalid_argument if @p level is not a GGGS level.
-/// @throws std::runtime_error if @p layer_dir is not a directory, is a legacy
-///   layer, or a removal fails.
+/// @throws std::runtime_error if @p layer_dir is not a directory, or a removal
+///   fails.
 std::vector<gggs::GridIndex> pruneMultiBandOverviewLevel(
   const std::string & layer_dir, int level);
 
@@ -446,19 +444,6 @@ std::vector<gggs::GridIndex> pruneMultiBandOverviewLevel(
 std::vector<gggs::GridIndex> removeMultiBandOverviewLevel(
   const std::string & layer_dir, int level);
 
-/// @brief Refuse a legacy `draft/processed/reference/chart` layer by POSITIVE
-///        identification, not by what its `overviews/` happens to hold.
-///
-/// Every 4-band writer and planner calls this first. The cross-schema guard
-/// (`refuseCrossSchemaSidecar`) only fires once a legacy layer already HAS a
-/// 2-band pyramid; a legacy layer with none would otherwise gain a 4-band one
-/// silently. Refused when the directory's name is one of
-/// `marine_bathymetry_store`'s own layer names (`layerDirName`), or when its
-/// parent holds the legacy store's `registry.json`. A rev-3 layer is
-/// `<root>/<quantity>/<state>/<origin>/` and matches neither.
-///
-/// @throws std::runtime_error naming the layer and the reason.
-void refuseLegacyDepthLayer(const std::string & layer_dir);
 
 /// @brief Internals exposed for unit testing — not a stable public API.
 namespace detail

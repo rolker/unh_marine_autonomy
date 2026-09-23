@@ -718,7 +718,7 @@ TEST(PerParentOverview, ListsADerivedTileAsAContributorToTheNextLevelUp)
   EXPECT_EQ(next.front(), grandparent);
 }
 
-// --- stale derived tiles, the legacy refusal, the DAG's inputs --------------
+// --- stale derived tiles, the DAG's inputs ----------------------------------
 
 std::string readText(const fs::path & path)
 {
@@ -874,48 +874,6 @@ TEST(PruneOverviewLevel, RemoveLevelTakesEveryDerivedTileAndNoNativeOne)
   EXPECT_THROW(
     mbs::removeMultiBandOverviewLevel(dir.path().string(), 21),
     std::invalid_argument);
-}
-
-TEST(LegacyLayerRefusal, EveryFourBandEntryPointRefusesALegacyLayer)
-{
-  // Regression: the 4-band writers refused a legacy layer only when its
-  // overviews/ ALREADY held 2-band tiles; one with no pyramid yet gained a
-  // 4-band one silently, and --list-parents had no guard at all.
-  ScratchDir root("legacy");
-  for (const char * name : {"draft", "processed", "reference", "chart"}) {
-    const fs::path layer = root.path() / name;
-    for (const gggs::GridIndex & g : fineSiblings()) {
-      writeUniformNativeTile(layer, g, -8.0, 0.4);
-    }
-    const gggs::GridIndex parent = gggs::parent(fineSiblings().front());
-    EXPECT_THROW(
-      mbs::buildMultiBandDepthOverviewParent(
-        layer.string(), parent.level(), parent.row(), parent.column()),
-      std::runtime_error) << name;
-    EXPECT_THROW(
-      mbs::listMultiBandOverviewParents(layer.string(), parent.level()),
-      std::runtime_error) << name;
-    EXPECT_THROW(
-      mbs::pruneMultiBandOverviewLevel(layer.string(), parent.level()),
-      std::runtime_error) << name;
-    mbs::MultiBandOverviewOptions batch;
-    batch.layer_dir = layer.string() + "/";   // a trailing slash hides nothing
-    batch.min_level = kFineLevel - 1;
-    EXPECT_THROW(mbs::buildMultiBandDepthOverviewPyramid(batch), std::runtime_error) <<
-      name;
-    EXPECT_FALSE(fs::exists(layer / "overviews")) << name;
-  }
-  // Any name, where the legacy store's registry sits beside it.
-  const fs::path store = root.path() / "store";
-  fs::create_directories(store / "renamed");
-  std::ofstream(store / "registry.json") << "{}";
-  EXPECT_THROW(mbs::refuseLegacyDepthLayer((store / "renamed").string()),
-    std::runtime_error);
-  // A rev-3 layer is refused by neither rule.
-  fs::create_directories(root.path() / "depths" / "draft" / "surveyed");
-  EXPECT_NO_THROW(
-    mbs::refuseLegacyDepthLayer(
-      (root.path() / "depths" / "draft" / "surveyed").string()));
 }
 
 TEST(PerParentOverview, ListingNamesEachParentsChildrenForTheDag)

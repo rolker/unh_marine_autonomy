@@ -339,10 +339,10 @@ ros2 run marine_bathymetry_store build_depth_overview_parent --prune \
 
 - **Which tree.** These write a **rev-3 quantity layer**
   (`<store root>/depths/<state>/<origin>/`), never `draft/processed/reference/
-  chart`, and every 4-band entry point (batch, per-parent, `--list-parents`,
-  `--prune`) refuses a legacy layer **positively** (`refuseLegacyDepthLayer`):
-  by its name, or by the legacy store's `registry.json` beside it. Both writers
-  also refuse to replace a sidecar written under the other's band count:
+  chart`. Nothing refuses the old tree by name: rev 3 replaces it, and the
+  existing stores are wiped and rebuilt once rev 3 works (owner decision,
+  2026-09-23) — point these at a rev-3 layer only. Both writers refuse to
+  replace a sidecar written under the other's band count:
   consumers read these tiles **by band index**, so a schema swapped in place is
   the one mistake nothing downstream could detect — every read would succeed
   and every number would mean something else.
