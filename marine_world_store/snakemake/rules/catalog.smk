@@ -36,9 +36,10 @@ because parallel writers would race over that one file, and the only lock that
 would fix it is one that serialises the DAG back into the batch build the
 per-parent mode exists to replace. uma-ADR-0013 D3 wants the manifest; this is
 where it is written, once, from records each written by exactly one process.
-Its inputs are the derived tiles and their records themselves, so a rebuilt,
-added or pruned tile reassembles it, and a missing tile or record is asked
-for -- and therefore rebuilt -- before it is.
+Its inputs are the derived tiles and their records themselves, so a missing
+tile or record is asked for -- and therefore rebuilt -- before it is. It runs
+on every run (its output is a stamp deleted when the Snakefile loads), and
+``coverage.json`` is rewritten only when its content changed.
 
 `catalog` builds the overview tiles' Items and writes ONLY changed ones --
 design section 9's replica rule, so an unchanged store leaves every file's
@@ -66,10 +67,14 @@ def native_items(wildcards=None):
 
 
 rule assemble_coverage:
+    # The output is a stamp, deleted when the Snakefile loads like the
+    # listings, so the manifest is reassembled on EVERY run -- and not
+    # coverage.json itself, which Snakemake would touch after the job even
+    # when assemble left it alone because its bytes had not changed.
     input:
         overview_products,
     output:
-        OVERVIEWS / "coverage.json",
+        touch(WORK / "coverage.done"),
     params:
         layer=str(LAYER_DIR),
         overviews=str(OVERVIEWS),
@@ -81,7 +86,7 @@ rule assemble_coverage:
 
 rule catalog:
     input:
-        OVERVIEWS / "coverage.json",
+        WORK / "coverage.done",
         native_items,
     output:
         touch(WORK / "catalog.done"),

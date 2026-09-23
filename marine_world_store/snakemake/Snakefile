@@ -88,7 +88,10 @@ Shape of the DAG, and why it is shaped that way:
 4. ``assemble_coverage`` is a single serialised step AFTER every parent. The
    per-parent writer deliberately leaves a per-tile record instead of touching
    a shared ``coverage.json``, because parallel writers would race over that one
-   file; this turns the records into the manifest uma-ADR-0013 D3 expects.
+   file; this turns the records into the manifest uma-ADR-0013 D3 expects. Its
+   output is a stamp (``coverage.done``) deleted when this file loads, so it
+   runs every run; ``coverage.json`` is not a declared output, because
+   Snakemake would touch it after the job even when its bytes did not change.
 
 5. ``catalog`` builds the overview tiles' Items and rewrites only changed ones
    (section 9's replica rule) -- for THIS layer (``--layer-dir``), not for
@@ -281,7 +284,8 @@ else:
     # Re-derive every level's listing (see the module docstring).
     for stale_listing in WORK.glob("parents_*.tsv"):
         stale_listing.unlink()
-    (WORK / "products.done").unlink(missing_ok=True)
+    for stamp in ("products.done", "coverage.done"):
+        (WORK / stamp).unlink(missing_ok=True)
 
 
 def native_tiles(level):

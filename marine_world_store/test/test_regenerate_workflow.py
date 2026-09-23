@@ -823,6 +823,35 @@ def test_a_deleted_product_is_rebuilt(workflow):
     assert (workflow.layer / 'index.gti.fgb').is_file()
 
 
+def test_the_manifest_is_reassembled_every_run_and_rewritten_only_if_changed(
+        workflow):
+    """
+    Reassemble coverage.json on every run; move its mtime only on a change.
+
+    Regression: coverage.json was the assembly rule's declared output, so an
+    unchanged run did not reassemble it (a deleted manifest stayed deleted),
+    and a run that rebuilt a parent into the same manifest bytes still had
+    its mtime moved by Snakemake -- a replica sync would move it.
+    """
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    workflow.run()
+    manifest = workflow.layer / 'overviews' / 'coverage.json'
+    text = manifest.read_bytes()
+    os.utime(manifest, ns=(10**18, 10**18))
+
+    workflow.native('13_0_0.tif', value=5.0)     # same tiles, same errors
+    _, builds, _ = workflow.run()
+    assert builds == ['11_0_0', '12_0_0']
+    assert manifest.read_bytes() == text
+    assert manifest.stat().st_mtime_ns == 10**18
+
+    manifest.unlink()
+    _, builds, _ = workflow.run()
+    assert builds == []
+    assert manifest.read_bytes() == text
+
+
 def test_levels_outside_the_configured_range_are_removed(workflow):
     """
     Derived levels this run does not build are removed, not left published.
