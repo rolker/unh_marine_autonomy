@@ -242,7 +242,7 @@ _TIME_POINT_MAX_NS = 2**63 - 1
 
 def _is_empty_split(entry: Any) -> bool:
     """
-    A split that observed nothing: zero messages, or the ``max()`` sentinel.
+    Tell whether a split observed nothing (zero messages, or ``max()`` start).
 
     Its ``starting_time`` is not a time, so it must not enter a union -- one
     empty split would otherwise stretch a bag's interval to 2262.

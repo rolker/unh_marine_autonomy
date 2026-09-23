@@ -93,7 +93,8 @@ def test_frame_can_be_overridden_for_an_untransformed_product():
 
 
 def test_proj_epsg_follows_the_declared_frame():
-    """proj:epsg and the frame are one claim; they must never disagree.
+    """
+    Keep proj:epsg and the frame, which are one claim, in agreement.
 
     Regression: proj:epsg was hard-coded to the store frame's 9989, so an
     adapter that declared an untransformed EPSG:4326 tile still claimed 9989.
@@ -236,7 +237,8 @@ def test_an_empty_collection_declares_an_honest_extent():
 
 
 def test_collection_temporal_extent_is_the_union_of_its_items():
-    """STAC reads interval[0] as the overall extent; it must cover them all.
+    """
+    Cover every Item: STAC reads interval[0] as the overall extent.
 
     Regression: every Item's interval was listed in id order, so interval[0]
     -- the Collection's declared extent -- was the first tile's window only,

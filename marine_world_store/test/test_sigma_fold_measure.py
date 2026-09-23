@@ -231,9 +231,8 @@ def test_a_tile_that_is_not_two_band_is_refused(tmp_path):
     gdal.UseExceptions()
     for bands in (1, 4):
         path = tmp_path / f'12_0_{bands}.tif'
-        dataset = gdal.GetDriverByName('GTiff').Create(
-            str(path), 4, 4, bands, gdal.GDT_Float64)
-        dataset = None
+        gdal.GetDriverByName('GTiff').Create(
+            str(path), 4, 4, bands, gdal.GDT_Float64).FlushCache()
         with pytest.raises(ValueError, match='2-band'):
             sfm.read_depth_tile(path)
 

@@ -167,14 +167,14 @@ _INVALID = object()
 
 
 def _index(value, maximum: int) -> bool:
-    """A JSON unsigned integer no larger than ``maximum`` (never a bool)."""
+    """Check for a JSON unsigned integer <= ``maximum`` (never a bool)."""
     return (isinstance(value, int) and not isinstance(value, bool)
             and 0 <= value <= maximum)
 
 
 def _geometric_error(value):
     """
-    One run's error: a length, ``None`` when unrecorded, or :data:`_INVALID`.
+    Read one run's error: a length, ``None`` when unrecorded, or invalid.
 
     Mirrors the C++ reader: a field that is not a number is treated as absent
     (``None``, never 0), and a number that is not a finite, non-negative length

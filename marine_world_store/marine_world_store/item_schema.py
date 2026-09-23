@@ -367,7 +367,7 @@ def build_collection(
 
 def collection_interval(items: Sequence[Mapping[str, Any]]) -> List[Any]:
     """
-    The Collection's overall temporal extent: the union of its Items'.
+    Return the Collection's overall temporal extent: the union of its Items'.
 
     STAC reads ``extent.temporal.interval[0]`` as the Collection's overall
     extent (later entries are optional sub-intervals). Listing every Item's
@@ -401,7 +401,7 @@ def collection_interval(items: Sequence[Mapping[str, Any]]) -> List[Any]:
 
 def collection_frame(items: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
     """
-    The frame a Collection declares: the one its Items all declare.
+    Return the frame a Collection declares: the one its Items all declare.
 
     A Collection that named the store frame over Items that declare an
     untransformed legacy frame repeats the false claim the Item-level

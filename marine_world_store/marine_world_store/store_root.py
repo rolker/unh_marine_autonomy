@@ -213,7 +213,6 @@ def _expand(value: str, env: Mapping[str, str],
         explicit ``--store-root`` is exempt: a path typed on a command line is
         read against that command's working directory, as every CLI does.
     """
-    
     text = value
     if text.startswith('~') and not text.startswith(('~/', '~\\')) \
             and text != '~':

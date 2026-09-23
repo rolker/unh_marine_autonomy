@@ -108,9 +108,9 @@ def test_a_backwards_run_is_refused(tmp_path):
 ])
 def test_an_error_that_is_not_a_length_refuses_the_document(tmp_path, error):
     """
-    NaN, inf or negative would read as infinitely precise; the C++ reader
-    refuses the document, and so must this one.
+    Refuse NaN, inf or a negative error, as the C++ reader does.
 
+    Any of them would read as infinitely precise to an LOD consumer.
     Regression: they were accepted and handed to the Item as the tile's error.
     """
     write_manifest(tmp_path, [{'level': 12, 'runs': [
