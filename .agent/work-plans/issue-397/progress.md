@@ -811,3 +811,24 @@ Tests: `./core_ws/test.sh marine_bathymetry_store marine_world_store`: 765 tests
 - [x] (suggestion) Ownership: a tile the pre-step cannot set a recorded mtime on is named with its uid and remedy; single-owner rule and the lock's scope (adapter, standalone refresh, direct `--prune`/`--remove-level` do not lock) documented rather than locked (the pre-step runs under the workflow's lock, so the tool taking it would conflict with its own caller) — `fingerprint_sidecar.py`, `README.md` (1860770, bdfb615)
 - [x] (suggestion) Relative PATH entry resolved to absolute before `workdir:` (673916b); a stray `overviews/99_0_0.tif` — any derived tile at or finer than `fine_level` — is refused by name at load instead of throwing in `--remove-level` (f96dd6d)
 - [x] (suggestion) Coexistence/untouched wording removed from the bathymetry README and `.agents/README.md`; plan context marked superseded; the plan's file table no longer lists `refuseLegacyDepthLayer` as added (66c6b59)
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-09-23 12:52 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-397 at `e7274cb` (scoped: `fa47d0d..e7274cb`, 17 commits, 19 files, +980/-235)
+**Mode**: pre-push
+**Depth**: Light (scoped verification of the round-3 fix pass, by owner choice: "fix all, then a short check instead of a full review round")
+**Must-fix**: 0 | **Suggestions**: 1
+**Round**: 4 | **Ship**: recommended — every round-3 finding is fixed, each correctness fix has a regression test, and no regression was found in the fix commits.
+
+Scope: only the commits since the round-3 entry (`fa47d0d`); the rest of the branch was not re-reviewed. Specialists: static analysis via the package's ament flake8/pep257/copyright tests (inside the test run, all passing); one Claude Adversarial pass (Lens A, fresh context), which ran the e2e workflow tests against the system Snakemake and also ran a scratch layer under a `--profile` with and without `-n`. Copilot off (quota exhausted), local model off. Tests at HEAD: `./core_ws/test.sh marine_bathymetry_store marine_world_store`: 765 tests, 0 errors, 0 failures, 45 skipped. stderr holds only the known STAC-validation-skipped warning (jsonschema 4.10).
+
+Round-3 findings, all 14 confirmed fixed: a derived tile whose content does not match its sidecar is removed and rebuilt (4c335e2). Removal happens only in the `overviews/` pass (`derived=True`). The layer-root pass keeps the default, and symlinks are skipped, so a NATIVE tile can never be removed. A `fine_level` coarser than a native tile is refused at load, before anything is written (aa2bc6d). The tool lookup order is now documented as the code has it (acc9bb0). The manifest writer refuses an invalid `geometric_error_m` (ff886d6). A `coverage.done` stamp makes the manifest reassemble every run (bcffee7). Dry-run and query detection now works (64a89fa, see below). A changed tile is stamped by the filesystem clock (572b0c9). Levels coarser than `min_level` are removed at load, and a stray derived tile at or finer than `fine_level` is refused by name (f96dd6d). No rule has `params:` any more; the shell expression is compiled into the rule's code object as names, not values, so a tool at another path does not trip the code trigger either (73027f3). A tool found on a relative PATH entry is made absolute (673916b). An orphaned native Item is refused with a remedy that works (81f7e9e). `atomic_io` mode edges are fixed: `O_EXCL` 0666, a rewrite keeps the file's mode, the umask is never touched, a copy gets the publish mode (8431357). A tile owned by another user is named, and the lock's scope is documented (1860770, bdfb615). The coexistence wording is gone (66c6b59).
+
+64a89fa on this host (Snakemake 7.32.4, apt): every name in `_NON_EXECUTING` is a real `snakemake()` keyword. `Mode.default` is the int 0. `workflow.include` is called from inside `snakemake()` (`__init__.py:671`), so the frame walk finds it for the CLI, `-n`, `--cores N` and `--profile` (a profile only feeds argv to the same `main()` → `snakemake()` path; checked by hand in scratch). A job re-invoked in subprocess or cluster mode reads as not executing, so it does not repeat the pre-step. The refusal names the cause and the Snakemake 7 entry-point dependency. It fires only for a load outside `snakemake()`, which in 7.32 is `--bash-completion` alone: tab completion of targets, not a run.
+
+### Findings
+- [ ] (suggestion) Removing the levels that `min_level` drops prints nothing from the Snakefile before it calls `--remove-level`, while the refusals name the tiles. Echo the levels being removed to stderr. — `marine_world_store/snakemake/Snakefile:350-358`
