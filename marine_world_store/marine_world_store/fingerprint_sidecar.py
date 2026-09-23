@@ -89,7 +89,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import time
 from typing import Dict, List, Optional, Union
 
 from marine_world_store import atomic_io, layout
@@ -235,8 +234,11 @@ def refresh_tile(tile: PathLike, report: RefreshReport,
     # with -- a copy2 of an older compile keeps its old one, a clock-skewed
     # sync a future one -- it must read as newer than every product built
     # before now, and older than every product built from it after.
-    mtime_ns = time.time_ns()
-    os.utime(tile, ns=(stat.st_atime_ns, mtime_ns))
+    # "Now" by the FILESYSTEM's clock, as a build output gets: on NFS/SMB the
+    # server's clock stamps what a rule writes, and a host clock behind it
+    # would record the tile at or below the mtime of a parent built after it.
+    os.utime(tile)
+    mtime_ns = tile.stat().st_mtime_ns
     _write_sidecar(sidecar, fingerprint, mtime_ns)
     if document:
         report.changed += 1

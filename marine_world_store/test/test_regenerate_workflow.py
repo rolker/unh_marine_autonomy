@@ -54,6 +54,21 @@ import pytest
 SNAKEMAKE_DIR = Path(__file__).resolve().parents[1] / 'snakemake'
 
 
+def _filesystem_now(directory: Path) -> int:
+    """
+    "Now" by the filesystem's clock: the mtime a file written now gets.
+
+    Not ``time.time_ns()``: the kernel stamps files from a coarser clock that
+    can read a few milliseconds behind it, and a build output is stamped by
+    the filesystem, which is what the pre-step's mtimes must be ordered with.
+    """
+    probe = directory / '.now'
+    probe.write_bytes(b'')
+    stamp = probe.stat().st_mtime_ns
+    probe.unlink()
+    return stamp
+
+
 def _tile(directory: Path, name: str, content: bytes = b'tile') -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / name
@@ -72,7 +87,7 @@ def test_a_first_pass_counts_every_tile_as_a_change(tmp_path):
     """
     tile = _tile(tmp_path, '13_1_1.tif')
     os.utime(tile, ns=(10**18, 10**18))       # an old compile, copied in
-    before = time.time_ns()
+    before = _filesystem_now(tmp_path)
     report = fingerprint_sidecar.refresh_directory(tmp_path)
     assert report.created == 1 and report.unchanged == 0
     assert tile.stat().st_mtime_ns >= before
@@ -126,13 +141,31 @@ def test_a_real_change_is_newer_than_anything_built_before_it(tmp_path):
     tile = _tile(tmp_path, '13_1_1.tif')
     fingerprint_sidecar.refresh_directory(tmp_path)
     tile.write_bytes(b'different')
-    before = time.time_ns()
+    before = _filesystem_now(tmp_path)
     report = fingerprint_sidecar.refresh_directory(tmp_path)
     assert report.changed == 1 and report.unchanged == 0
     assert tile.stat().st_mtime_ns >= before
     document = json.loads(fingerprint_sidecar.sidecar_path(tile).read_text())
     assert document['fingerprint'] == \
         fingerprint_sidecar.content_fingerprint(tile)
+    assert document['mtime_ns'] == tile.stat().st_mtime_ns
+
+
+def test_a_change_is_stamped_by_the_filesystem_clock(tmp_path, monkeypatch):
+    """
+    Advance a changed tile by the filesystem's clock, not the host's.
+
+    Regression: the new mtime came from ``time.time_ns()`` while build
+    outputs get the filesystem's; on NFS/SMB with a lagging server clock a
+    parent could then record an mtime at or below its child's.
+    """
+    tile = _tile(tmp_path, '13_1_1.tif')
+    fingerprint_sidecar.refresh_directory(tmp_path)
+    tile.write_bytes(b'different')
+    monkeypatch.setattr(time, 'time_ns', lambda: 10**9)   # a lagging clock
+    fingerprint_sidecar.refresh_directory(tmp_path)
+    assert tile.stat().st_mtime_ns > 10**9
+    document = json.loads(fingerprint_sidecar.sidecar_path(tile).read_text())
     assert document['mtime_ns'] == tile.stat().st_mtime_ns
 
 
