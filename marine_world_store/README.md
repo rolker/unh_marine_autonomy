@@ -326,10 +326,10 @@ written or removed (a slip there would otherwise remove the whole derived
 pyramid as "levels this run does not build" and exit 0).
 `layer_dir` is required and has no default: the store root is resolved by
 `store_root.py`, and a path written into the workflow would be the hard-coded
-path the guard test forbids (which now scans `Snakefile` too). The tools are
-found on `PATH`, else under `<prefix>/lib/<package>/` in the sourced ament
-install space (colcon installs both packages' executables there, not on
-`PATH`), else from `--config <tool>_tool=<path>`.
+path the guard test forbids (which now scans `Snakefile` too). Each tool is
+taken from `--config <tool>_tool=<path>` when given, else from `PATH`, else from
+`<prefix>/lib/<package>/` in the sourced ament install space (colcon installs
+both packages' executables there, not on `PATH`).
 
 - **The pre-step is the load-bearing part, and it runs when the Snakefile
   loads.** §9 makes fingerprints, not mtimes, the trigger; Snakemake's DAG

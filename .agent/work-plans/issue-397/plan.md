@@ -529,7 +529,7 @@ literal; plain Python package with a `package.xml` shim).
   C++ per-tile record and schema file likewise.
 - **Tool resolution.** colcon installs both packages' executables under
   `<prefix>/lib/<package>/`, not on `PATH`, so the rules resolve each tool
-  (PATH, then the ament prefixes, then `--config <tool>_tool=`). An override is
+  (`--config <tool>_tool=` first, then PATH, then the ament prefixes). An override is
   resolved before `workdir:` changes directory (round 2).
 
 ## Implementation notes — review fix pass, round 2 (2026-09-23)
