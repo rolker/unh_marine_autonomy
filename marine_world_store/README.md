@@ -348,7 +348,11 @@ both packages' executables there, not on `PATH`).
   it absorbed even when it came out byte for byte the same. The first refresh
   over a layer with no sidecars counts every native tile as changed and
   removes every overview, so the pyramid is rebuilt once.
-  A dry run skips the pre-step (it writes).
+  An invocation that does not execute the workflow — a dry run, `--summary`,
+  `--list-input-changes`, `--dag`, `--lint`, `--unlock` and the other query
+  modes, as Snakemake itself parsed them (abbreviations and profiles
+  included) — skips the pre-step and the listing reset; it still creates
+  `.regenerate/` (Snakemake's `workdir:`) and takes the run lock.
 - **Every rule's inputs and outputs are the real files.** A parent's job takes
   the child tiles it folds as inputs and declares the tile and its record as
   outputs, so a changed child reruns exactly its ancestors, and an added or

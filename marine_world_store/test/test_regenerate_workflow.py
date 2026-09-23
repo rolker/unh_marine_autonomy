@@ -992,19 +992,68 @@ def test_two_runs_over_one_layer_are_serialised(workflow, tmp_path):
     assert not (workflow.layer / 'overviews').exists()
 
 
+def _layer_state(layer):
+    """Every file under the layer outside .regenerate/: (path, mtime)."""
+    return sorted((p.relative_to(layer), p.stat().st_mtime_ns)
+                  for p in layer.rglob('*')
+                  if '.regenerate' not in p.parts and p.is_file())
+
+
 def test_a_dry_run_writes_nothing(workflow):
     """-n plans the DAG and writes no .fp, no tile and no Item."""
     workflow.native('13_0_0.tif')
-    before = sorted(p.relative_to(workflow.layer)
-                    for p in workflow.layer.rglob('*')
-                    if '.regenerate' not in p.parts)
+    before = _layer_state(workflow.layer)
     output, builds, _ = workflow.run('--dry-run')
     assert builds == []
     assert 'fingerprint pre-step is skipped' in output
-    after = sorted(p.relative_to(workflow.layer)
-                   for p in workflow.layer.rglob('*')
-                   if '.regenerate' not in p.parts)
-    assert after == before
+    assert _layer_state(workflow.layer) == before
+
+
+@pytest.mark.parametrize('mode', [
+    ['--dry-ru'], ['-pn'], ['--summary'], ['--list-input-changes'],
+    ['--list-params-changes'], ['--dag'], ['--lint']])
+def test_no_query_mode_touches_the_layer(workflow, mode):
+    """
+    A dry run or a query, however spelled, moves no mtime and writes no .fp.
+
+    Regression: dry runs were recognised by a regex over argv, which missed
+    argparse abbreviations (``--dry-ru``) and profiles, and knew nothing of
+    the query modes: ``--summary`` and ``--list-input-changes`` ran the
+    pre-step, wrote .fp files, moved mtimes and deleted the listings.
+    """
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    workflow.run()
+    tile = workflow.layer / '13_0_0.tif'
+    tile.write_bytes(tile.read_bytes()[:-1] + b'\x01')   # a real change
+    listings = sorted((workflow.layer / '.regenerate').glob('parents_*.tsv'))
+    assert listings
+    before = _layer_state(workflow.layer)
+    result = workflow.invoke(*mode)
+    assert 'fingerprint pre-step is skipped' in result.stdout + result.stderr
+    assert _layer_state(workflow.layer) == before
+    assert sorted(
+        (workflow.layer / '.regenerate').glob('parents_*.tsv')) == listings
+
+
+def test_a_real_run_is_not_mistaken_for_a_dry_run(workflow, tmp_path):
+    """``-sSnakefile`` is one short-option cluster holding an "n"; it runs."""
+    import subprocess
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    (tmp_path / 'Snakefile').write_text(
+        f'include: {str(SNAKEMAKE_DIR / "Snakefile")!r}\n')
+    fake = tmp_path / 'bin' / 'fake_build_depth_overview_parent'
+    result = subprocess.run(
+        ['snakemake', '-sSnakefile', '--cores', '1', '--config',
+         f'layer_dir={workflow.layer}', 'fine_level=13', 'min_level=11',
+         f'build_depth_overview_parent_tool={fake}'],
+        capture_output=True, text=True, cwd=str(tmp_path))
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert 'fingerprint pre-step is skipped' not in output
+    assert fingerprint_sidecar.sidecar_path(
+        workflow.layer / '13_0_0.tif').is_file()
 
 
 def test_the_workflow_requires_the_layer_directory(tmp_path):

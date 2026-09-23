@@ -61,8 +61,12 @@ Shape of the DAG, and why it is shaped that way:
    not work: Snakemake compares
    mtimes while PLANNING, before any rule runs, so a reconciliation scheduled
    as a job always comes too late -- and a rule with no inputs and a stamp
-   output ran once and never again. A dry run (``-n``) skips it: it writes
-   ``.fp`` files and moves mtimes, and a dry run writes nothing.
+   output ran once and never again. An invocation that does not execute the
+   workflow -- a dry run, ``--summary``, ``--list-*-changes``, ``--dag``,
+   ``--lint``, ``--unlock`` and the like, as Snakemake itself parsed them --
+   skips it, and the listing reset, and every other write this file makes
+   when it loads except ``.regenerate/`` itself (Snakemake's ``workdir:``
+   creates it) and its lock.
 
 2. Every rule's inputs and outputs are the real files. A parent tile's rule
    takes the child TILES it folds as inputs and declares the tile and its
@@ -213,22 +217,55 @@ except BlockingIOError:
         f"another regenerate is running over {LAYER_DIR} "
         f"({WORK / 'regenerate.lock'} is held); retry when it finishes")
 
+#: The arguments of Snakemake 7's ``snakemake()`` that mean "do not execute
+#: the workflow": a dry run, a query, a report, a cleanup. Any one of them set
+#: makes this invocation read-only as far as this file is concerned.
+_NON_EXECUTING = (
+    "dryrun", "touch", "summary", "detailed_summary", "list_version_changes",
+    "list_code_changes", "list_input_changes", "list_params_changes",
+    "list_untracked", "list_resources", "listrules", "list_target_rules",
+    "printdag", "printrulegraph", "printfilegraph", "printd3dag", "lint",
+    "unlock", "cleanup_metadata", "conda_cleanup_envs", "cleanup_shadow",
+    "cleanup_containers", "archive", "delete_all_output",
+    "delete_temp_output", "print_compilation", "report", "containerize",
+    "generate_unit_tests", "list_conda_envs", "conda_create_envs_only",
+    "export_cwl",
+)
+
+
+def _executing():
+    """
+    Whether this invocation will execute the workflow, as Snakemake decided.
+
+    Read from the arguments Snakemake's own ``snakemake()`` call is running
+    with -- after its parser, its argument abbreviations and any profile have
+    been applied -- rather than guessed from ``sys.argv``: a regex over argv
+    missed ``--dry-ru`` and every profile, read ``-sSnakefile`` as a dry run,
+    and knew nothing of ``--summary`` and the other query modes. A job
+    Snakemake re-invokes this file for (``mode`` other than the default: a
+    cluster or subprocess job) is not the run either.
+    """
+    frame = sys._getframe()
+    while frame is not None:
+        if (frame.f_code.co_name == "snakemake" and
+                frame.f_globals.get("__name__") == "snakemake"):
+            invocation = frame.f_locals
+            if str(invocation.get("mode", 0)) not in ("0", "Mode.default"):
+                return False
+            return not any(invocation.get(name) for name in _NON_EXECUTING)
+        frame = frame.f_back
+    raise WorkflowError(
+        "cannot read this Snakemake's invocation, so cannot tell a real run "
+        "from a dry run or a query; the regenerate is written for Snakemake "
+        "7's snakemake() entry point (the declared dependency)")
+
+
+EXECUTING = _executing()
+
+
 # Resolved BEFORE ``workdir:``, which changes directory: a relative
 # ``--config <tool>_tool=`` is relative to where snakemake was started, as
 # ``layer_dir`` is.
-def _is_dry_run(argv):
-    """Whether this invocation is a dry run (``-n``/``--dry-run``/``-np``)."""
-    for arg in argv:
-        if arg in ("--dry-run", "--dryrun"):
-            return True
-        if re.fullmatch(r"-[A-Za-z]+", arg) and "n" in arg[1:]:
-            return True
-    return False
-
-
-DRY_RUN = _is_dry_run(sys.argv[1:])
-
-
 def _tool(name, package):
     """
     Locate one of the tools the rules run.
@@ -273,9 +310,10 @@ wildcard_constraints:
     col=r"\d+",
 
 
-if DRY_RUN:
-    print("dry run: the fingerprint pre-step is skipped (it writes .fp files "
-          "and moves mtimes), so a tile rewritten byte for byte may be listed "
+if not EXECUTING:
+    print("not executing (a dry run or a query): the fingerprint pre-step is "
+          "skipped (it writes .fp files, moves mtimes and removes untrusted "
+          "derived tiles), so a tile rewritten byte for byte may be listed "
           "as a change it is not", file=sys.stderr)
 else:
     if str(config.get("refresh_fingerprints", True)).lower() not in (
