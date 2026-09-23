@@ -204,6 +204,31 @@ def test_a_record_whose_tile_is_gone_advertises_no_coverage(tmp_path):
     assert document['levels'] == []
 
 
+def test_a_tile_with_no_record_is_still_coverage(tmp_path):
+    """
+    Keep an unrecorded tile in the manifest, with the error it already had.
+
+    Regression: assembly dropped every tile with no per-tile record (a
+    batch-built pyramid records errors only in coverage.json), rewriting the
+    manifest with fewer tiles than the directory holds.
+    """
+    _record(tmp_path, '12_5_7', 4.0)
+    _tile(tmp_path, '12_5_8.tif')          # batch-built: no record
+    _tile(tmp_path, '12_5_9.tif')          # no record and no prior entry
+    (tmp_path / 'coverage.json').write_text(json.dumps({
+        'schema': overview_records.MANIFEST_SCHEMA, 'kind': 'derived',
+        'levels': [{'level': 12, 'runs': [
+            {'row': 5, 'col_min': 8, 'col_max': 8,
+             'geometric_error_m': 6.5}]}]}))
+    records, unrecorded = overview_records.manifest_records(tmp_path)
+    assert unrecorded == [(12, 5, 8), (12, 5, 9)]
+    document = json.loads(overview_records.assemble(tmp_path).read_text())
+    runs = document['levels'][0]['runs']
+    covered = {(r['row'], c): r['geometric_error_m']
+               for r in runs for c in range(r['col_min'], r['col_max'] + 1)}
+    assert covered == {(5, 7): 4.0, (5, 8): 6.5, (5, 9): None}
+
+
 def test_a_foreign_or_malformed_record_is_skipped(tmp_path):
     _tile(tmp_path, '12_5_7.tif')
     (tmp_path / '12_5_7.json').write_text(

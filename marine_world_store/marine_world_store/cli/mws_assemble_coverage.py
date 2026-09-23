@@ -69,9 +69,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise OSError(
             f'no overviews sidecar at {overviews}; nothing to assemble. Build '
             'the parents first (build_depth_overview_parent).')
+    _, unrecorded = overview_records.manifest_records(overviews)
     path = overview_records.assemble(overviews, kind=args.kind)
-    records = overview_records.read_tile_records(overviews)
+    records, _ = overview_records.manifest_records(overviews)
     print(f'wrote {path}: {len(records)} tile(s)')
+    if unrecorded:
+        # Named: these carry the error the previous manifest gave them (or
+        # none), not one a per-tile record vouches for.
+        print(f'{len(unrecorded)} tile(s) have no per-tile record (batch-built, '
+              'or interrupted before the record was written); their error is '
+              'carried over from the previous manifest where it had one:')
+        for level, row, col in unrecorded:
+            print(f'  {layout.tile_filename(level, row, col)}')
     folds = overview_records.sigma_folds(overviews)
     if folds:
         # Printed even when there is only one: "undecided" is a statement about

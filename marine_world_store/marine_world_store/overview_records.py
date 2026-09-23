@@ -55,7 +55,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-from marine_world_store import atomic_io, layout
+from marine_world_store import atomic_io, coverage, layout
 
 PathLike = Union[str, Path]
 
@@ -148,18 +148,55 @@ def encode_manifest(
     return {'schema': MANIFEST_SCHEMA, 'kind': kind, 'levels': levels}
 
 
+def manifest_records(overviews_dir: PathLike
+                     ) -> Tuple[Dict[TileKey, TileRecord], List[TileKey]]:
+    """
+    One entry per TILE on disk, recorded or not; and which had no record.
+
+    The manifest describes the tiles, not the records. A tile with no
+    per-tile record -- written by the batch builder, which records errors in
+    ``coverage.json`` only, or left by a crash between the tile's rename and
+    its record's -- is still coverage. Dropping it (as the first version did)
+    rewrote ``coverage.json`` with FEWER tiles than the directory holds, and
+    for a batch-built pyramid threw away every error the batch builder had
+    recorded. Such a tile keeps the error the existing manifest already gives
+    it, and otherwise ``None`` (fall back; never 0).
+
+    :returns: ``(records, unrecorded)`` -- ``unrecorded`` in GGGS order, so a
+        caller can name them.
+    """
+    overviews_dir = Path(overviews_dir)
+    records = read_tile_records(overviews_dir)
+    existing = coverage.load_coverage_manifest(
+        layout.coverage_manifest_path(overviews_dir))
+    unrecorded: List[TileKey] = []
+    for tile in layout.tiles_in_dir(overviews_dir):
+        key = layout.parse_tile_filename(tile.name)
+        if key is None or key in records:
+            continue
+        unrecorded.append(key)
+        records[key] = TileRecord(
+            key=key,
+            geometric_error_m=(
+                existing.geometric_error(key) if existing else None),
+            sigma_fold=None)
+    return records, sorted(unrecorded)
+
+
 def assemble(overviews_dir: PathLike, kind: str = 'derived') -> Path:
     """
-    Write ``<overviews_dir>/coverage.json`` from the per-tile records.
+    Write ``<overviews_dir>/coverage.json`` over every tile in the directory.
 
-    Atomic publish (write beside, rename over), the same guarantee
-    ``saveCoverageManifest`` gives: a reader sees the whole previous document
-    or the whole new one.
+    Built from the per-tile records, with each unrecorded tile carried over as
+    :func:`manifest_records` describes. Atomic publish (private temporary,
+    fsync, rename), the same guarantee ``saveCoverageManifest`` gives: a reader
+    sees the whole previous document or the whole new one.
     """
     overviews_dir = Path(overviews_dir)
     if not overviews_dir.is_dir():
         raise OSError(f'not a directory: {overviews_dir}')
-    document = encode_manifest(read_tile_records(overviews_dir), kind=kind)
+    records, _ = manifest_records(overviews_dir)
+    document = encode_manifest(records, kind=kind)
     path = layout.coverage_manifest_path(overviews_dir)
     atomic_io.write_text(path, json.dumps(document, indent=2) + '\n')
     return path
