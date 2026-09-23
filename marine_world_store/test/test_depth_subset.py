@@ -141,6 +141,63 @@ def test_the_existing_store_is_untouched(source_layer, tmp_path):
     assert before == after
 
 
+@pytest.mark.parametrize('inside', [
+    lambda layer: layer,                                  # the layer itself
+    lambda layer: layer / 'nested',                       # inside it
+])
+def test_a_destination_in_the_source_layer_is_refused(source_layer, inside):
+    """
+    The existing store is read-only; the rev-3 tree is built beside it.
+
+    Regression: a destination inside (or equal to) the source layer was
+    accepted, and the adapter wrote Items and collection.json into the store
+    it promises not to modify.
+    """
+    root = inside(source_layer)
+    # quantity_dir appends depths/<state>/<origin>, so point the ROOT such
+    # that the destination lands in the layer.
+    with pytest.raises(AdapterError, match='overlaps the source layer'):
+        adapt(source_layer, root)
+    assert sorted(p.name for p in source_layer.iterdir()) == [
+        '12_3_4.tif', '12_3_5.tif', 'coverage.json']
+
+
+def test_a_source_inside_the_destination_is_refused(tmp_path):
+    """A copy that would read its own output is refused too."""
+    root = tmp_path / 'rev3'
+    layer = root / 'depths' / 'reviewed' / 'surveyed' / 'old'
+    make_tile(layer)
+    with pytest.raises(AdapterError, match='overlaps'):
+        adapt(layer, root)
+
+
+def test_rev3_draft_is_refused_where_the_legacy_store_lives(
+        source_layer, tmp_path):
+    """
+    At a root holding the legacy store, depths/draft/ is ITS draft layer.
+
+    Regression: at the default root, rev-3 depths/draft/<origin>/ nested
+    inside the legacy store's draft layer.
+    """
+    root = tmp_path / 'shared-root'
+    (root / 'depths').mkdir(parents=True)
+    (root / 'depths' / 'registry.json').write_text('{}')
+    with pytest.raises(AdapterError, match='legacy'):
+        adapt(source_layer, root, state=State.DRAFT)
+    assert not (root / 'depths' / 'draft').exists()
+    # A state the legacy store does not use is not a collision.
+    assert adapt(source_layer, root, state=State.REVIEWED).tiles_copied == 2
+
+
+def test_a_state_directory_holding_tiles_is_a_legacy_layer(
+        source_layer, tmp_path):
+    """Whatever it is called, a directory of tiles is a layer, not a state."""
+    root = tmp_path / 'rev3'
+    make_tile(root / 'depths' / 'draft', row=9, col=9)
+    with pytest.raises(AdapterError, match='legacy'):
+        adapt(source_layer, root, state=State.DRAFT)
+
+
 def test_re_running_copies_nothing(source_layer, tmp_path):
     """Idempotent: an unchanged tile is not rewritten, so a replica is quiet."""
     root = tmp_path / 'rev3'

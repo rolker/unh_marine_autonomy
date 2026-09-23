@@ -177,7 +177,12 @@ def adapt_depth_tiles(
             + (f' at level(s) {sorted(set(levels))}' if levels else ''))
 
     manifest = coverage.coverage_for_layer(source_layer_dir)
-    destination = layout.quantity_dir(root, Quantity.DEPTHS, state, origin)
+    try:
+        destination = layout.writable_quantity_dir(
+            root, Quantity.DEPTHS, state, origin)
+    except layout.LayoutError as exc:
+        raise AdapterError(str(exc)) from exc
+    _refuse_overlap(source_layer_dir, destination)
     report = AdaptReport(destination=destination)
     if not dry_run:
         destination.mkdir(parents=True, exist_ok=True)
@@ -259,6 +264,26 @@ def write_report_items(report: AdaptReport, *, validate: bool = True
         description='depth tiles adapted from the existing store (#397)',
         validate=validate)
     return report
+
+
+def _refuse_overlap(source_layer_dir: Path, destination: Path) -> None:
+    """
+    Refuse a destination that is, contains, or sits inside the source layer.
+
+    The adapter promises the existing store is read-only. A destination inside
+    the source layer (or equal to it) would put Items and a ``collection.json``
+    into that store; a source inside the destination would make the copy read
+    its own output. Compared resolved, so a symlink cannot hide either.
+    """
+    source = source_layer_dir.resolve()
+    target = destination.resolve()
+    if target == source or source in target.parents or \
+            target in source.parents:
+        raise AdapterError(
+            f'destination {destination} overlaps the source layer '
+            f'{source_layer_dir}: the existing store is read-only, and the '
+            'rev-3 tree must be built beside it, not in it. Choose another '
+            '--store-root.')
 
 
 def _copy_identical(source: Path, target: Path) -> bool:

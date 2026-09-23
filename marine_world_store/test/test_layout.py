@@ -140,3 +140,33 @@ def test_sidecar_paths(tmp_path):
     assert layout.overviews_dir(layer) == layer / 'overviews'
     assert layout.coverage_manifest_path(layer) == layer / 'coverage.json'
     assert layout.collection_path(layer) == layer / 'collection.json'
+
+
+def test_writable_quantity_dir_is_quantity_dir_where_nothing_collides(
+        tmp_path):
+    """An empty root, or one with only rev-3 content, is not a collision."""
+    assert layout.writable_quantity_dir(
+        tmp_path, Quantity.DEPTHS, State.DRAFT, Origin.SURVEYED) == \
+        layout.quantity_dir(
+            tmp_path, Quantity.DEPTHS, State.DRAFT, Origin.SURVEYED)
+
+
+def test_writable_quantity_dir_refuses_the_legacy_draft_layer(tmp_path):
+    """Rev 3's draft/ state is the legacy store's draft/ LAYER at one root."""
+    (tmp_path / 'depths').mkdir()
+    (tmp_path / 'depths' / 'registry.json').write_text('{}')
+    with pytest.raises(LayoutError, match='legacy'):
+        layout.writable_quantity_dir(
+            tmp_path, Quantity.DEPTHS, State.DRAFT, Origin.SURVEYED)
+    assert layout.writable_quantity_dir(
+        tmp_path, Quantity.DEPTHS, State.PUBLISHED, Origin.IMPORTED).parent \
+        .name == 'published'
+
+
+def test_writable_quantity_dir_refuses_a_state_directory_of_tiles(tmp_path):
+    """A directory holding tiles directly is a layer, whatever its name."""
+    (tmp_path / 'depths' / 'reviewed').mkdir(parents=True)
+    (tmp_path / 'depths' / 'reviewed' / '12_1_1.tif').write_bytes(b'')
+    with pytest.raises(LayoutError, match='legacy'):
+        layout.writable_quantity_dir(
+            tmp_path, Quantity.DEPTHS, State.REVIEWED, Origin.SURVEYED)
