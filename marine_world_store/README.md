@@ -405,7 +405,15 @@ both packages' executables there, not on `PATH`).
 - **Runs over one layer are serialised** by a lock on
   `<layer>/.regenerate/regenerate.lock`, whatever directory each run starts
   from; the C++ writers additionally exclude a concurrent batch build
-  (`<layer>/overviews.lock`).
+  (`<layer>/overviews.lock`). Only the workflow takes that lock: the adapter
+  (`mws_link_depth_subset`), a standalone `mws_refresh_fingerprints`, and a
+  direct `build_depth_overview_parent --prune`/`--remove-level` do not, so do
+  not run them over a layer while a regenerate is running on it (the last
+  writer of `collection.json` would win).
+- **A layer has one owner.** The pre-step sets tile mtimes to recorded values,
+  which needs ownership of each tile, not just write access. A tile written by
+  another uid (a container run as someone else) stops the run with a named
+  error; run the regenerate as the layer's owner.
 
 The end-to-end tests (`test/test_regenerate_workflow.py`) run snakemake for
 real over a toy layer, with a stand-in for the C++ per-parent tool that keeps

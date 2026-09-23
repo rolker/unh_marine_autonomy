@@ -194,6 +194,24 @@ def _write_sidecar(path: Path, fingerprint: str, mtime_ns: int) -> None:
         indent=2) + '\n')
 
 
+def _set_mtime(tile: Path, stat: os.stat_result, mtime_ns: int) -> None:
+    """
+    Set a tile's mtime to a recorded value, naming an ownership refusal.
+
+    Setting explicit times needs OWNERSHIP of the file, not just write
+    access; a tile written by another uid (a container run as someone else)
+    otherwise stopped the pre-step with a bare PermissionError.
+    """
+    try:
+        os.utime(tile, ns=(stat.st_atime_ns, mtime_ns))
+    except PermissionError as exc:
+        raise PermissionError(
+            f'{tile}: owned by uid {stat.st_uid}, not this user (uid '
+            f'{os.getuid()}); the fingerprint pre-step sets tile mtimes, which '
+            'needs ownership -- run the regenerate as the layer\'s owner, or '
+            'give the layer a single owner') from exc
+
+
 def _remove_derived(tile: Path) -> None:
     """Remove a derived tile with its per-tile record and its sidecar."""
     for path in (tile, tile.with_suffix('.json'), sidecar_path(tile)):
@@ -221,7 +239,7 @@ def refresh_tile(tile: PathLike, report: RefreshReport,
     if document.get('fingerprint') == fingerprint:
         # The content is identical, so the tile is as old as the content is,
         # however many times a rebuild rewrote the file.
-        os.utime(tile, ns=(stat.st_atime_ns, document['mtime_ns']))
+        _set_mtime(tile, stat, document['mtime_ns'])
         report.unchanged += 1
         return 'unchanged'
     if derived:

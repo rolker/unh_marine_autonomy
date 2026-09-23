@@ -213,6 +213,26 @@ def test_a_built_tile_is_recorded_with_the_mtime_its_build_gave_it(tmp_path):
     assert parent.stat().st_mtime_ns == built_at
 
 
+def test_a_tile_owned_by_another_user_is_named(tmp_path, monkeypatch):
+    """
+    Name the ownership a recorded mtime needs, rather than a bare errno.
+
+    Regression: a tile written under another uid made the pre-step abort
+    with an unexplained PermissionError.
+    """
+    tile = _tile(tmp_path, '13_1_1.tif')
+    fingerprint_sidecar.refresh_directory(tmp_path)
+
+    def refuse(path, *args, **kwargs):
+        if kwargs.get('ns') is not None:
+            raise PermissionError(1, 'Operation not permitted')
+
+    monkeypatch.setattr(fingerprint_sidecar.os, 'utime', refuse)
+    with pytest.raises(PermissionError, match='needs ownership') as info:
+        fingerprint_sidecar.refresh_directory(tmp_path)
+    assert str(tile) in str(info.value)
+
+
 def test_a_symbolic_link_is_not_recorded_as_built(tmp_path):
     real = _tile(tmp_path, 'real.tif')
     link = tmp_path / '12_0_0.tif'
