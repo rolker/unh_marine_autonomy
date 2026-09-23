@@ -208,7 +208,7 @@ def _set_mtime(tile: Path, stat: os.stat_result, mtime_ns: int) -> None:
         raise PermissionError(
             f'{tile}: owned by uid {stat.st_uid}, not this user (uid '
             f'{os.getuid()}); the fingerprint pre-step sets tile mtimes, which '
-            'needs ownership -- run the regenerate as the layer\'s owner, or '
+            "needs ownership -- run the regenerate as the layer's owner, or "
             'give the layer a single owner') from exc
 
 
