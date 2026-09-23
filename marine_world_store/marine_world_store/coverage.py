@@ -151,8 +151,8 @@ def load_coverage_manifest(path: PathLike) -> Optional[CoverageManifest]:
                 return None
             if col_max < col_min:
                 return None
-            error = _geometric_error(run.get('geometric_error_m'))
-            if error is _INVALID:
+            error = parse_geometric_error(run.get('geometric_error_m'))
+            if error is INVALID:
                 return None
             decoded += col_max - col_min + 1
             if decoded > MAX_DECODED_TILES:
@@ -163,7 +163,7 @@ def load_coverage_manifest(path: PathLike) -> Optional[CoverageManifest]:
 
 
 #: Marks a ``geometric_error_m`` that makes the whole document unreadable.
-_INVALID = object()
+INVALID = object()
 
 
 def _index(value, maximum: int) -> bool:
@@ -172,7 +172,7 @@ def _index(value, maximum: int) -> bool:
             and 0 <= value <= maximum)
 
 
-def _geometric_error(value):
+def parse_geometric_error(value):
     """
     Read one run's error: a length, ``None`` when unrecorded, or invalid.
 
@@ -186,9 +186,9 @@ def _geometric_error(value):
         value = float(value)
     except OverflowError:
         # A JSON integer past float range: no finite length, like inf.
-        return _INVALID
+        return INVALID
     if not math.isfinite(value) or value < 0.0:
-        return _INVALID
+        return INVALID
     return value
 
 

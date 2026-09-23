@@ -348,6 +348,27 @@ def test_an_unrecorded_error_is_none_never_zero(tmp_path):
     assert document['levels'][0]['runs'][0]['geometric_error_m'] is None
 
 
+@pytest.mark.parametrize('error', [
+    float('nan'), float('inf'), -1.0, 10**400, True, 'nan', '4.0', [4.0]])
+def test_an_invalid_geometric_error_is_refused_not_published(tmp_path, error):
+    """
+    Refuse a record the manifest reader would reject; never publish it.
+
+    Regression: the writer passed the record's value through a bare float():
+    10**400 crashed assembly, "nan" published a bare NaN (not JSON, and the
+    C++ reader refuses the whole document), and a negative value or True
+    passed as a length.
+    """
+    _tile(tmp_path, '12_5_7.tif')
+    text = json.dumps({
+        'schema': overview_records.TILE_RECORD_SCHEMA,
+        'geometric_error_m': error, 'sigma_fold': 'undecided'})
+    (tmp_path / '12_5_7.json').write_text(text)
+    with pytest.raises(ValueError, match='geometric_error_m'):
+        overview_records.assemble(tmp_path)
+    assert not (tmp_path / 'coverage.json').exists()
+
+
 def test_a_record_whose_tile_is_gone_advertises_no_coverage(tmp_path):
     _record(tmp_path, '12_5_7', 4.0)
     (tmp_path / '12_5_7.tif').unlink()

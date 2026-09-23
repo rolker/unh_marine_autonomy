@@ -88,6 +88,9 @@ def read_tile_records(overviews_dir: PathLike) -> Dict[TileKey, TileRecord]:
 
     A record whose tile is gone is ignored: it describes nothing, and carrying
     it into the manifest would advertise coverage that is not there.
+
+    :raises ValueError: a record of this schema whose ``geometric_error_m`` is
+        neither null nor a finite, non-negative number.
     """
     overviews_dir = Path(overviews_dir)
     records: Dict[TileKey, TileRecord] = {}
@@ -106,13 +109,20 @@ def read_tile_records(overviews_dir: PathLike) -> Dict[TileKey, TileRecord]:
         if (not isinstance(document, dict) or
                 document.get('schema') != TILE_RECORD_SCHEMA):
             continue
-        error = document.get('geometric_error_m')
+        raw = document.get('geometric_error_m')
         # An unrecorded error is None, never 0: uma-ADR-0013 D1's reader
-        # contract is that absence means "fall back", not "no error".
-        try:
-            error = None if error is None else float(error)
-        except (TypeError, ValueError):
-            error = None
+        # contract is that absence means "fall back", not "no error". Anything
+        # else must be a finite, non-negative length -- the rule the manifest
+        # READER applies (coverage.parse_geometric_error). This is the
+        # manifest's writer, so an invalid value is refused here rather than
+        # published: a bare NaN is not JSON, and the C++ reader rejects the
+        # whole document over one.
+        error = coverage.parse_geometric_error(raw)
+        if error is coverage.INVALID or (error is None and raw is not None):
+            raise ValueError(
+                f'{path}: geometric_error_m {raw!r} is not a finite, '
+                'non-negative length (or null for unrecorded); refusing to '
+                'publish it -- rebuild the tile')
         children = document.get('children')
         if not (isinstance(children, list) and
                 all(isinstance(c, str) and c for c in children)):
