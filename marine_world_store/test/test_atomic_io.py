@@ -35,6 +35,9 @@ the other's half-written bytes (or leave the second rename with nothing to
 rename).
 """
 
+import os
+import stat
+
 from marine_world_store import atomic_io
 import pytest
 
@@ -85,6 +88,37 @@ def test_a_copy_that_fails_its_check_is_never_visible(tmp_path):
     assert not target.exists()
     atomic_io.copy_file(source, target)
     assert target.read_bytes() == b'pixels'
+
+
+@pytest.mark.parametrize('umask', [0o022, 0o002, 0o077])
+def test_a_published_file_gets_the_mode_open_would_give_it(tmp_path, umask):
+    """
+    0666 less the umask, exactly as a plain ``open()`` would create it.
+
+    Regression: the temporary came from mkstemp (0600) and was renamed as is,
+    so every Item, Collection, manifest, .fp and revision was owner-only and
+    unreadable to any other uid (renderers, CAMP, ``docker -u``, a NAS sync).
+    """
+    old = os.umask(umask)
+    try:
+        published = atomic_io.write_text(tmp_path / 'item.json', '{}')
+        plain = tmp_path / 'plain.json'
+        with open(plain, 'w') as handle:
+            handle.write('{}')
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(published.stat().st_mode) == 0o666 & ~umask
+    assert stat.S_IMODE(published.stat().st_mode) == \
+        stat.S_IMODE(plain.stat().st_mode)
+
+
+def test_a_copy_keeps_its_sources_mode(tmp_path):
+    """copy_file is copy2: the published copy has the source's permissions."""
+    source = tmp_path / 'source.tif'
+    source.write_bytes(b'pixels')
+    source.chmod(0o644)
+    target = atomic_io.copy_file(source, tmp_path / 'target.tif')
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
 
 
 def test_the_data_is_synced_before_the_rename(tmp_path, monkeypatch):

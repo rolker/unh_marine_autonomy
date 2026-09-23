@@ -55,6 +55,16 @@ from typing import Callable, Union
 
 PathLike = Union[str, Path]
 
+#: The mode ``open(path, 'w')`` asks for, before the umask is applied.
+_PUBLISHED_MODE = 0o666
+
+
+def _current_umask() -> int:
+    """Return the process umask (reading it means setting it; put it back)."""
+    mask = os.umask(0o022)
+    os.umask(mask)
+    return mask
+
 
 def _fsync_directory(directory: Path) -> None:
     """Make a rename in ``directory`` durable (best effort where unsupported)."""
@@ -83,14 +93,24 @@ def publish(path: PathLike, fill: Callable[[Path], None]) -> Path:
     path = Path(path)
     fd, name = tempfile.mkstemp(
         prefix=f'.{path.name}.', suffix='.tmp', dir=str(path.parent))
-    os.close(fd)
     tmp = Path(name)
     try:
+        # mkstemp creates the temporary 0600, which is right for a scratch
+        # file and wrong for a published one: every Item, Collection and
+        # manifest would be owner-only, unreadable to the renderers, CAMP, a
+        # container run as another uid or a NAS sync. Give it the mode a plain
+        # open() would have given the file -- 0666 less the umask. (A fill
+        # that copies metadata, as copy_file does, may set its own.)
+        os.fchmod(fd, _PUBLISHED_MODE & ~_current_umask())
+        os.close(fd)
+        fd = -1
         fill(tmp)
         with open(tmp, 'rb') as handle:
             os.fsync(handle.fileno())
         os.replace(tmp, path)
     except BaseException:
+        if fd >= 0:
+            os.close(fd)
         tmp.unlink(missing_ok=True)
         raise
     _fsync_directory(path.parent)
