@@ -567,3 +567,54 @@ What the round-2 pre-push review's fix pass changed about the notes above.
 - **The legacy-tree guards were deleted after this pass** on the owner's
   decision (above); the round-2 symlink finding is resolved by that deletion.
 
+
+## Implementation notes — review fix pass, round 3 (2026-09-23)
+
+Round 3's 3 must-fix + 12 suggestions, all fixed in this PR (owner policy),
+each with a regression test reproducing the reviewer's case. The guidance was
+to prefer the simplest correct fix and refusing loudly over more mechanism;
+where a round-2 mechanism was replaced, it says so.
+
+- **A derived tile that is not the recorded content is removed**, with its
+  record and `.fp`, and rebuilt as a missing product (a restore, a partial
+  copy, bit rot, or no sidecar). Native tiles still advance to now. The first
+  refresh over a layer with no sidecars therefore removes every overview.
+- **A `fine_level` the natives contradict is refused** when the Snakefile
+  loads, before anything is written or removed; so is a derived tile at or
+  finer than `fine_level` (which replaces removing those levels, and covers a
+  stray `overviews/99_0_0.tif` that made `--remove-level` throw every run).
+- **Dropped coarse levels are removed at load** (`--remove-level` for each
+  derived level below `min_level`), in a real run, before the pre-step —
+  replacing round 2's removal inside the finest listing job, which never ran
+  when `min_level >= fine_level`.
+- **Real run vs. query** is read from the arguments of the `snakemake()` call
+  loading the Snakefile (after Snakemake's own parser and any profile), not a
+  regex over argv; a dry run and every query mode (`--summary`,
+  `--list-*-changes`, `--dag`, `--lint`, `--unlock`, …) skip the pre-step and
+  the listing reset. `.regenerate/` and the lock are still created (the
+  `workdir:` directive makes the directory). If the invocation cannot be read
+  (not Snakemake 7) the run is refused.
+- **The manifest is reassembled every run** behind a `coverage.done` stamp
+  deleted at load; `coverage.json` is no longer a declared output, so
+  Snakemake no longer touches it when its bytes did not change.
+- **No rule carries paths as `params:`** (Snakemake reruns on a params change):
+  tool and layer paths are shell-quoted literals (`_shell_literal`). The e2e
+  layer path holds a space.
+- **A changed tile is stamped by the filesystem's clock** (`os.utime` with no
+  times, then `stat`), not `time.time_ns()`.
+- **The manifest writer refuses an invalid `geometric_error_m`** (NaN, inf,
+  negative, past float range, a bool or a string), using the reader's rule
+  (`coverage.parse_geometric_error`, made public).
+- **A native Item whose tile is gone is refused by the catalog**, by name and
+  before the Collection is rewritten, with the remedy (remove the Item with its
+  tile, or restore the tile); `mws_list_tiles` gives the same remedy.
+- **`atomic_io`**: temporaries are created `O_EXCL` at 0666 so the kernel
+  applies the umask (no `os.umask` read); a rewrite keeps the file's mode;
+  `copy_file` keeps the source's times but publishes with the publish mode.
+- **Ownership / locking** (documented, one code change): a tile the pre-step
+  cannot set a recorded mtime on is named with its uid and the remedy; the
+  README states that a layer has one owner and that only the workflow takes
+  the regenerate lock.
+- **Tool lookup**: the documented order now matches the code (override, then
+  PATH, then the ament prefixes); a tool found on a relative PATH entry is
+  made absolute before `workdir:`.
