@@ -8,25 +8,15 @@ The design this implements is
 [`docs/world_store_design.md`](../docs/world_store_design.md) (rev 3) — read it
 first; this README says what the code does, not what the store is for.
 
-**It builds alongside the existing store.** Nothing here writes
-`marine_bathymetry_store`'s `draft/`, `processed/`, `reference/` or `chart/`
-tree (the adapter below only reads it). The rev-3 layout is a different
-directory tree, not a rename of that one, and every existing consumer is
-unaffected.
-
-That is enforced, not assumed. The two trees meet under `<root>/depths/`, and
-one name is in both vocabularies: the legacy store's `draft` LAYER and rev 3's
-`draft` STATE. So:
-
-- `layout.writable_quantity_dir` refuses a rev-3 destination whose
-  `<root>/<quantity>/<state>/` directory holds tiles directly (it is a legacy
-  layer), or is named like a legacy layer where the legacy `registry.json`
-  lives — at the default root today, rev-3 `depths/draft/` would nest inside
-  the legacy `draft` layer. Build rev 3 under another `--store-root` there;
-- `layout.refuse_legacy_layer` (and its C++ twin `refuseLegacyDepthLayer`)
-  refuses to treat a legacy layer as a rev-3 quantity layer in every tool that
-  writes beside a layer's tiles: the fingerprint pre-step, the coverage
-  assembly, the catalog, and every 4-band overview writer.
+**It replaces the existing store; it does not coexist with it.** No
+compatibility with `marine_bathymetry_store`'s `draft/`, `processed/`,
+`reference/` and `chart/` tree is kept: once rev 3 works end to end, the
+existing stores are wiped and rebuilt (owner decision, 2026-09-23). Until then
+that tree is only an **input** — the adapter below reads it and refuses a
+destination that overlaps the layer it reads. Nothing else guards the old tree,
+so on a host that still holds one, build rev 3 under its own `--store-root`:
+rev 3's `depths/draft/<origin>/` and the old store's `depths/draft/` layer
+share a path at the default root.
 
 ## Not a ROS package (but installable as one)
 

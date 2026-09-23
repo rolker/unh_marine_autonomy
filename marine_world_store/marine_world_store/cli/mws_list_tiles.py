@@ -46,7 +46,7 @@ import argparse
 from pathlib import Path
 from typing import List, Optional, Sequence
 
-from marine_world_store import layout, overview_items
+from marine_world_store import overview_items
 from marine_world_store.cli._common import run, stac_catalog
 
 
@@ -95,7 +95,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     layer_dir = Path(args.layer_dir).expanduser()
     if not layer_dir.is_dir():
         raise OSError(f'not a directory: {layer_dir}')
-    layout.refuse_legacy_layer(layer_dir)
     for path in tile_paths(layer_dir, args.kind):
         print(f'"{path}"' if args.optfile else path)
     return 0

@@ -178,8 +178,7 @@ def adapt_depth_tiles(
 
     manifest = coverage.coverage_for_layer(source_layer_dir)
     try:
-        destination = layout.writable_quantity_dir(
-            root, Quantity.DEPTHS, state, origin)
+        destination = layout.quantity_dir(root, Quantity.DEPTHS, state, origin)
     except layout.LayoutError as exc:
         raise AdapterError(str(exc)) from exc
     _refuse_overlap(source_layer_dir, destination)

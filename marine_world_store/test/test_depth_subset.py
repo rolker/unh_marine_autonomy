@@ -171,33 +171,6 @@ def test_a_source_inside_the_destination_is_refused(tmp_path):
         adapt(layer, root)
 
 
-def test_rev3_draft_is_refused_where_the_legacy_store_lives(
-        source_layer, tmp_path):
-    """
-    At a root holding the legacy store, depths/draft/ is ITS draft layer.
-
-    Regression: at the default root, rev-3 depths/draft/<origin>/ nested
-    inside the legacy store's draft layer.
-    """
-    root = tmp_path / 'shared-root'
-    (root / 'depths').mkdir(parents=True)
-    (root / 'depths' / 'registry.json').write_text('{}')
-    with pytest.raises(AdapterError, match='legacy'):
-        adapt(source_layer, root, state=State.DRAFT)
-    assert not (root / 'depths' / 'draft').exists()
-    # A state the legacy store does not use is not a collision.
-    assert adapt(source_layer, root, state=State.REVIEWED).tiles_copied == 2
-
-
-def test_a_state_directory_holding_tiles_is_a_legacy_layer(
-        source_layer, tmp_path):
-    """Whatever it is called, a directory of tiles is a layer, not a state."""
-    root = tmp_path / 'rev3'
-    make_tile(root / 'depths' / 'draft', row=9, col=9)
-    with pytest.raises(AdapterError, match='legacy'):
-        adapt(source_layer, root, state=State.DRAFT)
-
-
 def test_re_running_copies_nothing(source_layer, tmp_path):
     """Idempotent: an unchanged tile is not rewritten, so a replica is quiet."""
     root = tmp_path / 'rev3'

@@ -36,15 +36,17 @@ Design draft sections 2 and 5. Two things this module exists to prevent:
 * a second copy of the path arithmetic in each consumer -- CAMP, the survey
   explorer and the costmap all need the same answers.
 
-The layout is built **alongside** the existing store: nothing here reads or
-writes ``draft/``, ``processed/``, ``reference/`` or ``chart/``, which are
-``marine_bathymetry_store``'s tree and are unaffected by this package.
+The layout **replaces** ``marine_bathymetry_store``'s ``draft/``,
+``processed/``, ``reference/`` and ``chart/`` tree; no compatibility with that
+tree is kept. Once rev 3 works end to end the existing stores are wiped and
+rebuilt (owner decision, 2026-09-23). Until then that tree is only an INPUT,
+read by :mod:`marine_world_store.depth_subset`; build rev 3 under its own
+store root on a host that still holds one.
 """
 
 from __future__ import annotations
 
 from enum import Enum
-import os
 from pathlib import Path
 from typing import Iterable, Union
 
@@ -98,16 +100,6 @@ OVERVIEWS_DIR = 'overviews'
 #: Item/Collection filenames within a directory.
 COLLECTION_FILENAME = 'collection.json'
 
-#: ``marine_bathymetry_store``'s own layer directories (``layerDirName`` in
-#: its ``tile_io``). The legacy store keeps them directly under
-#: ``<store>/depths/`` -- the same place rev 3 keeps its ``<state>/``
-#: directories -- and one name, ``draft``, is in both vocabularies.
-LEGACY_LAYER_NAMES = ('draft', 'processed', 'reference', 'chart')
-
-#: The legacy store's registry, at ``<store>/<quantity>/registry.json`` beside
-#: its layer directories. Its presence says a legacy store lives there.
-LEGACY_REGISTRY_FILENAME = 'registry.json'
-
 
 class LayoutError(ValueError):
     """A layout request that the rev-3 model does not have a place for."""
@@ -143,77 +135,6 @@ def quantity_dir(
     state = _coerce(state, State)
     origin = _coerce(origin, Origin)
     return Path(root) / quantity.value / state.value / origin.value
-
-
-def writable_quantity_dir(
-    root: PathLike,
-    quantity: Union[Quantity, str],
-    state: Union[State, str],
-    origin: Union[Origin, str],
-) -> Path:
-    """
-    :func:`quantity_dir`, refused where it would nest inside the legacy store.
-
-    Rev 3 is built ALONGSIDE ``marine_bathymetry_store``'s tree, and at a root
-    that holds both the two meet under ``<root>/depths/``: rev 3's
-    ``depths/draft/<origin>/`` is a subdirectory of the legacy ``draft`` LAYER.
-    Writing there puts rev-3 tiles, Items and a Collection inside a directory
-    the legacy tools own (and scan), which is exactly what "alongside" promises
-    not to do. Refused when:
-
-    * ``<root>/<quantity>/<state>/`` holds tile files directly -- it IS a
-      legacy layer, whatever it is called; or
-    * ``<state>`` is also a legacy layer name and ``<root>/<quantity>/`` holds
-      the legacy ``registry.json`` -- the legacy store lives at this root, so
-      its ``draft`` layer can appear there at any time.
-
-    :raises LayoutError: naming the collision and the remedy.
-    """
-    path = quantity_dir(root, quantity, state, origin)
-    state_dir = path.parent
-    quantity_root = state_dir.parent
-    if any(True for _ in tiles_in_dir(state_dir)):
-        raise LayoutError(
-            f'{state_dir} holds tile files directly: it is a legacy '
-            'marine_bathymetry_store layer, not a rev-3 state directory. '
-            f'Writing {path} would nest the rev-3 tree inside it; build rev 3 '
-            'under a different store root (--store-root).')
-    if state_dir.name in LEGACY_LAYER_NAMES and \
-            (quantity_root / LEGACY_REGISTRY_FILENAME).is_file():
-        raise LayoutError(
-            f'{quantity_root} holds a legacy marine_bathymetry_store '
-            f'({LEGACY_REGISTRY_FILENAME}), whose {state_dir.name!r} layer '
-            f'shares its name with the rev-3 state: {path} would nest inside '
-            'it. Build rev 3 under a different store root (--store-root).')
-    return path
-
-
-def refuse_legacy_layer(layer_dir: PathLike) -> Path:
-    """
-    Refuse a legacy ``marine_bathymetry_store`` layer, positively.
-
-    The Python half of the C++ ``refuseLegacyDepthLayer``, with the same two
-    rules, so a tool that writes beside a layer's tiles (``.fp`` sidecars, the
-    assembled ``coverage.json``, Items) cannot be pointed at the legacy tree
-    either: the directory's name is one of :data:`LEGACY_LAYER_NAMES`, or its
-    parent holds the legacy ``registry.json``. A rev-3 layer is
-    ``<root>/<quantity>/<state>/<origin>/`` and matches neither.
-
-    :returns: the layer directory, for chaining.
-    :raises LayoutError: naming the layer and which rule it met.
-    """
-    layer = Path(os.path.abspath(str(layer_dir)))
-    if layer.name in LEGACY_LAYER_NAMES:
-        raise LayoutError(
-            f'{layer_dir}: {layer.name!r} is a legacy marine_bathymetry_store '
-            'layer, not a world-store quantity layer '
-            '(<root>/<quantity>/<state>/<origin>/)')
-    if (layer.parent / LEGACY_REGISTRY_FILENAME).is_file():
-        raise LayoutError(
-            f"{layer_dir}: its parent holds the legacy store's "
-            f'{LEGACY_REGISTRY_FILENAME}, so it is a legacy '
-            'marine_bathymetry_store layer, not a world-store quantity layer')
-    return Path(layer_dir)
 
 
 def sources_dir(root: PathLike) -> Path:

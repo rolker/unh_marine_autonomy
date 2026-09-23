@@ -258,13 +258,8 @@ def refresh_layer(layer_dir: PathLike) -> Dict[str, RefreshReport]:
     Reported separately, because the two are different kinds of thing: the
     native tiles are the compile this store does not own, and the overviews are
     the derived product the DAG rebuilds.
-
-    :raises marine_world_store.layout.LayoutError: on a legacy
-        ``draft/processed/reference/chart`` layer -- this pass writes and
-        deletes ``.fp`` files and moves tile mtimes, none of which it may do
-        to the legacy tree (:func:`marine_world_store.layout.refuse_legacy_layer`).
     """
-    layer_dir = layout.refuse_legacy_layer(layer_dir)
+    layer_dir = Path(layer_dir)
     # Overviews FIRST: a tile advanced to "now" is advanced in visiting order,
     # so on a first refresh (no sidecars at all) every native tile comes out
     # newer than every overview, and every overview is rebuilt once -- rather

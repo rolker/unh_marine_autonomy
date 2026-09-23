@@ -144,7 +144,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         directory = Path(args.layer_dir).expanduser()
         if not directory.is_dir():
             raise OSError(f'not a directory: {directory}')
-        layout.refuse_legacy_layer(directory)
         quantity, state, origin = layer_cell(directory)
         print(f'layer: {directory}')
         result = regenerate_cell(

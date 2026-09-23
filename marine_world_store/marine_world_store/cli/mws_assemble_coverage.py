@@ -62,8 +62,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Assemble a layer's overview coverage manifest."""
     args = build_parser().parse_args(argv)
-    # The legacy layer's overviews/coverage.json is the legacy writer's.
-    layout.refuse_legacy_layer(args.layer_dir)
     overviews = layout.overviews_dir(Path(args.layer_dir))
     if not overviews.is_dir():
         raise OSError(
