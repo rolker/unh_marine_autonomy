@@ -155,6 +155,52 @@ def test_link_subset_counts_a_repeated_source_once(tmp_path, capsys):
     assert 'counted once' in capsys.readouterr().out
 
 
+def test_link_subset_global_interval_never_overrides_a_recorded_one(
+        tmp_path):
+    """
+    The stated interval is a fallback for undated sources, not an override.
+
+    Regression: a manifest-level start:/end: replaced the interval every bag
+    recorded in its metadata.yaml.
+    """
+    dated = make_bag(tmp_path / 'dated')
+    undated = make_bag(tmp_path / 'undated', start_ns=START_NS + 1,
+                       dated=False)
+    (undated / 'rosbag2_0.mcap').write_bytes(b'other')
+    _, _, intervals = mws_link_depth_subset.resolve_sources(
+        [{'path': str(dated)}, {'path': str(undated)}],
+        '2026-06-22T13:22:29Z', '2026-06-22T15:00:00Z')
+    assert intervals[0] == ('2026-06-14T15:38:58.661123Z',
+                            '2026-06-14T15:40:07.608178Z')
+    assert intervals[1] == ('2026-06-22T13:22:29Z', '2026-06-22T15:00:00Z')
+
+
+def test_link_subset_refuses_half_an_entry_interval(tmp_path):
+    """An entry's start is never stitched to the global end."""
+    bag = make_bag(tmp_path / 'bag', dated=False)
+    with pytest.raises(TimeIntervalError):
+        mws_link_depth_subset.resolve_sources(
+            [{'path': str(bag), 'start': '2026-06-22T13:22:29Z'}],
+            '2026-06-01T00:00:00Z', '2026-06-30T00:00:00Z')
+
+
+def test_link_subset_an_entry_statement_wins_over_the_record(tmp_path):
+    """A per-source statement is about that source; it is taken as given."""
+    bag = make_bag(tmp_path / 'bag')
+    _, _, intervals = mws_link_depth_subset.resolve_sources(
+        [{'path': str(bag), 'start': '2026-06-22T13:22:29Z',
+          'end': '2026-06-22T15:00:00Z'}])
+    assert intervals == [('2026-06-22T13:22:29Z', '2026-06-22T15:00:00Z')]
+
+
+def test_link_subset_an_undated_source_with_no_statement_is_refused(
+        tmp_path):
+    """Nothing to read and nothing stated: a provenance defect."""
+    bag = make_bag(tmp_path / 'bag', dated=False)
+    with pytest.raises(TimeIntervalError):
+        mws_link_depth_subset.resolve_sources([{'path': str(bag)}])
+
+
 def test_write_revision_round_trip(tmp_path, store_root):
     """A YAML description becomes an append-only record."""
     description = tmp_path / 'datum.yaml'

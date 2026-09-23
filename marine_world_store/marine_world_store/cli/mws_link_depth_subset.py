@@ -41,9 +41,11 @@ they are what the tiles fingerprint over, and they are what the tiles are
 **dated** by. Each bag's ``metadata.yaml`` gives its recording interval, and
 the tile Items carry the union of them. A source whose interval cannot be
 read is refused and nothing is written -- ``--start``/``--end`` (or
-``start:``/``end:`` in the manifest) state an interval for the sources that
-have one but do not record it, and are an operator statement rather than a
-default.
+``start:``/``end:`` at the top of the manifest) state an interval for the
+sources that have one but do not record it, and are an operator statement
+rather than a default: a bag that records its own interval keeps it. A
+per-source ``start:``/``end:`` pair in a manifest entry is a statement about
+that source alone, and wins over what it records.
 
 Typical use, with a subset manifest::
 
@@ -126,9 +128,47 @@ def _load_subset(path: Path) -> dict:
     return document
 
 
+def _source_interval(entry, path, start, end):
+    """
+    Date one source: its own statement, else its record, else the fallback.
+
+    Precedence, and why:
+
+    1. an entry's own ``start:``/``end:`` -- an operator statement about THIS
+       source, taken as a pair (both or neither; half of one is refused rather
+       than completed from the global pair, which would stitch one source's
+       start to another statement's end);
+    2. the interval the source RECORDED (a bag's ``metadata.yaml``). A recorded
+       interval is evidence; a manifest-wide statement is not about this bag;
+    3. the global ``--start/--end`` (or manifest ``start:``/``end:``) -- only
+       for a source that records none, which is what the flag is documented
+       for.
+
+    Regression: the global pair used to override every source, bags that
+    recorded their own interval included, and could be mixed with an entry's
+    half-stated one.
+    """
+    entry_start, entry_end = entry.get('start'), entry.get('end')
+    if entry_start or entry_end:
+        return source_time.check_interval(
+            entry_start, entry_end, what=f'source {path.name}')
+    try:
+        return source_time.source_interval(path)
+    except source_time.TimeIntervalError:
+        if not (start or end):
+            raise
+    print(f'source {path.name}: records no interval; using the stated '
+          f'--start/--end')
+    return source_time.check_interval(
+        start, end, what=f'the stated interval for source {path.name}')
+
+
 def resolve_sources(entries, start=None, end=None):
     """
     Identify and date every source entry; return ids, Items and intervals.
+
+    ``start``/``end`` are the global stated interval: the fallback for a
+    source that records none, never an override (see :func:`_source_interval`).
 
     A source named twice -- on the command line and in the manifest, or twice
     in one manifest -- is ONE source: its content id is what identifies it, so
@@ -149,15 +189,7 @@ def resolve_sources(entries, start=None, end=None):
                   f'({identifier}); counted once')
             continue
         seen[identifier] = path
-        stated_start = entry.get('start') or start
-        stated_end = entry.get('end') or end
-        if stated_start or stated_end:
-            # An operator statement about this source, for material that has
-            # an interval but does not record one.
-            entry_start, entry_end = source_time.check_interval(
-                stated_start, stated_end, what=f'source {path.name}')
-        else:
-            entry_start, entry_end = source_time.source_interval(path)
+        entry_start, entry_end = _source_interval(entry, path, start, end)
         intervals.append((entry_start, entry_end))
         source_ids.append(identifier)
         keys = (source_identity.merkle_lines(path) if path.is_dir()
