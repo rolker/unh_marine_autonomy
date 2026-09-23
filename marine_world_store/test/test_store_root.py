@@ -144,6 +144,34 @@ def test_result_is_absolute(home, monkeypatch, tmp_path):
         .is_absolute()
 
 
+def test_a_relative_environment_root_is_refused(home, monkeypatch,
+                                                tmp_path):
+    """
+    An exported relative root would be a different tree per working directory.
+
+    Regression: WORLD_STORE_ROOT=world resolved against each tool's cwd.
+    """
+    monkeypatch.chdir(tmp_path)
+    home[ENV_VAR] = 'world'
+    with pytest.raises(StoreRootError, match='relative'):
+        resolve_store_root_verbose(env=home)
+
+
+def test_a_relative_config_root_is_refused(home, tmp_path):
+    """Same for the config file: it is read from every cwd alike."""
+    config = tmp_path / 'config.yaml'
+    config.write_text('store_root: data/world\n')
+    with pytest.raises(StoreRootError, match='relative'):
+        resolve_store_root_verbose(env=home, config_path=config)
+
+
+def test_a_tilde_environment_root_is_still_accepted(home):
+    """~/ is expanded first, so it is absolute and allowed."""
+    home[ENV_VAR] = '~/elsewhere'
+    assert resolve_store_root_verbose(env=home).path == \
+        Path(home['HOME']) / 'elsewhere'
+
+
 def test_store_root_is_path_like(home):
     """A StoreRoot can be used wherever a path is accepted."""
     root = resolve_store_root_verbose(env=home)

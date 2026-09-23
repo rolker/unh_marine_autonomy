@@ -151,7 +151,8 @@ def resolve_store_root_verbose(
         tests so no test depends on the developer's own environment).
     :param config_path: override for the config file location.
     :returns: the resolved :class:`StoreRoot`, expanded but **not** created.
-    :raises StoreRootError: on an empty ``cli_arg`` or an unreadable config.
+    :raises StoreRootError: on an empty ``cli_arg``, an unreadable config,
+        or a relative path in the environment variable or the config file.
     """
     env = os.environ if env is None else env
 
@@ -164,13 +165,18 @@ def resolve_store_root_verbose(
 
     from_env = env.get(ENV_VAR, '').strip()
     if from_env:
-        return StoreRoot(_expand(from_env, env), f'${ENV_VAR}')
+        return StoreRoot(
+            _expand(from_env, env, absolute_only=f'${ENV_VAR}'),
+            f'${ENV_VAR}')
 
     path = _config_path(env) if config_path is None else config_path
     if path is not None:
         from_config = _from_config(path)
         if from_config is not None:
-            return StoreRoot(_expand(from_config, env), f'config {path}')
+            return StoreRoot(
+                _expand(from_config, env,
+                        absolute_only=f'{CONFIG_KEY!r} in {path}'),
+                f'config {path}')
 
     return StoreRoot(_expand(_DEFAULT_ROOT, env), 'default')
 
@@ -191,13 +197,23 @@ def resolve_store_root(
         cli_arg, env=env, config_path=config_path).path
 
 
-def _expand(value: str, env: Mapping[str, str]) -> Path:
+def _expand(value: str, env: Mapping[str, str],
+            absolute_only: Optional[str] = None) -> Path:
     """
     Expand ``~`` against ``env``'s HOME and return an absolute path.
 
     ``Path.expanduser`` reads the process environment directly, which would
     make an injected ``env`` a half-truth in tests.
+
+    :param absolute_only: when set, names a SETTING (the environment variable,
+        the config file) whose value must be absolute after ``~`` expansion. A
+        relative value there resolves against whatever directory each tool
+        happens to be run from -- one exported ``WORLD_STORE_ROOT=world``
+        would put every run in a different tree -- so it is refused. An
+        explicit ``--store-root`` is exempt: a path typed on a command line is
+        read against that command's working directory, as every CLI does.
     """
+    
     text = value
     if text.startswith('~') and not text.startswith(('~/', '~\\')) \
             and text != '~':
@@ -211,4 +227,9 @@ def _expand(value: str, env: Mapping[str, str]) -> Path:
                 f'cannot expand {value!r}: HOME is not set. Pass an absolute '
                 f'--store-root or set ${ENV_VAR} to one.')
         text = home + text[1:]
+    if absolute_only is not None and not Path(text).is_absolute():
+        raise StoreRootError(
+            f'{absolute_only} is {value!r}, a relative path: it would resolve '
+            'against whichever directory each tool is run from. Give an '
+            'absolute path (or ~/...).')
     return Path(text).absolute()
