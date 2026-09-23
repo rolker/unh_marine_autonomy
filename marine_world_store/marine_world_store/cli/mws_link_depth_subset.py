@@ -126,6 +126,58 @@ def _load_subset(path: Path) -> dict:
     return document
 
 
+def resolve_sources(entries, start=None, end=None):
+    """
+    Identify and date every source entry; return ids, Items and intervals.
+
+    A source named twice -- on the command line and in the manifest, or twice
+    in one manifest -- is ONE source: its content id is what identifies it, so
+    a repeat is dropped (and said so) rather than fingerprinted twice and
+    written twice.
+    """
+    source_ids = []
+    source_items = []
+    intervals = []
+    seen = {}
+    for entry in entries:
+        path = Path(entry['path']).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(f'{path}: no such file or directory')
+        identifier = source_identity.source_id(path)
+        if identifier in seen:
+            print(f'source {path}: same content as {seen[identifier]} '
+                  f'({identifier}); counted once')
+            continue
+        seen[identifier] = path
+        stated_start = entry.get('start') or start
+        stated_end = entry.get('end') or end
+        if stated_start or stated_end:
+            # An operator statement about this source, for material that has
+            # an interval but does not record one.
+            entry_start, entry_end = source_time.check_interval(
+                stated_start, stated_end, what=f'source {path.name}')
+        else:
+            entry_start, entry_end = source_time.source_interval(path)
+        intervals.append((entry_start, entry_end))
+        source_ids.append(identifier)
+        keys = (source_identity.merkle_lines(path) if path.is_dir()
+                else [f'{path.name}\t{source_identity.file_key(path)}'])
+        source_items.append(item_schema.build_source_item(
+            source_id=identifier,
+            kind='bag' if path.is_dir() else 'file',
+            name=entry.get('name') or path.name,
+            file_keys=keys,
+            platform=entry.get('platform'),
+            recorder=entry.get('recorder'),
+            start_datetime=entry_start,
+            end_datetime=entry_end,
+            href=str(path),
+        ))
+        print(f'source {path.name}: {identifier} '
+              f'({entry_start} .. {entry_end})')
+    return source_ids, source_items, intervals
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Adapt the subset and write its Items."""
     args = build_parser().parse_args(argv)
@@ -146,40 +198,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     end = args.end or document.get('end')
 
     root = resolved_root(args)
-    source_ids = []
-    source_items = []
-    intervals = []
-    for entry in entries:
-        path = Path(entry['path']).expanduser()
-        if not path.exists():
-            raise FileNotFoundError(f'{path}: no such file or directory')
-        stated_start = entry.get('start') or start
-        stated_end = entry.get('end') or end
-        if stated_start or stated_end:
-            # An operator statement about this source, for material that has
-            # an interval but does not record one.
-            entry_start, entry_end = source_time.check_interval(
-                stated_start, stated_end, what=f'source {path.name}')
-        else:
-            entry_start, entry_end = source_time.source_interval(path)
-        intervals.append((entry_start, entry_end))
-        identifier = source_identity.source_id(path)
-        source_ids.append(identifier)
-        keys = (source_identity.merkle_lines(path) if path.is_dir()
-                else [f'{path.name}\t{source_identity.file_key(path)}'])
-        source_items.append(item_schema.build_source_item(
-            source_id=identifier,
-            kind='bag' if path.is_dir() else 'file',
-            name=entry.get('name') or path.name,
-            file_keys=keys,
-            platform=entry.get('platform'),
-            recorder=entry.get('recorder'),
-            start_datetime=entry_start,
-            end_datetime=entry_end,
-            href=str(path),
-        ))
-        print(f'source {path.name}: {identifier} '
-              f'({entry_start} .. {entry_end})')
+    source_ids, source_items, intervals = resolve_sources(entries, start, end)
 
     # A product is dated by everything that went into it: a tile built from
     # three bags was observed over all three.

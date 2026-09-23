@@ -62,7 +62,10 @@ FINGERPRINT_KEYS = (
 )
 
 #: Sets of ids whose order is not an input: two builds that list the same
-#: sources in a different order are the same build, so these are sorted.
+#: sources in a different order are the same build, so these are sorted. They
+#: are SETS, so a repeated id is also de-duplicated: a source named twice is
+#: still one input, and counting it twice would give the same build two
+#: fingerprints depending on how its caller spelled the list.
 _UNORDERED_KEYS = frozenset({'source_ids', 'revision_ids'})
 
 #: Ordering IS the input here (design section 5: "the order it used is an input
@@ -99,7 +102,7 @@ def fingerprint_document(**inputs: Any) -> Dict[str, Any]:
             raise FingerprintError(
                 f'{key} is None; omit the input rather than passing null')
         if key in _UNORDERED_KEYS:
-            document[key] = sorted(_as_str_sequence(key, value))
+            document[key] = sorted(set(_as_str_sequence(key, value)))
         elif key in _ORDERED_KEYS:
             document[key] = list(_as_str_sequence(key, value))
         else:

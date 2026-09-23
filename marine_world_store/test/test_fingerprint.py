@@ -53,6 +53,22 @@ def test_source_order_does_not_matter():
         fingerprint(source_ids=['b', 'a'], builder_version='1')
 
 
+def test_a_repeated_source_is_one_input():
+    """
+    Source and revision ids are sets: naming one twice is still one input.
+
+    Regression: they were sorted but not de-duplicated, so a source listed
+    twice gave the same build a different fingerprint.
+    """
+    assert fingerprint(source_ids=['a', 'b', 'a'], builder_version='1') == \
+        fingerprint(source_ids=['a', 'b'], builder_version='1')
+    assert fingerprint_document(
+        source_ids=['a', 'a'], revision_ids=['r', 'r'],
+        builder_version='1') == {
+            'source_ids': ['a'], 'revision_ids': ['r'],
+            'builder_version': '1'}
+
+
 def test_consumer_ordering_order_does_matter():
     """Design section 5: the order a consumer used is an input."""
     assert fingerprint(consumer_ordering=['a', 'b'], builder_version='1') != \

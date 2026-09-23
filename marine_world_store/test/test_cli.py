@@ -38,7 +38,8 @@ import json
 
 from marine_world_store import layout, source_identity
 from marine_world_store.cli import (
-    mws_import_source, mws_regenerate_catalog, mws_write_revision,
+    mws_import_source, mws_link_depth_subset, mws_regenerate_catalog,
+    mws_write_revision,
 )
 from marine_world_store.source_time import TimeIntervalError
 from marine_world_store.store_root import ENV_VAR
@@ -135,6 +136,23 @@ def test_import_source_reports_a_missing_path(tmp_path, store_root):
     """A path that is not there is an error, not an empty id."""
     with pytest.raises(FileNotFoundError):
         mws_import_source.main([str(tmp_path / 'nope')])
+
+
+def test_link_subset_counts_a_repeated_source_once(tmp_path, capsys):
+    """
+    One bag named twice is one input, fingerprinted and written once.
+
+    Regression: a source on the command line and in the manifest (or twice in
+    a manifest) was fingerprinted twice and its Item written twice.
+    """
+    bag = make_bag(tmp_path / 'bag')
+    same_content = make_bag(tmp_path / 'copy-of-bag')
+    ids, items, intervals = mws_link_depth_subset.resolve_sources(
+        [{'path': str(bag)}, {'path': str(bag)},
+         {'path': str(same_content)}])
+    assert ids == [source_identity.bag_source_id(bag)]
+    assert len(items) == 1 and len(intervals) == 1
+    assert 'counted once' in capsys.readouterr().out
 
 
 def test_write_revision_round_trip(tmp_path, store_root):
