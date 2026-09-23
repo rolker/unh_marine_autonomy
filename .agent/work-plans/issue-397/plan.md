@@ -229,9 +229,9 @@ would also need — root resolution, layout paths, fingerprints, Item reading �
 | `marine_world_store/test/test_{coverage,item_schema,depth_subset,source_time,revisions,cli,copyright,flake8,pep257}.py` | New — Group A tests beyond the plan's list |
 | `marine_world_store/test/test_{sigma_fold_measure,regenerate_workflow,overview_items,atomic_io}.py`, `test/fake_build_depth_overview_parent.py` | New — Group B / fix-pass tests; the regenerate tests run snakemake end to end with a stand-in for the C++ tool |
 | `marine_world_store/snakemake/Snakefile`, `marine_world_store/snakemake/rules/{overviews,catalog,gti}.smk` | New — Group B regenerate rules (the fix pass folded the pre-step into the Snakefile and deleted `rules/fingerprints.smk`) |
-| `marine_bathymetry_store/include/marine_bathymetry_store/overview_pyramid.hpp` | Add `depthMultiBandFold`, `buildMultiBandDepthOverviewPyramid`, `buildMultiBandDepthOverviewParent` declarations (additive); Group B adds `listMultiBandOverviewParents`; the fix pass adds `listMultiBandOverviewParentInputs`, `pruneMultiBandOverviewLevel`, `refuseLegacyDepthLayer` |
+| `marine_bathymetry_store/include/marine_bathymetry_store/overview_pyramid.hpp` | Add `depthMultiBandFold`, `buildMultiBandDepthOverviewPyramid`, `buildMultiBandDepthOverviewParent` declarations (additive); Group B adds `listMultiBandOverviewParents`; the fix passes add `listMultiBandOverviewParentInputs`, `pruneMultiBandOverviewLevel`, `refuseLegacyDepthLayer`, `removeMultiBandOverviewLevel` |
 | `marine_bathymetry_store/src/overview_pyramid.cpp` | Implement the above |
-| `marine_bathymetry_store/src/build_depth_overview_parent.cpp` | New — per-parent CLI (planned as `build_depth_overview_parent_main.cpp`; shipped under this name) with `--list-parents` and `--prune` |
+| `marine_bathymetry_store/src/build_depth_overview_parent.cpp` | New — per-parent CLI (planned as `build_depth_overview_parent_main.cpp`; shipped under this name) with `--list-parents`, `--prune` and `--remove-level` |
 | `marine_bathymetry_store/CMakeLists.txt` | New executable target + install rule |
 | `marine_bathymetry_store/test/test_depth_overview_multiband.cpp` | New — fold correctness, MIN-vs-legacy equivalence, per-parent mode |
 | `marine_bathymetry_store/README.md` | Document the multi-band writer and per-parent mode alongside the existing wholesale one; note it targets the rev-3 tree only |
@@ -524,5 +524,38 @@ literal; plain Python package with a `package.xml` shim).
   C++ per-tile record and schema file likewise.
 - **Tool resolution.** colcon installs both packages' executables under
   `<prefix>/lib/<package>/`, not on `PATH`, so the rules resolve each tool
-  (PATH, then the ament prefixes, then `--config <tool>_tool=`).
+  (PATH, then the ament prefixes, then `--config <tool>_tool=`). An override is
+  resolved before `workdir:` changes directory (round 2).
+
+## Implementation notes — review fix pass, round 2 (2026-09-23)
+
+What the round-2 pre-push review's fix pass changed about the notes above.
+
+- **Change detection is decided from content, and the mtime is set to say
+  so.** The round-1 `.fp` rule (reset an unchanged tile to its recorded mtime,
+  leave a changed one alone) missed a change copied in with an OLD mtime
+  (`copy2`, `rsync -t`, a restore). Now a changed or new tile is advanced to
+  now and that is recorded; an unchanged one gets back its recorded mtime; the
+  refresh visits `overviews/` before the natives, so a first refresh rebuilds
+  every overview once. Each parent a rule builds is recorded as built
+  (`mws_refresh_fingerprints --record`), so a parent that came out byte for
+  byte the same stays newer than the child it absorbed.
+- **"Re-derived every run" is now true, and a missing product is rebuilt.**
+  Deleting the listings at load was not enough: Snakemake plans a checkpoint
+  only when something asks for its output. The listings and `products.done`
+  (a rule that asks for every derived tile and its record) are targets of
+  `rule all`, deleted at load; each level's listing asks for the level below's
+  tiles AND records. The bookkeeping steps (manifest, catalog, indexes)
+  therefore run every run; the manifest, like the Items/Collection, is
+  rewritten only when its content changed.
+- **Levels outside the configured range are removed** — a new C++ entry point,
+  `removeMultiBandOverviewLevel` / `--remove-level`, run by the finest level's
+  checkpoint for every derived level outside `min_level`..`fine_level - 1`
+  (replacing the one-level `--prune` of `fine_level`).
+- **`atomic_io` publishes with the mode `open()` would give** (0666 less the
+  umask), not mkstemp's 0600.
+- **Host-local files** (`.regenerate/`, `overviews.lock`, `*.fp`,
+  `*.gti.fgb`) are documented as sync excludes in the README.
+- **The legacy-tree guards above are unchanged in this pass** (see
+  progress.md's round-2 Implementation entry).
 
