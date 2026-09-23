@@ -72,10 +72,13 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -92,7 +95,9 @@
 
 #include "marine_autonomy/gggs.h"
 #include "marine_autonomy/gggs/index_math.h"
+#include "marine_bathymetry_store/bathy_cell.hpp"
 #include "marine_bathymetry_store/bathymetry_tile.hpp"
+#include "marine_bathymetry_store/tile_io.hpp"
 #include "marine_tiled_raster_store/coverage_manifest.hpp"
 #include "marine_tiled_raster_store/overview_builder.hpp"
 #include "marine_tiled_raster_store/tile_io.hpp"
@@ -453,6 +458,102 @@ void refuseCrossSchemaSidecar(
   }
 }
 
+// fsync one path. A file's failure throws — its content is what the rename
+// is about to publish. A directory's is best effort: some filesystems refuse
+// fsync on a directory, and the rename is still atomic there; only its
+// durability is the filesystem's call.
+void fsyncPath(const fs::path & path, bool directory)
+{
+  const int fd = ::open(path.c_str(), directory ? (O_RDONLY | O_DIRECTORY) : O_RDONLY);
+  if (fd < 0) {
+    if (directory) {
+      return;
+    }
+    throw std::runtime_error(
+      "cannot open " + path.string() + " to sync it: " + std::strerror(errno));
+  }
+  const int rc = ::fsync(fd);
+  const int err = errno;
+  ::close(fd);
+  if (rc != 0 && !directory) {
+    throw std::runtime_error(
+      "cannot sync " + path.string() + ": " + std::strerror(err));
+  }
+}
+
+// A temporary beside @p path that no other writer uses: pid plus a
+// per-process counter. A fixed `<name>.tmp` is shared by every writer of
+// `<name>`, so two concurrent runs could publish each other's half-written
+// file; the counter covers two writes of one name from one process.
+fs::path privateTemporary(const fs::path & path, const std::string & suffix)
+{
+  static std::atomic<unsigned long> counter{0};   // NOLINT(runtime/int)
+  return path.parent_path() /
+         ("." + path.filename().string() + "." +
+         std::to_string(static_cast<std::int64_t>(::getpid())) + "." +
+         std::to_string(counter.fetch_add(1)) + suffix);
+}
+
+// Publish @p path whole and durably: write a private temporary, sync it,
+// rename it over @p path, sync the directory. rename(2) alone is atomic but
+// not durable — after a crash a renamed file whose data never reached disk
+// can be present and empty.
+void publishText(const fs::path & path, const std::string & text)
+{
+  const fs::path tmp = privateTemporary(path, ".tmp");
+  try {
+    {
+      std::ofstream out(tmp);
+      out << text;
+      out.flush();
+      if (!out) {
+        throw std::runtime_error("cannot write " + tmp.string());
+      }
+    }
+    fsyncPath(tmp, false);
+    fs::rename(tmp, path);
+  } catch (...) {
+    std::error_code ec;
+    fs::remove(tmp, ec);
+    throw;
+  }
+  fsyncPath(path.parent_path(), true);
+}
+
+// The per-tile record's filename beside a tile: `<level>_<row>_<col>.json`.
+fs::path tileRecordPath(const fs::path & tile_path)
+{
+  fs::path record = tile_path;
+  record.replace_extension(".json");
+  return record;
+}
+
+// Remove one derived tile and everything that describes it: its per-tile
+// record and its content-fingerprint sidecar (`<tile>.fp`, written by
+// marine_world_store's refresh pre-step). The tile goes first, so an
+// interruption leaves at worst a record with no tile — which every reader
+// already ignores — never a tile with no record claiming it is fine.
+// Returns whether the tile existed.
+bool removeDerivedTile(const fs::path & overviews, const gggs::GridIndex & grid)
+{
+  const fs::path tile = overviews / marine_tiled_raster_store::tileFilename(grid);
+  std::error_code ec;
+  const bool existed = fs::remove(tile, ec);
+  if (ec) {
+    throw std::runtime_error("cannot remove stale " + tile.string() + ": " + ec.message());
+  }
+  for (const fs::path & companion :
+    {tileRecordPath(tile), fs::path(tile).concat(".fp")})
+  {
+    fs::remove(companion, ec);
+    if (ec) {
+      throw std::runtime_error(
+        "cannot remove stale " + companion.string() + ": " + ec.message());
+    }
+  }
+  return existed;
+}
+
 // The band schema and the σ rule, recorded beside the tiles.
 //
 // A reader must never have to INFER which of the four bands carries meaning.
@@ -467,16 +568,7 @@ void writeOverviewSchema(const fs::path & dir, SigmaFold rule)
     {"bands", nlohmann::json::array({"min", "mean", "count", "sigma"})},
     {"sigma_fold", sigmaFoldName(rule)},
     {"sigma_band_written", rule != SigmaFold::kUndecided}};
-  const fs::path path = dir / "overview_schema.json";
-  const fs::path tmp = fs::path(path).concat(".tmp");
-  {
-    std::ofstream out(tmp);
-    out << doc.dump(2) << "\n";
-    if (!out) {
-      throw std::runtime_error("cannot write " + tmp.string());
-    }
-  }
-  fs::rename(tmp, path);
+  publishText(dir / "overview_schema.json", doc.dump(2) + "\n");
 }
 
 // One derived tile's own record: its geometric error and the schema it was
@@ -485,9 +577,14 @@ void writeOverviewSchema(const fs::path & dir, SigmaFold rule)
 // shared coverage.json would be a write race with no lock that would not also
 // serialise the DAG back into the batch build it replaces. The records are
 // assembled into coverage.json once, after the DAG (mws_assemble_coverage).
+//
+// `children` names the contributors (relative to the layer: `<name>` native,
+// `overviews/<name>` derived), which is the lineage marine_world_store needs
+// to build the tile's STAC Item — its observation interval and its inputs are
+// the union of its children's.
 void writeTileMeta(
   const fs::path & tile_path, double geometric_error_m, SigmaFold rule,
-  std::size_t children_used)
+  const std::vector<std::string> & children)
 {
   nlohmann::json doc{
     {"schema", "depth-overview-tile/1"},
@@ -495,18 +592,9 @@ void writeTileMeta(
     {"bands", nlohmann::json::array({"min", "mean", "count", "sigma"})},
     {"sigma_fold", sigmaFoldName(rule)},
     {"sigma_band_written", rule != SigmaFold::kUndecided},
-    {"children_used", children_used}};
-  fs::path path = tile_path;
-  path.replace_extension(".json");
-  const fs::path tmp = fs::path(path).concat(".tmp");
-  {
-    std::ofstream out(tmp);
-    out << doc.dump(2) << "\n";
-    if (!out) {
-      throw std::runtime_error("cannot write " + tmp.string());
-    }
-  }
-  fs::rename(tmp, path);
+    {"children_used", children.size()},
+    {"children", children}};
+  publishText(tileRecordPath(tile_path), doc.dump(2) + "\n");
 }
 
 // One level's tile counts: how many child tiles were read, how many parents were
@@ -1051,9 +1139,37 @@ std::string sigmaFoldName(SigmaFold rule)
   return "unknown";
 }
 
+void refuseLegacyDepthLayer(const std::string & layer_dir_s)
+{
+  fs::path layer = fs::absolute(fs::path(layer_dir_s)).lexically_normal();
+  if (layer.filename().empty()) {
+    layer = layer.parent_path();   // a trailing separator names no directory
+  }
+  const std::string name = layer.filename().string();
+  for (const SourceLayer legacy :
+    {SourceLayer::Processed, SourceLayer::Draft, SourceLayer::Reference,
+      SourceLayer::Chart})
+  {
+    if (name == layerDirName(legacy)) {
+      throw std::runtime_error(
+        "refusing " + layer_dir_s + ": '" + name + "' is a legacy "
+        "marine_bathymetry_store layer, whose pyramid is the 2-band one "
+        "build_depth_overviews writes. The 4-band rev-3 schema belongs to a "
+        "world-store quantity layer (<root>/depths/<state>/<origin>/)");
+    }
+  }
+  if (fs::exists(layer.parent_path() / "registry.json")) {
+    throw std::runtime_error(
+      "refusing " + layer_dir_s + ": its parent holds the legacy store's "
+      "registry.json, so this is a legacy marine_bathymetry_store layer, not a "
+      "world-store quantity layer (<root>/depths/<state>/<origin>/)");
+  }
+}
+
 DepthOverviewBuildResult buildMultiBandDepthOverviewPyramid(
   const MultiBandOverviewOptions & opts, std::ostream * progress)
 {
+  refuseLegacyDepthLayer(opts.layer_dir);
   const SigmaFold rule = opts.sigma_fold;
   return buildPyramidCore(
     opts.layer_dir, opts.min_level, opts.dry_run, detail::kMultiBandCount,
@@ -1096,10 +1212,23 @@ std::optional<double> tileMetaGeometricError(const fs::path & tile_path)
 std::vector<gggs::GridIndex> listMultiBandOverviewParents(
   const std::string & layer_dir_s, int parent_level)
 {
+  std::vector<gggs::GridIndex> parents;
+  for (const MultiBandOverviewParent & entry :
+    listMultiBandOverviewParentInputs(layer_dir_s, parent_level))
+  {
+    parents.push_back(entry.parent);
+  }
+  return parents;
+}
+
+std::vector<MultiBandOverviewParent> listMultiBandOverviewParentInputs(
+  const std::string & layer_dir_s, int parent_level)
+{
   const fs::path layer_dir(layer_dir_s);
   if (!fs::is_directory(layer_dir)) {
     throw std::runtime_error("not a directory: " + layer_dir_s);
   }
+  refuseLegacyDepthLayer(layer_dir_s);
   if (parent_level < 0 ||
     static_cast<std::size_t>(parent_level) + 1 >= gggs::levels.size())
   {
@@ -1131,7 +1260,71 @@ std::vector<gggs::GridIndex> listMultiBandOverviewParents(
       }
     }
   }
-  return std::vector<gggs::GridIndex>(parents.begin(), parents.end());
+  std::vector<MultiBandOverviewParent> out;
+  out.reserve(parents.size());
+  for (const gggs::GridIndex & parent : parents) {
+    MultiBandOverviewParent entry{parent, {}};
+    for (const gggs::GridIndex & child : gggs::children(parent)) {
+      const std::string name = marine_tiled_raster_store::tileFilename(child);
+      const bool has_native = fs::exists(layer_dir / name);
+      const bool has_derived = fs::exists(overviews / name);
+      if (has_native && has_derived) {
+        throw std::runtime_error(
+          "tile " + name + " exists both natively in " + layer_dir_s +
+          " and as a derived overview in " + overviews.string() +
+          "; native and derived coverage must be disjoint — refusing to guess");
+      }
+      if (has_native) {
+        entry.children.push_back(name);
+      } else if (has_derived) {
+        entry.children.push_back("overviews/" + name);
+      }
+    }
+    out.push_back(std::move(entry));
+  }
+  return out;
+}
+
+std::vector<gggs::GridIndex> pruneMultiBandOverviewLevel(
+  const std::string & layer_dir_s, int level)
+{
+  const fs::path layer_dir(layer_dir_s);
+  if (!fs::is_directory(layer_dir)) {
+    throw std::runtime_error("not a directory: " + layer_dir_s);
+  }
+  if (level < 0 || static_cast<std::size_t>(level) >= gggs::levels.size()) {
+    throw std::invalid_argument(
+      "pruneMultiBandOverviewLevel: " + std::to_string(level) +
+      " is not a GGGS level");
+  }
+  refuseLegacyDepthLayer(layer_dir_s);
+  const fs::path overviews = layer_dir / "overviews";
+  const bool has_child_level =
+    static_cast<std::size_t>(level) + 1 < gggs::levels.size();
+  std::vector<gggs::GridIndex> removed;
+  std::size_t skipped = 0;
+  for (const gggs::GridIndex & grid :
+    marine_tiled_raster_store::gridsInDir(
+      overviews.string(), static_cast<uint8_t>(level), skipped))
+  {
+    const bool native_here =
+      fs::exists(layer_dir / marine_tiled_raster_store::tileFilename(grid));
+    bool any_child = false;
+    if (!native_here && has_child_level) {
+      for (const gggs::GridIndex & child : gggs::children(grid)) {
+        const std::string name = marine_tiled_raster_store::tileFilename(child);
+        if (fs::exists(layer_dir / name) || fs::exists(overviews / name)) {
+          any_child = true;
+          break;
+        }
+      }
+    }
+    if ((native_here || !any_child) && removeDerivedTile(overviews, grid)) {
+      removed.push_back(grid);
+    }
+  }
+  std::sort(removed.begin(), removed.end());
+  return removed;
 }
 
 MultiBandParentResult buildMultiBandDepthOverviewParent(
@@ -1147,6 +1340,7 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
       "buildMultiBandDepthOverviewParent: level " + std::to_string(level) +
       " has no child level to fold from");
   }
+  refuseLegacyDepthLayer(layer_dir_s);
   // gridFromTileName round-trips its answer through tileFilename and compares
   // it with this string, so the label must be the FILENAME, extension included
   // — a bare "<level>_<row>_<col>" never matches and every index reads as
@@ -1170,6 +1364,10 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
   // a native-covered parent costs one stat() rather than four tile loads.
   if (fs::exists(layer_dir / marine_tiled_raster_store::tileFilename(parent))) {
     result.suppressed_by_native = true;
+    // A derived tile an earlier run left here now shadows nothing but the
+    // truth: remove it, or the next coarser fold finds this index both
+    // natively and derived and refuses the layer forever.
+    result.removed_stale = removeDerivedTile(overviews, parent);
     return result;
   }
 
@@ -1177,6 +1375,7 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
   std::vector<marine_tiled_raster_store::TiledRasterTile<double>> child_tiles;
   std::vector<const marine_tiled_raster_store::TiledRasterTile<double> *> child_ptrs;
   std::vector<std::optional<double>> child_errors;
+  std::vector<std::string> child_names;
   for (const gggs::GridIndex & child : gggs::children(parent)) {
     const std::string name = marine_tiled_raster_store::tileFilename(child);
     const fs::path native_path = layer_dir / name;
@@ -1205,11 +1404,15 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
       promoteNativeTile(loaded, detail::kMultiBandCount) : std::move(loaded));
     child_errors.push_back(
       has_native ? std::nullopt : tileMetaGeometricError(derived_path));
+    child_names.push_back(has_native ? name : "overviews/" + name);
   }
   if (child_tiles.empty()) {
     // Nothing to fold. Not an error: a per-parent DAG legitimately enumerates
     // parents whose children have not been built (or do not exist) yet, and a
-    // throw here would turn a sparse region into a failed run.
+    // throw here would turn a sparse region into a failed run. A derived tile
+    // left here by an earlier run describes children that are gone; remove it
+    // rather than keep advertising that coverage.
+    result.removed_stale = removeDerivedTile(overviews, parent);
     return result;
   }
   child_ptrs.reserve(child_tiles.size());
@@ -1244,25 +1447,26 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
   // per-parent DAG runs many of these at once over this directory.
   const fs::path final_path =
     overviews / marine_tiled_raster_store::tileFilename(parent);
-  const fs::path tmp_path = overviews /
-    ("." + marine_tiled_raster_store::tileFilename(parent) + "." +
-    std::to_string(static_cast<std::int64_t>(::getpid())) + ".tmp.tif");
+  // `.tif` last: the private temporary must still read as a GeoTIFF to GDAL.
+  const fs::path tmp_path = privateTemporary(final_path, ".tmp.tif");
   try {
     marine_tiled_raster_store::saveTile<double>(
       parent_tile, tmp_path.string(),
       std::vector<std::optional<double>>(
         detail::kMultiBandCount, std::optional<double>(nan)));
+    fsyncPath(tmp_path, false);
     fs::rename(tmp_path, final_path);
   } catch (...) {
     std::error_code cleanup_ec;
     fs::remove(tmp_path, cleanup_ec);
     throw;
   }
+  fsyncPath(overviews, true);
 
   result.geometric_error_m = detail::saturatedGeometricError(
     level, static_cast<int>(child_level), child_errors);
   result.written = true;
-  writeTileMeta(final_path, result.geometric_error_m, rule, result.children_used);
+  writeTileMeta(final_path, result.geometric_error_m, rule, child_names);
   return result;
 }
 

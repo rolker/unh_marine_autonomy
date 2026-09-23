@@ -54,11 +54,15 @@ void usage()
     "  and writes it to <layer_dir>/overviews/ as a 4-band MIN/MEAN/COUNT/sigma\n"
     "  tile (the rev-3 world store schema; docs/world_store_design.md section 7).\n"
     "  <layer_dir> is a rev-3 quantity layer, e.g. <store root>/depths/<state>/\n"
-    "  <origin>/ — NOT a draft/processed/reference layer, whose pyramid is the\n"
-    "  2-band one build_depth_overviews writes. Pointing this at one is refused.\n"
+    "  <origin>/ — NOT a draft/processed/reference/chart layer, whose pyramid is\n"
+    "  the 2-band one build_depth_overviews writes. Pointing this (or either\n"
+    "  mode below) at one is refused: by its name, or by the legacy store's\n"
+    "  registry.json beside it.\n"
     "  Children are the native tiles in <layer_dir> (2-band, promoted on read)\n"
     "  and the derived tiles already in overviews/. A parent already covered by a\n"
-    "  NATIVE tile is left alone: native data wins on disk.\n"
+    "  NATIVE tile is left alone: native data wins on disk. A DERIVED tile at the\n"
+    "  parent's index that a native tile now covers, or whose children are all\n"
+    "  gone, is removed with its record (reported on stderr).\n"
     "  The sigma band is RESERVED and written as nodata — section 7's fold rule\n"
     "  is not decided yet, and each tile records `sigma_fold: undecided` beside\n"
     "  it so the later decision is a new fingerprint, not a migration.\n"
@@ -68,12 +72,22 @@ void usage()
     "        (both reported on stderr), 2 usage, 1 failure.\n"
     "\n"
     "usage: build_depth_overview_parent --list-parents <layer_dir> <level>\n"
-    "  Prints, one `<level>_<row>_<col>` per line, the parents at <level> that\n"
-    "  have at least one child and are not already covered by a native tile —\n"
-    "  what a Snakemake DAG enumerates before it can schedule anything. It is\n"
-    "  here rather than in the rules because the parent/child mapping is GGGS,\n"
-    "  whose column counts vary by latitude band; a second implementation of\n"
-    "  that arithmetic would be a second thing to get wrong.\n";
+    "  Prints, one parent per line, the parents at <level> that have at least\n"
+    "  one child and are not already covered by a native tile, as\n"
+    "  `<level>_<row>_<col>` followed by a TAB-separated list of the children\n"
+    "  it folds, relative to <layer_dir> (`<name>` native, `overviews/<name>`\n"
+    "  derived) — what a Snakemake DAG enumerates before it can schedule\n"
+    "  anything, and what it uses as each job's inputs. It is here rather than\n"
+    "  in the rules because the parent/child mapping is GGGS, whose column\n"
+    "  counts vary by latitude band; a second implementation of that\n"
+    "  arithmetic would be a second thing to get wrong.\n"
+    "\n"
+    "usage: build_depth_overview_parent --prune <layer_dir> <level>\n"
+    "  Removes the derived tiles at <level> that describe nothing any more — a\n"
+    "  native tile now covers the index, or no child of it exists — with their\n"
+    "  records and .fp sidecars, printing each removed `<level>_<row>_<col>`.\n"
+    "  A per-parent DAG only schedules parents that have children, so nothing\n"
+    "  else would ever remove one. Run it once the level below is final.\n";
 }
 
 // Strict unsigned parse: an empty, negative, non-numeric or trailing-garbage
@@ -97,6 +111,12 @@ bool parseU32(const char * text, uint32_t & out)
   }
 }
 
+std::string gridName(const gggs::GridIndex & grid)
+{
+  return std::to_string(static_cast<int>(grid.level())) + "_" +
+         std::to_string(grid.row()) + "_" + std::to_string(grid.column());
+}
+
 }  // namespace
 
 int main(int argc, char ** argv)
@@ -117,11 +137,33 @@ int main(int argc, char ** argv)
       return 2;
     }
     try {
-      for (const gggs::GridIndex & parent :
-        mbs::listMultiBandOverviewParents(argv[2], static_cast<int>(list_level)))
+      for (const mbs::MultiBandOverviewParent & entry :
+        mbs::listMultiBandOverviewParentInputs(
+          argv[2], static_cast<int>(list_level)))
       {
-        std::cout << static_cast<int>(parent.level()) << "_" << parent.row() <<
-          "_" << parent.column() << "\n";
+        std::cout << gridName(entry.parent);
+        for (const std::string & child : entry.children) {
+          std::cout << "\t" << child;
+        }
+        std::cout << "\n";
+      }
+      return 0;
+    } catch (const std::exception & e) {
+      std::cerr << "error: " << e.what() << "\n";
+      return 1;
+    }
+  }
+  if (argc == 4 && std::string(argv[1]) == "--prune") {
+    uint32_t prune_level = 0;
+    if (!parseU32(argv[3], prune_level)) {
+      usage();
+      return 2;
+    }
+    try {
+      for (const gggs::GridIndex & removed :
+        mbs::pruneMultiBandOverviewLevel(argv[2], static_cast<int>(prune_level)))
+      {
+        std::cout << gridName(removed) << "\n";
       }
       return 0;
     } catch (const std::exception & e) {
@@ -145,14 +187,17 @@ int main(int argc, char ** argv)
     const mbs::MultiBandParentResult result =
       mbs::buildMultiBandDepthOverviewParent(
       argv[1], static_cast<int>(level), row, col);
+    const char * removed = result.removed_stale ?
+      "; the stale derived tile there was removed" : "";
     if (result.suppressed_by_native) {
       std::cerr << "parent " << level << "_" << row << "_" << col <<
-        ": left to the native tile already at that index; nothing written\n";
+        ": left to the native tile already at that index; nothing written" <<
+        removed << "\n";
       return 0;
     }
     if (!result.written) {
       std::cerr << "parent " << level << "_" << row << "_" << col <<
-        ": no child tile exists yet; nothing written\n";
+        ": no child tile exists; nothing written" << removed << "\n";
       return 0;
     }
     std::cerr << "parent " << level << "_" << row << "_" << col << ": written "

@@ -234,8 +234,10 @@ DepthOverviewBuildResult buildDepthOverviewPyramid(
 ///
 /// Until it is decided the writers default to @c kUndecided: the fourth band is
 /// RESERVED and written as nodata, and the rule name is recorded in the tile's
-/// sidecar metadata (and from there in its STAC Item) so the later decision is a
-/// new fingerprint rather than a migration. The candidates are implemented here
+/// per-tile record (`<level>_<row>_<col>.json`, which `marine_world_store`'s
+/// `mws_regenerate_catalog` carries into the tile's STAC Item as
+/// `mws:sigma_fold`) so the later decision is a new fingerprint rather than a
+/// migration. The candidates are implemented here
 /// because the measurement that decides between them must exercise the same
 /// arithmetic the writer would — not a second copy of it.
 enum class SigmaFold
@@ -310,6 +312,23 @@ struct MultiBandParentResult
   /// The saturated geometric error recorded for the written tile
   /// (`uma-ADR-0013` D1/D2); NaN when nothing was written.
   double geometric_error_m = 0.0;
+  /// A DERIVED tile already at the parent's index was removed, because it no
+  /// longer describes anything: a native tile now occupies that index
+  /// (native-wins), or no child of it exists any more. Leaving it would keep
+  /// advertising coverage that is not there — and, in the native-wins case,
+  /// make the next coarser fold refuse the layer as "both native and derived".
+  bool removed_stale = false;
+};
+
+/// @brief One parent a per-parent run should build, with the inputs it folds.
+struct MultiBandOverviewParent
+{
+  gggs::GridIndex parent;
+  /// The contributing children, as paths RELATIVE to the layer directory: a
+  /// native child is `<name>`, a derived one `overviews/<name>`. A DAG uses
+  /// these as the job's inputs, so a changed, added or vanished child reruns
+  /// exactly the parent it feeds — without the DAG knowing any GGGS arithmetic.
+  std::vector<std::string> children;
 };
 
 /// @brief Fold ONE parent tile from its up-to-four children and write it.
@@ -329,6 +348,13 @@ struct MultiBandParentResult
 ///
 /// **Native-wins** still holds: if a native tile occupies the parent's own
 /// `(level, index)`, nothing is written and @c suppressed_by_native is set.
+/// A derived tile left at that index by an earlier run is REMOVED (with its
+/// record), as is one whose children have all gone — see
+/// @c MultiBandParentResult::removed_stale and
+/// `pruneMultiBandOverviewLevel`, which finds such tiles without being told
+/// their index.
+///
+/// **Refuses a legacy layer**: see `refuseLegacyDepthLayer`.
 ///
 /// **Atomicity is per tile**, not wholesale: the tile is written to a unique
 /// temporary beside its destination and renamed over it, which `rename(2)` makes
@@ -372,6 +398,52 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
 /// @throws std::runtime_error if @p layer_dir is not a directory.
 std::vector<gggs::GridIndex> listMultiBandOverviewParents(
   const std::string & layer_dir, int parent_level);
+
+/// @brief `listMultiBandOverviewParents`, with each parent's contributing
+///        children named (see @c MultiBandOverviewParent::children).
+///
+/// @throws Everything `listMultiBandOverviewParents` throws, plus
+///   `std::runtime_error` when a child is present both natively and as a
+///   derived tile — the same corrupted-layer refusal the fold makes, raised
+///   while the DAG is still being planned rather than mid-run.
+std::vector<MultiBandOverviewParent> listMultiBandOverviewParentInputs(
+  const std::string & layer_dir, int parent_level);
+
+/// @brief Remove the DERIVED tiles at @p level that no longer describe anything.
+///
+/// A derived tile is stale when a native tile now occupies its index
+/// (native-wins: compiled data replaced the fold), or when none of its
+/// children — native in @p layer_dir or derived in `overviews/` — exists any
+/// more. A per-parent DAG only ever schedules parents that HAVE children and
+/// no native tile, so without this nothing would ever remove such a tile: it
+/// would stay in `overviews/`, in the assembled coverage manifest and in the
+/// derived index, and a native-covered one would make the next coarser fold
+/// refuse the layer.
+///
+/// Removes each stale tile with its per-tile record (`.json`) and content
+/// sidecar (`.fp`). Run it for a level only once the level below is final —
+/// the regenerate DAG runs it immediately before listing that level's parents.
+///
+/// @return The indices removed, in GGGS order.
+/// @throws std::invalid_argument if @p level is not a GGGS level.
+/// @throws std::runtime_error if @p layer_dir is not a directory, is a legacy
+///   layer, or a removal fails.
+std::vector<gggs::GridIndex> pruneMultiBandOverviewLevel(
+  const std::string & layer_dir, int level);
+
+/// @brief Refuse a legacy `draft/processed/reference/chart` layer by POSITIVE
+///        identification, not by what its `overviews/` happens to hold.
+///
+/// Every 4-band writer and planner calls this first. The cross-schema guard
+/// (`refuseCrossSchemaSidecar`) only fires once a legacy layer already HAS a
+/// 2-band pyramid; a legacy layer with none would otherwise gain a 4-band one
+/// silently. Refused when the directory's name is one of
+/// `marine_bathymetry_store`'s own layer names (`layerDirName`), or when its
+/// parent holds the legacy store's `registry.json`. A rev-3 layer is
+/// `<root>/<quantity>/<state>/<origin>/` and matches neither.
+///
+/// @throws std::runtime_error naming the layer and the reason.
+void refuseLegacyDepthLayer(const std::string & layer_dir);
 
 /// @brief Internals exposed for unit testing — not a stable public API.
 namespace detail

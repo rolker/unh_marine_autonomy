@@ -33,6 +33,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -711,6 +712,210 @@ TEST(PerParentOverview, ListsADerivedTileAsAContributorToTheNextLevelUp)
     dir.path().string(), grandparent.level());
   ASSERT_EQ(next.size(), 1u);
   EXPECT_EQ(next.front(), grandparent);
+}
+
+// --- stale derived tiles, the legacy refusal, the DAG's inputs --------------
+
+std::string readText(const fs::path & path)
+{
+  std::ifstream in(path);
+  return std::string(
+    (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+fs::path recordOf(const fs::path & tile)
+{
+  fs::path record = tile;
+  record.replace_extension(".json");
+  return record;
+}
+
+TEST(PerParentOverview, NativeWinsRemovesAStaleDerivedParent)
+{
+  // Regression: a native tile arriving where an earlier run had derived one
+  // left the derived tile in place, and the next coarser fold then found the
+  // index "both natively and derived" and refused the layer forever.
+  ScratchDir dir("stale_native");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  const gggs::GridIndex grandparent = gggs::parent(parent);
+  ASSERT_TRUE(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column())
+    .written);
+  const fs::path derived = dir.path() / "overviews" / mtrs::tileFilename(parent);
+  std::ofstream(fs::path(derived).concat(".fp")) << "{}";
+  ASSERT_TRUE(fs::exists(derived));
+
+  writeUniformNativeTile(dir.path(), parent, -3.0, 0.2);   // compiled data lands
+  const mbs::MultiBandParentResult r = mbs::buildMultiBandDepthOverviewParent(
+    dir.path().string(), parent.level(), parent.row(), parent.column());
+  EXPECT_TRUE(r.suppressed_by_native);
+  EXPECT_TRUE(r.removed_stale);
+  EXPECT_FALSE(fs::exists(derived));
+  EXPECT_FALSE(fs::exists(recordOf(derived)));
+  EXPECT_FALSE(fs::exists(fs::path(derived).concat(".fp")));
+  EXPECT_NO_THROW(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), grandparent.level(), grandparent.row(),
+      grandparent.column()));
+}
+
+TEST(PerParentOverview, AParentWhoseChildrenAreGoneIsRemoved)
+{
+  // Regression: a parent whose children vanished kept its tile and record,
+  // so the coverage manifest and the derived index kept advertising it.
+  ScratchDir dir("stale_orphan");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  ASSERT_TRUE(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column())
+    .written);
+  for (const gggs::GridIndex & g : fine) {
+    fs::remove(dir.path() / mtrs::tileFilename(g));
+  }
+  const mbs::MultiBandParentResult r = mbs::buildMultiBandDepthOverviewParent(
+    dir.path().string(), parent.level(), parent.row(), parent.column());
+  EXPECT_FALSE(r.written);
+  EXPECT_TRUE(r.removed_stale);
+  EXPECT_FALSE(fs::exists(dir.path() / "overviews" / mtrs::tileFilename(parent)));
+}
+
+TEST(PruneOverviewLevel, RemovesOnlyTheTilesThatDescribeNothing)
+{
+  // The DAG never schedules a parent with no children or with a native tile,
+  // so without a prune nothing would remove such a tile.
+  ScratchDir dir("prune");
+  const gggs::GridIndex seed = gggs::Level(kFineLevel).gridIndex(kLat, kLon);
+  const gggs::GridIndex keep = gggs::parent(seed);
+  // Three parents at one level: one kept (children present), one covered by
+  // a native tile, one whose children are gone.
+  std::vector<gggs::GridIndex> parents;
+  for (const gggs::GridIndex & sibling : gggs::children(gggs::parent(keep))) {
+    parents.push_back(sibling);
+  }
+  ASSERT_GE(parents.size(), 3u);
+  for (const gggs::GridIndex & p : parents) {
+    for (const gggs::GridIndex & g : gggs::children(p)) {
+      writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+    }
+    ASSERT_TRUE(
+      mbs::buildMultiBandDepthOverviewParent(
+        dir.path().string(), p.level(), p.row(), p.column()).written);
+  }
+  const gggs::GridIndex covered = parents[1];
+  const gggs::GridIndex orphaned = parents[2];
+  writeUniformNativeTile(dir.path(), covered, -3.0, 0.2);
+  for (const gggs::GridIndex & g : gggs::children(orphaned)) {
+    fs::remove(dir.path() / mtrs::tileFilename(g));
+  }
+
+  const std::vector<gggs::GridIndex> removed =
+    mbs::pruneMultiBandOverviewLevel(dir.path().string(), keep.level());
+  std::vector<gggs::GridIndex> expected{covered, orphaned};
+  std::sort(expected.begin(), expected.end());
+  EXPECT_EQ(removed, expected);
+  const fs::path overviews = dir.path() / "overviews";
+  EXPECT_TRUE(fs::exists(overviews / mtrs::tileFilename(parents[0])));
+  EXPECT_FALSE(fs::exists(overviews / mtrs::tileFilename(covered)));
+  EXPECT_FALSE(fs::exists(recordOf(overviews / mtrs::tileFilename(orphaned))));
+  // Idempotent: a second prune finds nothing.
+  EXPECT_TRUE(
+    mbs::pruneMultiBandOverviewLevel(dir.path().string(), keep.level()).empty());
+  EXPECT_THROW(
+    mbs::pruneMultiBandOverviewLevel(dir.path().string(), 21),
+    std::invalid_argument);
+}
+
+TEST(LegacyLayerRefusal, EveryFourBandEntryPointRefusesALegacyLayer)
+{
+  // Regression: the 4-band writers refused a legacy layer only when its
+  // overviews/ ALREADY held 2-band tiles; one with no pyramid yet gained a
+  // 4-band one silently, and --list-parents had no guard at all.
+  ScratchDir root("legacy");
+  for (const char * name : {"draft", "processed", "reference", "chart"}) {
+    const fs::path layer = root.path() / name;
+    for (const gggs::GridIndex & g : fineSiblings()) {
+      writeUniformNativeTile(layer, g, -8.0, 0.4);
+    }
+    const gggs::GridIndex parent = gggs::parent(fineSiblings().front());
+    EXPECT_THROW(
+      mbs::buildMultiBandDepthOverviewParent(
+        layer.string(), parent.level(), parent.row(), parent.column()),
+      std::runtime_error) << name;
+    EXPECT_THROW(
+      mbs::listMultiBandOverviewParents(layer.string(), parent.level()),
+      std::runtime_error) << name;
+    EXPECT_THROW(
+      mbs::pruneMultiBandOverviewLevel(layer.string(), parent.level()),
+      std::runtime_error) << name;
+    mbs::MultiBandOverviewOptions batch;
+    batch.layer_dir = layer.string() + "/";   // a trailing slash hides nothing
+    batch.min_level = kFineLevel - 1;
+    EXPECT_THROW(mbs::buildMultiBandDepthOverviewPyramid(batch), std::runtime_error) <<
+      name;
+    EXPECT_FALSE(fs::exists(layer / "overviews")) << name;
+  }
+  // Any name, where the legacy store's registry sits beside it.
+  const fs::path store = root.path() / "store";
+  fs::create_directories(store / "renamed");
+  std::ofstream(store / "registry.json") << "{}";
+  EXPECT_THROW(mbs::refuseLegacyDepthLayer((store / "renamed").string()),
+    std::runtime_error);
+  // A rev-3 layer is refused by neither rule.
+  fs::create_directories(root.path() / "depths" / "draft" / "surveyed");
+  EXPECT_NO_THROW(
+    mbs::refuseLegacyDepthLayer(
+      (root.path() / "depths" / "draft" / "surveyed").string()));
+}
+
+TEST(PerParentOverview, ListingNamesEachParentsChildrenForTheDag)
+{
+  // The DAG's job inputs: native children by name, derived ones under
+  // overviews/, so a changed or vanished child reruns exactly its parent.
+  ScratchDir dir("list_inputs");
+  const gggs::GridIndex seed = gggs::Level(kFineLevel).gridIndex(kLat, kLon);
+  const gggs::GridIndex parent = gggs::parent(seed);
+  const gggs::GridIndex grandparent = gggs::parent(parent);
+  writeUniformNativeTile(dir.path(), seed, -8.0, 0.4);
+  std::vector<mbs::MultiBandOverviewParent> level_one =
+    mbs::listMultiBandOverviewParentInputs(dir.path().string(), parent.level());
+  ASSERT_EQ(level_one.size(), 1u);
+  EXPECT_EQ(level_one.front().parent, parent);
+  EXPECT_EQ(level_one.front().children,
+    std::vector<std::string>{mtrs::tileFilename(seed)});
+
+  ASSERT_TRUE(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column())
+    .written);
+  const std::vector<mbs::MultiBandOverviewParent> level_two =
+    mbs::listMultiBandOverviewParentInputs(
+    dir.path().string(), grandparent.level());
+  ASSERT_EQ(level_two.size(), 1u);
+  EXPECT_EQ(level_two.front().children,
+    std::vector<std::string>{"overviews/" + mtrs::tileFilename(parent)});
+
+  // The record names the same lineage, which is what the tile's Item is
+  // built from.
+  const std::string record = readText(
+    recordOf(dir.path() / "overviews" / mtrs::tileFilename(parent)));
+  EXPECT_NE(record.find("\"children\""), std::string::npos) << record;
+  EXPECT_NE(record.find(mtrs::tileFilename(seed)), std::string::npos) << record;
+
+  // A child present both ways is refused while planning, not mid-run.
+  writeUniformNativeTile(dir.path(), parent, -3.0, 0.2);
+  EXPECT_THROW(
+    mbs::listMultiBandOverviewParentInputs(
+      dir.path().string(), grandparent.level()),
+    std::runtime_error);
 }
 
 int main(int argc, char ** argv)
