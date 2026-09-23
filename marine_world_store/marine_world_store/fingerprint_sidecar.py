@@ -37,10 +37,20 @@ nothing.
 This is that reconciliation, the prototype's component 5 pre-step. Each tile
 gets a ``.fp`` sidecar holding the tile's **content** fingerprint. On a refresh:
 
-* the content matches the sidecar -- the tile's mtime is reset to the sidecar's,
-  so the DAG sees no change, because there is none;
-* the content differs -- the sidecar is rewritten and the tile's mtime is left
-  alone, so the DAG re-runs what depends on it.
+* the content matches the sidecar -- the tile's mtime is reset to the mtime
+  RECORDED with the fingerprint (the tile's own mtime when that content was
+  first seen), so the DAG sees no change, because there is none;
+* the content differs -- the sidecar is rewritten with the new fingerprint and
+  the tile's current mtime, and the mtime is left alone, so the DAG re-runs
+  what depends on it.
+
+Why the recorded mtime and not the sidecar file's own: the first version reset
+a tile to its sidecar's mtime, and sidecars are written in whatever order a
+refresh visits the tiles -- coarsest level first. A parent's sidecar was
+therefore OLDER than its child's, every unchanged parent came out older than
+its unchanged children, and the DAG rebuilt it -- byte for byte, on every run,
+forever. Restoring the tile's own recorded mtime keeps the order the builds
+actually happened in.
 
 **This is not section 9's fingerprint.** That one is over a product's *inputs*
 (sources, revisions, decoder and builder versions) and lives in the tile's Item;
@@ -61,15 +71,20 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Union
+from typing import Dict, List, Optional, Union
 
 from marine_world_store import atomic_io, layout
 
 PathLike = Union[str, Path]
 
 #: What a ``.fp`` document is, so a reader cannot mistake it for section 9's
-#: input fingerprint.
-SCHEMA = 'tile-content-fingerprint/1'
+#: input fingerprint. ``/2`` adds ``mtime_ns``, the tile's mtime when the
+#: fingerprint was recorded.
+SCHEMA = 'tile-content-fingerprint/2'
+
+#: The superseded schema: no recorded mtime, so it is re-recorded (as for a
+#: tile seen for the first time) rather than reported as unreadable.
+_SUPERSEDED_SCHEMAS = frozenset({'tile-content-fingerprint/1'})
 
 #: Suffix of the sidecar beside a tile.
 SUFFIX = '.fp'
@@ -125,23 +140,35 @@ class RefreshReport:
             self.symlinks_skipped = []
 
 
-def _read_sidecar(path: Path) -> Dict[str, object]:
+def _read_sidecar(path: Path) -> Optional[Dict[str, object]]:
+    """
+    Return the sidecar's document; ``{}`` when absent; ``None`` if unreadable.
+
+    A superseded-schema document reads as absent (it is re-recorded), a
+    document of any other schema or shape as unreadable -- it is not this
+    module's to interpret, so it is rewritten rather than guessed at.
+    """
+    if not path.exists():
+        return {}
     try:
         document = json.loads(path.read_text())
     except (OSError, ValueError):
+        return None
+    if isinstance(document, dict) and \
+            document.get('schema') in _SUPERSEDED_SCHEMAS:
         return {}
-    if not isinstance(document, dict) or document.get('schema') != SCHEMA:
-        # A document of some other schema is not this one's to interpret --
-        # treat it as absent and rewrite, rather than guessing its fields.
-        return {}
+    if not isinstance(document, dict) or document.get('schema') != SCHEMA \
+            or not isinstance(document.get('mtime_ns'), int):
+        return None
     return document
 
 
-def _write_sidecar(path: Path, fingerprint: str) -> None:
+def _write_sidecar(path: Path, fingerprint: str, mtime_ns: int) -> None:
     # Atomic: a reader sees the old document or the new one, never a half
     # one, and a crashed run leaves no sidecar claiming a truncated hash.
     atomic_io.write_text(path, json.dumps(
-        {'schema': SCHEMA, 'fingerprint': fingerprint}, indent=2) + '\n')
+        {'schema': SCHEMA, 'fingerprint': fingerprint, 'mtime_ns': mtime_ns},
+        indent=2) + '\n')
 
 
 def refresh_tile(tile: PathLike, report: RefreshReport) -> str:
@@ -154,17 +181,19 @@ def refresh_tile(tile: PathLike, report: RefreshReport) -> str:
     sidecar = sidecar_path(tile)
     fingerprint = content_fingerprint(tile)
     document = _read_sidecar(sidecar)
-    if sidecar.exists() and not document:
+    if document is None:
         report.unreadable.append(str(sidecar))
+        document = {}
     if document.get('fingerprint') == fingerprint:
-        # The content is identical, so the tile is not newer than the record of
-        # it however many times a rebuild rewrote the file.
-        sidecar_mtime = sidecar.stat().st_mtime
-        os.utime(tile, (sidecar_mtime, sidecar_mtime))
+        # The content is identical, so the tile is as old as the content is,
+        # however many times a rebuild rewrote the file: give it back the
+        # mtime it had when this content was first recorded.
+        recorded = document['mtime_ns']
+        os.utime(tile, ns=(tile.stat().st_atime_ns, recorded))
         report.unchanged += 1
         return 'unchanged'
     existed = bool(document)
-    _write_sidecar(sidecar, fingerprint)
+    _write_sidecar(sidecar, fingerprint, tile.stat().st_mtime_ns)
     if existed:
         report.changed += 1
         return 'changed'

@@ -77,20 +77,39 @@ def test_first_pass_records_without_claiming_the_tile_is_older(tmp_path):
 
 def test_a_byte_identical_rewrite_stops_looking_like_a_change(tmp_path):
     """
-    Reset an unchanged tile's mtime to its sidecar's.
+    Reset an unchanged tile's mtime to the one recorded with its content.
 
     This is the whole point of the pre-step: a rebuild that produced the same
     bytes must not make every rule above the tile re-run.
     """
     tile = _tile(tmp_path, '13_1_1.tif')
+    recorded = tile.stat().st_mtime_ns
     fingerprint_sidecar.refresh_directory(tmp_path)
-    sidecar_mtime = fingerprint_sidecar.sidecar_path(tile).stat().st_mtime
     # A rebuild: same bytes, newer mtime.
     tile.write_bytes(b'tile')
-    os.utime(tile, (sidecar_mtime + 1000, sidecar_mtime + 1000))
+    os.utime(tile, ns=(recorded + 10**12, recorded + 10**12))
     report = fingerprint_sidecar.refresh_directory(tmp_path)
     assert report.unchanged == 1 and report.changed == 0
-    assert tile.stat().st_mtime == pytest.approx(sidecar_mtime)
+    assert tile.stat().st_mtime_ns == recorded
+
+
+def test_unchanged_tiles_keep_the_order_they_were_built_in(tmp_path):
+    """
+    A parent built after its child stays newer than it, run after run.
+
+    Regression: unchanged tiles were reset to their SIDECAR's mtime, and the
+    refresh writes coarser tiles' sidecars first -- so every unchanged parent
+    came out older than its unchanged child, and the DAG rebuilt it byte for
+    byte on every run, forever.
+    """
+    overviews = tmp_path / 'overviews'
+    child = _tile(overviews, '13_1_1.tif', b'child')
+    parent = _tile(overviews, '12_0_0.tif', b'parent')
+    os.utime(child, ns=(10**18, 10**18))
+    os.utime(parent, ns=(10**18 + 5, 10**18 + 5))   # built after its child
+    for _ in range(3):
+        fingerprint_sidecar.refresh_directory(overviews)
+        assert parent.stat().st_mtime_ns > child.stat().st_mtime_ns
 
 
 def test_a_real_change_keeps_its_mtime_and_rewrites_the_record(tmp_path):
@@ -104,6 +123,16 @@ def test_a_real_change_keeps_its_mtime_and_rewrites_the_record(tmp_path):
     assert json.loads(
         fingerprint_sidecar.sidecar_path(tile).read_text())['fingerprint'] == \
         fingerprint_sidecar.content_fingerprint(tile)
+
+
+def test_a_superseded_sidecar_is_re_recorded_quietly(tmp_path):
+    """A /1 sidecar has no recorded mtime; it is re-recorded, not 'unreadable'."""
+    tile = _tile(tmp_path, '13_1_1.tif')
+    fingerprint_sidecar.sidecar_path(tile).write_text(json.dumps({
+        'schema': 'tile-content-fingerprint/1',
+        'fingerprint': fingerprint_sidecar.content_fingerprint(tile)}))
+    report = fingerprint_sidecar.refresh_directory(tmp_path)
+    assert report.created == 1 and report.unreadable == []
 
 
 def test_an_unreadable_sidecar_is_named_not_silently_replaced(tmp_path):
