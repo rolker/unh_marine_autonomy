@@ -320,6 +320,10 @@ snakemake -s "$(ros2 pkg prefix marine_world_store)"/share/marine_world_store/sn
   --config layer_dir="$WORLD_STORE/depths/reviewed/surveyed" fine_level=13 min_level=8 -j8
 ```
 
+`fine_level` must be the layer's finest native level: a run whose `fine_level`
+is coarser than a native tile in the layer is refused before anything is
+written or removed (a slip there would otherwise remove the whole derived
+pyramid as "levels this run does not build" and exit 0).
 `layer_dir` is required and has no default: the store root is resolved by
 `store_root.py`, and a path written into the workflow would be the hard-coded
 path the guard test forbids (which now scans `Snakefile` too). The tools are

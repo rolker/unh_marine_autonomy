@@ -570,16 +570,27 @@ def workflow(tmp_path, monkeypatch):
                 end_datetime='2026-06-22T14:00:00Z')])
             return path
 
-        def run(self, *extra, **config):
-            """Run the workflow; return (stdout+stderr, builds, prunes)."""
+        def invoke(self, *extra, **config):
+            """Run snakemake over the layer; return the CompletedProcess."""
             self.log.write_text('')
             settings = {'layer_dir': layer, 'fine_level': 13, 'min_level': 11,
                         'build_depth_overview_parent_tool': fake, **config}
-            result = subprocess.run(
+            return subprocess.run(
                 ['snakemake', '-s', str(SNAKEMAKE_DIR / 'Snakefile'),
                  '--cores', '2', '--config',
                  *(f'{k}={v}' for k, v in settings.items()), *extra],
                 capture_output=True, text=True, cwd=str(tmp_path))
+
+        def refused(self, *extra, **config):
+            """Run the workflow expecting a refusal; return its output."""
+            result = self.invoke(*extra, **config)
+            output = result.stdout + result.stderr
+            assert result.returncode != 0, output
+            return output
+
+        def run(self, *extra, **config):
+            """Run the workflow; return (stdout+stderr, builds, prunes)."""
+            result = self.invoke(*extra, **config)
             output = result.stdout + result.stderr
             assert result.returncode == 0, output
             lines = self.log.read_text().split()
@@ -813,6 +824,27 @@ def test_levels_outside_the_configured_range_are_removed(workflow):
     coverage = json.loads((overviews / 'coverage.json').read_text())
     assert [lvl['level'] for lvl in coverage['levels']] == [12]
     assert not (workflow.layer / 'depths-reviewed-surveyed-11_0_0.json').exists()
+
+
+def test_a_fine_level_the_natives_contradict_is_refused(workflow):
+    """
+    Refuse a fine_level coarser than the natives, before removing anything.
+
+    Regression: with natives at 13, fine_level=12 removed every derived tile
+    as "a level this run does not build", built nothing, and exited 0 with
+    an empty manifest and no overview Items.
+    """
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    workflow.run()
+    overviews = workflow.layer / 'overviews'
+    before = sorted(p.name for p in overviews.iterdir())
+    published = workflow.published()
+    output = workflow.refused(fine_level=12)
+    assert 'fine_level=12' in output and '13_0_0.tif' in output
+    assert sorted(p.name for p in overviews.iterdir()) == before
+    assert workflow.published() == published
+    assert workflow.log.read_text() == ''
 
 
 def test_a_relative_tool_override_is_relative_to_where_snakemake_started(
