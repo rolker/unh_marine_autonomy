@@ -208,18 +208,24 @@ def parse_tile_filename(name: str):
     Tolerant on purpose: a layer directory legitimately holds non-tile files
     (``coverage.json``, Items), and a reader that threw on them would make
     every caller write the same try/except.
+
+    Strict about the SPELLING, though: a name is a tile only when it is the
+    canonical one :func:`tile_filename` would write for the index it parses to.
+    ``int()`` alone accepts ``01``, `` 1``, ``+1`` and non-ASCII digits, so
+    ``01_2_3.tif`` and ``1_2_3.tif`` used to alias one ``(level, row, col)``
+    -- two files claiming one tile. The C++ side rejects every one of those
+    (``gridFromTileName`` round-trips the name through ``tileFilename``), and
+    the two readers must agree on which files are tiles.
     """
-    stem, dot, suffix = str(name).rpartition('.')
+    name = str(name)
+    stem, dot, suffix = name.rpartition('.')
     if not dot or suffix != 'tif':
         return None
     parts = stem.split('_')
-    if len(parts) != 3:
+    if len(parts) != 3 or not all(p.isascii() and p.isdigit() for p in parts):
         return None
-    try:
-        level, row, col = (int(p) for p in parts)
-    except ValueError:
-        return None
-    if min(level, row, col) < 0:
+    level, row, col = (int(p) for p in parts)
+    if f'{level}_{row}_{col}.tif' != name:
         return None
     return level, row, col
 

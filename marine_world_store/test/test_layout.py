@@ -107,6 +107,14 @@ def test_tile_filename_refuses_impossible_indices(args):
     ('12_34.tif', None),
     ('12_34_56.tif.tmp', None),
     ('a_b_c.tif', None),
+    # Non-canonical spellings of a real index: the C++ reader rejects them,
+    # and accepting them let two files alias one (level, row, col).
+    ('01_2_3.tif', None),
+    ('1_02_3.tif', None),
+    (' 1_2_3.tif', None),
+    ('+1_2_3.tif', None),
+    ('1_2_-3.tif', None),
+    ('\u0661_2_3.tif', None),   # ARABIC-INDIC DIGIT ONE: int() accepts it
 ])
 def test_parse_tile_filename_is_tolerant(name, expected):
     """A layer directory holds non-tile files; reading one is not an error."""
