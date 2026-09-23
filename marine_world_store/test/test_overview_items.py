@@ -163,14 +163,22 @@ def test_a_changed_sigma_rule_is_a_new_fingerprint(tmp_path):
 ])
 def test_an_overview_with_unknown_lineage_is_refused(tmp_path, children,
                                                      match):
-    """No lineage, no time: refused and named, like every undated Item."""
+    """
+    No lineage, no time: refused and named, like every undated Item.
+
+    And with the remedy: a batch-built tile (no record) or a record naming no
+    children cannot be catalogued, and the error says how to rebuild it.
+    """
     directory = tmp_path / 'depths' / 'reviewed' / 'surveyed'
     natives = [native(directory, '13_2_2.tif', '2026-06-22T13:00:00Z',
                       '2026-06-22T14:00:00Z', ['bag-a'])]
     overview(directory, '12_1_1.tif', children)
-    with pytest.raises(overview_items.OverviewItemError, match=match):
+    with pytest.raises(overview_items.OverviewItemError, match=match) as info:
         overview_items.build_overview_items(
             directory, **CELL, existing_items=natives)
+    if children is None:
+        assert 'remove 12_1_1.json' in str(info.value)
+        assert 'rerun' in str(info.value)
 
 
 def test_children_in_two_frames_are_refused(tmp_path):

@@ -129,7 +129,12 @@ def build_overview_items(
         if record is None or not record.children:
             problems.append(
                 f'{name}: no per-tile record naming its children, so its '
-                'lineage -- and therefore its time -- is unknown')
+                'lineage -- and therefore its time -- is unknown. Only the '
+                'per-parent writer (build_depth_overview_parent) records '
+                'children; rebuild the tile with it -- the regenerate '
+                'workflow rebuilds any tile whose record is missing, so '
+                f'remove {Path(name).with_suffix(".json").name} (or all of '
+                'overviews/) and rerun it')
             continue
         children = [by_path.get(child) for child in record.children]
         missing = [child for child, item in zip(record.children, children)
