@@ -8,10 +8,25 @@ The design this implements is
 [`docs/world_store_design.md`](../docs/world_store_design.md) (rev 3) — read it
 first; this README says what the code does, not what the store is for.
 
-**It builds alongside the existing store.** Nothing here reads or writes
+**It builds alongside the existing store.** Nothing here writes
 `marine_bathymetry_store`'s `draft/`, `processed/`, `reference/` or `chart/`
-tree. The rev-3 layout is a different directory tree, not a rename of that one,
-and every existing consumer is unaffected.
+tree (the adapter below only reads it). The rev-3 layout is a different
+directory tree, not a rename of that one, and every existing consumer is
+unaffected.
+
+That is enforced, not assumed. The two trees meet under `<root>/depths/`, and
+one name is in both vocabularies: the legacy store's `draft` LAYER and rev 3's
+`draft` STATE. So:
+
+- `layout.writable_quantity_dir` refuses a rev-3 destination whose
+  `<root>/<quantity>/<state>/` directory holds tiles directly (it is a legacy
+  layer), or is named like a legacy layer where the legacy `registry.json`
+  lives — at the default root today, rev-3 `depths/draft/` would nest inside
+  the legacy `draft` layer. Build rev 3 under another `--store-root` there;
+- `layout.refuse_legacy_layer` (and its C++ twin `refuseLegacyDepthLayer`)
+  refuses to treat a legacy layer as a rev-3 quantity layer in every tool that
+  writes beside a layer's tiles: the fingerprint pre-step, the coverage
+  assembly, the catalog, and every 4-band overview writer.
 
 ## Not a ROS package (but installable as one)
 
@@ -43,15 +58,25 @@ does not name.
 
 Precedence, highest first:
 
-1. `--store-root` (every `mws_*` CLI has it)
+1. `--store-root`, on every CLI that resolves a root: `mws_import_source`,
+   `mws_write_revision`, `mws_link_depth_subset` and `mws_regenerate_catalog`
 2. `$WORLD_STORE_ROOT`
 3. `store_root:` in `~/.config/marine_world_store/config.yaml`
 4. the documented default
 
+The other CLIs take no root at all, because they never resolve one: they are
+handed exactly the directory or files they work on (`mws_refresh_fingerprints`,
+`mws_assemble_coverage` and `mws_list_tiles` a `LAYER_DIR`,
+`mws_measure_sigma_fold` tile paths), and `mws_regenerate_catalog --layer-dir`
+likewise ignores the root.
+
 A config file that exists but cannot be read is an **error**, never a silent
 fall-through to the default: falling back would write a survey into the wrong
-tree because of a stray character, and nothing would say so. Every CLI prints
-which of the four decided the root it used.
+tree because of a stray character, and nothing would say so. So is a
+**relative** path from `$WORLD_STORE_ROOT` or the config file — it would
+resolve against whichever directory each tool runs in (`--store-root` keeps
+ordinary command-line semantics). Every CLI that resolves a root prints which
+of the four decided it.
 
 ## Modules
 
@@ -69,8 +94,10 @@ which of the four decided the root it used.
 | `revisions.py` | Append-only `revisions/` records: geometry revisions and datum records. The id is the content hash, so an edited record is detected on read |
 | `depth_subset.py` | The native-tile **adapter** (see below) |
 | `sigma_fold_measure.py` | The evidence design §7's **open** σ-fold rule is decided from: what each candidate would write, against the true spread of the native cells under a parent. Decides nothing (see below) |
-| `fingerprint_sidecar.py` | The regenerate pre-step's `.fp` sidecar — a tile's **content** hash, which is *not* §9's input fingerprint; one answers "did this file change?", the other "was this built from the same things?" |
-| `overview_records.py` | Assembles the per-tile records the per-parent overview writer leaves into one `coverage-manifest/1` document (uma-ADR-0013 D3) |
+| `fingerprint_sidecar.py` | The regenerate pre-step's `.fp` sidecar — a tile's **content** hash plus the tile's mtime when that content was recorded, which is *not* §9's input fingerprint; one answers "did this file change?", the other "was this built from the same things?" |
+| `overview_records.py` | Assembles the per-tile records the per-parent overview writer leaves into one `coverage-manifest/1` document (uma-ADR-0013 D3), with an entry for every tile on disk — a tile with no record keeps the error the previous manifest gave it |
+| `overview_items.py` | The derived overview tiles' STAC Items, built from their lineage: the interval is the union of their children's, the inputs the union of their children's sources and revisions, the frame their children's (see below) |
+| `atomic_io.py` | Publishes every file this package writes whole and durably: a private temporary (never a shared `<name>.tmp`), fsync, rename, fsync of the directory |
 
 ### Every Item is dated, from its sources
 
@@ -116,11 +143,12 @@ vocabulary.
 |---|---|
 | `mws_import_source PATH` | Compute a source's content id, read its recorded interval out of the bag's `metadata.yaml`, and write its `sources/` Item. `--dry-run` prints the id and the interval and writes nothing (and needs no `pystac`); a source that cannot be dated is refused |
 | `mws_write_revision DESCRIPTION` | Append one `revisions/` record from a small YAML/JSON description |
-| `mws_regenerate_catalog` | Rebuild each present cell's `collection.json`, reporting only what changed |
+| `mws_regenerate_catalog` | Build the overview tiles' Items (removing the Item of a pruned tile) and rebuild each present cell's `collection.json`, writing only what changed. `--layer-dir LAYER_DIR` does exactly one layer — what the regenerate DAG runs |
 | `mws_link_depth_subset` | The adapter below |
 | `mws_measure_sigma_fold TILE…` | Measure the candidate σ-fold rules over native depth tiles and print a markdown table. Tile paths are **arguments** |
-| `mws_refresh_fingerprints LAYER_DIR` | The regenerate pre-step: reconcile `.fp` sidecars with the tiles, resetting an unchanged tile's mtime |
+| `mws_refresh_fingerprints LAYER_DIR` | The regenerate pre-step: reconcile `.fp` sidecars with the tiles, giving an unchanged tile back its recorded mtime. A symlinked tile is named and left alone (`utime` would reach through it) |
 | `mws_assemble_coverage LAYER_DIR` | Write `overviews/coverage.json` from the per-tile overview records, once, after the DAG |
+| `mws_list_tiles LAYER_DIR --kind native\|overview` | The data assets of a layer's Items of one kind, one path per line — the tile index's inputs, taken from the record rather than a glob |
 
 A revision description (the fields are `revisions.build_revision`'s arguments):
 
@@ -178,16 +206,51 @@ mws_link_depth_subset --source-store <existing store> --layer processed \
 sources:
   - path: /path/to/logs/bizzyboat_sonar/2026-06-22T13-22-29+00-00
     platform: bizzyboat
+  - path: /path/to/a/cast/file
+    start: '2026-06-22T14:00:00Z'   # this source's own interval, as a pair
+    end: '2026-06-22T14:05:00Z'
 levels: [12]
-# Optional, and only for a source that does not record its own interval:
-# stating it here overrides what would otherwise be read from the bag.
+# Optional: the interval for a source that records NONE. It never overrides
+# an interval a bag recorded in its metadata.yaml.
 start: '2026-06-22T13:22:29Z'
 end: '2026-06-22T15:00:00Z'
 ```
 
+A source named twice (on the command line and in the manifest, or twice in one
+manifest) is one source — identified by its content id — and is fingerprinted
+and written once.
+
 A tile whose coverage manifest recorded no geometric error gets an Item with
 **no** `mws:geometric_error_m` — never a zero, which would claim a perfect tile
 to the uma#395 selection core — and the run says how many.
+
+The destination must not overlap the source layer (equal to it, inside it, or
+containing it): the existing store is read-only, and a rev-3 tree inside it
+would put Items and a `collection.json` into the store the adapter promises not
+to touch.
+
+## Overview tiles have Items too
+
+Every product carries the consumer contract's Item (Part 2), and a derived
+overview tile is a product. `mws_regenerate_catalog` builds one per tile in
+`overviews/` from the per-tile record `build_depth_overview_parent` leaves,
+which names the children the tile folded:
+
+- **time** — the union of its children's intervals, down to the native tiles'
+  Items, which are dated from their bags. A tile whose lineage is unknown (no
+  record, or a child with no Item) is refused, named, like any undated Item;
+- **inputs** — the union of its children's sources and revisions, with a
+  builder version that names the fold and its σ rule over the children's own
+  builder versions, so a decided σ rule is a new fingerprint;
+- **frame** — its children's, which must agree (an adapted layer's overviews
+  declare the same untransformed frame its native tiles do);
+- `mws:geometric_error_m`, `mws:sigma_fold` (`undecided`), the 4-band
+  `mws:cell_fields` (MIN, MEAN, COUNT, σ — σ described as reserved nodata), and
+  `mws:children`.
+
+The Collection's temporal extent is the **union** of its Items' intervals
+(STAC reads `interval[0]` as the overall extent), and it declares the frame its
+Items declare.
 
 ## Dependencies
 
@@ -269,27 +332,47 @@ snakemake -s "$(ros2 pkg prefix marine_world_store)"/share/marine_world_store/sn
 
 `layer_dir` is required and has no default: the store root is resolved by
 `store_root.py`, and a path written into the workflow would be the hard-coded
-path the guard test forbids (which now scans `Snakefile` too).
+path the guard test forbids (which now scans `Snakefile` too). The tools are
+found on `PATH`, else under `<prefix>/lib/<package>/` in the sourced ament
+install space (colcon installs both packages' executables there, not on
+`PATH`), else from `--config <tool>_tool=<path>`.
 
-- **The pre-step is the load-bearing part.** §9 makes fingerprints, not mtimes,
-  the trigger; Snakemake's DAG decides from mtimes. `mws_refresh_fingerprints`
-  resets an unchanged tile's mtime to its `.fp` sidecar's, so a rebuild that
-  produced the same bytes stops looking like a change — without it, everything
-  above a rewritten-but-identical tile re-runs, which is the behaviour the
-  prototype found in the batch builder.
-- **One `checkpoint` per level.** The parents at level N cannot be enumerated
-  until N+1 exists, because a derived tile is itself a contributor; a DAG whose
-  shape depends on a previous step's output is what a checkpoint is for. The
-  enumeration is `build_depth_overview_parent --list-parents`, never Python in
-  the rules: the parent/child mapping is GGGS, whose column counts vary by
-  latitude band, and a test asserts it is not reimplemented there.
+- **The pre-step is the load-bearing part, and it runs when the Snakefile
+  loads.** §9 makes fingerprints, not mtimes, the trigger; Snakemake's DAG
+  decides from mtimes, while PLANNING — so the reconciliation has to happen
+  before planning, not as a job in the DAG. `mws_refresh_fingerprints` gives an
+  unchanged tile back the mtime recorded with its content, so a rebuild that
+  produced the same bytes stops looking like a change, and a parent stays newer
+  than its unchanged children. A dry run skips it (it writes).
+- **Every rule's inputs and outputs are the real files.** A parent's job takes
+  the child tiles it folds as inputs and declares the tile and its record as
+  outputs, so a changed child reruns exactly its ancestors, and an added or
+  vanished child changes the parent's recorded input set.
+- **One `checkpoint` per level, re-derived every run.** The parents at level N
+  cannot be enumerated until N+1 exists, because a derived tile is itself a
+  contributor. The checkpoint prunes level N (`--prune`: derived tiles a native
+  tile now covers, or whose children are gone) and lists its parents with their
+  children (`--list-parents`) — never Python in the rules: the parent/child
+  mapping is GGGS, whose column counts vary by latitude band, and a test asserts
+  it is not reimplemented there.
 - **`mws_assemble_coverage` is a single serialised step after every parent.**
   The per-parent writer leaves a per-tile record instead of touching a shared
-  `coverage.json`, because parallel folds would race over that one file and the
-  only lock that would fix it is one that serialises the DAG.
-- **The GTI index is derived and never synced** (§7) — regenerated locally from
-  the Collection, which is the record.
+  `coverage.json`, because parallel folds would race over that one file.
+- **The catalog is this layer's** (`mws_regenerate_catalog --layer-dir`), not
+  whatever tree the environment's store root names.
+- **The tile indexes are derived and never synced** (§7): one per band schema
+  (`<layer>/index.gti.fgb` for the native tiles, `overviews/index.gti.fgb` for
+  the overviews), built from the Items' data assets (`mws_list_tiles`). They are
+  written with only the `gdaltindex` options every supported GDAL has, so the
+  workflow runs on this repo's GDAL 3.8.4 hosts; reading one **as a raster** is
+  GDAL's GTI driver, which needs GDAL ≥ 3.9, and the workflow says so once per
+  run on an older host (there the index is an ordinary vector tile index).
+- **Runs over one layer are serialised** by a lock on
+  `<layer>/.regenerate/regenerate.lock`, whatever directory each run starts
+  from; the C++ writers additionally exclude a concurrent batch build
+  (`<layer>/overviews.lock`).
 
-Snakemake is not installed on the development host (it resolves through the
-repo-root `rosdep.yaml` local key), so the `--dry-run` test skips with that
-reason; the remaining rule checks are static and run today.
+The end-to-end tests (`test/test_regenerate_workflow.py`) run snakemake for
+real over a toy layer, with a stand-in for the C++ per-parent tool that keeps
+its command-line contract (`test/fake_build_depth_overview_parent.py`); the
+tool's own semantics are pinned by `marine_bathymetry_store`'s tests.

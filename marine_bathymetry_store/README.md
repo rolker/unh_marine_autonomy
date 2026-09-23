@@ -325,18 +325,27 @@ process is a new fingerprint, never a migration.
 # One parent tile of a rev-3 quantity layer, from its up-to-four children.
 ros2 run marine_bathymetry_store build_depth_overview_parent \
   "$WORLD_STORE/depths/reviewed/surveyed" 12 71203 55592
-# What a regenerate should schedule at level 12 (one `<level>_<row>_<col>` per
-# line): the parents that have a child and are not already native.
+# What a regenerate should schedule at level 12: the parents that have a child
+# and are not already native, one per line as `<level>_<row>_<col>` followed by
+# the TAB-separated children it folds (`<name>` native, `overviews/<name>`
+# derived) -- a DAG's job inputs.
 ros2 run marine_bathymetry_store build_depth_overview_parent --list-parents \
+  "$WORLD_STORE/depths/reviewed/surveyed" 12
+# Remove the derived tiles at level 12 that describe nothing any more (a native
+# tile now covers the index, or no child of it exists), printing each one.
+ros2 run marine_bathymetry_store build_depth_overview_parent --prune \
   "$WORLD_STORE/depths/reviewed/surveyed" 12
 ```
 
 - **Which tree.** These write a **rev-3 quantity layer**
   (`<store root>/depths/<state>/<origin>/`), never `draft/processed/reference/
-  chart`. Both writers refuse to replace a sidecar written under the other's
-  band count: consumers read these tiles **by band index**, so a schema swapped
-  in place is the one mistake nothing downstream could detect — every read would
-  succeed and every number would mean something else.
+  chart`, and every 4-band entry point (batch, per-parent, `--list-parents`,
+  `--prune`) refuses a legacy layer **positively** (`refuseLegacyDepthLayer`):
+  by its name, or by the legacy store's `registry.json` beside it. Both writers
+  also refuse to replace a sidecar written under the other's band count:
+  consumers read these tiles **by band index**, so a schema swapped in place is
+  the one mistake nothing downstream could detect — every read would succeed
+  and every number would mean something else.
 - **"MIN" is the minimum DEPTH.** The tiles hold ellipsoidal height (positive
   up), so the shoalest cell is the **maximum** stored number. Band 0 is
   bit-identical to the single-band fold's depth band over the same inputs — the
@@ -361,22 +370,34 @@ ros2 run marine_bathymetry_store build_depth_overview_parent --list-parents \
   refreshing one tile re-folds a whole layer. `build_depth_overview_parent`
   folds exactly one parent, which is what lets a Snakemake DAG
   (`marine_world_store/snakemake/`) decide what is stale. Atomicity is per
-  **tile** — write beside the destination, then rename over it — with no
-  `overviews.tmp/` staging and no run lock: one tile has no partial-pyramid
-  hazard, and a lock over the whole sidecar would serialise the DAG straight
-  back into the batch build it replaces.
+  **tile** — write a private temporary beside the destination, sync it, rename
+  over it — with no `overviews.tmp/` staging: one tile has no partial-pyramid
+  hazard. Per-parent writes hold `<layer>/overviews.lock` **shared** (many at
+  once) and the batch 4-band builder holds it **exclusively**, so a batch swap
+  never retires tiles a per-parent run just wrote; either refuses rather than
+  waits, and a leftover `overviews.tmp/` also stops a per-parent write.
 - **Native-wins, unchanged.** A parent already covered by a native tile is left
   alone and reported, in both writers and in `--list-parents`. A child found
   *both* natively and as a derived overview throws: the two sets are disjoint by
   construction, so that is a corrupted layer rather than a precedence question,
   and resolving it silently would make the pyramid depend on which rule ran
   last.
+- **Stale derived tiles are removed.** A derived tile that a native tile now
+  covers, or whose children are all gone, describes nothing; left in place it
+  would stay in the manifest and the index, and a native-covered one would make
+  the next coarser fold refuse the layer forever. The per-parent writer removes
+  one at the index it was asked to fold (reporting `removed_stale`), and
+  `--prune` removes every such tile at a level — the DAG never schedules those
+  parents, so nothing else would. Each goes with its record and its `.fp`.
 - **Geometric error, still a producer obligation (uma-ADR-0013 D1/D2/D3).** The
   batch writer stages `overviews/coverage.json` exactly as the single-band one
   does. The per-parent writer instead records each tile's error in that tile's
   own JSON, and `mws_assemble_coverage` turns those records into the manifest
   once, after the DAG — a shared `coverage.json` written by parallel folds would
-  be a race whose only fix is a lock that undoes the parallelism.
+  be a race whose only fix is a lock that undoes the parallelism. The record
+  also names the children the tile folded: the lineage `marine_world_store`
+  builds the tile's STAC Item from (its interval and inputs are its
+  children's).
 - **A parent with no children yet is not an error.** A per-parent DAG
   legitimately enumerates sparse regions; throwing there would turn one into a
   failed run.
