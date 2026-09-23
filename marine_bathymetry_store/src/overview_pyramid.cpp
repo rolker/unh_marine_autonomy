@@ -69,6 +69,7 @@
 #include "marine_bathymetry_store/overview_pyramid.hpp"
 
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -518,6 +519,78 @@ void publishText(const fs::path & path, const std::string & text)
     throw;
   }
   fsyncPath(path.parent_path(), true);
+}
+
+// The rev-3 layer's writer lock: `<layer>/overviews.lock`, flock(2)ed.
+//
+// The batch 4-band builder replaces overviews/ WHOLESALE (stage, then swap);
+// the per-parent writer and the prune write into it tile by tile. Interleaved,
+// the swap retires every tile a per-parent run wrote meanwhile, or a
+// per-parent run writes into a directory about to be retired. So the batch
+// builder holds the lock EXCLUSIVELY for its whole run, and each per-parent
+// write or prune holds it SHARED — many of those may run at once, which is
+// the point of the per-parent mode, but never beside a batch build. Both
+// refuse rather than wait: a DAG job that blocked on a batch build would hold
+// a worker for the batch's whole duration and then fold stale inputs.
+//
+// flock is released by the kernel when the process exits, so a crashed run
+// leaves no stale lock (unlike the batch builder's overviews.tmp/ staging
+// directory, which is checked separately as the crash-debris signal).
+class LayerWriterLock
+{
+public:
+  LayerWriterLock(const fs::path & layer_dir, bool exclusive)
+  : path_(layer_dir / "overviews.lock")
+  {
+    fd_ = ::open(path_.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    if (fd_ < 0) {
+      throw std::runtime_error(
+        "cannot open the layer writer lock " + path_.string() + ": " +
+        std::strerror(errno));
+    }
+    if (::flock(fd_, (exclusive ? LOCK_EX : LOCK_SH) | LOCK_NB) != 0) {
+      const int err = errno;
+      ::close(fd_);
+      fd_ = -1;
+      if (err == EWOULDBLOCK) {
+        throw std::runtime_error(
+          std::string("refusing to write ") + layer_dir.string() + ": " +
+                (exclusive ?
+                "per-parent overview writes are in progress over this layer" :
+                "a batch overview build is in progress over this layer") +
+          " (" + path_.string() + " is held); retry when it finishes");
+      }
+      throw std::runtime_error(
+        "cannot lock " + path_.string() + ": " + std::strerror(err));
+    }
+  }
+  ~LayerWriterLock()
+  {
+    if (fd_ >= 0) {
+      ::close(fd_);   // releases the flock
+    }
+  }
+  LayerWriterLock(const LayerWriterLock &) = delete;
+  LayerWriterLock & operator=(const LayerWriterLock &) = delete;
+
+private:
+  fs::path path_;
+  int fd_ = -1;
+};
+
+// A batch build's staging directory left behind by a crash: the per-parent
+// writer must not fold into overviews/ while it is there, because the next
+// batch run's recovery (or an operator clearing it) is about to decide what
+// overviews/ holds.
+void refuseBatchDebris(const fs::path & layer_dir)
+{
+  const fs::path staging = layer_dir / "overviews.tmp";
+  if (fs::exists(staging)) {
+    throw std::runtime_error(
+      "refusing to write " + layer_dir.string() + ": " + staging.string() +
+      " exists — a batch overview build is running, or crashed and left it "
+      "behind (remove it to retry)");
+  }
 }
 
 // The per-tile record's filename beside a tile: `<level>_<row>_<col>.json`.
@@ -1171,6 +1244,12 @@ DepthOverviewBuildResult buildMultiBandDepthOverviewPyramid(
 {
   refuseLegacyDepthLayer(opts.layer_dir);
   const SigmaFold rule = opts.sigma_fold;
+  // A dry run writes nothing, so it needs no writer lock (and must not create
+  // the lock file in a layer it only inspects).
+  std::optional<LayerWriterLock> lock;
+  if (!opts.dry_run && fs::is_directory(opts.layer_dir)) {
+    lock.emplace(fs::path(opts.layer_dir), true);
+  }
   return buildPyramidCore(
     opts.layer_dir, opts.min_level, opts.dry_run, detail::kMultiBandCount,
     [rule](const std::vector<std::vector<double>> & contributors) {
@@ -1298,6 +1377,8 @@ std::vector<gggs::GridIndex> pruneMultiBandOverviewLevel(
       " is not a GGGS level");
   }
   refuseLegacyDepthLayer(layer_dir_s);
+  const LayerWriterLock lock(layer_dir, false);
+  refuseBatchDebris(layer_dir);
   const fs::path overviews = layer_dir / "overviews";
   const bool has_child_level =
     static_cast<std::size_t>(level) + 1 < gggs::levels.size();
@@ -1341,6 +1422,8 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
       " has no child level to fold from");
   }
   refuseLegacyDepthLayer(layer_dir_s);
+  const LayerWriterLock lock(layer_dir, false);
+  refuseBatchDebris(layer_dir);
   // gridFromTileName round-trips its answer through tileFilename and compares
   // it with this string, so the label must be the FILENAME, extension included
   // — a bare "<level>_<row>_<col>" never matches and every index reads as

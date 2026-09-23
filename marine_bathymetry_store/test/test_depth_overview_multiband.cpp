@@ -31,6 +31,10 @@
 // regression guard uses — a value the pre-#331 binary produced — so the two
 // writers are pinned to one reference rather than to each other.
 
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -915,6 +919,63 @@ TEST(PerParentOverview, ListingNamesEachParentsChildrenForTheDag)
   EXPECT_THROW(
     mbs::listMultiBandOverviewParentInputs(
       dir.path().string(), grandparent.level()),
+    std::runtime_error);
+}
+
+TEST(LayerWriterLock, PerParentWritesAndABatchBuildExcludeEachOther)
+{
+  // Regression: the per-parent writer ignored the batch builder's run lock, so
+  // a batch swap could retire tiles a per-parent run had just written, or a
+  // per-parent run could write into a directory about to be retired.
+  ScratchDir dir("writer_lock");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  const fs::path lock_path = dir.path() / "overviews.lock";
+
+  {
+    // A batch build holds the lock exclusively.
+    const int fd = ::open(lock_path.c_str(), O_RDWR | O_CREAT, 0644);
+    ASSERT_GE(fd, 0);
+    ASSERT_EQ(::flock(fd, LOCK_EX | LOCK_NB), 0);
+    try {
+      mbs::buildMultiBandDepthOverviewParent(
+        dir.path().string(), parent.level(), parent.row(), parent.column());
+      ADD_FAILURE() << "a per-parent write beside a batch build must refuse";
+    } catch (const std::runtime_error & e) {
+      EXPECT_NE(std::string(e.what()).find("batch"), std::string::npos) <<
+        e.what();
+    }
+    EXPECT_THROW(
+      mbs::pruneMultiBandOverviewLevel(dir.path().string(), parent.level()),
+      std::runtime_error);
+    ::close(fd);
+  }
+  {
+    // Per-parent writers hold it shared: two may run at once, a batch may not.
+    const int fd = ::open(lock_path.c_str(), O_RDWR | O_CREAT, 0644);
+    ASSERT_GE(fd, 0);
+    ASSERT_EQ(::flock(fd, LOCK_SH | LOCK_NB), 0);
+    EXPECT_TRUE(
+      mbs::buildMultiBandDepthOverviewParent(
+        dir.path().string(), parent.level(), parent.row(), parent.column())
+      .written);
+    mbs::MultiBandOverviewOptions batch;
+    batch.layer_dir = dir.path().string();
+    batch.min_level = kFineLevel - 1;
+    EXPECT_THROW(
+      mbs::buildMultiBandDepthOverviewPyramid(batch), std::runtime_error);
+    batch.dry_run = true;   // a dry run writes nothing and takes no lock
+    EXPECT_NO_THROW(mbs::buildMultiBandDepthOverviewPyramid(batch));
+    ::close(fd);
+  }
+  // A crashed batch build's staging directory also stops a per-parent write.
+  fs::create_directories(dir.path() / "overviews.tmp");
+  EXPECT_THROW(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column()),
     std::runtime_error);
 }
 
