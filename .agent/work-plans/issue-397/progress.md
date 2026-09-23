@@ -611,3 +611,50 @@ Specialists: static analysis (flake8/ament_pep257/ament_cpplint/uncrustify/xmlli
 - [x] (suggestion) `files:` fallback does not skip `message_count: 0` splits, whose `starting_time` is time_point::max (~2262). Lens A — `marine_world_store/marine_world_store/source_time.py:261`
 - [x] (suggestion) Header promises σ rule/geometric error "in its STAC Item" for overview tiles, but nothing builds Items for derived tiles. Lens A — `marine_bathymetry_store/include/marine_bathymetry_store/overview_pyramid.hpp`
 - [x] (suggestion) Plan bookkeeping: `source_time.py`, `overview_records.py`, `docs/world_store_prototype_log.md` not in plan.md's records; planned `build_depth_overview_parent_main.cpp` shipped as `build_depth_overview_parent.cpp`. Plan Drift — `.agent/work-plans/issue-397/plan.md`
+
+## Implementation
+**Status**: complete
+**When**: 2026-09-23 10:25 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-397 at `258a72a`
+**Addressed**: Local Review (Pre-Push), round 1, When 2026-09-23 09:35 -04:00, reviewed at `e2998ea` (entry committed as `77dc930`) — 9 must-fix + 14 suggestions, all actioned, none deferred
+**Commits**: d696f14, 6994a7e, 90b2f5a, 90c271f, 04f85c9, 64e83d0, a659010, 0659808, 5ab6c24, e454bc2, 0ab4c61 (lint), c6e36a5, e492e84, 628c50e, 387b262, aadd105, 852b63e, abd1c37, 7b54f9f, fa79dd3, 8b7f161, 8a6a265, 258a72a
+
+**Tests**: `./core_ws/test.sh marine_bathymetry_store marine_world_store` — 719 tests, 0 errors, 0 failures, 45 skipped (clean rebuild of marine_bathymetry_store first: its public result struct changed). `marine_world_store` alone under plain pytest with ROS sourced: 299 passed (ament flake8/pep257/copyright included). `test_depth_overview_multiband`: 30/30. Every correctness fix has a regression test. Manual smoke (scratch only, not committed): the reworked Snakefile over four real GGGS native tiles with the REAL `build_depth_overview_parent` — run 1 built 12/11/10 + catalog + both indexes; run 2 "Nothing to be done"; a changed native tile rebuilt exactly its three ancestors.
+
+### Actions
+- [x] (must-fix) Regenerate DAG inert after run 1 — pre-step now runs at Snakefile load; parent jobs take child TILES as inputs and declare tile + record as outputs; per-level checkpoint prunes then lists parents with their children; listings re-derived each run; `.fp` schema /2 restores the tile's own recorded mtime (resetting to the sidecar's made unchanged parents older than children → perpetual rebuilds, found while fixing). E2E tests run snakemake for real with a stand-in tool — `snakemake/`, `fingerprint_sidecar.py`, `test/test_regenerate_workflow.py` (7b54f9f, 8b7f161)
+- [x] (must-fix) `catalog` rule regenerated the env's store root — `mws_regenerate_catalog --layer-dir`; the rule passes the layer; test asserts $WORLD_STORE_ROOT tree is untouched — `rules/catalog.smk` (852b63e, 8b7f161)
+- [x] (must-fix) Stale derived tiles never removed — per-parent writer removes a derived tile at its index on native-wins / no children (`removed_stale`); new `pruneMultiBandOverviewLevel` / `--prune` run by each level's checkpoint; removes record + `.fp` too — `overview_pyramid.cpp` (628c50e)
+- [x] (must-fix) No positive legacy-layer refusal — `refuseLegacyDepthLayer` (legacy name or `registry.json` beside it) in batch 4-band, per-parent, list, prune; Python `layout.refuse_legacy_layer` in the pre-step, coverage assembly, catalog, `mws_list_tiles`; symlinked tiles left alone (utime followed them) — (628c50e, 387b262)
+- [x] (must-fix) Adapter could write into the source store / legacy `draft` — `layout.writable_quantity_dir` refuses a state dir holding tiles, or a legacy-named state where the legacy registry lives; adapter refuses any destination overlapping the source layer (resolved) — `depth_subset.py`, `layout.py` (e492e84)
+- [x] (must-fix) `proj:epsg` always 9989 — follows the declared frame; a frame with no integer EPSG is refused — `item_schema.py` (d696f14)
+- [x] (must-fix) Collection temporal extent was the first tile's — now the union interval (`[null,null]` when empty); Collection frame follows its Items and refuses mixed frames — `item_schema.py` (6994a7e)
+- [x] (must-fix) `gti` rule needs GDAL ≥ 3.9 / wrong doc — **choice**: the index is written with only `gdaltindex` options every supported GDAL has (plain vector tile index named `*.gti.fgb`, which the GTI driver opens directly), so `rule all` succeeds on GDAL 3.8.4 and nothing is dropped; the Snakefile prints once per run on GDAL < 3.9 that reading it AS A RASTER needs ≥ 3.9. One index per band schema, built from the Items (`mws_list_tiles`), not a glob; atomic via write-beside + rename. (The old rule also passed the first tile as the index path.) — `rules/gti.smk` (fa79dd3, 8b7f161)
+- [x] (must-fix) README `--store-root` claim — names which CLIs resolve a root and which are handed a directory — `marine_world_store/README.md` (8a6a265)
+- [x] (suggestion) Shared `.tmp` / no fsync — `atomic_io` (mkstemp, fsync, rename, dir fsync) for all Python writers; C++ record/schema via `publishText`, tile temporary synced before rename (c6e36a5, 628c50e)
+- [x] (suggestion) Runs not serialised — flock `.regenerate/regenerate.lock` at Snakefile load (any cwd) + `workdir:`; C++ `overviews.lock` (batch exclusive, per-parent/prune shared) and `overviews.tmp/` debris check (8b7f161, abd1c37)
+- [x] (suggestion) Unquoted shell paths — every path `:q`, guarded by a test (8b7f161)
+- [x] (suggestion) Relative env/config store root — refused; `--store-root` keeps CLI semantics (e454bc2)
+- [x] (suggestion) Coverage reader — mirrors the C++ reader: non-number error = unrecorded, NaN/inf/negative refuse the doc, strict uint32 indices, level 0..20, 5M expansion cap (5ab6c24)
+- [x] (suggestion) `parse_tile_filename` aliases — canonical spelling only (0659808)
+- [x] (suggestion) Assembly dropped unrecorded tiles — every tile on disk gets an entry, error carried from the previous manifest; CLI names them (aadd105)
+- [x] (suggestion) Fingerprint dedupe — id sets de-duplicated; CLI drops a repeated source by content id (90b2f5a)
+- [x] (suggestion) Manifest start/end override — entry pair > recorded interval > global fallback; half pairs refused (90c271f)
+- [x] (suggestion) σ measurement band check / odd grids — exactly 2 bands; odd grid ends the measurement (a659010)
+- [x] (suggestion) YAML datetimes in `applies_to` — zoned times spelled RFC 3339, dates/naive refused with remedy, other non-JSON refused by path (64e83d0)
+- [x] (suggestion) `message_count: 0` splits — skipped, as is the `time_point::max` sentinel (04f85c9)
+- [x] (suggestion) No Items for derived tiles — `overview_items.py` builds them from the record's new `children` lineage (interval = union of children's; inputs = union of sources/revisions + fold builder incl. sigma rule; frame = children's); catalog removes a pruned tile's Item (852b63e)
+- [x] (suggestion) Plan bookkeeping — file table, shipped CLI name, fix-pass departures recorded (258a72a)
+
+### Found in passing, fixed in this PR
+- The rules ran bare `mws_*` / `build_depth_overview_parent`, but colcon installs both packages' executables under `lib/<pkg>/`, not on PATH — the Snakefile now resolves tools (PATH, ament prefixes, `--config <tool>_tool=`).
+- The perpetual-rebuild `.fp` mtime bug above.
+
+### For the owner (not blocking, no decision taken here)
+- At the default root the legacy store's `depths/draft/` LAYER and rev 3's `depths/draft/<origin>/` STATE share a path. This pass refuses rev-3 `draft` wherever the legacy `registry.json` lives (so the prototype keeps building under another `--store-root`); whether the long-term answer is migrating the legacy tree, renaming a vocabulary, or accepting separate roots is a design choice left open.
+- Operator decisions untouched: σ fold rule undecided (σ band nodata, `sigma_fold: undecided`), Items dated from sources, configurable root with default `~/data/world`, plain Python package + `package.xml` shim.
+
+### Next
+review-code (re-review): `.agent/scripts/dispatch_subagent.sh --mode in-process --issue 397 --skill review-code`
