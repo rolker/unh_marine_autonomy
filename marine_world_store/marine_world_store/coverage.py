@@ -182,7 +182,11 @@ def _geometric_error(value):
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    value = float(value)
+    try:
+        value = float(value)
+    except OverflowError:
+        # A JSON integer past float range: no finite length, like inf.
+        return _INVALID
     if not math.isfinite(value) or value < 0.0:
         return _INVALID
     return value

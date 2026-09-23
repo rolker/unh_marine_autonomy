@@ -105,13 +105,16 @@ def test_a_backwards_run_is_refused(tmp_path):
 
 @pytest.mark.parametrize('error', [
     float('nan'), float('inf'), -1.0,
+    10**400,     # a JSON integer past float range
 ])
 def test_an_error_that_is_not_a_length_refuses_the_document(tmp_path, error):
     """
-    Refuse NaN, inf or a negative error, as the C++ reader does.
+    Refuse NaN, inf, a negative or an unrepresentable error, as C++ does.
 
     Any of them would read as infinitely precise to an LOD consumer.
-    Regression: they were accepted and handed to the Item as the tile's error.
+    Regression: they were accepted and handed to the Item as the tile's error;
+    and an integer too large for a float raised OverflowError, breaking the
+    reader's never-raises contract.
     """
     write_manifest(tmp_path, [{'level': 12, 'runs': [
         {'row': 1, 'col_min': 2, 'col_max': 2, 'geometric_error_m': error}]}])
