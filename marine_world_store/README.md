@@ -384,7 +384,11 @@ both packages' executables there, not on `PATH`).
   reads every overview tile's footprint each run — a cost that grows with the
   layer, next to folds that run only for what changed.
 - **The catalog is this layer's** (`mws_regenerate_catalog --layer-dir`), not
-  whatever tree the environment's store root names.
+  whatever tree the environment's store root names. It removes an overview
+  Item whose tile was pruned, but a native tile and its Item are the link
+  step's: a native tile gone with its Item left behind is refused by name,
+  before the Collection is rewritten — remove the Item with its tile, or
+  restore the tile.
 - **The tile indexes are derived and never synced** (§7): one per band schema
   (`<layer>/index.gti.fgb` for the native tiles, `overviews/index.gti.fgb` for
   the overviews), built from the Items' data assets (`mws_list_tiles`). They are

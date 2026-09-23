@@ -1071,6 +1071,31 @@ def test_a_regenerate_prunes_what_describes_nothing(workflow):
     assert record['children'] == ['12_1_1.tif']
 
 
+def test_a_native_tile_gone_with_its_item_kept_is_named(workflow):
+    """
+    Refuse, with a remedy that is not circular, before publishing anything.
+
+    Regression: the catalog rewrote the Collection still listing the tile,
+    and the native index then failed every run with "regenerate the catalog
+    before the index" -- the step that had just run.
+    """
+    for name in ('13_0_0.tif', '13_0_1.tif', '13_2_2.tif'):
+        workflow.native(name)
+    workflow.run()
+    collection = workflow.layer / 'collection.json'
+    before = collection.read_bytes()
+    (workflow.layer / '13_2_2.tif').unlink()
+    output = workflow.refused()
+    assert 'depths-reviewed-surveyed-13_2_2.json' in output
+    assert 'link step' in output
+    assert 'regenerate the catalog before the index' not in output
+    assert collection.read_bytes() == before
+
+    (workflow.layer / 'depths-reviewed-surveyed-13_2_2.json').unlink()
+    workflow.run()
+    assert b'13_2_2' not in collection.read_bytes()
+
+
 def test_the_catalog_and_indexes_are_this_layers(workflow):
     """
     Catalog the layer the DAG built, and index it from its Items.

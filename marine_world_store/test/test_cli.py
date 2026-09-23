@@ -256,7 +256,10 @@ def test_regenerate_catalog_rebuilds_present_cells(store_root):
     directory = layout.quantity_dir(
         store_root, layout.Quantity.DEPTHS, layout.State.REVIEWED,
         layout.Origin.SURVEYED)
-    stac_catalog.write_items(directory, [a_tile_item()])
+    item = a_tile_item()
+    stac_catalog.write_items(directory, [item])
+    # The native tile the Item records: an Item without it is refused.
+    (directory / item['assets']['data']['href']).write_bytes(b'tile')
     assert mws_regenerate_catalog.main([]) == 0
     assert layout.collection_path(directory).is_file()
 

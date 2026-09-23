@@ -99,6 +99,34 @@ def layer_cell(
             f'({exc})') from exc
 
 
+def refuse_orphan_native_items(directory: Path, item_files) -> None:
+    """
+    Refuse a NATIVE tile's Item whose tile is gone, before anything is written.
+
+    Native tiles and their Items are the link step's, not this tool's, so it
+    does not remove one -- but it must not publish a Collection listing a tile
+    that is not there, and the tile indexes would refuse it next. Naming the
+    Item and the remedy here is what an operator can act on; the first
+    version rewrote the Collection and let the index fail with "regenerate
+    the catalog", the step that had just run.
+
+    :raises OSError: naming every such Item file.
+    """
+    orphans = []
+    for path, item in item_files:
+        if overview_items.is_overview_item(item):
+            continue
+        href = ((item.get('assets') or {}).get('data') or {}).get('href')
+        if href and not (directory / href).is_file():
+            orphans.append(f'{path} (records {href})')
+    if orphans:
+        raise OSError(
+            'native tile(s) gone but their Item(s) remain: '
+            + '; '.join(orphans) + '. A native tile and its Item belong to '
+            'the link step: remove each Item with its tile, or restore the '
+            'tile, then regenerate')
+
+
 def regenerate_cell(catalog, directory: Path, quantity, state, origin,
                     validate: bool) -> Tuple[bool, int, int, int]:
     """
@@ -108,6 +136,7 @@ def regenerate_cell(catalog, directory: Path, quantity, state, origin,
         overview_items_removed)``.
     """
     existing_files = catalog.read_item_files(directory)
+    refuse_orphan_native_items(directory, existing_files)
     existing = [item for _, item in existing_files]
     overview = overview_items.build_overview_items(
         directory, quantity=quantity, state=state, origin=origin,

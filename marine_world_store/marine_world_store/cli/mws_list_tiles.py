@@ -82,9 +82,16 @@ def tile_paths(layer_dir: Path, kind: str) -> List[Path]:
             raise OSError(f'Item {item.get("id")!r} has no data asset')
         path = (layer_dir / href).resolve()
         if not path.is_file():
+            # The two kinds have different owners, so different remedies:
+            # the catalog prunes an overview Item whose tile is gone, never
+            # a native one (the link step's).
+            remedy = ('regenerate the catalog before the index'
+                      if wanted_overview else
+                      'a native tile and its Item belong to the link step: '
+                      'remove the Item with its tile, or restore the tile')
             raise OSError(
                 f'Item {item.get("id")!r} records {href}, which is not on '
-                'disk; regenerate the catalog before the index')
+                f'disk; {remedy}')
         paths.append(path)
     return sorted(paths)
 
