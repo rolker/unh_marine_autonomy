@@ -220,12 +220,18 @@ would also need — root resolution, layout paths, fingerprints, Item reading �
 | `.github/workflows/ros-base-docker.yml` | Add the "Install repo-local rosdep keys" step before `rosdep update` (step 7) |
 | `marine_world_store/test/test_{no_ros_imports,dependency_lists}.py` | New — package-shape discipline tests (step 8) |
 | `marine_world_store/marine_world_store/{store_root,layout,source_identity,fingerprint,stac_catalog,revisions}.py` | New — Group A core modules |
+| `marine_world_store/marine_world_store/{coverage,footprint,item_schema,depth_subset,source_time}.py`, `cli/_common.py` | New — Group A library modules the plan did not name (see Group A notes; `source_time.py` is the Item-time resolution) |
+| `marine_world_store/marine_world_store/{sigma_fold_measure,fingerprint_sidecar,overview_records}.py` | New — Group B library modules (see Group B notes) |
+| `marine_world_store/marine_world_store/{overview_items,atomic_io}.py` | New — review fix pass: overview tiles' Items; atomic, durable publication for every writer |
 | `marine_world_store/marine_world_store/cli/{mws_import_source,mws_write_revision,mws_regenerate_catalog,mws_link_depth_subset}.py` | New — Group A CLIs |
+| `marine_world_store/marine_world_store/cli/{mws_measure_sigma_fold,mws_refresh_fingerprints,mws_assemble_coverage,mws_list_tiles}.py` | New — Group B CLIs (`mws_list_tiles` from the review fix pass) |
 | `marine_world_store/test/test_{store_root,layout,source_identity,fingerprint,stac_catalog,no_literal_store_root}.py` | New — Group A tests, incl. the guard test |
-| `marine_world_store/snakemake/Snakefile`, `marine_world_store/snakemake/rules/*.smk` | New — Group B regenerate rules |
-| `marine_bathymetry_store/include/marine_bathymetry_store/overview_pyramid.hpp` | Add `depthMultiBandFold`, `buildMultiBandDepthOverviewPyramid`, `buildMultiBandDepthOverviewParent` declarations (additive) |
+| `marine_world_store/test/test_{coverage,item_schema,depth_subset,source_time,revisions,cli,copyright,flake8,pep257}.py` | New — Group A tests beyond the plan's list |
+| `marine_world_store/test/test_{sigma_fold_measure,regenerate_workflow,overview_items,atomic_io}.py`, `test/fake_build_depth_overview_parent.py` | New — Group B / fix-pass tests; the regenerate tests run snakemake end to end with a stand-in for the C++ tool |
+| `marine_world_store/snakemake/Snakefile`, `marine_world_store/snakemake/rules/{overviews,catalog,gti}.smk` | New — Group B regenerate rules (the fix pass folded the pre-step into the Snakefile and deleted `rules/fingerprints.smk`) |
+| `marine_bathymetry_store/include/marine_bathymetry_store/overview_pyramid.hpp` | Add `depthMultiBandFold`, `buildMultiBandDepthOverviewPyramid`, `buildMultiBandDepthOverviewParent` declarations (additive); Group B adds `listMultiBandOverviewParents`; the fix pass adds `listMultiBandOverviewParentInputs`, `pruneMultiBandOverviewLevel`, `refuseLegacyDepthLayer` |
 | `marine_bathymetry_store/src/overview_pyramid.cpp` | Implement the above |
-| `marine_bathymetry_store/src/build_depth_overview_parent_main.cpp` | New — per-parent CLI |
+| `marine_bathymetry_store/src/build_depth_overview_parent.cpp` | New — per-parent CLI (planned as `build_depth_overview_parent_main.cpp`; shipped under this name) with `--list-parents` and `--prune` |
 | `marine_bathymetry_store/CMakeLists.txt` | New executable target + install rule |
 | `marine_bathymetry_store/test/test_depth_overview_multiband.cpp` | New — fold correctness, MIN-vs-legacy equivalence, per-parent mode |
 | `marine_bathymetry_store/README.md` | Document the multi-band writer and per-parent mode alongside the existing wholesale one; note it targets the rev-3 tree only |
@@ -233,6 +239,7 @@ would also need — root resolution, layout paths, fingerprints, Item reading �
 | `marine_bathymetry_store/test/sigma_fold_measure.py` (or a `measure` CLI) | New — Group B evidence step: candidate σ-fold rules measured on the Massabesic subset (see step 4); runs only when the subset root is present |
 | `.agents/README.md` | Add `marine_world_store` to the package inventory table |
 | `docs/world_store_design.md` | (a) Part 2 amendment: overview tiles/Items carry nested `geometric_error_m` (ADR-0013 D2/D3); (b) §7: σ fold rule marked **open**, candidates listed, decided from the Group B measurement; (c) any further mismatch found during implementation — all as logged process-derived corrections, never a silent workaround |
+| `docs/world_store_prototype_log.md` | The σ-fold measurement recorded as evidence beside the prototype's spine-2 `fold_measure` (Group B), with the rule left open |
 
 ## Principles Self-Check
 
@@ -451,7 +458,9 @@ there: no rule is chosen and no σ band is written.
 - **Two more rev-3 amendments** (f) and (g) — §7's MIN/MEAN are in the depth
   sense while the tiles hold ellipsoidal height, and the 4-band schema is a
   *folded* level's only. Both logged in the change log and written into §7.
-- **Found, not fixed — a Group A defect.** With `pystac` now importable on this
+- **Found, not fixed — a Group A defect** (since RESOLVED: the operator's
+  2026-09-22 Item-time decision, "Item time interval" above — every Item is
+  dated from its sources and an undatable one is refused). With `pystac` now importable on this
   host, two Group A tests fail: every Item built with no time gets
   `"datetime": null` with no `start_datetime`/`end_datetime`, which is not a
   legal STAC Item, and pystac refuses it at write time. It is pre-existing on
@@ -467,3 +476,53 @@ there: no rule is chosen and no σ band is written.
   live compare-by-value run against the real subset. No run was made against
   `~/data/world`, `~/data/logs` or the NAS in this pass, and no bag or store
   path is in the code.
+
+## Implementation notes — review fix pass (2026-09-23)
+
+Recorded inline, as the plan-task "during implementation" rules ask: what the
+round-1 pre-push review's fix pass changed about what this plan says. The
+operator decisions stand unchanged (σ rule open and σ band nodata; every Item
+dated from its sources; root configurable, default `~/data/world`, never a
+literal; plain Python package with a `package.xml` shim).
+
+- **Step 6's DAG shape did not work, and was replaced.** As planned — a
+  fingerprint-refresh leaf rule, parent rules on stamp files — the workflow was
+  inert after its first run: no rule took a tile as input, so the stamps
+  satisfied everything. Now the pre-step runs when the Snakefile LOADS (before
+  Snakemake compares mtimes), each parent's job takes the child tiles as inputs
+  and the tile + record as outputs, each level's checkpoint prunes and then
+  lists parents WITH their children, and the listings are re-derived every run.
+  The `.fp` sidecar (schema /2) records the tile's own mtime, because resetting
+  to the sidecar's mtime made unchanged parents older than their children and
+  rebuilt them forever.
+- **Pruning is a new C++ entry point** (`pruneMultiBandOverviewLevel`,
+  `--prune`), and the per-parent writer removes a stale derived tile at its own
+  index: nothing else could remove a derived tile a native one now covers, or
+  whose children are gone.
+- **Overview tiles get Items** (`overview_items.py`), as this plan's step 4
+  said each overview Item carries `geometric_error_m` and `sigma_fold` — Group B
+  had written the records but not the Items. Their lineage comes from a
+  `children` list the per-tile record now carries.
+- **The GTI step is one tile index per band schema, built from the Items**
+  (`mws_list_tiles`), with only the `gdaltindex` options every supported GDAL
+  has. Decision recorded for the reviewer's must-fix: the dev host's GDAL is
+  3.8.4 and the planned rule used 3.9-only flags. Rather than skip or gate the
+  output, the index is written on any GDAL (it is the ordinary vector tile
+  index, which the GTI driver opens directly by its `.gti.fgb` extension), and
+  the Snakefile states once per run on an older host that reading it AS A
+  RASTER needs GDAL >= 3.9. `rule all` therefore succeeds on this host and
+  nothing is dropped.
+- **Legacy-tree guards, both languages.** `refuseLegacyDepthLayer` (C++) and
+  `layout.refuse_legacy_layer` / `writable_quantity_dir` (Python) refuse the
+  `draft/processed/reference/chart` tree positively. At the default root the
+  legacy `depths/draft/` layer and rev 3's `depths/draft/<origin>/` state share
+  a path, so rev-3 `draft` is refused wherever the legacy registry lives.
+- **Locks.** `<layer>/overviews.lock` (flock; batch exclusive, per-parent and
+  prune shared) and `<layer>/.regenerate/regenerate.lock` (one DAG run per
+  layer, whatever its working directory). Every Python writer publishes
+  through `atomic_io` (private temporary, fsync, rename, directory fsync); the
+  C++ per-tile record and schema file likewise.
+- **Tool resolution.** colcon installs both packages' executables under
+  `<prefix>/lib/<package>/`, not on `PATH`, so the rules resolve each tool
+  (PATH, then the ament prefixes, then `--config <tool>_tool=`).
+
