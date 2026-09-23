@@ -1011,6 +1011,31 @@ def test_the_same_tool_at_another_path_rebuilds_nothing(workflow, tmp_path):
     assert builds == ['11_0_0', '12_0_0']
 
 
+def test_a_tool_on_a_relative_path_entry_survives_workdir(
+        workflow, tmp_path):
+    """
+    A tool found through a relative PATH entry is made absolute first.
+
+    Regression: it stayed relative, and broke once ``workdir:`` changed
+    directory into ``.regenerate/``.
+    """
+    import subprocess
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    env = dict(os.environ)
+    env['PATH'] = os.pathsep.join(
+        ['bin'] + [entry for entry in env['PATH'].split(os.pathsep)
+                   if entry != str(tmp_path / 'bin')])
+    result = subprocess.run(
+        ['snakemake', '-s', str(SNAKEMAKE_DIR / 'Snakefile'), '--cores', '1',
+         '--config', f'layer_dir={workflow.layer}', 'fine_level=13',
+         'min_level=11',
+         'build_depth_overview_parent_tool=bin/fake_build_depth_overview_parent'],
+        capture_output=True, text=True, cwd=str(tmp_path), env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (workflow.layer / 'overviews' / 'coverage.json').is_file()
+
+
 def test_a_regenerate_prunes_what_describes_nothing(workflow):
     """
     A native tile at a derived index, or vanished children, remove the tile.

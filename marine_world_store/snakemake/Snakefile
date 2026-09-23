@@ -303,7 +303,9 @@ def _tool(name, package):
         return str(path)
     found = shutil.which(name)
     if found:
-        return found
+        # Absolute NOW: a relative PATH entry is relative to where snakemake
+        # was started, and ``workdir:`` is about to change directory.
+        return os.path.abspath(found)
     for prefix in os.environ.get("AMENT_PREFIX_PATH", "").split(os.pathsep):
         candidate = Path(prefix) / "lib" / package / name if prefix else None
         if candidate and candidate.is_file() and os.access(candidate, os.X_OK):
