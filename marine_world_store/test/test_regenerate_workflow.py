@@ -242,21 +242,53 @@ def test_a_layer_reports_its_native_tiles_and_overviews_apart(tmp_path):
     the derived product the DAG rebuilds.
     """
     _tile(tmp_path, '13_1_1.tif')
-    _tile(tmp_path / 'overviews', '12_0_0.tif')
+    derived = _tile(tmp_path / 'overviews', '12_0_0.tif')
+    fingerprint_sidecar.record_tile(derived)
     reports = fingerprint_sidecar.refresh_layer(tmp_path)
     assert set(reports) == {'native', 'overviews'}
     assert reports['native'].created == 1
-    assert reports['overviews'].created == 1
+    assert reports['overviews'].unchanged == 1
 
 
-def test_a_first_refresh_leaves_every_overview_older_than_every_native(
-        tmp_path):
+def test_a_first_refresh_removes_every_overview(tmp_path):
     """No sidecars prove any overview was built from these natives: redo all."""
     native = _tile(tmp_path, '13_1_1.tif', b'native')
     derived = _tile(tmp_path / 'overviews', '12_0_0.tif', b'derived')
-    os.utime(derived, ns=(2 * 10**18, 2 * 10**18))    # "newer" as found
-    fingerprint_sidecar.refresh_layer(tmp_path)
-    assert derived.stat().st_mtime_ns < native.stat().st_mtime_ns
+    record = _tile(tmp_path / 'overviews', '12_0_0.json', b'{}')
+    reports = fingerprint_sidecar.refresh_layer(tmp_path)
+    assert reports['overviews'].removed == [str(derived)]
+    assert not derived.exists() and not record.exists()
+    assert native.exists()
+
+
+@pytest.mark.parametrize('damage', ['changed', 'no-sidecar', 'unreadable'])
+def test_a_derived_tile_not_built_from_what_is_there_is_removed(
+        tmp_path, damage):
+    """
+    Remove a derived tile whose content is not what the DAG recorded.
+
+    Regression: it was classed "changed" and advanced to now, like a native
+    tile -- newer than its children, so it was never rebuilt, while its
+    parents were rebuilt FROM its stale content (a restore from a backup, a
+    partial copy, bit rot).
+    """
+    overviews = tmp_path / 'overviews'
+    derived = _tile(overviews, '12_0_0.tif', b'built')
+    record = _tile(overviews, '12_0_0.json', b'{}')
+    fingerprint_sidecar.record_tile(derived)
+    sidecar = fingerprint_sidecar.sidecar_path(derived)
+    if damage == 'changed':
+        derived.write_bytes(b'restored from an old backup')
+    elif damage == 'no-sidecar':
+        sidecar.unlink()
+    else:
+        sidecar.write_text('{ not json')
+    report = fingerprint_sidecar.refresh_directory(overviews, derived=True)
+    assert report.removed == [str(derived)]
+    assert report.changed == 0 and report.created == 0
+    assert not derived.exists()
+    assert not record.exists()
+    assert not sidecar.exists()
 
 
 # --- the per-tile records and the manifest they assemble into ---------------
@@ -670,6 +702,48 @@ def test_a_rebuilt_but_identical_parent_does_not_rebuild_forever(workflow):
     for _ in range(2):
         _, builds, _ = workflow.run()
         assert builds == []
+
+
+def _band1(path):
+    from osgeo import gdal
+    dataset = gdal.Open(str(path))
+    return float(dataset.GetRasterBand(1).ReadAsArray(0, 0, 1, 1)[0][0])
+
+
+def test_a_derived_tile_restored_from_a_backup_is_rebuilt(workflow, tmp_path):
+    """
+    A derived tile whose content is not the one built is rebuilt, not trusted.
+
+    Regression: the pre-step advanced it to now like a changed native tile --
+    newer than its children, so it was never rebuilt, while its parent was
+    rebuilt from the stale content. Both reviewers' cases: a copy2-restored
+    older tile, and a single flipped byte.
+    """
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    workflow.run()
+    overviews = workflow.layer / 'overviews'
+    derived = overviews / '12_0_0.tif'
+    backup = tmp_path / 'backup.tif'
+    shutil.copy2(derived, backup)
+    workflow.native('13_0_0.tif', value=7.0)
+    _, builds, _ = workflow.run()
+    assert builds == ['11_0_0', '12_0_0']
+    assert _band1(derived) == 7.0
+
+    shutil.copy2(backup, derived)                 # an operator's restore
+    _, builds, _ = workflow.run()
+    assert builds == ['11_0_0', '12_0_0']
+    assert _band1(derived) == 7.0
+    assert _band1(overviews / '11_0_0.tif') == 7.0 + 1.0
+
+    content = bytearray(derived.read_bytes())     # bit rot
+    content[-1] ^= 0xff
+    derived.write_bytes(bytes(content))
+    _, builds, _ = workflow.run()
+    assert builds == ['11_0_0', '12_0_0']
+    _, builds, _ = workflow.run()
+    assert builds == []
 
 
 def test_a_deleted_product_is_rebuilt(workflow):

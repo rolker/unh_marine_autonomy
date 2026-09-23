@@ -31,8 +31,10 @@
 Design section 9 makes fingerprints, not mtimes, the trigger for a regenerate;
 Snakemake's DAG is mtime-driven. This reconciles them: it decides from each
 tile's CONTENT whether it changed, then sets the tile's mtime to say so -- a
-byte-identical rewrite goes back to its recorded mtime, a real change (even
-one copied in with an old mtime) is advanced to now. ``--record`` records tiles
+byte-identical rewrite goes back to its recorded mtime, a real change to a
+native tile (even one copied in with an old mtime) is advanced to now, and a
+DERIVED tile whose content is not the recorded content is removed so the DAG
+rebuilds it. ``--record`` records tiles
 the DAG has just built, with the mtime the build gave them. See
 :mod:`marine_world_store.fingerprint_sidecar` for what the ``.fp`` sidecar is
 and, just as importantly, what it is **not** (it is a content hash, not section
@@ -94,6 +96,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             # Named, not counted: an unreadable sidecar was treated as absent,
             # so the tile it belongs to will look changed to the DAG once.
             print(f'  unreadable sidecar, rewritten: {unreadable}')
+        for removed in report.removed:
+            # A derived tile not built from what is there now: removed with
+            # its record and sidecar, so the DAG rebuilds it.
+            print(f'  derived tile not the recorded content, removed: '
+                  f'{removed}')
         for link in report.symlinks_skipped:
             # Never reconciled: utime would reach through the link.
             print(f'  symbolic link, left alone: {link}')

@@ -136,7 +136,7 @@ vocabulary.
 | `mws_regenerate_catalog` | Build the overview tiles' Items (removing the Item of a pruned tile) and rebuild each present cell's `collection.json`, writing only what changed. `--layer-dir LAYER_DIR` does exactly one layer — what the regenerate DAG runs |
 | `mws_link_depth_subset` | The adapter below |
 | `mws_measure_sigma_fold TILE…` | Measure the candidate σ-fold rules over native depth tiles and print a markdown table. Tile paths are **arguments** |
-| `mws_refresh_fingerprints LAYER_DIR` | The regenerate pre-step: decide from each tile's content whether it changed, then set its mtime to say so — an unchanged tile gets back its recorded mtime, a changed or new one is advanced to now and recorded. `--record TILE` records a tile the DAG just built, with its build mtime. A symlinked tile is named and left alone (`utime` would reach through it) |
+| `mws_refresh_fingerprints LAYER_DIR` | The regenerate pre-step: decide from each tile's content whether it changed, then set its mtime to say so — an unchanged tile gets back its recorded mtime, a changed or new native one is advanced to now and recorded, and a derived (`overviews/`) one whose content is not the recorded content is removed with its record so the DAG rebuilds it. `--record TILE` records a tile the DAG just built, with its build mtime. A symlinked tile is named and left alone (`utime` would reach through it) |
 | `mws_assemble_coverage LAYER_DIR` | Write `overviews/coverage.json` from the per-tile overview records, once, after the DAG |
 | `mws_list_tiles LAYER_DIR --kind native\|overview` | The data assets of a layer's Items of one kind, one path per line — the tile index's inputs, taken from the record rather than a glob |
 
@@ -332,13 +332,18 @@ install space (colcon installs both packages' executables there, not on
   decides from mtimes, while PLANNING — so the reconciliation has to happen
   before planning, not as a job in the DAG. `mws_refresh_fingerprints` decides
   from each tile's **content** and then sets the mtime to say so: a tile
-  rewritten byte for byte gets back its recorded mtime, and a changed one is
-  advanced to now — including one copied in with an *old* mtime (`copy2`,
-  `rsync -t`, a restore), which by mtime alone would look older than its
-  products. Each tile a rule builds is recorded with its build mtime
-  (`--record`), so a parent stays newer than the children it absorbed even
-  when it came out byte for byte the same. The first refresh over a layer with
-  no sidecars counts every tile as changed, so the overviews are rebuilt once.
+  rewritten byte for byte gets back its recorded mtime, and a changed native
+  tile is advanced to now — including one copied in with an *old* mtime
+  (`copy2`, `rsync -t`, a restore), which by mtime alone would look older than
+  its products. A **derived** tile whose content is not the recorded content
+  (a restore from a backup, a partial copy, bit rot), or that has no sidecar,
+  is removed with its record and rebuilt as a missing product: advanced to
+  now it would look newer than its children, never be rebuilt, and have its
+  parents rebuilt from its stale content. Each tile a rule builds is recorded
+  with its build mtime (`--record`), so a parent stays newer than the children
+  it absorbed even when it came out byte for byte the same. The first refresh
+  over a layer with no sidecars counts every native tile as changed and
+  removes every overview, so the pyramid is rebuilt once.
   A dry run skips the pre-step (it writes).
 - **Every rule's inputs and outputs are the real files.** A parent's job takes
   the child tiles it folds as inputs and declares the tile and its record as

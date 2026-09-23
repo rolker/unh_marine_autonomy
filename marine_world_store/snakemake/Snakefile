@@ -49,10 +49,13 @@ Shape of the DAG, and why it is shaped that way:
    plans anything. Snakemake decides from mtimes; section 9 decides from
    fingerprints. The pre-step decides from each tile's CONTENT (its ``.fp``
    sidecar) and then sets the mtime to say so: a tile rewritten byte for byte
-   goes back to its recorded mtime, and a changed one is advanced to now --
-   including one copied in with an OLD mtime (``copy2``, ``rsync -t``, a
-   restore), which by mtime alone would look older than its products and be
-   missed. A tile a rule builds is recorded as built (``mws_refresh_fingerprints
+   goes back to its recorded mtime, and a changed native tile is advanced to
+   now -- including one copied in with an OLD mtime (``copy2``, ``rsync -t``,
+   a restore), which by mtime alone would look older than its products and be
+   missed. A DERIVED tile whose content is not the recorded content (a
+   restore, a partial copy, bit rot) is removed with its record, and rebuilt
+   as a missing product: advanced, it would look newer than its children and
+   never be rebuilt. A tile a rule builds is recorded as built (``mws_refresh_fingerprints
    --record``), so it stays newer than the children it absorbed even when it
    came out byte for byte the same. As a rule inside the DAG the pre-step could
    not work: Snakemake compares

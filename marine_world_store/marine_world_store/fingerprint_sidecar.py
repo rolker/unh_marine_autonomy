@@ -54,9 +54,19 @@ came out byte for byte the same as before. (Resetting it to its FIRST-seen
 mtime instead left it older than a child whose change it absorbed, and the DAG
 rebuilt it and everything above it on every later run.)
 
-The first refresh over a layer with no sidecars therefore marks every tile as
-changed, which rebuilds its overviews once: with nothing recorded, there is
-nothing to prove any product was built from what is there now.
+A DERIVED tile (``overviews/``) is held to a stricter rule, because advancing
+it would be a lie: a derived tile is newer than its children only because it
+was folded FROM them. One whose content does not match its sidecar -- restored
+from a backup, half-copied, rotted -- or that has no sidecar at all was not
+built by this DAG from what is there now, and moving its mtime to now would
+make it look newer than its children, so it would never be rebuilt while its
+parents were rebuilt from it. It is **removed**, with its per-tile record and
+its sidecar, and the DAG rebuilds it as a missing product.
+
+The first refresh over a layer with no sidecars therefore marks every native
+tile as changed and removes every derived tile: with nothing recorded, there is
+nothing to prove any product was built from what is there now, so the whole
+pyramid is rebuilt once.
 
 **This is not section 9's fingerprint.** That one is over a product's *inputs*
 (sources, revisions, decoder and builder versions) and lives in the tile's Item;
@@ -66,8 +76,10 @@ different questions and neither substitutes for the other -- which is why the
 sidecar records which it is, rather than being a bare hash a later reader could
 mistake for the other one.
 
-The mtime is the only write to the tile itself, and it never touches its
-content.
+For a native tile the mtime is the only write, and it never touches its
+content; the store does not own the compile. A derived tile is the store's own
+regenerable product, and removing an untrustworthy one is the only way to have
+it rebuilt.
 """
 
 from __future__ import annotations
@@ -130,6 +142,10 @@ class RefreshReport:
     orphans_removed: int = 0
     #: Sidecars that could not be read and were treated as absent.
     unreadable: List[str] = None    # type: ignore[assignment]
+    #: DERIVED tiles removed (with their record and sidecar) because their
+    #: content did not match their sidecar, or they had none: nothing shows
+    #: they were built from what is there now, so the DAG rebuilds them.
+    removed: List[str] = None    # type: ignore[assignment]
     #: Tiles that are symbolic links, left entirely alone. ``os.utime``
     #: follows a link, so "resetting the tile's mtime" would reach through it
     #: and rewrite the mtime of whatever it points at -- possibly a file in a
@@ -142,6 +158,8 @@ class RefreshReport:
         """Give the list fields per-instance lists."""
         if self.unreadable is None:
             self.unreadable = []
+        if self.removed is None:
+            self.removed = []
         if self.symlinks_skipped is None:
             self.symlinks_skipped = []
 
@@ -177,12 +195,21 @@ def _write_sidecar(path: Path, fingerprint: str, mtime_ns: int) -> None:
         indent=2) + '\n')
 
 
-def refresh_tile(tile: PathLike, report: RefreshReport) -> str:
+def _remove_derived(tile: Path) -> None:
+    """Remove a derived tile with its per-tile record and its sidecar."""
+    for path in (tile, tile.with_suffix('.json'), sidecar_path(tile)):
+        path.unlink(missing_ok=True)
+
+
+def refresh_tile(tile: PathLike, report: RefreshReport,
+                 derived: bool = False) -> str:
     """
     Reconcile one tile with its sidecar. Returns the outcome's name.
 
     ``unchanged`` (mtime reset to the recorded one), ``changed`` or
-    ``created`` (mtime advanced to now, and recorded).
+    ``created`` (mtime advanced to now, and recorded) -- or, for a
+    ``derived`` tile whose content is not the recorded content, ``removed``
+    (see the module docstring).
     """
     tile = Path(tile)
     sidecar = sidecar_path(tile)
@@ -198,6 +225,12 @@ def refresh_tile(tile: PathLike, report: RefreshReport) -> str:
         os.utime(tile, ns=(stat.st_atime_ns, document['mtime_ns']))
         report.unchanged += 1
         return 'unchanged'
+    if derived:
+        # Not built by this DAG from what is there now: advancing it would
+        # make it look newer than its children and it would never be rebuilt.
+        _remove_derived(tile)
+        report.removed.append(str(tile))
+        return 'removed'
     # Different content (or none recorded): whatever mtime the file arrived
     # with -- a copy2 of an older compile keeps its old one, a clock-skewed
     # sync a future one -- it must read as newer than every product built
@@ -229,9 +262,14 @@ def record_tile(tile: PathLike) -> None:
 
 
 def refresh_directory(
-    directory: PathLike, remove_orphans: bool = True,
+    directory: PathLike, remove_orphans: bool = True, derived: bool = False,
 ) -> RefreshReport:
-    """Refresh every ``*.tif`` in ``directory`` (not recursive)."""
+    """
+    Refresh every ``*.tif`` in ``directory`` (not recursive).
+
+    :param derived: the directory holds DERIVED tiles (``overviews/``): one
+        whose content is not the recorded content is removed, not advanced.
+    """
     directory = Path(directory)
     report = RefreshReport()
     if not directory.is_dir():
@@ -241,7 +279,7 @@ def refresh_directory(
         if tile.is_symlink():
             report.symlinks_skipped.append(str(tile))
             continue
-        refresh_tile(tile, report)
+        refresh_tile(tile, report, derived=derived)
     if remove_orphans:
         live = {sidecar_path(tile) for tile in tiles if not tile.is_symlink()}
         for sidecar in sorted(directory.glob('*' + SUFFIX)):
@@ -260,13 +298,9 @@ def refresh_layer(layer_dir: PathLike) -> Dict[str, RefreshReport]:
     the derived product the DAG rebuilds.
     """
     layer_dir = Path(layer_dir)
-    # Overviews FIRST: a tile advanced to "now" is advanced in visiting order,
-    # so on a first refresh (no sidecars at all) every native tile comes out
-    # newer than every overview, and every overview is rebuilt once -- rather
-    # than an arbitrary half of them being taken as already built from it.
     reports = {}
     overviews = layout.overviews_dir(layer_dir)
     if overviews.is_dir():
-        reports['overviews'] = refresh_directory(overviews)
+        reports['overviews'] = refresh_directory(overviews, derived=True)
     reports['native'] = refresh_directory(layer_dir)
     return reports
