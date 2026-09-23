@@ -352,6 +352,11 @@ else:
             _tile_level(path) for path in OVERVIEWS.glob("*_*_*.tif")
             if _tile_level(path) is not None
             and _tile_level(path) < MIN_LEVEL})
+        if _dropped:
+            print("min_level is " + str(MIN_LEVEL)
+                  + ": removing derived level(s) "
+                  + ", ".join(str(lv) for lv in _dropped)
+                  + " from " + str(OVERVIEWS), file=sys.stderr)
         for _level in _dropped:
             subprocess.run(
                 [OVERVIEW_TOOL, "--remove-level", str(LAYER_DIR), str(_level)],

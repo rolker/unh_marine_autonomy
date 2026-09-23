@@ -925,8 +925,10 @@ def test_levels_outside_the_configured_range_are_removed(workflow):
     overviews = workflow.layer / 'overviews'
     assert (overviews / '11_0_0.tif').is_file()
 
-    _, builds, removed = workflow.run(min_level=12)
+    output, builds, removed = workflow.run(min_level=12)
     assert removed == ['11_0_0']
+    # Named before it goes, as the refusals name their tiles.
+    assert 'removing derived level(s) 11 from' in output
     assert builds == []
     assert not (overviews / '11_0_0.tif').exists()
     assert not (overviews / '11_0_0.json').exists()
