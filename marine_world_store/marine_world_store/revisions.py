@@ -51,8 +51,10 @@ only happen by tampering or by a bug.
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from enum import Enum
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Union
 
@@ -118,6 +120,8 @@ def build_revision(
         raise RevisionError('applies_to must be a non-empty mapping')
     if not isinstance(parameters, Mapping) or not parameters:
         raise RevisionError('parameters must be a non-empty mapping')
+    applies_to = _json_safe(applies_to, 'applies_to')
+    parameters = _json_safe(parameters, 'parameters')
     for name, value in (('evidence', evidence), ('reviewer', reviewer)):
         if not isinstance(value, str) or not value.strip():
             raise RevisionError(f'{name} must be a non-empty string')
@@ -162,6 +166,45 @@ def build_revision(
     }
     body['id'] = revision_id(body)
     return body
+
+
+def _json_safe(value: Any, where: str) -> Any:
+    """
+    Return ``value`` as plain JSON, or refuse it naming where it sits.
+
+    YAML is why this exists: an unquoted ``from: 2026-06-01T00:00:00Z`` nested
+    in ``applies_to`` arrives as a :class:`~datetime.datetime`, which the
+    content hash (canonical JSON) cannot serialise -- the writer died with a
+    raw ``TypeError`` traceback. A zoned datetime is spelled canonically, the
+    same way every Item time is; a date or a zone-less time is refused with
+    the remedy, because it names no instant (as for Item intervals).
+
+    :raises RevisionError: on anything JSON has no spelling for.
+    """
+    if isinstance(value, Mapping):
+        out = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise RevisionError(
+                    f'{where}: key {key!r} is not a string; quote it')
+            out[key] = _json_safe(item, f'{where}.{key}')
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item, f'{where}[{index}]')
+                for index, item in enumerate(value)]
+    if isinstance(value, (datetime, date)):
+        try:
+            return source_time.as_rfc3339(value, what=where)
+        except source_time.TimeIntervalError as exc:
+            raise RevisionError(str(exc)) from exc
+    if value is None or isinstance(value, (str, bool, int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise RevisionError(
+                f'{where}: {value!r} is not a JSON number')
+        return value
+    raise RevisionError(
+        f'{where}: a {type(value).__name__} has no JSON spelling; write it as '
+        'a string or a number')
 
 
 def revision_id(body: Mapping[str, Any]) -> str:

@@ -140,3 +140,42 @@ def test_a_hand_assigned_id_is_refused(tmp_path):
     record['id'] = 'something-i-made-up'
     with pytest.raises(RevisionError):
         revisions.write_revision(tmp_path, record)
+
+
+def test_an_unquoted_yaml_time_in_applies_to_is_spelled_canonically(
+        tmp_path):
+    """
+    A zoned datetime nested in applies_to is written as RFC 3339.
+
+    Regression: YAML loads an unquoted timestamp as a datetime, and the id's
+    canonical-JSON hash died on it with a raw TypeError traceback.
+    """
+    yaml = pytest.importorskip('yaml')
+    applies_to = yaml.safe_load(
+        'platform: bizzyboat\nfrom: 2026-06-01T00:00:00Z\n'
+        'to: 2026-06-30T00:00:00Z\n')
+    record = a_datum_record(applies_to=applies_to)
+    body = record['properties']['mws:revision']['applies_to']
+    assert body == {'platform': 'bizzyboat', 'from': '2026-06-01T00:00:00Z',
+                    'to': '2026-06-30T00:00:00Z'}
+    assert record['id'] == a_datum_record(applies_to={
+        'platform': 'bizzyboat', 'from': '2026-06-01T00:00:00Z',
+        'to': '2026-06-30T00:00:00Z'})['id']
+    revisions.write_revision(tmp_path, record)
+
+
+@pytest.mark.parametrize('text', [
+    'from: 2026-06-01\n',                 # a date names a day, not an instant
+    'from: 2026-06-01 12:00:00\n',        # no zone
+])
+def test_a_time_with_no_instant_in_applies_to_is_refused(text):
+    """Refused with the remedy, never a traceback, never assumed UTC."""
+    yaml = pytest.importorskip('yaml')
+    with pytest.raises(RevisionError, match='applies_to.from'):
+        a_datum_record(applies_to=yaml.safe_load(text))
+
+
+def test_a_value_json_cannot_spell_is_refused_by_name():
+    """A set (or any object) is named with where it sits."""
+    with pytest.raises(RevisionError, match=r'parameters\.bad'):
+        a_datum_record(parameters={'bad': {1, 2}})
