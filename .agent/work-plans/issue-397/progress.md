@@ -831,4 +831,18 @@ Round-3 findings, all 14 confirmed fixed: a derived tile whose content does not 
 64a89fa on this host (Snakemake 7.32.4, apt): every name in `_NON_EXECUTING` is a real `snakemake()` keyword. `Mode.default` is the int 0. `workflow.include` is called from inside `snakemake()` (`__init__.py:671`), so the frame walk finds it for the CLI, `-n`, `--cores N` and `--profile` (a profile only feeds argv to the same `main()` → `snakemake()` path; checked by hand in scratch). A job re-invoked in subprocess or cluster mode reads as not executing, so it does not repeat the pre-step. The refusal names the cause and the Snakemake 7 entry-point dependency. It fires only for a load outside `snakemake()`, which in 7.32 is `--bash-completion` alone: tab completion of targets, not a run.
 
 ### Findings
-- [ ] (suggestion) Removing the levels that `min_level` drops prints nothing from the Snakefile before it calls `--remove-level`, while the refusals name the tiles. Echo the levels being removed to stderr. — `marine_world_store/snakemake/Snakefile:350-358`
+- [x] (suggestion) [fixed 6bd726b] Removing the levels that `min_level` drops prints nothing from the Snakefile before it calls `--remove-level`, while the refusals name the tiles. Echo the levels being removed to stderr. — `marine_world_store/snakemake/Snakefile:350-358`
+
+## Implementation
+**Status**: complete
+**When**: 2026-09-23 13:00 -04:00
+**By**: Claude Code Agent (Claude Opus 5.5 (1M context))
+**Branch**: feature/issue-397 at `6bd726b`
+**Mode**: inline
+**Addressed**: Local Review (Pre-Push), round 4 (entry `7749482`, approved, Ship: recommended) — its single suggestion.
+
+- `6bd726b` The Snakefile prints the derived levels a raised `min_level` removes, before removing them; `test_levels_outside_the_configured_range_are_removed` asserts the message. First attempt used an f-string, which Snakemake 7.32's Snakefile parser rejected on Python 3.12 (29 workflow tests failed with SyntaxError) — replaced with plain concatenation.
+
+Tests: `./core_ws/test.sh marine_bathymetry_store marine_world_store` — 765 tests, 0 errors, 0 failures, 45 skipped.
+
+Host-inline, one line of output plus one assertion, after an approved review; no further review round (owner chose fix-all + short check, 2026-09-23).
