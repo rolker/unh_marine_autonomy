@@ -522,8 +522,8 @@ def test_every_shell_path_is_quoted():
         for field in re.findall(r'\{(params\.[a-z_]+|output|input)(:q)?\}',
                                 path.read_text()):
             name, quoted = field
-            if name in ('params.remove_levels', 'params.kind'):
-                continue   # integers and a fixed word, never a path
+            if name == 'params.kind':
+                continue   # a fixed word, never a path
             assert quoted, f'{path.name}: {{{name}}} is not :q-quoted'
 
 
@@ -927,6 +927,44 @@ def test_a_fine_level_the_natives_contradict_is_refused(workflow):
     assert 'fine_level=12' in output and '13_0_0.tif' in output
     assert sorted(p.name for p in overviews.iterdir()) == before
     assert workflow.published() == published
+    assert workflow.log.read_text() == ''
+
+
+def test_levels_dropped_by_min_level_go_even_with_no_level_to_build(workflow):
+    """
+    Remove the dropped levels when min_level >= fine_level, too.
+
+    Regression: the removal ran inside the finest level's listing job, and
+    with nothing to build there is no listing job -- the stale levels stayed
+    published.
+    """
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    workflow.run()
+    _, builds, removed = workflow.run(min_level=13)
+    assert builds == []
+    assert removed == ['11_0_0', '12_0_0', '12_1_1']
+    assert not list((workflow.layer / 'overviews').glob('*_*_*.tif'))
+    assert not list(workflow.layer.glob('*-1[12]_*_*.json'))
+
+
+@pytest.mark.parametrize('stray', ['13_0_0.tif', '99_0_0.tif'])
+def test_a_derived_tile_at_or_finer_than_fine_level_is_refused(
+        workflow, stray):
+    """
+    Name a derived tile no native lies below; never remove it by guess.
+
+    Regression: a stray ``overviews/99_0_0.tif`` made ``--remove-level 99``
+    throw ("not a GGGS level") on every run.
+    """
+    for name in ('13_2_2.tif',):
+        workflow.native(name)
+    workflow.run()
+    overviews = workflow.layer / 'overviews'
+    shutil.copy2(overviews / '12_1_1.tif', overviews / stray)
+    output = workflow.refused()
+    assert stray in output and 'fine_level=13' in output
+    assert (overviews / stray).is_file()
     assert workflow.log.read_text() == ''
 
 

@@ -42,10 +42,9 @@ as its inputs without this file knowing which tiles those are.
 
 Before listing, the same checkpoint prunes the level (`--prune`): a derived
 tile that a native tile now covers, or whose children are all gone, is never
-listed, so no job would ever be scheduled to remove it. The finest level's
-checkpoint also removes every derived level outside the configured range
-(`--remove-level`), which no prune would take: those tiles still have
-children.
+listed, so no job would ever be scheduled to remove it. (Derived levels
+coarser than ``min_level``, which no prune would take because they still have
+children, are removed when the Snakefile loads.)
 
 Every file a rule reads or writes is a real input or output -- never a stamp
 standing in for one -- so Snakemake's mtime and input-set triggers see a
@@ -62,17 +61,6 @@ def _levels():
             "`build_depth_overviews --dry-run <layer>` reports it."
         )
     return list(range(int(FINE_LEVEL) - 1, MIN_LEVEL - 1, -1))
-
-
-def _derived_levels_outside_range():
-    """The levels ``overviews/`` holds tiles at that this run does not build."""
-    built = set(_levels())
-    found = set()
-    if OVERVIEWS.is_dir():
-        for path in OVERVIEWS.glob("*_*_*.tif"):
-            if _TILE_NAME.fullmatch(path.name):
-                found.add(int(path.name.split("_", 1)[0]))
-    return sorted(found - built)
 
 
 def _listing(level):
@@ -119,16 +107,7 @@ checkpoint list_parents:
     params:
         layer=str(LAYER_DIR),
         tool=OVERVIEW_TOOL,
-        # Derived levels this run does not build: at or finer than
-        # fine_level (nothing native lies below them), or coarser than
-        # min_level. Removed with the first (finest) listing.
-        remove_levels=lambda wildcards: " ".join(
-            str(level) for level in _derived_levels_outside_range()
-        ) if int(wildcards.level) == int(FINE_LEVEL) - 1 else "",
     shell:
-        "for stale in {params.remove_levels}; do "
-        "{params.tool:q} --remove-level {params.layer:q} $stale || exit 1; "
-        "done; "
         "{params.tool:q} --prune {params.layer:q} {wildcards.level} && "
         "{params.tool:q} --list-parents {params.layer:q} {wildcards.level} "
         "> {output:q}"

@@ -84,10 +84,12 @@ Shape of the DAG, and why it is shaped that way:
    per-parent job would ever be scheduled to remove -- then lists level N's
    parents WITH their children (`build_depth_overview_parent --prune` and
    `--list-parents`), so the GGGS parent/child mapping is never re-implemented
-   here. The finest level's checkpoint also removes every derived level
-   outside ``min_level``..``fine_level - 1`` (``--remove-level``): a run
-   configured differently from the last would otherwise leave whole levels
-   that nothing rebuilds, still published by the manifest and the Items.
+   here. Derived levels coarser than ``min_level`` are removed when this file
+   loads (``--remove-level``): a run configured differently from the last
+   would otherwise leave whole levels that nothing rebuilds, still published
+   by the manifest and the Items. A derived tile at or finer than
+   ``fine_level``, or a native tile finer than it, is refused by name before
+   anything is removed.
 
 4. ``assemble_coverage`` is a single serialised step AFTER every parent. The
    per-parent writer deliberately leaves a per-tile record instead of touching
@@ -200,6 +202,23 @@ if FINE_LEVEL is not None:
             f"a finer level ({_named}): refusing before anything is removed. "
             "Pass the layer's finest native level; "
             "`build_depth_overviews --dry-run <layer>` reports it.")
+    # A derived tile at or finer than fine_level has no native tile below it
+    # (checked above), so it describes nothing a fold made -- a pyramid built
+    # under another fine_level, or a stray file. Named, not guessed at: the
+    # levels removed automatically are only the coarse ones min_level drops.
+    _derived_finer = sorted(
+        path.name for path in OVERVIEWS.glob("*_*_*.tif")
+        if (_tile_level(path) if _tile_level(path) is not None else -1)
+        >= FINE_LEVEL)
+    if _derived_finer:
+        _named = (", ".join(_derived_finer[:3]) +
+                  (", ..." if len(_derived_finer) > 3 else ""))
+        raise WorkflowError(
+            f"{OVERVIEWS} holds derived tiles at or finer than "
+            f"fine_level={FINE_LEVEL} ({_named}), which no native tile lies "
+            "below: refusing before anything is removed. Remove them (with "
+            "their .json records and .fp sidecars), or pass the fine_level "
+            "they were built under.")
 
 #: Where the run's own bookkeeping goes -- and Snakemake's, via ``workdir:``.
 #: Inside the layer, so a layer carries its regenerate state with it, two
@@ -316,6 +335,19 @@ if not EXECUTING:
           "derived tiles), so a tile rewritten byte for byte may be listed "
           "as a change it is not", file=sys.stderr)
 else:
+    # Derived levels coarser than min_level are no longer built: remove them
+    # now, before the pre-step reads them and before anything is planned, so
+    # nothing publishes them. (In the finest level's listing job, as it first
+    # was, this never ran when min_level >= fine_level: no listing job.)
+    if FINE_LEVEL is not None:
+        _dropped = sorted({
+            _tile_level(path) for path in OVERVIEWS.glob("*_*_*.tif")
+            if _tile_level(path) is not None
+            and _tile_level(path) < MIN_LEVEL})
+        for _level in _dropped:
+            subprocess.run(
+                [OVERVIEW_TOOL, "--remove-level", str(LAYER_DIR), str(_level)],
+                check=True)
     if str(config.get("refresh_fingerprints", True)).lower() not in (
             "false", "0", "no"):
         subprocess.run([REFRESH_TOOL, str(LAYER_DIR)], check=True)

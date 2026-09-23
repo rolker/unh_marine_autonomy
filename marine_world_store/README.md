@@ -363,10 +363,12 @@ both packages' executables there, not on `PATH`).
   tile now covers, or whose children are gone) and lists its parents with their
   children (`--list-parents`) — never Python in the rules: the parent/child
   mapping is GGGS, whose column counts vary by latitude band, and a test asserts
-  it is not reimplemented there. The finest level's checkpoint also removes
-  every derived level outside `min_level`..`fine_level - 1` (`--remove-level`),
-  so a run configured differently from the last leaves no stale level
-  published.
+  it is not reimplemented there. Derived levels coarser than `min_level` are
+  removed when the Snakefile loads (`--remove-level`), so a run configured
+  differently from the last leaves no stale level published — including a run
+  with no level left to build. A derived tile at or finer than `fine_level`
+  describes nothing a fold made and is refused by name, never removed by
+  guess.
 - **A missing product is rebuilt.** The listings, and a rule that asks for
   every derived tile and its record, are deleted when the Snakefile loads and
   are targets of `rule all`, so every run plans them — and a tile or record
