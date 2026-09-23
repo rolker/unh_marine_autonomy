@@ -29,13 +29,17 @@
 ``mws_refresh_fingerprints`` -- the regenerate DAG's pre-step.
 
 Design section 9 makes fingerprints, not mtimes, the trigger for a regenerate;
-Snakemake's DAG is mtime-driven. This reconciles them, so a tile a rebuild
-rewrote byte for byte stops looking newer than the record of it. See
+Snakemake's DAG is mtime-driven. This reconciles them: it decides from each
+tile's CONTENT whether it changed, then sets the tile's mtime to say so -- a
+byte-identical rewrite goes back to its recorded mtime, a real change (even
+one copied in with an old mtime) is advanced to now. ``--record`` records tiles
+the DAG has just built, with the mtime the build gave them. See
 :mod:`marine_world_store.fingerprint_sidecar` for what the ``.fp`` sidecar is
 and, just as importantly, what it is **not** (it is a content hash, not section
 9's input fingerprint).
 
-Run it over a layer before the overview rules, which is what the Snakefile does.
+Run it over a layer before the overview rules, and ``--record`` each tile a
+rule builds, which is what the Snakefile does.
 """
 
 from __future__ import annotations
@@ -54,8 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
         prog='mws_refresh_fingerprints',
         description=__doc__.splitlines()[1])
     parser.add_argument(
-        'layer_dir', metavar='LAYER_DIR',
+        'layer_dir', metavar='LAYER_DIR', nargs='?',
         help='a quantity layer; its tiles and its overviews/ are refreshed')
+    parser.add_argument(
+        '--record', metavar='TILE', action='append', default=[],
+        help=('record TILE as just built (its content and current mtime), '
+              'instead of refreshing a layer; repeatable'))
     parser.add_argument(
         '--keep-orphans', action='store_true',
         help=('keep a .fp whose tile is gone (default: remove it -- it '
@@ -65,7 +73,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Refresh a layer's fingerprint sidecars."""
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.record:
+        if args.layer_dir is not None:
+            parser.error('--record takes tiles, not a LAYER_DIR')
+        for tile in args.record:
+            fingerprint_sidecar.record_tile(tile)
+        return 0
+    if args.layer_dir is None:
+        parser.error('LAYER_DIR is required (or --record TILE)')
     layer_dir = Path(args.layer_dir)
     if not layer_dir.is_dir():
         raise OSError(f'not a directory: {layer_dir}')

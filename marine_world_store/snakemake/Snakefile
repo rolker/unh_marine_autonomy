@@ -47,9 +47,15 @@ Shape of the DAG, and why it is shaped that way:
 
 1. The fingerprint pre-step runs when this file is LOADED, before Snakemake
    plans anything. Snakemake decides from mtimes; section 9 decides from
-   fingerprints. The pre-step resets an unchanged tile's mtime to its ``.fp``
-   sidecar's, so a rebuild that rewrote a tile byte for byte stops looking like
-   a change. As a rule inside the DAG it could not work: Snakemake compares
+   fingerprints. The pre-step decides from each tile's CONTENT (its ``.fp``
+   sidecar) and then sets the mtime to say so: a tile rewritten byte for byte
+   goes back to its recorded mtime, and a changed one is advanced to now --
+   including one copied in with an OLD mtime (``copy2``, ``rsync -t``, a
+   restore), which by mtime alone would look older than its products and be
+   missed. A tile a rule builds is recorded as built (``mws_refresh_fingerprints
+   --record``), so it stays newer than the children it absorbed even when it
+   came out byte for byte the same. As a rule inside the DAG the pre-step could
+   not work: Snakemake compares
    mtimes while PLANNING, before any rule runs, so a reconciliation scheduled
    as a job always comes too late -- and a rule with no inputs and a stamp
    output ran once and never again. A dry run (``-n``) skips it: it writes
@@ -71,7 +77,10 @@ Shape of the DAG, and why it is shaped that way:
    per-parent job would ever be scheduled to remove -- then lists level N's
    parents WITH their children (`build_depth_overview_parent --prune` and
    `--list-parents`), so the GGGS parent/child mapping is never re-implemented
-   here.
+   here. The finest level's checkpoint also removes every derived level
+   outside ``min_level``..``fine_level - 1`` (``--remove-level``): a run
+   configured differently from the last would otherwise leave whole levels
+   that nothing rebuilds, still published by the manifest and the Items.
 
 4. ``assemble_coverage`` is a single serialised step AFTER every parent. The
    per-parent writer deliberately leaves a per-tile record instead of touching
@@ -86,14 +95,23 @@ Shape of the DAG, and why it is shaped that way:
    section 7): regenerated locally, one per band schema. See ``rules/gti.smk``
    for the GDAL version they need to be read as rasters.
 
-Every level's listing is re-derived on every run. A checkpoint whose output
-already exists is read, not re-checked -- Snakemake only reconsiders a
-checkpoint it has been asked to produce -- so a listing kept from the last run
-would never learn that a native tile arrived or a child vanished. The
-listings are deleted when this file loads (a dry run keeps them, and so may
-plan from a stale one). Listing is a directory scan, cheap next to a fold, and
-the parents' jobs do not depend on the listing FILE, so a re-derived listing
-reruns nothing by itself.
+Every level's listing is re-derived on every run, and that is what makes a
+MISSING product rebuild. The listings are deleted when this file loads and are
+targets of ``rule all`` (with ``products.done``, a rule that asks for every
+derived tile and its record), so every level's checkpoint runs; its listing
+then names every parent the level should hold, and a derived tile or per-tile
+record deleted since the last run is a missing output of a scheduled job,
+which Snakemake rebuilds. Deleting the listings was not enough on its own: a
+checkpoint's output is only produced when something ASKS for it, and when
+every product downstream exists Snakemake asks for nothing -- so a deleted
+tile got "Nothing to be done" while the manifest and its Item kept
+advertising it. (A dry run keeps the listings, and so may plan from a stale
+one.) Listing is a directory scan, cheap next to a fold, and the parents'
+jobs do not depend on the listing FILE, so a re-derived listing rebuilds no
+tile by itself. It does make the bookkeeping steps -- manifest, catalog,
+indexes -- run on every run; the manifest and the Items/Collection are
+rewritten only when their content changed, so an unchanged layer's published
+files keep their bytes and mtimes (section 9's replica rule).
 
 Two runs over one layer are serialised by a lock taken when this file loads
 (``.regenerate/regenerate.lock``), before the pre-step or the listing reset
@@ -159,14 +177,9 @@ except BlockingIOError:
         f"another regenerate is running over {LAYER_DIR} "
         f"({WORK / 'regenerate.lock'} is held); retry when it finishes")
 
-workdir: str(WORK)
-
-wildcard_constraints:
-    level=r"\d+",
-    row=r"\d+",
-    col=r"\d+",
-
-
+# Resolved BEFORE ``workdir:``, which changes directory: a relative
+# ``--config <tool>_tool=`` is relative to where snakemake was started, as
+# ``layer_dir`` is.
 def _is_dry_run(argv):
     """Whether this invocation is a dry run (``-n``/``--dry-run``/``-np``)."""
     for arg in argv:
@@ -215,6 +228,15 @@ ASSEMBLE_TOOL = _tool("mws_assemble_coverage", "marine_world_store")
 CATALOG_TOOL = _tool("mws_regenerate_catalog", "marine_world_store")
 LIST_TILES_TOOL = _tool("mws_list_tiles", "marine_world_store")
 
+workdir: str(WORK)
+
+
+wildcard_constraints:
+    level=r"\d+",
+    row=r"\d+",
+    col=r"\d+",
+
+
 if DRY_RUN:
     print("dry run: the fingerprint pre-step is skipped (it writes .fp files "
           "and moves mtimes), so a tile rewritten byte for byte may be listed "
@@ -226,6 +248,7 @@ else:
     # Re-derive every level's listing (see the module docstring).
     for stale_listing in WORK.glob("parents_*.tsv"):
         stale_listing.unlink()
+    (WORK / "products.done").unlink(missing_ok=True)
 
 
 #: ``<level>_<row>_<col>.tif`` exactly -- the canonical tile name.
@@ -246,6 +269,10 @@ include: "rules/gti.smk"
 
 rule all:
     input:
+        # The listings are targets so every level's checkpoint runs every run
+        # (see the module docstring): that is what notices a missing product.
+        expand(str(WORK / "parents_{level}.tsv"), level=_levels()),
+        WORK / "products.done",
         WORK / "catalog.done",
         WORK / "gti_native.done",
         WORK / "gti_overview.done",

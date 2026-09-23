@@ -42,7 +42,10 @@ as its inputs without this file knowing which tiles those are.
 
 Before listing, the same checkpoint prunes the level (`--prune`): a derived
 tile that a native tile now covers, or whose children are all gone, is never
-listed, so no job would ever be scheduled to remove it.
+listed, so no job would ever be scheduled to remove it. The finest level's
+checkpoint also removes every derived level outside the configured range
+(`--remove-level`), which no prune would take: those tiles still have
+children.
 
 Every file a rule reads or writes is a real input or output -- never a stamp
 standing in for one -- so Snakemake's mtime and input-set triggers see a
@@ -59,6 +62,17 @@ def _levels():
             "`build_depth_overviews --dry-run <layer>` reports it."
         )
     return list(range(int(FINE_LEVEL) - 1, MIN_LEVEL - 1, -1))
+
+
+def _derived_levels_outside_range():
+    """The levels ``overviews/`` holds tiles at that this run does not build."""
+    built = set(_levels())
+    found = set()
+    if OVERVIEWS.is_dir():
+        for path in OVERVIEWS.glob("*_*_*.tif"):
+            if _TILE_NAME.fullmatch(path.name):
+                found.add(int(path.name.split("_", 1)[0]))
+    return sorted(found - built)
 
 
 def _listing(level):
@@ -90,7 +104,9 @@ def _list_inputs(wildcards):
     level = int(wildcards.level)
     inputs = native_tiles(level + 1) + native_tiles(level)
     if level < int(FINE_LEVEL) - 1:
-        inputs += parent_tiles(level + 1)
+        # Tiles AND records: a missing one is rebuilt only if asked for.
+        inputs += [path for tile in parent_tiles(level + 1)
+                   for path in (tile, tile.with_suffix(".json"))]
     return inputs
 
 
@@ -103,14 +119,16 @@ checkpoint list_parents:
     params:
         layer=str(LAYER_DIR),
         tool=OVERVIEW_TOOL,
-        # The finest level can hold no valid derived tile (nothing native lies
-        # below it), so its leftovers are pruned with the first listing.
-        prune_below=lambda wildcards: (
-            int(wildcards.level) + 1
-            if int(wildcards.level) == int(FINE_LEVEL) - 1 else ""),
+        # Derived levels this run does not build: at or finer than
+        # fine_level (nothing native lies below them), or coarser than
+        # min_level. Removed with the first (finest) listing.
+        remove_levels=lambda wildcards: " ".join(
+            str(level) for level in _derived_levels_outside_range()
+        ) if int(wildcards.level) == int(FINE_LEVEL) - 1 else "",
     shell:
-        "if [ -n '{params.prune_below}' ]; then "
-        "{params.tool:q} --prune {params.layer:q} {params.prune_below}; fi; "
+        "for stale in {params.remove_levels}; do "
+        "{params.tool:q} --remove-level {params.layer:q} $stale || exit 1; "
+        "done; "
         "{params.tool:q} --prune {params.layer:q} {wildcards.level} && "
         "{params.tool:q} --list-parents {params.layer:q} {wildcards.level} "
         "> {output:q}"
@@ -137,11 +155,46 @@ rule build_parent:
     params:
         layer=str(LAYER_DIR),
         tool=OVERVIEW_TOOL,
+        record=REFRESH_TOOL,
     shell:
+        # Recorded as built, with the mtime the build gave it (see
+        # fingerprint_sidecar): the next pre-step then leaves it newer than
+        # the children it absorbed, even if it came out byte for byte the same.
         "{params.tool:q} {params.layer:q} "
-        "{wildcards.level} {wildcards.row} {wildcards.col}"
+        "{wildcards.level} {wildcards.row} {wildcards.col} && "
+        "{params.record:q} --record {output[0]:q}"
 
 
 def overview_tiles(wildcards=None):
     """Every derived tile the DAG builds, every level."""
     return [tile for level in _levels() for tile in parent_tiles(level)]
+
+
+def overview_products(wildcards=None):
+    """
+    Every derived tile AND its per-tile record, every level.
+
+    Both, because a job's output is only rebuilt when something asks for it:
+    with the tiles alone as the manifest's inputs, a deleted record was never
+    requested, never rebuilt, and the catalog then refused the tile as having
+    no lineage.
+    """
+    return [path for tile in overview_tiles()
+            for path in (tile, tile.with_suffix(".json"))]
+
+
+rule overview_products_present:
+    """
+    Ask for every derived tile and record, so a missing one is rebuilt.
+
+    Snakemake rebuilds a job's missing output only when a job it is PLANNING
+    asks for it. Each level's listing asks for the level below's products,
+    but nothing asks for the coarsest level's except the manifest, and a job
+    whose own output already exists is not re-planned after a checkpoint.
+    This one's output is deleted when the Snakefile loads, like the listings,
+    so it is planned every run.
+    """
+    input:
+        overview_products,
+    output:
+        touch(WORK / "products.done"),

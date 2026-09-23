@@ -30,7 +30,7 @@
 A stand-in for ``build_depth_overview_parent``, for the workflow tests.
 
 It keeps the real tool's command-line CONTRACT -- ``--list-parents`` output
-with children, ``--prune``, one parent per invocation writing a 4-band tile and
+with children, ``--prune``, ``--remove-level``, one parent per invocation writing a 4-band tile and
 its per-tile record -- over a toy quadtree (parent = row//2, col//2) instead of
 GGGS, and appends what it did to ``$FAKE_TOOL_LOG`` so a test can count the
 builds a run made. The real tool's semantics are pinned by the C++ tests
@@ -38,7 +38,6 @@ builds a run made. The real tool's semantics are pinned by the C++ tests
 it. Not a test module (no ``test_`` prefix), so pytest does not collect it.
 """
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -49,6 +48,12 @@ from osgeo import gdal
 
 gdal.UseExceptions()
 NAME = re.compile(r'(\d+)_(\d+)_(\d+)\.tif')
+SIZE = 128
+
+
+def _band1_value(path):
+    dataset = gdal.Open(str(path))
+    return float(dataset.GetRasterBand(1).ReadAsArray(0, 0, 1, 1)[0][0])
 
 
 def _log(line):
@@ -104,20 +109,32 @@ def prune(layer, level):
             print(tile.name[:-4])
 
 
+def remove_level(layer, level):
+    for _, row, col in _tiles(layer / 'overviews', level):
+        tile = layer / 'overviews' / _name(level, row, col)
+        for path in (tile, tile.with_suffix('.json'),
+                     tile.with_name(tile.name + '.fp')):
+            path.unlink(missing_ok=True)
+        _log(f'remove {tile.name[:-4]}')
+        print(tile.name[:-4])
+
+
 def build(layer, level, row, col):
     children = _children(layer, level, row, col)
     if (layer / _name(level, row, col)).exists() or not children:
         return
-    digest = hashlib.sha256()
-    for child in children:
-        digest.update((layer / child).read_bytes())
-    value = int(digest.hexdigest()[:6], 16) / 1000.0
+    # A fold, not a digest: a child that differs only where the fold does not
+    # look (its sigma band, like the real tool's undecided sigma rule) gives
+    # the same parent bytes -- the rebuilt-but-byte-identical case.
+    value = sum(_band1_value(layer / child) for child in children)
     overviews = layer / 'overviews'
     overviews.mkdir(exist_ok=True)
     final = overviews / _name(level, row, col)
     tmp = overviews / f'.{final.name}.{os.getpid()}.tmp.tif'
+    # Over Snakemake's 100 kB checksum limit, like a real tile: below it,
+    # Snakemake's own checksum comparison would hide what the DAG does.
     dataset = gdal.GetDriverByName('GTiff').Create(
-        str(tmp), 4, 4, 4, gdal.GDT_Float64)
+        str(tmp), SIZE, SIZE, 4, gdal.GDT_Float64)
     dataset.SetGeoTransform((-70.0, 0.001, 0.0, 42.1, 0.0, -0.001))
     dataset.GetRasterBand(1).Fill(value)
     dataset = None
@@ -135,6 +152,8 @@ def main(argv):
         list_parents(Path(argv[1]), int(argv[2]))
     elif argv[0] == '--prune':
         prune(Path(argv[1]), int(argv[2]))
+    elif argv[0] == '--remove-level':
+        remove_level(Path(argv[1]), int(argv[2]))
     else:
         build(Path(argv[0]), *(int(a) for a in argv[1:4]))
     return 0

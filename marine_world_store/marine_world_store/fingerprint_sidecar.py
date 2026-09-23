@@ -26,31 +26,37 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 """
-Keep an unchanged tile from *looking* changed to a mtime-driven DAG.
+Decide from a tile's CONTENT whether it changed, and tell a mtime-driven DAG.
 
 Design section 9 makes **fingerprints, not mtimes**, the trigger for a
 regenerate. Snakemake's own DAG is mtime-based, so the two only agree if
-something reconciles them: a tile that a rebuild rewrote byte for byte is newer
-by mtime and identical by content, and every rule above it would re-run for
-nothing.
+something reconciles them -- and a tile's mtime as found cannot be trusted in
+EITHER direction: a rebuild that rewrote a tile byte for byte made it newer
+without changing it, and a copy that preserves mtimes (``shutil.copy2``,
+``rsync -t``, a restore, re-linking an older compile) changed it while leaving
+it OLDER than the products built from it.
 
 This is that reconciliation, the prototype's component 5 pre-step. Each tile
-gets a ``.fp`` sidecar holding the tile's **content** fingerprint. On a refresh:
+gets a ``.fp`` sidecar holding the tile's **content** fingerprint and the mtime
+this module gave the tile when that content was recorded. On a refresh the
+decision is made from the content alone, and the mtime is then SET to say it:
 
-* the content matches the sidecar -- the tile's mtime is reset to the mtime
-  RECORDED with the fingerprint (the tile's own mtime when that content was
-  first seen), so the DAG sees no change, because there is none;
-* the content differs -- the sidecar is rewritten with the new fingerprint and
-  the tile's current mtime, and the mtime is left alone, so the DAG re-runs
-  what depends on it.
+* the content matches the sidecar -- the tile's mtime is reset to the recorded
+  one, so the DAG sees no change, because there is none;
+* the content differs, or there is no sidecar -- the tile's mtime is advanced
+  to now, and that is what is recorded, so the DAG
+  sees a change newer than anything built from the old content.
 
-Why the recorded mtime and not the sidecar file's own: the first version reset
-a tile to its sidecar's mtime, and sidecars are written in whatever order a
-refresh visits the tiles -- coarsest level first. A parent's sidecar was
-therefore OLDER than its child's, every unchanged parent came out older than
-its unchanged children, and the DAG rebuilt it -- byte for byte, on every run,
-forever. Restoring the tile's own recorded mtime keeps the order the builds
-actually happened in.
+A tile the DAG itself has just built is recorded as built
+(:func:`record_tile`), with the mtime the build gave it: it is newer than the
+children it was folded from, and it keeps that order even when the rebuild
+came out byte for byte the same as before. (Resetting it to its FIRST-seen
+mtime instead left it older than a child whose change it absorbed, and the DAG
+rebuilt it and everything above it on every later run.)
+
+The first refresh over a layer with no sidecars therefore marks every tile as
+changed, which rebuilds its overviews once: with nothing recorded, there is
+nothing to prove any product was built from what is there now.
 
 **This is not section 9's fingerprint.** That one is over a product's *inputs*
 (sources, revisions, decoder and builder versions) and lives in the tile's Item;
@@ -60,7 +66,7 @@ different questions and neither substitutes for the other -- which is why the
 sidecar records which it is, rather than being a bare hash a later reader could
 mistake for the other one.
 
-The mtime reset is the only write to the tile itself, and it never touches its
+The mtime is the only write to the tile itself, and it never touches its
 content.
 """
 
@@ -71,6 +77,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import time
 from typing import Dict, List, Optional, Union
 
 from marine_world_store import atomic_io, layout
@@ -78,8 +85,8 @@ from marine_world_store import atomic_io, layout
 PathLike = Union[str, Path]
 
 #: What a ``.fp`` document is, so a reader cannot mistake it for section 9's
-#: input fingerprint. ``/2`` adds ``mtime_ns``, the tile's mtime when the
-#: fingerprint was recorded.
+#: input fingerprint. ``mtime_ns`` is the mtime this module gave the tile when
+#: the fingerprint was recorded.
 SCHEMA = 'tile-content-fingerprint/2'
 
 #: The superseded schema: no recorded mtime, so it is re-recorded (as for a
@@ -113,11 +120,10 @@ class RefreshReport:
 
     #: Tiles whose content matched their sidecar; their mtime was reset.
     unchanged: int = 0
-    #: Tiles whose content differed; their sidecar was rewritten.
+    #: Tiles whose content differed; mtime advanced, sidecar rewritten.
     changed: int = 0
-    #: Tiles that had no sidecar; one was written. Their mtime is left alone --
-    #: a first run has nothing to compare against and must not claim the tile
-    #: is older than it is.
+    #: Tiles that had no sidecar; mtime advanced, one written. Nothing proves
+    #: a product was built from this content, so it counts as a change.
     created: int = 0
     #: Sidecars whose tile is gone. Removed: a stale ``.fp`` would keep
     #: asserting a fingerprint for a file nothing can check it against.
@@ -175,7 +181,8 @@ def refresh_tile(tile: PathLike, report: RefreshReport) -> str:
     """
     Reconcile one tile with its sidecar. Returns the outcome's name.
 
-    ``unchanged`` (mtime reset), ``changed`` or ``created``.
+    ``unchanged`` (mtime reset to the recorded one), ``changed`` or
+    ``created`` (mtime advanced to now, and recorded).
     """
     tile = Path(tile)
     sidecar = sidecar_path(tile)
@@ -184,21 +191,41 @@ def refresh_tile(tile: PathLike, report: RefreshReport) -> str:
     if document is None:
         report.unreadable.append(str(sidecar))
         document = {}
+    stat = tile.stat()
     if document.get('fingerprint') == fingerprint:
         # The content is identical, so the tile is as old as the content is,
-        # however many times a rebuild rewrote the file: give it back the
-        # mtime it had when this content was first recorded.
-        recorded = document['mtime_ns']
-        os.utime(tile, ns=(tile.stat().st_atime_ns, recorded))
+        # however many times a rebuild rewrote the file.
+        os.utime(tile, ns=(stat.st_atime_ns, document['mtime_ns']))
         report.unchanged += 1
         return 'unchanged'
-    existed = bool(document)
-    _write_sidecar(sidecar, fingerprint, tile.stat().st_mtime_ns)
-    if existed:
+    # Different content (or none recorded): whatever mtime the file arrived
+    # with -- a copy2 of an older compile keeps its old one, a clock-skewed
+    # sync a future one -- it must read as newer than every product built
+    # before now, and older than every product built from it after.
+    mtime_ns = time.time_ns()
+    os.utime(tile, ns=(stat.st_atime_ns, mtime_ns))
+    _write_sidecar(sidecar, fingerprint, mtime_ns)
+    if document:
         report.changed += 1
         return 'changed'
     report.created += 1
     return 'created'
+
+
+def record_tile(tile: PathLike) -> None:
+    """
+    Record a tile the DAG has just built, with the mtime the build gave it.
+
+    Not a comparison: the build is the change, and its mtime is already newer
+    than the inputs it was folded from. Recording it keeps that order on every
+    later refresh, even when the rebuild came out byte for byte the same.
+    A symbolic link is refused -- a build writes a real file.
+    """
+    tile = Path(tile)
+    if tile.is_symlink():
+        raise OSError(f'{tile}: a symbolic link, not a tile this DAG built')
+    _write_sidecar(sidecar_path(tile), content_fingerprint(tile),
+                   tile.stat().st_mtime_ns)
 
 
 def refresh_directory(
@@ -238,8 +265,13 @@ def refresh_layer(layer_dir: PathLike) -> Dict[str, RefreshReport]:
         to the legacy tree (:func:`marine_world_store.layout.refuse_legacy_layer`).
     """
     layer_dir = layout.refuse_legacy_layer(layer_dir)
-    reports = {'native': refresh_directory(layer_dir)}
+    # Overviews FIRST: a tile advanced to "now" is advanced in visiting order,
+    # so on a first refresh (no sidecars at all) every native tile comes out
+    # newer than every overview, and every overview is rebuilt once -- rather
+    # than an arbitrary half of them being taken as already built from it.
+    reports = {}
     overviews = layout.overviews_dir(layer_dir)
     if overviews.is_dir():
         reports['overviews'] = refresh_directory(overviews)
+    reports['native'] = refresh_directory(layer_dir)
     return reports

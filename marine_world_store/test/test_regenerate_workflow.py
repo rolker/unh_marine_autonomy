@@ -34,17 +34,18 @@ that decides from mtimes. If the pre-step does not reconcile the two, every
 rule above a rewritten-but-identical tile re-runs, which is the behaviour the
 prototype found and this workflow exists to fix.
 
-The Snakemake rules themselves are checked statically here and, when snakemake
-is importable, with a dry run. It is not installed on the development host
-(``snakemake`` resolves through the repo-root ``rosdep.yaml`` local key), so the
-dry run skips with that reason rather than being deleted -- a test that cannot
-run today still has to exist for the day the dependency lands.
+The Snakemake rules themselves are checked statically here, and end to end by
+running snakemake for real over a toy layer (``snakemake`` is a declared
+dependency, resolved through the repo-root ``rosdep.yaml`` local key; the e2e
+tests skip only where it is not installed).
 """
 
 import json
 import os
 from pathlib import Path
 import re
+import shutil
+import time
 
 from marine_world_store import fingerprint_sidecar, overview_records
 
@@ -63,17 +64,23 @@ def _tile(directory: Path, name: str, content: bytes = b'tile') -> Path:
 # --- the fingerprint pre-step -----------------------------------------------
 
 
-def test_first_pass_records_without_claiming_the_tile_is_older(tmp_path):
-    """A first run has nothing to compare against, so it moves no mtime."""
+def test_a_first_pass_counts_every_tile_as_a_change(tmp_path):
+    """
+    With nothing recorded, nothing proves a product was built from this tile.
+
+    So the tile reads as changed: its mtime is advanced to now, and recorded.
+    """
     tile = _tile(tmp_path, '13_1_1.tif')
-    before = tile.stat().st_mtime
+    os.utime(tile, ns=(10**18, 10**18))       # an old compile, copied in
+    before = time.time_ns()
     report = fingerprint_sidecar.refresh_directory(tmp_path)
     assert report.created == 1 and report.unchanged == 0
-    assert tile.stat().st_mtime == before
+    assert tile.stat().st_mtime_ns >= before
     document = json.loads(fingerprint_sidecar.sidecar_path(tile).read_text())
     assert document['schema'] == fingerprint_sidecar.SCHEMA
     assert document['fingerprint'] == fingerprint_sidecar.content_fingerprint(
         tile)
+    assert document['mtime_ns'] == tile.stat().st_mtime_ns
 
 
 def test_a_byte_identical_rewrite_stops_looking_like_a_change(tmp_path):
@@ -84,8 +91,8 @@ def test_a_byte_identical_rewrite_stops_looking_like_a_change(tmp_path):
     bytes must not make every rule above the tile re-run.
     """
     tile = _tile(tmp_path, '13_1_1.tif')
-    recorded = tile.stat().st_mtime_ns
     fingerprint_sidecar.refresh_directory(tmp_path)
+    recorded = tile.stat().st_mtime_ns
     # A rebuild: same bytes, newer mtime.
     tile.write_bytes(b'tile')
     os.utime(tile, ns=(recorded + 10**12, recorded + 10**12))
@@ -108,22 +115,77 @@ def test_unchanged_tiles_keep_the_order_they_were_built_in(tmp_path):
     parent = _tile(overviews, '12_0_0.tif', b'parent')
     os.utime(child, ns=(10**18, 10**18))
     os.utime(parent, ns=(10**18 + 5, 10**18 + 5))   # built after its child
+    fingerprint_sidecar.record_tile(child)
+    fingerprint_sidecar.record_tile(parent)
     for _ in range(3):
         fingerprint_sidecar.refresh_directory(overviews)
         assert parent.stat().st_mtime_ns > child.stat().st_mtime_ns
 
 
-def test_a_real_change_keeps_its_mtime_and_rewrites_the_record(tmp_path):
+def test_a_real_change_is_newer_than_anything_built_before_it(tmp_path):
     tile = _tile(tmp_path, '13_1_1.tif')
     fingerprint_sidecar.refresh_directory(tmp_path)
     tile.write_bytes(b'different')
-    changed_at = tile.stat().st_mtime
+    before = time.time_ns()
     report = fingerprint_sidecar.refresh_directory(tmp_path)
     assert report.changed == 1 and report.unchanged == 0
-    assert tile.stat().st_mtime == pytest.approx(changed_at)
-    assert json.loads(
-        fingerprint_sidecar.sidecar_path(tile).read_text())['fingerprint'] == \
+    assert tile.stat().st_mtime_ns >= before
+    document = json.loads(fingerprint_sidecar.sidecar_path(tile).read_text())
+    assert document['fingerprint'] == \
         fingerprint_sidecar.content_fingerprint(tile)
+    assert document['mtime_ns'] == tile.stat().st_mtime_ns
+
+
+def test_a_change_copied_in_with_an_old_mtime_is_still_a_change(tmp_path):
+    """
+    Decide from the content; the mtime a file arrives with proves nothing.
+
+    Regression: a changed tile kept the mtime it arrived with. ``copy2`` (the
+    adapter's copy), ``rsync -t`` and a restore all preserve an OLD mtime, so a
+    re-linked older compile looked older than the overviews built from the
+    content it replaced, and the DAG said "Nothing to be done".
+    """
+    tile = _tile(tmp_path, '13_1_1.tif')
+    fingerprint_sidecar.refresh_directory(tmp_path)
+    recorded = tile.stat().st_mtime_ns
+    older = tmp_path / 'older.tif'
+    older.write_bytes(b'an older compile')
+    os.utime(older, ns=(10**18, 10**18))
+    shutil.copy2(older, tile)
+    assert tile.stat().st_mtime_ns < recorded
+    report = fingerprint_sidecar.refresh_directory(tmp_path)
+    assert report.changed == 1
+    assert tile.stat().st_mtime_ns > recorded
+
+
+def test_a_built_tile_is_recorded_with_the_mtime_its_build_gave_it(tmp_path):
+    """
+    ``record_tile`` records; it does not compare, and it moves no mtime.
+
+    Regression: a parent rebuilt byte for byte (its child changed only where
+    the fold does not look) was reset to its FIRST-seen mtime -- older than the
+    child whose change it had absorbed -- so the DAG rebuilt it, and every
+    ancestor, on every later run.
+    """
+    parent = _tile(tmp_path, '12_0_0.tif', b'parent')
+    os.utime(parent, ns=(10**18, 10**18))
+    fingerprint_sidecar.record_tile(parent)
+    # Rebuilt, byte for byte, after its child changed.
+    parent.write_bytes(b'parent')
+    built_at = parent.stat().st_mtime_ns
+    fingerprint_sidecar.record_tile(parent)
+    assert parent.stat().st_mtime_ns == built_at
+    report = fingerprint_sidecar.refresh_directory(tmp_path)
+    assert report.unchanged == 1
+    assert parent.stat().st_mtime_ns == built_at
+
+
+def test_a_symbolic_link_is_not_recorded_as_built(tmp_path):
+    real = _tile(tmp_path, 'real.tif')
+    link = tmp_path / '12_0_0.tif'
+    link.symlink_to(real)
+    with pytest.raises(OSError, match='symbolic link'):
+        fingerprint_sidecar.record_tile(link)
 
 
 def test_a_superseded_sidecar_is_re_recorded_quietly(tmp_path):
@@ -187,6 +249,16 @@ def test_a_layer_reports_its_native_tiles_and_overviews_apart(tmp_path):
     assert reports['overviews'].created == 1
 
 
+def test_a_first_refresh_leaves_every_overview_older_than_every_native(
+        tmp_path):
+    """No sidecars prove any overview was built from these natives: redo all."""
+    native = _tile(tmp_path, '13_1_1.tif', b'native')
+    derived = _tile(tmp_path / 'overviews', '12_0_0.tif', b'derived')
+    os.utime(derived, ns=(2 * 10**18, 2 * 10**18))    # "newer" as found
+    fingerprint_sidecar.refresh_layer(tmp_path)
+    assert derived.stat().st_mtime_ns < native.stat().st_mtime_ns
+
+
 # --- the per-tile records and the manifest they assemble into ---------------
 
 
@@ -218,6 +290,23 @@ def test_records_assemble_into_the_manifest_the_cxx_reader_expects(tmp_path):
                        'geometric_error_m': 4.0}
     assert runs[1] == {'row': 5, 'col_min': 9, 'col_max': 9,
                        'geometric_error_m': 9.0}
+
+
+def test_an_unchanged_manifest_is_left_alone(tmp_path):
+    """
+    Reassembling the same records leaves coverage.json's bytes and mtime.
+
+    The DAG reassembles on every run; a rewrite that changed nothing would
+    still make a replica sync move the file (design section 9).
+    """
+    _record(tmp_path, '12_5_7', 4.0)
+    path = overview_records.assemble(tmp_path)
+    os.utime(path, ns=(10**18, 10**18))
+    overview_records.assemble(tmp_path)
+    assert path.stat().st_mtime_ns == 10**18
+    _record(tmp_path, '12_5_8', 4.0)
+    overview_records.assemble(tmp_path)
+    assert path.stat().st_mtime_ns != 10**18
 
 
 def test_an_unrecorded_error_is_none_never_zero(tmp_path):
@@ -347,8 +436,8 @@ def test_every_shell_path_is_quoted():
         for field in re.findall(r'\{(params\.[a-z_]+|output|input)(:q)?\}',
                                 path.read_text()):
             name, quoted = field
-            if name in ('params.prune_below', 'params.kind'):
-                continue   # an integer and a fixed word, never a path
+            if name in ('params.remove_levels', 'params.kind'):
+                continue   # integers and a fixed word, never a path
             assert quoted, f'{path.name}: {{{name}}} is not :q-quoted'
 
 
@@ -418,15 +507,26 @@ def workflow(tmp_path, monkeypatch):
             self.elsewhere = elsewhere
             self.log = log
 
-        def native(self, name, value=1.0):
-            """Write a native tile and its Item, as the link step would."""
+        def native(self, name, value=1.0, sigma=0.5, path=None):
+            """
+            Write a native tile and its Item, as the link step would.
+
+            128 x 128 x 2 float64 = 256 kB: over Snakemake's 100 kB checksum
+            limit, as real tiles are. Below it Snakemake compares checksums
+            itself, and a test of the fingerprint pre-step would pass with
+            the pre-step switched off.
+            """
             from marine_world_store import item_schema, stac_catalog
-            path = layer / name
+            path = path or layer / name
             dataset = gdal.GetDriverByName('GTiff').Create(
-                str(path), 4, 4, 2, gdal.GDT_Float64)
+                str(path), 128, 128, 2, gdal.GDT_Float64)
             dataset.SetGeoTransform((-70.0, 0.001, 0.0, 42.1, 0.0, -0.001))
             dataset.GetRasterBand(1).Fill(value)
+            dataset.GetRasterBand(2).Fill(sigma)
             dataset = None
+            assert path.stat().st_size > 100_000
+            if path.parent != layer:
+                return path
             level, row, col = (int(p) for p in name[:-4].split('_'))
             stac_catalog.write_items(layer, [item_schema.build_tile_item(
                 quantity='depths', state='reviewed', origin='surveyed',
@@ -438,14 +538,15 @@ def workflow(tmp_path, monkeypatch):
                 end_datetime='2026-06-22T14:00:00Z')])
             return path
 
-        def run(self, *extra):
+        def run(self, *extra, **config):
             """Run the workflow; return (stdout+stderr, builds, prunes)."""
             self.log.write_text('')
+            settings = {'layer_dir': layer, 'fine_level': 13, 'min_level': 11,
+                        'build_depth_overview_parent_tool': fake, **config}
             result = subprocess.run(
                 ['snakemake', '-s', str(SNAKEMAKE_DIR / 'Snakefile'),
-                 '--cores', '2', '--config', f'layer_dir={layer}',
-                 'fine_level=13', 'min_level=11',
-                 f'build_depth_overview_parent_tool={fake}', *extra],
+                 '--cores', '2', '--config',
+                 *(f'{k}={v}' for k, v in settings.items()), *extra],
                 capture_output=True, text=True, cwd=str(tmp_path))
             output = result.stdout + result.stderr
             assert result.returncode == 0, output
@@ -453,8 +554,17 @@ def workflow(tmp_path, monkeypatch):
             builds = sorted(lines[i + 1] for i, w in enumerate(lines)
                             if w == 'build')
             prunes = sorted(lines[i + 1] for i, w in enumerate(lines)
-                            if w == 'prune')
+                            if w in ('prune', 'remove'))
             return output, builds, prunes
+
+        def published(self):
+            """Every published product file: (path, bytes, mtime)."""
+            found = []
+            for path in sorted(layer.rglob('*.json')):
+                if '.regenerate' not in path.parts:
+                    found.append((path.relative_to(layer), path.read_bytes(),
+                                  path.stat().st_mtime_ns))
+            return found
 
     return Workflow()
 
@@ -472,21 +582,14 @@ def test_a_regenerate_rebuilds_exactly_what_changed(workflow):
     _, builds, _ = workflow.run()
     assert builds == ['11_0_0', '12_0_0', '12_1_1']
 
-    # Nothing changed: nothing is rebuilt, and no product step reruns (the
-    # level listings are re-derived every run; they are planning, not
-    # products).
+    # Nothing changed: nothing is rebuilt, and nothing published is touched
+    # -- not a byte, not an mtime (design section 9's replica rule). The
+    # listings, manifest assembly, catalog and indexes are re-derived every
+    # run; they write only what changed.
+    before = workflow.published()
     output, builds, _ = workflow.run()
     assert builds == [], output
-    for product_rule in ('rule build_parent', 'rule assemble_coverage',
-                         'rule catalog', 'rule gti_'):
-        assert product_rule not in output, output
-
-    # A byte-identical rewrite is not a change (the fingerprint pre-step).
-    tile = workflow.layer / '13_0_0.tif'
-    tile.write_bytes(tile.read_bytes())
-    os.utime(tile, (tile.stat().st_atime, tile.stat().st_mtime + 100))
-    _, builds, _ = workflow.run()
-    assert builds == []
+    assert workflow.published() == before
 
     # A real change rebuilds its ancestors and ONLY them.
     workflow.native('13_2_2.tif', value=7.0)
@@ -494,6 +597,163 @@ def test_a_regenerate_rebuilds_exactly_what_changed(workflow):
     assert builds == ['11_0_0', '12_1_1']
     _, builds, _ = workflow.run()
     assert builds == []
+
+
+def _rewrite_identically(tile):
+    """Rewrite ``tile`` byte for byte, with a newer mtime (a rebuild)."""
+    tile.write_bytes(tile.read_bytes())
+    stat = tile.stat()
+    os.utime(tile, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**11))
+
+
+def test_a_byte_identical_rewrite_is_not_a_change(workflow):
+    """
+    The fingerprint pre-step, not Snakemake, is what keeps this quiet.
+
+    Pinned both ways, so this test can fail: with the pre-step switched off
+    the same rewrite DOES rebuild (the tiles are over Snakemake's 100 kB
+    checksum limit, so its own checksum shortcut cannot hide the difference).
+    Regression: the first version of this test used 4 x 4 tiles and passed
+    with the pre-step disabled.
+    """
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    workflow.run()
+    tile = workflow.layer / '13_0_0.tif'
+
+    _rewrite_identically(tile)
+    _, builds, _ = workflow.run()
+    assert builds == []
+
+    _rewrite_identically(tile)
+    _, builds, _ = workflow.run(refresh_fingerprints='false')
+    assert builds == ['11_0_0', '12_0_0']
+
+
+def test_a_change_copied_in_with_an_old_mtime_rebuilds(workflow):
+    """
+    Changed content is a change, whatever mtime the file arrived with.
+
+    Regression: the pre-step saw the change and left the tile's mtime alone.
+    The adapter copies with ``copy2``, which keeps the source's mtime, so a
+    re-linked older compile (or an rsync -t, or a restore) was older than the
+    overviews built from what it replaced: "Nothing to be done".
+    """
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    older = workflow.native('older.tif', value=9.0,
+                            path=workflow.layer.parent / 'older.tif')
+    os.utime(older, ns=(10**18, 10**18))
+    workflow.run()
+    shutil.copy2(older, workflow.layer / '13_0_0.tif')
+    _, builds, _ = workflow.run()
+    assert builds == ['11_0_0', '12_0_0']
+    _, builds, _ = workflow.run()
+    assert builds == []
+
+
+def test_a_rebuilt_but_identical_parent_does_not_rebuild_forever(workflow):
+    """
+    A child that changes where the fold does not look rebuilds its parent once.
+
+    Here the sigma band: the fold (like the real tool's undecided sigma rule)
+    gives the parent the same bytes. Regression: that parent was reset to its
+    first-seen mtime, older than the changed child, so it and every ancestor
+    were rebuilt on every later run.
+    """
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    workflow.run()
+    workflow.native('13_0_0.tif', sigma=0.9)
+    _, builds, _ = workflow.run()
+    assert builds == ['11_0_0', '12_0_0']
+    for _ in range(2):
+        _, builds, _ = workflow.run()
+        assert builds == []
+
+
+def test_a_deleted_product_is_rebuilt(workflow):
+    """
+    A derived tile or its record deleted since the last run is rebuilt.
+
+    Regression: with every product downstream present, Snakemake asked for no
+    listing, so it never saw that a scheduled parent's output was missing:
+    "Nothing to be done", every run, while coverage.json and the overview
+    Item kept advertising the tile.
+    """
+    for name in ('13_0_0.tif', '13_0_1.tif', '13_2_2.tif'):
+        workflow.native(name)
+    workflow.run()
+    overviews = workflow.layer / 'overviews'
+
+    # Rebuilt, and so is the parent that folds it (Snakemake cannot know in
+    # the same run that the rebuild came out the same).
+    (overviews / '12_0_0.tif').unlink()
+    _, builds, _ = workflow.run()
+    assert builds == ['11_0_0', '12_0_0']
+    assert (overviews / '12_0_0.tif').is_file()
+
+    (overviews / '12_1_1.json').unlink()
+    _, builds, _ = workflow.run()
+    assert builds == ['11_0_0', '12_1_1']
+    assert (overviews / '12_1_1.json').is_file()
+
+    # The coarsest level's, too: nothing above it asks for them but the
+    # manifest.
+    (overviews / '11_0_0.tif').unlink()
+    _, builds, _ = workflow.run()
+    assert builds == ['11_0_0']
+    (overviews / '11_0_0.json').unlink()
+    _, builds, _ = workflow.run()
+    assert builds == ['11_0_0']
+
+    # A published product of the bookkeeping steps is re-derived too.
+    item = workflow.layer / 'depths-reviewed-surveyed-11_0_0.json'
+    item.unlink()
+    (workflow.layer / 'index.gti.fgb').unlink()
+    _, builds, _ = workflow.run()
+    assert builds == []
+    assert item.is_file()
+    assert (workflow.layer / 'index.gti.fgb').is_file()
+
+
+def test_levels_outside_the_configured_range_are_removed(workflow):
+    """
+    Derived levels this run does not build are removed, not left published.
+
+    Regression: after min_level was raised, the old coarser levels were never
+    pruned or rebuilt (they still have children), yet the manifest and the
+    overview Items scan all of overviews/, so they stayed published, stale.
+    """
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    workflow.run()
+    overviews = workflow.layer / 'overviews'
+    assert (overviews / '11_0_0.tif').is_file()
+
+    _, builds, removed = workflow.run(min_level=12)
+    assert removed == ['11_0_0']
+    assert builds == []
+    assert not (overviews / '11_0_0.tif').exists()
+    assert not (overviews / '11_0_0.json').exists()
+    coverage = json.loads((overviews / 'coverage.json').read_text())
+    assert [lvl['level'] for lvl in coverage['levels']] == [12]
+    assert not (workflow.layer / 'depths-reviewed-surveyed-11_0_0.json').exists()
+
+
+def test_a_relative_tool_override_is_relative_to_where_snakemake_started(
+        workflow, tmp_path):
+    """
+    Resolve a relative ``--config <tool>_tool=`` before ``workdir:``.
+
+    Regression: overrides were resolved after ``workdir:`` had moved into
+    ``.regenerate/``, so a relative path failed as "not an executable".
+    """
+    workflow.native('13_0_0.tif')
+    fake = tmp_path / 'bin' / 'fake_build_depth_overview_parent'
+    _, builds, _ = workflow.run(
+        build_depth_overview_parent_tool=os.path.relpath(fake, tmp_path))
+    assert builds == ['11_0_0', '12_0_0']
 
 
 def test_a_regenerate_prunes_what_describes_nothing(workflow):

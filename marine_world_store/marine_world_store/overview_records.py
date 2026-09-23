@@ -200,6 +200,10 @@ def assemble(overviews_dir: PathLike, kind: str = 'derived') -> Path:
     :func:`manifest_records` describes. Atomic publish (private temporary,
     fsync, rename), the same guarantee ``saveCoverageManifest`` gives: a reader
     sees the whole previous document or the whole new one.
+
+    An unchanged manifest is left alone, bytes and mtime (design section 9's
+    replica rule): the regenerate DAG reassembles on every run, and a
+    rewrite that changed nothing would still make a replica sync move it.
     """
     overviews_dir = Path(overviews_dir)
     if not overviews_dir.is_dir():
@@ -207,7 +211,13 @@ def assemble(overviews_dir: PathLike, kind: str = 'derived') -> Path:
     records, _ = manifest_records(overviews_dir)
     document = encode_manifest(records, kind=kind)
     path = layout.coverage_manifest_path(overviews_dir)
-    atomic_io.write_text(path, json.dumps(document, indent=2) + '\n')
+    text = json.dumps(document, indent=2) + '\n'
+    try:
+        unchanged = path.read_text() == text
+    except OSError:
+        unchanged = False
+    if not unchanged:
+        atomic_io.write_text(path, text)
     return path
 
 

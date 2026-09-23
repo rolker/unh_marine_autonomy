@@ -94,7 +94,7 @@ of the four decided it.
 | `revisions.py` | Append-only `revisions/` records: geometry revisions and datum records. The id is the content hash, so an edited record is detected on read |
 | `depth_subset.py` | The native-tile **adapter** (see below) |
 | `sigma_fold_measure.py` | The evidence design §7's **open** σ-fold rule is decided from: what each candidate would write, against the true spread of the native cells under a parent. Decides nothing (see below) |
-| `fingerprint_sidecar.py` | The regenerate pre-step's `.fp` sidecar — a tile's **content** hash plus the tile's mtime when that content was recorded, which is *not* §9's input fingerprint; one answers "did this file change?", the other "was this built from the same things?" |
+| `fingerprint_sidecar.py` | The regenerate pre-step's `.fp` sidecar — a tile's **content** hash plus the mtime the pre-step gave the tile when that content was recorded, which is *not* §9's input fingerprint; one answers "did this file change?", the other "was this built from the same things?" |
 | `overview_records.py` | Assembles the per-tile records the per-parent overview writer leaves into one `coverage-manifest/1` document (uma-ADR-0013 D3), with an entry for every tile on disk — a tile with no record keeps the error the previous manifest gave it |
 | `overview_items.py` | The derived overview tiles' STAC Items, built from their lineage: the interval is the union of their children's, the inputs the union of their children's sources and revisions, the frame their children's (see below) |
 | `atomic_io.py` | Publishes every file this package writes whole and durably: a private temporary (never a shared `<name>.tmp`), fsync, rename, fsync of the directory |
@@ -146,7 +146,7 @@ vocabulary.
 | `mws_regenerate_catalog` | Build the overview tiles' Items (removing the Item of a pruned tile) and rebuild each present cell's `collection.json`, writing only what changed. `--layer-dir LAYER_DIR` does exactly one layer — what the regenerate DAG runs |
 | `mws_link_depth_subset` | The adapter below |
 | `mws_measure_sigma_fold TILE…` | Measure the candidate σ-fold rules over native depth tiles and print a markdown table. Tile paths are **arguments** |
-| `mws_refresh_fingerprints LAYER_DIR` | The regenerate pre-step: reconcile `.fp` sidecars with the tiles, giving an unchanged tile back its recorded mtime. A symlinked tile is named and left alone (`utime` would reach through it) |
+| `mws_refresh_fingerprints LAYER_DIR` | The regenerate pre-step: decide from each tile's content whether it changed, then set its mtime to say so — an unchanged tile gets back its recorded mtime, a changed or new one is advanced to now and recorded. `--record TILE` records a tile the DAG just built, with its build mtime. A symlinked tile is named and left alone (`utime` would reach through it) |
 | `mws_assemble_coverage LAYER_DIR` | Write `overviews/coverage.json` from the per-tile overview records, once, after the DAG |
 | `mws_list_tiles LAYER_DIR --kind native\|overview` | The data assets of a layer's Items of one kind, one path per line — the tile index's inputs, taken from the record rather than a glob |
 
@@ -340,10 +340,16 @@ install space (colcon installs both packages' executables there, not on
 - **The pre-step is the load-bearing part, and it runs when the Snakefile
   loads.** §9 makes fingerprints, not mtimes, the trigger; Snakemake's DAG
   decides from mtimes, while PLANNING — so the reconciliation has to happen
-  before planning, not as a job in the DAG. `mws_refresh_fingerprints` gives an
-  unchanged tile back the mtime recorded with its content, so a rebuild that
-  produced the same bytes stops looking like a change, and a parent stays newer
-  than its unchanged children. A dry run skips it (it writes).
+  before planning, not as a job in the DAG. `mws_refresh_fingerprints` decides
+  from each tile's **content** and then sets the mtime to say so: a tile
+  rewritten byte for byte gets back its recorded mtime, and a changed one is
+  advanced to now — including one copied in with an *old* mtime (`copy2`,
+  `rsync -t`, a restore), which by mtime alone would look older than its
+  products. Each tile a rule builds is recorded with its build mtime
+  (`--record`), so a parent stays newer than the children it absorbed even
+  when it came out byte for byte the same. The first refresh over a layer with
+  no sidecars counts every tile as changed, so the overviews are rebuilt once.
+  A dry run skips the pre-step (it writes).
 - **Every rule's inputs and outputs are the real files.** A parent's job takes
   the child tiles it folds as inputs and declares the tile and its record as
   outputs, so a changed child reruns exactly its ancestors, and an added or
@@ -354,10 +360,24 @@ install space (colcon installs both packages' executables there, not on
   tile now covers, or whose children are gone) and lists its parents with their
   children (`--list-parents`) — never Python in the rules: the parent/child
   mapping is GGGS, whose column counts vary by latitude band, and a test asserts
-  it is not reimplemented there.
+  it is not reimplemented there. The finest level's checkpoint also removes
+  every derived level outside `min_level`..`fine_level - 1` (`--remove-level`),
+  so a run configured differently from the last leaves no stale level
+  published.
+- **A missing product is rebuilt.** The listings, and a rule that asks for
+  every derived tile and its record, are deleted when the Snakefile loads and
+  are targets of `rule all`, so every run plans them — and a tile or record
+  deleted since the last run is a missing output Snakemake rebuilds.
 - **`mws_assemble_coverage` is a single serialised step after every parent.**
   The per-parent writer leaves a per-tile record instead of touching a shared
   `coverage.json`, because parallel folds would race over that one file.
+- **The bookkeeping steps run every run and write only what changed.** Because
+  the listings are re-derived every run, the manifest assembly, the catalog and
+  the tile indexes run every run too; the manifest and the Items/Collection are
+  rewritten only when their content changed (§9's replica rule), so an
+  unchanged layer's published files keep their bytes and mtimes. The catalog
+  reads every overview tile's footprint each run — a cost that grows with the
+  layer, next to folds that run only for what changed.
 - **The catalog is this layer's** (`mws_regenerate_catalog --layer-dir`), not
   whatever tree the environment's store root names.
 - **The tile indexes are derived and never synced** (§7): one per band schema
@@ -367,6 +387,12 @@ install space (colcon installs both packages' executables there, not on
   workflow runs on this repo's GDAL 3.8.4 hosts; reading one **as a raster** is
   GDAL's GTI driver, which needs GDAL ≥ 3.9, and the workflow says so once per
   run on an older host (there the index is an ordinary vector tile index).
+- **Host-local files live inside the layer; exclude them from any sync.**
+  `.regenerate/` (the run lock, listings and Snakemake's metadata),
+  `overviews.lock`, the `*.fp` content sidecars (their mtimes are this host's)
+  and the `*.gti.fgb` indexes (absolute paths) are regenerated on each host and
+  must not be replicated: for `rsync`, `--exclude=.regenerate/
+  --exclude=overviews.lock --exclude='*.fp' --exclude='*.gti.fgb'`.
 - **Runs over one layer are serialised** by a lock on
   `<layer>/.regenerate/regenerate.lock`, whatever directory each run starts
   from; the C++ writers additionally exclude a concurrent batch build

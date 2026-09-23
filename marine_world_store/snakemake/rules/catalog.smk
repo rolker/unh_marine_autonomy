@@ -36,8 +36,9 @@ because parallel writers would race over that one file, and the only lock that
 would fix it is one that serialises the DAG back into the batch build the
 per-parent mode exists to replace. uma-ADR-0013 D3 wants the manifest; this is
 where it is written, once, from records each written by exactly one process.
-Its inputs are the derived tiles themselves, so a rebuilt, added or pruned
-tile reassembles it.
+Its inputs are the derived tiles and their records themselves, so a rebuilt,
+added or pruned tile reassembles it, and a missing tile or record is asked
+for -- and therefore rebuilt -- before it is.
 
 `catalog` builds the overview tiles' Items and writes ONLY changed ones --
 design section 9's replica rule, so an unchanged store leaves every file's
@@ -66,7 +67,7 @@ def native_items(wildcards=None):
 
 rule assemble_coverage:
     input:
-        overview_tiles,
+        overview_products,
     output:
         OVERVIEWS / "coverage.json",
     params:
