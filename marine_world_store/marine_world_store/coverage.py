@@ -46,6 +46,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import math
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -58,6 +59,19 @@ SCHEMA = 'coverage-manifest/1'
 
 #: ``(level, row, col)`` -- the key both sides use for a tile.
 TileKey = Tuple[int, int, int]
+
+#: GGGS levels are 0..20 (``gggs::levels.size() == 21``); the C++ reader
+#: refuses a document naming any other.
+MAX_LEVEL = 20
+
+#: Grid indices are ``uint32_t`` on the C++ side.
+MAX_INDEX = 0xFFFFFFFF
+
+#: Total tiles one document may expand to -- the C++ reader's
+#: ``kMaxDecodedGrids``. A real layer is thousands of tiles; this only ever
+#: trips on corruption, where a few hundred bytes of JSON declaring a
+#: full-width run would otherwise expand into tens of millions of entries.
+MAX_DECODED_TILES = 5_000_000
 
 
 @dataclass
@@ -99,6 +113,15 @@ def load_coverage_manifest(path: PathLike) -> Optional[CoverageManifest]:
 
     Never raises on a bad document: the manifest is advisory, and a consumer
     that cannot read it is no worse off than before the manifest existed.
+
+    Refuses (``None``) what the C++ reader refuses, so the two agree on which
+    documents are manifests: a level outside GGGS, a row or column that is not
+    a non-negative integer in ``uint32`` range, a backwards run, and a
+    ``geometric_error_m`` that is a number but not a finite, non-negative
+    length (NaN, inf or negative would read as "infinitely precise" to an LOD
+    consumer). A document expanding past :data:`MAX_DECODED_TILES` is refused
+    too; the C++ reader truncates it instead -- both end the read, and a
+    refused manifest falls back to :func:`scan_coverage` here.
     """
     path = Path(path)
     try:
@@ -111,29 +134,58 @@ def load_coverage_manifest(path: PathLike) -> Optional[CoverageManifest]:
     if not isinstance(levels, list):
         return None
     manifest = CoverageManifest(kind=str(document.get('kind', '')))
+    decoded = 0
     for level_entry in levels:
         if not isinstance(level_entry, dict):
             return None
         level = level_entry.get('level')
         runs = level_entry.get('runs')
-        if not isinstance(level, int) or not isinstance(runs, list):
+        if not _index(level, MAX_LEVEL) or not isinstance(runs, list):
             return None
         for run in runs:
             if not isinstance(run, dict):
                 return None
-            try:
-                row = int(run['row'])
-                col_min = int(run['col_min'])
-                col_max = int(run['col_max'])
-            except (KeyError, TypeError, ValueError):
+            row, col_min, col_max = (
+                run.get('row'), run.get('col_min'), run.get('col_max'))
+            if not all(_index(v, MAX_INDEX) for v in (row, col_min, col_max)):
                 return None
             if col_max < col_min:
                 return None
-            error = run.get('geometric_error_m')
-            error = None if error is None else float(error)
+            error = _geometric_error(run.get('geometric_error_m'))
+            if error is _INVALID:
+                return None
+            decoded += col_max - col_min + 1
+            if decoded > MAX_DECODED_TILES:
+                return None
             for col in range(col_min, col_max + 1):
                 manifest.errors[(level, row, col)] = error
     return manifest
+
+
+#: Marks a ``geometric_error_m`` that makes the whole document unreadable.
+_INVALID = object()
+
+
+def _index(value, maximum: int) -> bool:
+    """A JSON unsigned integer no larger than ``maximum`` (never a bool)."""
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and 0 <= value <= maximum)
+
+
+def _geometric_error(value):
+    """
+    One run's error: a length, ``None`` when unrecorded, or :data:`_INVALID`.
+
+    Mirrors the C++ reader: a field that is not a number is treated as absent
+    (``None``, never 0), and a number that is not a finite, non-negative length
+    invalidates the document rather than being read.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    if not math.isfinite(value) or value < 0.0:
+        return _INVALID
+    return value
 
 
 def load_layer_coverage(layer_dir: PathLike) -> Optional[CoverageManifest]:

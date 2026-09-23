@@ -37,6 +37,7 @@ test of the shared convention rather than of a private schema.
 import json
 
 from marine_world_store import coverage
+import pytest
 
 
 def write_manifest(directory, levels, kind='derived'):
@@ -99,6 +100,56 @@ def test_a_backwards_run_is_refused(tmp_path):
     """col_max < col_min is a corrupt document, not an empty run."""
     write_manifest(tmp_path, [
         {'level': 12, 'runs': [{'row': 1, 'col_min': 5, 'col_max': 2}]}])
+    assert coverage.load_layer_coverage(tmp_path) is None
+
+
+@pytest.mark.parametrize('error', [
+    float('nan'), float('inf'), -1.0,
+])
+def test_an_error_that_is_not_a_length_refuses_the_document(tmp_path, error):
+    """
+    NaN, inf or negative would read as infinitely precise; the C++ reader
+    refuses the document, and so must this one.
+
+    Regression: they were accepted and handed to the Item as the tile's error.
+    """
+    write_manifest(tmp_path, [{'level': 12, 'runs': [
+        {'row': 1, 'col_min': 2, 'col_max': 2, 'geometric_error_m': error}]}])
+    assert coverage.load_layer_coverage(tmp_path) is None
+
+
+def test_a_non_numeric_error_never_raises(tmp_path):
+    """
+    A string where a number belongs reads as unrecorded, like the C++ side.
+
+    Regression: float() sat outside the try, so this raised despite the
+    never-raises contract.
+    """
+    write_manifest(tmp_path, [{'level': 12, 'runs': [
+        {'row': 1, 'col_min': 2, 'col_max': 2,
+         'geometric_error_m': 'about two metres'}]}])
+    manifest = coverage.load_layer_coverage(tmp_path)
+    assert manifest.contains((12, 1, 2))
+    assert manifest.geometric_error((12, 1, 2)) is None
+
+
+@pytest.mark.parametrize('run', [
+    {'row': 1.5, 'col_min': 2, 'col_max': 2},      # not an integer
+    {'row': True, 'col_min': 2, 'col_max': 2},     # a bool is not an index
+    {'row': -1, 'col_min': 2, 'col_max': 2},
+    {'row': 1, 'col_min': 2, 'col_max': 2**32},    # past uint32
+    {'row': 1, 'col_min': 0, 'col_max': 10_000_000},   # expansion cap
+])
+def test_an_index_the_cxx_reader_refuses_is_refused(tmp_path, run):
+    """The two readers must agree on which documents are manifests."""
+    write_manifest(tmp_path, [{'level': 12, 'runs': [run]}])
+    assert coverage.load_layer_coverage(tmp_path) is None
+
+
+def test_a_level_outside_gggs_is_refused(tmp_path):
+    """GGGS levels are 0..20."""
+    write_manifest(tmp_path, [{'level': 21, 'runs': [
+        {'row': 0, 'col_min': 0, 'col_max': 0}]}])
     assert coverage.load_layer_coverage(tmp_path) is None
 
 
