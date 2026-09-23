@@ -512,11 +512,16 @@ literal; plain Python package with a `package.xml` shim).
   the Snakefile states once per run on an older host that reading it AS A
   RASTER needs GDAL >= 3.9. `rule all` therefore succeeds on this host and
   nothing is dropped.
-- **Legacy-tree guards, both languages.** `refuseLegacyDepthLayer` (C++) and
-  `layout.refuse_legacy_layer` / `writable_quantity_dir` (Python) refuse the
-  `draft/processed/reference/chart` tree positively. At the default root the
-  legacy `depths/draft/` layer and rev 3's `depths/draft/<origin>/` state share
-  a path, so rev-3 `draft` is refused wherever the legacy registry lives.
+- **No legacy-tree guards (owner decision, 2026-09-23).** Round 1 added
+  `refuseLegacyDepthLayer` (C++) and `layout.refuse_legacy_layer` /
+  `writable_quantity_dir` (Python); round 2's review found a symlink bypass.
+  Roland: backward compatibility is not a goal — once rev 3 is implemented the
+  existing stores on all three hosts are wiped and rebuilt. The guards and
+  their tests were therefore deleted, not hardened. The old tree is read only
+  as the adapter's input (which still refuses a destination overlapping its
+  source layer); until the wipe, build rev 3 under its own `--store-root` on a
+  host that holds one. The `depths/draft/` vs `depths/draft/<origin>/`
+  collision is no longer an open question.
 - **Locks.** `<layer>/overviews.lock` (flock; batch exclusive, per-parent and
   prune shared) and `<layer>/.regenerate/regenerate.lock` (one DAG run per
   layer, whatever its working directory). Every Python writer publishes
@@ -556,6 +561,6 @@ What the round-2 pre-push review's fix pass changed about the notes above.
   umask), not mkstemp's 0600.
 - **Host-local files** (`.regenerate/`, `overviews.lock`, `*.fp`,
   `*.gti.fgb`) are documented as sync excludes in the README.
-- **The legacy-tree guards above are unchanged in this pass** (see
-  progress.md's round-2 Implementation entry).
+- **The legacy-tree guards were deleted after this pass** on the owner's
+  decision (above); the round-2 symlink finding is resolved by that deletion.
 
