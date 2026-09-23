@@ -76,6 +76,10 @@ class TileRecord:
     geometric_error_m: Optional[float]
     sigma_fold: Optional[str]
     sigma_band_written: bool = False
+    #: The contributors the tile folded, relative to the layer (``<name>``
+    #: native, ``overviews/<name>`` derived); ``None`` for a record that does
+    #: not name them. The lineage an overview tile's Item is built from.
+    children: Optional[List[str]] = None
 
 
 def read_tile_records(overviews_dir: PathLike) -> Dict[TileKey, TileRecord]:
@@ -109,11 +113,16 @@ def read_tile_records(overviews_dir: PathLike) -> Dict[TileKey, TileRecord]:
             error = None if error is None else float(error)
         except (TypeError, ValueError):
             error = None
+        children = document.get('children')
+        if not (isinstance(children, list) and
+                all(isinstance(c, str) and c for c in children)):
+            children = None
         records[key] = TileRecord(
             key=key,
             geometric_error_m=error,
             sigma_fold=document.get('sigma_fold'),
             sigma_band_written=bool(document.get('sigma_band_written', False)),
+            children=children,
         )
     return records
 

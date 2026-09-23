@@ -186,11 +186,35 @@ def depth_cell_fields(bands: int = 2) -> List[CellField]:
     """
     if bands != 2:
         raise ItemSchemaError(
-            f'depth tiles in this repo are 2-band (value, sigma); got {bands}. '
-            'The 4-band MIN/MEAN/COUNT/sigma overview schema is Group B.')
+            f'native depth tiles in this repo are 2-band (value, sigma); got '
+            f'{bands}. The 4-band overview schema is '
+            'depth_overview_cell_fields().')
     return [
         CellField('value', 1, 'Ellipsoidal height of the seafloor', 'm'),
         CellField('sigma', 2, 'Per-cell uncertainty (1 sigma)', 'm'),
+    ]
+
+
+def depth_overview_cell_fields(sigma_fold: str) -> List[CellField]:
+    """
+    Per-cell fields of a rev-3 4-band depth OVERVIEW tile (design section 7).
+
+    Band order is ``marine_bathymetry_store``'s ``MultiBandIndex``: MIN, MEAN,
+    COUNT, sigma. The sigma band's description says what it holds under
+    ``sigma_fold`` -- while the rule is ``undecided`` the band is written as
+    nodata, and an Item that described it as an uncertainty would be a promise
+    the tile does not keep.
+    """
+    sigma = ('RESERVED: written as nodata while the sigma fold rule is '
+             'undecided (design section 7)' if sigma_fold == 'undecided' else
+             f'Per-cell uncertainty (1 sigma), folded by rule {sigma_fold!r}')
+    return [
+        CellField('min', 1, 'Shoalest ellipsoidal height of the cells this '
+                  'cell summarises (navigation reads this band)', 'm'),
+        CellField('mean', 2, 'Count-weighted mean ellipsoidal height', 'm'),
+        CellField('count', 3, 'How many native cells this cell summarises '
+                  '(lineage: the evidence the mean rests on)'),
+        CellField('sigma', 4, sigma, 'm'),
     ]
 
 

@@ -148,6 +148,16 @@ def test_cell_fields_describe_only_what_the_tile_holds():
         item_schema.depth_cell_fields(bands=4)
 
 
+def test_overview_cell_fields_follow_the_band_order_and_the_sigma_rule():
+    """MIN, MEAN, COUNT, sigma; sigma described as nodata while undecided."""
+    fields = item_schema.depth_overview_cell_fields('undecided')
+    assert [(f.name, f.band) for f in fields] == [
+        ('min', 1), ('mean', 2), ('count', 3), ('sigma', 4)]
+    assert 'nodata' in fields[3].description
+    assert 'pooled' in item_schema.depth_overview_cell_fields(
+        'pooled')[3].description
+
+
 def test_ids_are_stable_and_say_where_the_tile_lives():
     """Two runs over the same tile write the same Item id."""
     assert a_tile_item()['id'] == 'depths-reviewed-surveyed-12_3_4'

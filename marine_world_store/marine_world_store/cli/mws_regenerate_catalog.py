@@ -30,18 +30,27 @@
 ``mws_regenerate_catalog`` -- rewrite the Collections over existing Items.
 
 Design section 9's replica rule, mechanically: **only changed Items are
-written**. The Items themselves are produced by whichever tool built the
-products; this rebuilds each cell's ``collection.json`` from what is on disk
-and reports what actually changed, so an unchanged store leaves every file's
-bytes and mtime alone and a replica sync moves nothing.
+written**. A native tile's Item is produced by whichever tool built the
+product; the derived OVERVIEW tiles' Items are built here, from the per-tile
+records the per-parent writer leaves (:mod:`marine_world_store.
+overview_items`), and an overview Item whose tile is gone is removed. Each
+cell's ``collection.json`` is then rebuilt from what is on disk, and what
+actually changed is reported, so an unchanged store leaves every file's bytes
+and mtime alone and a replica sync moves nothing.
+
+Two scopes: every cell under the store root (the default), or exactly one
+quantity layer with ``--layer-dir`` -- what the regenerate DAG runs, so that it
+catalogs the layer it just built rather than whatever tree the environment's
+store root names.
 """
 
 from __future__ import annotations
 
 import argparse
-from typing import Optional, Sequence
+from pathlib import Path
+from typing import Optional, Sequence, Tuple
 
-from marine_world_store import layout
+from marine_world_store import layout, overview_items
 from marine_world_store.cli._common import (
     add_store_root_argument, resolved_root, run, stac_catalog,
 )
@@ -50,20 +59,97 @@ from marine_world_store.cli._common import (
 def build_parser() -> argparse.ArgumentParser:
     """Build the command line."""
     parser = argparse.ArgumentParser(
-        prog='mws_regenerate_catalog', description=__doc__.splitlines()[0])
+        prog='mws_regenerate_catalog', description=__doc__.splitlines()[1])
     add_store_root_argument(parser)
     parser.add_argument(
         '--quantity', action='append', default=None,
         choices=[q.value for q in layout.Quantity],
         help='limit to one quantity (repeatable; default: all present)')
+    parser.add_argument(
+        '--layer-dir', default=None, metavar='DIR',
+        help=('regenerate exactly this quantity layer '
+              '(<root>/<quantity>/<state>/<origin>/) instead of every cell '
+              'under the store root; --store-root and --quantity do not '
+              'apply'))
     parser.add_argument('--no-validate', action='store_true',
                         help='skip STAC validation of the Collections')
     return parser
 
 
+def layer_cell(
+        layer_dir: Path) -> Tuple[layout.Quantity, layout.State, layout.Origin]:
+    """
+    Read ``(quantity, state, origin)`` off a layer path's last three parts.
+
+    :raises layout.LayoutError: when the path is not
+        ``<root>/<quantity>/<state>/<origin>/`` -- a typo'd layer is refused
+        by name, never catalogued as a cell nobody asked for.
+    """
+    parts = layer_dir.resolve().parts
+    if len(parts) < 4:
+        raise layout.LayoutError(
+            f'{layer_dir}: not a <root>/<quantity>/<state>/<origin>/ layer')
+    quantity, state, origin = parts[-3:]
+    try:
+        return (layout.Quantity(quantity), layout.State(state),
+                layout.Origin(origin))
+    except ValueError as exc:
+        raise layout.LayoutError(
+            f'{layer_dir}: not a <root>/<quantity>/<state>/<origin>/ layer '
+            f'({exc})') from exc
+
+
+def regenerate_cell(catalog, directory: Path, quantity, state, origin,
+                    validate: bool) -> Tuple[bool, int, int, int]:
+    """
+    Rewrite one cell: its overview Items, then its Collection.
+
+    :returns: ``(collection_written, items, overview_items_written,
+        overview_items_removed)``.
+    """
+    existing = catalog.read_items(directory)
+    overview = overview_items.build_overview_items(
+        directory, quantity=quantity, state=state, origin=origin,
+        existing_items=existing)
+    live = {item['id'] for item in overview}
+    removed = 0
+    for item in existing:
+        if overview_items.is_overview_item(item) and item['id'] not in live:
+            # Its tile was pruned: the product is gone, so is its record.
+            (directory / f'{item["id"]}.json').unlink(missing_ok=True)
+            removed += 1
+    written = catalog.write_items(directory, overview, validate=validate)
+    _, collection_written, items = catalog.regenerate_collection(
+        directory, quantity=quantity, state=state, origin=origin,
+        description=f'{quantity.value} / {state.value} / {origin.value}',
+        validate=validate)
+    return collection_written, len(items), len(written), removed
+
+
+def _report(directory, result) -> None:
+    written, items, overviews_written, overviews_removed = result
+    print(f'{"wrote" if written else "unchanged"}: '
+          f'{layout.collection_path(directory)} ({items} item(s); overview '
+          f'Items: {overviews_written} written, {overviews_removed} removed)')
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Rebuild every present cell's Collection."""
+    """Rebuild the Collection of one layer, or of every present cell."""
     args = build_parser().parse_args(argv)
+    validate = not args.no_validate
+
+    if args.layer_dir is not None:
+        directory = Path(args.layer_dir).expanduser()
+        if not directory.is_dir():
+            raise OSError(f'not a directory: {directory}')
+        layout.refuse_legacy_layer(directory)
+        quantity, state, origin = layer_cell(directory)
+        print(f'layer: {directory}')
+        result = regenerate_cell(
+            stac_catalog(), directory, quantity, state, origin, validate)
+        _report(directory, result)
+        return 0
+
     # Acquired on the first cell that needs it: a store with nothing in
     # it regenerates nothing and should not require the writer to be
     # installed to say so.
@@ -83,15 +169,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     continue
                 cells += 1
                 catalog = catalog or stac_catalog()
-                path, written, items = catalog.regenerate_collection(
-                    directory,
-                    quantity=quantity, state=state, origin=origin,
-                    description=(
-                        f'{quantity.value} / {state.value} / {origin.value}'),
-                    validate=not args.no_validate)
-                changed += 1 if written else 0
-                print(f'{"wrote" if written else "unchanged"}: {path} '
-                      f'({len(items)} item(s))')
+                result = regenerate_cell(
+                    catalog, directory, quantity, state, origin, validate)
+                changed += 1 if result[0] else 0
+                _report(directory, result)
     print(f'{cells} cell(s) present, {changed} collection(s) rewritten')
     if cells == 0:
         # Not an error: a store with no products yet is a legitimate state.
