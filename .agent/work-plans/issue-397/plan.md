@@ -19,9 +19,12 @@ Today's store (`SourceLayer` enum `Processed/Draft/Reference/Chart`, one native 
 `overview_pyramid.cpp`'s single-band shallowest-preserving fold) is production code read by
 `bathymetry_layer`, CAMP and the costmap. Rev 3's `<quantity>/<state>/<origin>/` layout with
 `state ∈ {draft, reviewed, published}` × `origin ∈ {surveyed, imported}` is a **different**
-directory tree and STAC-indexed catalog, not a rename of the existing one. Per the design's
+directory tree and STAC-indexed catalog, not a rename of the existing one. ~~Per the design's
 governing principle, this PR builds the new tree **alongside** the existing store — it does not
-migrate or touch `draft/processed/reference/chart`, and existing consumers are unaffected.
+migrate or touch `draft/processed/reference/chart`, and existing consumers are unaffected.~~
+**Superseded (owner decision, 2026-09-23):** rev 3 *replaces* the old tree; no backward
+compatibility is kept, and the existing stores are wiped and rebuilt once rev 3 works (see
+"No legacy-tree guards" below). The old tree is read only as the adapter's input.
 
 ## Approach
 
@@ -229,7 +232,7 @@ would also need — root resolution, layout paths, fingerprints, Item reading �
 | `marine_world_store/test/test_{coverage,item_schema,depth_subset,source_time,revisions,cli,copyright,flake8,pep257}.py` | New — Group A tests beyond the plan's list |
 | `marine_world_store/test/test_{sigma_fold_measure,regenerate_workflow,overview_items,atomic_io}.py`, `test/fake_build_depth_overview_parent.py` | New — Group B / fix-pass tests; the regenerate tests run snakemake end to end with a stand-in for the C++ tool |
 | `marine_world_store/snakemake/Snakefile`, `marine_world_store/snakemake/rules/{overviews,catalog,gti}.smk` | New — Group B regenerate rules (the fix pass folded the pre-step into the Snakefile and deleted `rules/fingerprints.smk`) |
-| `marine_bathymetry_store/include/marine_bathymetry_store/overview_pyramid.hpp` | Add `depthMultiBandFold`, `buildMultiBandDepthOverviewPyramid`, `buildMultiBandDepthOverviewParent` declarations (additive); Group B adds `listMultiBandOverviewParents`; the fix passes add `listMultiBandOverviewParentInputs`, `pruneMultiBandOverviewLevel`, `refuseLegacyDepthLayer`, `removeMultiBandOverviewLevel` |
+| `marine_bathymetry_store/include/marine_bathymetry_store/overview_pyramid.hpp` | Add `depthMultiBandFold`, `buildMultiBandDepthOverviewPyramid`, `buildMultiBandDepthOverviewParent` declarations (additive); Group B adds `listMultiBandOverviewParents`; the fix passes add `listMultiBandOverviewParentInputs`, `pruneMultiBandOverviewLevel`, `removeMultiBandOverviewLevel` (round 1's `refuseLegacyDepthLayer` was deleted by the no-compatibility decision) |
 | `marine_bathymetry_store/src/overview_pyramid.cpp` | Implement the above |
 | `marine_bathymetry_store/src/build_depth_overview_parent.cpp` | New — per-parent CLI (planned as `build_depth_overview_parent_main.cpp`; shipped under this name) with `--list-parents`, `--prune` and `--remove-level` |
 | `marine_bathymetry_store/CMakeLists.txt` | New executable target + install rule |

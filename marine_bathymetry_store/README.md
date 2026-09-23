@@ -316,10 +316,11 @@ folds a level into **four bands — MIN, MEAN, COUNT and σ — per parent cell*
 rather than one `{depth, σ}` pair, so a view chooses its band: the navigation
 surface reads MIN, others read MEAN, and COUNT is the parent's lineage. That
 schema is written by `buildMultiBandDepthOverviewPyramid` (batch) and
-`build_depth_overview_parent` (one tile), and is **additive**: the
-single-band writer above and the `draft/processed/reference/chart` tree it
-serves are untouched, and the two schemas coexist deliberately — a changed
-process is a new fingerprint, never a migration.
+`build_depth_overview_parent` (one tile) into a rev-3 quantity layer. Rev 3
+**replaces** the `draft/processed/reference/chart` tree the single-band writer
+above serves: no compatibility is kept, and the existing stores are wiped and
+rebuilt once rev 3 works. Until then each writer refuses to replace the other's
+`overviews/`, and a changed process is a new fingerprint, never a migration.
 
 ```bash
 # One parent tile of a rev-3 quantity layer, from its up-to-four children.
