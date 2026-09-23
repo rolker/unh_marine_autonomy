@@ -107,16 +107,18 @@ def regenerate_cell(catalog, directory: Path, quantity, state, origin,
     :returns: ``(collection_written, items, overview_items_written,
         overview_items_removed)``.
     """
-    existing = catalog.read_items(directory)
+    existing_files = catalog.read_item_files(directory)
+    existing = [item for _, item in existing_files]
     overview = overview_items.build_overview_items(
         directory, quantity=quantity, state=state, origin=origin,
         existing_items=existing)
     live = {item['id'] for item in overview}
     removed = 0
-    for item in existing:
-        if overview_items.is_overview_item(item) and item['id'] not in live:
-            # Its tile was pruned: the product is gone, so is its record.
-            (directory / f'{item["id"]}.json').unlink(missing_ok=True)
+    for path, item in existing_files:
+        if overview_items.is_overview_item(item) and item.get('id') not in live:
+            # Its tile was pruned: the product is gone, so is its record --
+            # the file it was READ from, not one named from its id.
+            path.unlink(missing_ok=True)
             removed += 1
     written = catalog.write_items(directory, overview, validate=validate)
     _, collection_written, items = catalog.regenerate_collection(

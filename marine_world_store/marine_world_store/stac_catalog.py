@@ -192,11 +192,23 @@ def write_collection(
 
 def read_items(directory: PathLike) -> List[Dict[str, Any]]:
     """
-    Every Item document in ``directory``, ordered by id.
+    Every Item document in ``directory``, ordered by filename.
 
     ``collection.json`` is not an Item and is skipped; a file that is not JSON
     at all raises, because an unreadable Item is a product the catalog would
     silently stop enumerating (Part 2 line 1).
+    """
+    return [item for _, item in read_item_files(directory)]
+
+
+def read_item_files(directory: PathLike) -> List[Tuple[Path, Dict[str, Any]]]:
+    """
+    :func:`read_items`, with the file each Item was read from.
+
+    A caller that removes an Item removes THAT file -- never one named from
+    the document's ``id``, which is data: an id holding ``../`` would name a
+    file outside the layer, and one that disagrees with its filename would
+    name the wrong file.
     """
     directory = Path(directory)
     if not directory.is_dir():
@@ -206,7 +218,7 @@ def read_items(directory: PathLike) -> List[Dict[str, Any]]:
         if path.name == layout.COLLECTION_FILENAME:
             continue
         try:
-            items.append(json.loads(path.read_text()))
+            items.append((path, json.loads(path.read_text())))
         except ValueError as exc:
             raise CatalogError(f'{path}: not valid JSON: {exc}') from exc
     return items

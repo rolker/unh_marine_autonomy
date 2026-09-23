@@ -220,6 +220,34 @@ def test_the_catalog_step_writes_overview_items_for_the_layer_it_is_given(
     assert collection['summaries'][CONTRACT_FIELDS['levels']] == [12, 13]
 
 
+def test_a_pruned_items_file_is_removed_never_one_named_by_its_id(
+        layer, tmp_path):
+    """
+    Remove the file an Item was read from; its ``id`` is data, not a path.
+
+    Regression: the stale Item was deleted as ``<layer>/<id>.json``, so an id
+    holding ``../`` deleted a file outside the layer, and an id that disagreed
+    with its filename deleted the wrong file (and left the stale one).
+    """
+    pytest.importorskip('pystac', reason='declared dependency; run rosdep')
+    from marine_world_store import stac_catalog
+    from marine_world_store.cli import mws_regenerate_catalog
+    directory, natives = layer
+    stac_catalog.write_items(directory, natives)
+    assert mws_regenerate_catalog.main(['--layer-dir', str(directory)]) == 0
+    stale = directory / 'depths-reviewed-surveyed-11_0_0.json'
+    outside = directory.parent / 'victim.json'
+    outside.write_text('{}')
+    document = json.loads(stale.read_text())
+    document['id'] = '../victim'
+    stale.write_text(json.dumps(document))
+    (directory / 'overviews' / '11_0_0.tif').unlink()
+    (directory / 'overviews' / '11_0_0.json').unlink()
+    assert mws_regenerate_catalog.main(['--layer-dir', str(directory)]) == 0
+    assert outside.exists()
+    assert not stale.exists()
+
+
 def test_the_catalog_step_refuses_a_path_that_is_not_a_layer(tmp_path):
     """A typo'd layer is refused by name, not catalogued as a new cell."""
     from marine_world_store.cli import mws_regenerate_catalog
