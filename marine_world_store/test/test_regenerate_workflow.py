@@ -517,13 +517,19 @@ def test_the_layer_directory_has_no_default():
 
 
 def test_every_shell_path_is_quoted():
-    """A layer path with a space must not split into two arguments."""
+    """
+    A layer path with a space must not split into two arguments.
+
+    Placeholders are :q-quoted; every other path is written into the command
+    through ``_shell_literal`` (shell-quoted), never as a ``params:`` value
+    (Snakemake reruns on a params change). The end-to-end layer path holds a
+    space, so a slip here fails there too.
+    """
     for path in sorted((SNAKEMAKE_DIR / 'rules').glob('*.smk')):
-        for field in re.findall(r'\{(params\.[a-z_]+|output|input)(:q)?\}',
-                                path.read_text()):
-            name, quoted = field
-            if name == 'params.kind':
-                continue   # a fixed word, never a path
+        text = path.read_text()
+        assert '{params.' not in text, path.name
+        for name, quoted in re.findall(r'\{(output|input)[^}:]*(:q)?\}',
+                                       text):
             assert quoted, f'{path.name}: {{{name}}} is not :q-quoted'
 
 
@@ -583,7 +589,7 @@ def workflow(tmp_path, monkeypatch):
     elsewhere = tmp_path / 'the-environments-store'
     monkeypatch.setenv('WORLD_STORE_ROOT', str(elsewhere))
 
-    layer = tmp_path / 'store' / 'depths' / 'reviewed' / 'surveyed'
+    layer = tmp_path / 'the store' / 'depths' / 'reviewed' / 'surveyed'
     layer.mkdir(parents=True)
 
     class Workflow:
@@ -980,6 +986,28 @@ def test_a_relative_tool_override_is_relative_to_where_snakemake_started(
     fake = tmp_path / 'bin' / 'fake_build_depth_overview_parent'
     _, builds, _ = workflow.run(
         build_depth_overview_parent_tool=os.path.relpath(fake, tmp_path))
+    assert builds == ['11_0_0', '12_0_0']
+
+
+def test_the_same_tool_at_another_path_rebuilds_nothing(workflow, tmp_path):
+    """
+    A tool found elsewhere is not a change to any product.
+
+    Regression: the tool and layer paths were rule params, and Snakemake
+    reruns a job whose params changed: the same tool at another path rebuilt
+    every derived tile.
+    """
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    workflow.run()
+    other = tmp_path / 'another {install}'
+    other.mkdir()
+    moved = shutil.copy2(tmp_path / 'bin' / 'fake_build_depth_overview_parent',
+                         other / 'fake_build_depth_overview_parent')
+    _, builds, _ = workflow.run(build_depth_overview_parent_tool=moved)
+    assert builds == []
+    workflow.native('13_0_0.tif', value=4.0)     # and it is the one that runs
+    _, builds, _ = workflow.run(build_depth_overview_parent_tool=moved)
     assert builds == ['11_0_0', '12_0_0']
 
 

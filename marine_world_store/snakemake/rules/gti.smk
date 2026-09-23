@@ -84,17 +84,23 @@ if GDAL_VERSION < (3, 9):
           "tile indexes", file=sys.stderr)
 
 
-def _gti_rule_shell():
-    """One shell body for both kinds (see the module docstring)."""
+def _gti_rule_shell(kind, listing, tmp, index):
+    """
+    One shell body for both kinds (see the module docstring).
+
+    Paths are written into the command, not passed as ``params:`` (see
+    ``build_parent``): Snakemake reruns on a params change, and formats a
+    param's value, so a path holding a brace would not survive it.
+    """
+    listing, tmp, index = (_shell_literal(path) for path in (listing, tmp, index))
     return (
-        "{params.list_tool:q} {params.layer:q} --kind {params.kind} "
-        "--optfile > {params.listing:q}; "
-        "rm -f {params.tmp:q}; "
-        "if [ -s {params.listing:q} ]; then "
+        _shell_literal(LIST_TILES_TOOL) + " " + _shell_literal(LAYER_DIR) +
+        f" --kind {kind} --optfile > {listing}; "
+        f"rm -f {tmp}; "
+        f"if [ -s {listing} ]; then "
         "gdaltindex -f FlatGeobuf -lyr_name tiles -write_absolute_path "
-        "{params.tmp:q} "
-        "--optfile {params.listing:q} && mv {params.tmp:q} {params.index:q}; "
-        "else rm -f {params.index:q}; fi"
+        f"{tmp} --optfile {listing} && mv {tmp} {index}; "
+        f"else rm -f {index}; fi"
     )
 
 
@@ -103,15 +109,10 @@ rule gti_native:
         WORK / "catalog.done",
     output:
         touch(WORK / "gti_native.done"),
-    params:
-        layer=str(LAYER_DIR),
-        kind="native",
-        list_tool=LIST_TILES_TOOL,
-        listing=str(WORK / "gti_native.lst"),
-        tmp=str(WORK / "index-native.tmp.fgb"),
-        index=str(LAYER_DIR / "index.gti.fgb"),
     shell:
-        _gti_rule_shell()
+        _gti_rule_shell("native", WORK / "gti_native.lst",
+                        WORK / "index-native.tmp.fgb",
+                        LAYER_DIR / "index.gti.fgb")
 
 
 rule gti_overview:
@@ -119,12 +120,7 @@ rule gti_overview:
         WORK / "catalog.done",
     output:
         touch(WORK / "gti_overview.done"),
-    params:
-        layer=str(LAYER_DIR),
-        kind="overview",
-        list_tool=LIST_TILES_TOOL,
-        listing=str(WORK / "gti_overview.lst"),
-        tmp=str(WORK / "index-overview.tmp.fgb"),
-        index=str(OVERVIEWS / "index.gti.fgb"),
     shell:
-        _gti_rule_shell()
+        _gti_rule_shell("overview", WORK / "gti_overview.lst",
+                        WORK / "index-overview.tmp.fgb",
+                        OVERVIEWS / "index.gti.fgb")

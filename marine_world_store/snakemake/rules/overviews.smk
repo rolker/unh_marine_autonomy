@@ -104,13 +104,12 @@ checkpoint list_parents:
         _list_inputs,
     output:
         WORK / "parents_{level}.tsv",
-    params:
-        layer=str(LAYER_DIR),
-        tool=OVERVIEW_TOOL,
     shell:
-        "{params.tool:q} --prune {params.layer:q} {wildcards.level} && "
-        "{params.tool:q} --list-parents {params.layer:q} {wildcards.level} "
-        "> {output:q}"
+        # Paths written in, not `params:` (see build_parent).
+        _shell_literal(OVERVIEW_TOOL) + " --prune " +
+        _shell_literal(LAYER_DIR) + " {wildcards.level} && " +
+        _shell_literal(OVERVIEW_TOOL) + " --list-parents " +
+        _shell_literal(LAYER_DIR) + " {wildcards.level} > {output:q}"
 
 
 def _children(wildcards):
@@ -131,17 +130,18 @@ rule build_parent:
     output:
         OVERVIEWS / "{level}_{row}_{col}.tif",
         OVERVIEWS / "{level}_{row}_{col}.json",
-    params:
-        layer=str(LAYER_DIR),
-        tool=OVERVIEW_TOOL,
-        record=REFRESH_TOOL,
+    # No `params:`. Snakemake reruns a job whose params changed, so a tool
+    # found at another path (another install space, another PATH) or the
+    # store under another mount would rebuild every derived tile. The tool
+    # and layer paths are written into the command instead, which Snakemake
+    # does not compare: what this rule's product depends on is its inputs.
     shell:
         # Recorded as built, with the mtime the build gave it (see
         # fingerprint_sidecar): the next pre-step then leaves it newer than
         # the children it absorbed, even if it came out byte for byte the same.
-        "{params.tool:q} {params.layer:q} "
-        "{wildcards.level} {wildcards.row} {wildcards.col} && "
-        "{params.record:q} --record {output[0]:q}"
+        _shell_literal(OVERVIEW_TOOL) + " " + _shell_literal(LAYER_DIR) + " "
+        "{wildcards.level} {wildcards.row} {wildcards.col} && " +
+        _shell_literal(REFRESH_TOOL) + " --record {output[0]:q}"
 
 
 def overview_tiles(wildcards=None):

@@ -145,6 +145,7 @@ import fcntl
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -312,6 +313,11 @@ def _tool(name, package):
         f"install/setup.bash, put it on PATH, or pass --config "
         f"{name}_tool=<path>"
     )
+
+
+def _shell_literal(value):
+    """A value quoted for the shell and escaped for Snakemake's formatting."""
+    return shlex.quote(str(value)).replace("{", "{{").replace("}", "}}")
 
 
 OVERVIEW_TOOL = _tool("build_depth_overview_parent", "marine_bathymetry_store")

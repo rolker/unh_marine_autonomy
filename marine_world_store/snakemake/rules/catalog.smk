@@ -75,13 +75,10 @@ rule assemble_coverage:
         overview_products,
     output:
         touch(WORK / "coverage.done"),
-    params:
-        layer=str(LAYER_DIR),
-        overviews=str(OVERVIEWS),
-        tool=ASSEMBLE_TOOL,
     shell:
-        "mkdir -p {params.overviews:q} && "
-        "{params.tool:q} {params.layer:q}"
+        # Paths written in, not `params:` (see build_parent).
+        "mkdir -p " + _shell_literal(OVERVIEWS) + " && " +
+        _shell_literal(ASSEMBLE_TOOL) + " " + _shell_literal(LAYER_DIR)
 
 
 rule catalog:
@@ -90,8 +87,7 @@ rule catalog:
         native_items,
     output:
         touch(WORK / "catalog.done"),
-    params:
-        layer=str(LAYER_DIR),
-        tool=CATALOG_TOOL,
     shell:
-        "{params.tool:q} --layer-dir {params.layer:q}"
+        # Paths written in, not `params:` (see build_parent).
+        _shell_literal(CATALOG_TOOL) + " --layer-dir " +
+        _shell_literal(LAYER_DIR)
