@@ -149,6 +149,20 @@ def _initial_state(depth: np.ndarray, sigma: np.ndarray) -> _State:
     )
 
 
+def _foldable(shape: Tuple[int, ...]) -> bool:
+    """
+    Whether a ``(H, W)`` raster has a 2x2 fold step left in it.
+
+    Both sides must be at least 2 AND even. A GGGS tile is 960 cells on a side,
+    so the sixth step leaves 15 -- an odd grid, where a 2x2 parent cell has no
+    definition. That used to reach :func:`_blocks`'s reshape and die with an
+    unexplained ``ValueError``; it is the same "out of resolution" as a 1x1
+    grid, and ends the measurement the same way.
+    """
+    height, width = shape
+    return height >= 2 and width >= 2 and height % 2 == 0 and width % 2 == 0
+
+
 def _blocks(array: np.ndarray) -> np.ndarray:
     """Reshape ``(H, W)`` into ``(H/2, W/2, 4)`` -- one row per parent cell."""
     height, width = array.shape
@@ -322,7 +336,7 @@ def measure_arrays(
         state = _initial_state(depth, sigma)
         measured_any = True
         for index in range(steps):
-            if state.n.shape[0] < 2 or state.n.shape[1] < 2:
+            if not _foldable(state.n.shape):
                 # Out of resolution: report the steps that were measurable
                 # rather than padding the table with cells that do not exist.
                 break
@@ -349,7 +363,11 @@ def read_depth_tile(path: PathLike) -> Tuple[np.ndarray, np.ndarray, Optional[in
     dataset = gdal.Open(str(path))
     if dataset is None:
         raise OSError(f'cannot open {path}')
-    if dataset.RasterCount < 2:
+    if dataset.RasterCount != 2:
+        # Exactly 2, not "at least 2": a 4-band MIN/MEAN/COUNT/sigma overview
+        # tile has a band 1 and a band 2 too, and reading them as {depth,
+        # sigma} would measure MIN as depth and MEAN as sigma -- a number that
+        # looks like evidence and means nothing.
         raise ValueError(
             f'{path} has {dataset.RasterCount} band(s); a native depth tile is '
             'the 2-band {depth, sigma} pair. A 4-band overview tile is not an '

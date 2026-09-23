@@ -205,6 +205,39 @@ def test_measurement_stops_when_the_raster_runs_out_of_resolution():
     assert [m.step for m in measurements] == [1]
 
 
+def test_an_odd_grid_ends_the_measurement_rather_than_crashing():
+    """
+    960 -> 480 -> ... -> 15 is odd: no 2x2 parent, so the measurement stops.
+
+    Regression: the reshape in _blocks raised an unexplained ValueError.
+    """
+    depth, sigma = _uniform((60, 60), -12.0, 0.25)
+    measurements = sfm.measure_arrays([(depth, sigma, 13)], steps=4)
+    # 60 -> 30 -> 15: two steps, then 15 is odd.
+    assert [m.step for m in measurements] == [1, 2]
+    depth, sigma = _uniform((6, 4), -12.0, 0.25)
+    measurements = sfm.measure_arrays([(depth, sigma, 13)], steps=3)
+    assert [m.step for m in measurements] == [1]
+
+
+def test_a_tile_that_is_not_two_band_is_refused(tmp_path):
+    """
+    A 4-band overview is not read as {depth, sigma}.
+
+    Regression: the check was `< 2`, so a 4-band tile read MIN as depth and
+    MEAN as sigma.
+    """
+    gdal = pytest.importorskip('osgeo.gdal')
+    gdal.UseExceptions()
+    for bands in (1, 4):
+        path = tmp_path / f'12_0_{bands}.tif'
+        dataset = gdal.GetDriverByName('GTiff').Create(
+            str(path), 4, 4, bands, gdal.GDT_Float64)
+        dataset = None
+        with pytest.raises(ValueError, match='2-band'):
+            sfm.read_depth_tile(path)
+
+
 def test_rejects_mismatched_or_non_2d_rasters():
     """Refuse inputs that are not a matched pair of 2-D rasters."""
     with pytest.raises(ValueError):
