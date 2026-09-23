@@ -94,6 +94,62 @@ def test_the_files_entries_are_the_fallback_reading(tmp_path):
     assert end == '2026-06-14T15:39:01.661124Z'
 
 
+def test_an_empty_split_does_not_stretch_the_interval(tmp_path):
+    """
+    A split with no message is not dated 2262.
+
+    Regression: rosbag2 writes time_point::max() as an empty split's start,
+    and the files: fallback took it as a time, so one empty split pushed the
+    bag's interval four centuries out.
+    """
+    bag = write_metadata(tmp_path / 'bag', (
+        '  message_count: 12\n'
+        '  files:\n'
+        f'    - path: bag_0.mcap\n'
+        f'      starting_time:\n'
+        f'        nanoseconds_since_epoch: {START_NS}\n'
+        f'      duration:\n        nanoseconds: 1000000000\n'
+        f'      message_count: 12\n'
+        f'    - path: bag_1.mcap\n'
+        f'      starting_time:\n'
+        f'        nanoseconds_since_epoch: {2**63 - 1}\n'
+        f'      duration:\n        nanoseconds: 0\n'
+        f'    - path: bag_2.mcap\n'
+        f'      starting_time:\n'
+        f'        nanoseconds_since_epoch: {START_NS + 5000000000}\n'
+        f'      duration:\n        nanoseconds: 1000000000\n'
+        f'      message_count: 0\n'))
+    start, end = source_time.bag_interval(bag)
+    assert start == '2026-06-14T15:38:58.661123Z'
+    assert end == '2026-06-14T15:38:59.661124Z'
+
+
+def test_a_top_level_sentinel_start_falls_through_to_the_files(tmp_path):
+    """The bag-level max() sentinel is not a time either."""
+    bag = write_metadata(tmp_path / 'bag', (
+        f'  starting_time:\n    nanoseconds_since_epoch: {2**63 - 1}\n'
+        '  duration:\n    nanoseconds: 0\n'
+        '  files:\n'
+        f'    - path: bag_0.mcap\n'
+        f'      starting_time:\n'
+        f'        nanoseconds_since_epoch: {START_NS}\n'
+        f'      duration:\n        nanoseconds: 1000000000\n'))
+    start, _ = source_time.bag_interval(bag)
+    assert start == '2026-06-14T15:38:58.661123Z'
+
+
+def test_a_bag_of_only_empty_splits_is_refused(tmp_path):
+    """Nothing observed, nothing to date."""
+    bag = write_metadata(tmp_path / 'bag', (
+        '  files:\n'
+        f'    - path: bag_0.mcap\n'
+        f'      starting_time:\n'
+        f'        nanoseconds_since_epoch: {2**63 - 1}\n'
+        f'      message_count: 0\n'))
+    with pytest.raises(TimeIntervalError):
+        source_time.bag_interval(bag)
+
+
 def test_a_bag_with_no_metadata_is_refused(tmp_path):
     """Undated is a provenance defect, not a gap to fill with a guess."""
     bag = tmp_path / 'bag'

@@ -234,6 +234,26 @@ def _nanoseconds(container: Any, key: str) -> Optional[int]:
     return int(value) if isinstance(value, int) else None
 
 
+#: rosbag2 writes ``std::chrono::time_point::max()`` as the starting time of
+#: a split (and of a bag) that holds no message -- the identity of a running
+#: ``min`` that nothing ever lowered. Read as a time it is the year 2262.
+_TIME_POINT_MAX_NS = 2**63 - 1
+
+
+def _is_empty_split(entry: Any) -> bool:
+    """
+    A split that observed nothing: zero messages, or the ``max()`` sentinel.
+
+    Its ``starting_time`` is not a time, so it must not enter a union -- one
+    empty split would otherwise stretch a bag's interval to 2262.
+    """
+    if not isinstance(entry, Mapping):
+        return True
+    if entry.get('message_count') == 0:
+        return True
+    return _nanoseconds(entry, 'starting_time') == _TIME_POINT_MAX_NS
+
+
 def bag_interval(bag_dir: PathLike) -> Tuple[str, str]:
     """
     Read the interval a bag recorded over from its ``metadata.yaml``.
@@ -255,11 +275,14 @@ def bag_interval(bag_dir: PathLike) -> Tuple[str, str]:
             'interval')
     start_ns = _nanoseconds(info, 'starting_time')
     duration_ns = _nanoseconds(info, 'duration')
-    if start_ns is not None and duration_ns is not None:
+    if start_ns is not None and duration_ns is not None and \
+            start_ns != _TIME_POINT_MAX_NS:
         return interval_from_nanoseconds(start_ns, duration_ns)
 
     spans = []
     for entry in info.get('files') or []:
+        if _is_empty_split(entry):
+            continue
         entry_start = _nanoseconds(entry, 'starting_time')
         entry_duration = _nanoseconds(entry, 'duration')
         if entry_start is None:
