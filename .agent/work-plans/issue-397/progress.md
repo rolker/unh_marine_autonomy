@@ -572,3 +572,42 @@ say. The rule is **OPEN** (Roland, 2026-09-22); writers emit σ as nodata with
 ---
 **Authored-By**: `Claude Code Agent`
 **Model**: `Claude Opus`
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-09-23 09:35 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-397 at `e2998ea` (diff base `origin/feature/issue-391` @ `50b33d4`, 34 commits)
+**Mode**: pre-push
+**Depth**: Deep (reason: 11,655 added lines / 68 files; CI workflow touched)
+**Must-fix**: 9 | **Suggestions**: 14
+**Round**: 1 | **Ship**: continue — must-fixes include real correctness defects (the regenerate DAG is inert after run 1, stale derived tiles are never removed, legacy-layer refusal missing), not mechanical nits
+
+Specialists: static analysis (flake8/ament_pep257/ament_cpplint/uncrustify/xmllint/yamllint on changed lines — clean; pytest 227 passed), governance + plan drift, Claude Adversarial Lens A + Lens B (Deep). Copilot off (quota exhausted), local model off (opt-in). Known gaps not re-reported: STAC jsonschema no-op on this host, no live compare-by-value run, ros2_agent_workspace#659.
+
+### Findings
+- [ ] (must-fix) Snakemake regenerate is inert after the first run: no rule takes a tile as input, `refresh_fingerprints` has no inputs, so stamps satisfy everything; reproduced by Lens B (tile rewritten → "Nothing to be done", exit 0). Lens A + B — `marine_world_store/snakemake/rules/fingerprints.smk:43`, `Snakefile:106`, `rules/overviews.smk:77`
+- [ ] (must-fix) `catalog` rule runs `mws_regenerate_catalog --quantity depths` with no `--store-root`, so it regenerates `$WORLD_STORE_ROOT`/config/`~/data/world`, not the layer the DAG built. Lens A + B — `marine_world_store/snakemake/rules/catalog.smk:63`
+- [ ] (must-fix) Per-parent fold never removes a derived tile: native-wins returns without deleting an existing derived parent (next coarser fold then throws "exists both natively and derived", forever), and a parent whose children vanished keeps its stale tile + record in coverage/GTI. Lens A + B — `marine_bathymetry_store/src/overview_pyramid.cpp:1171`, `:1209`
+- [ ] (must-fix) 4-band writers do not positively refuse a legacy draft/processed/reference/chart layer (help text says they do); guard fires only if `overviews/` already holds 2-band tiles; `--list-parents` and `mws_refresh_fingerprints` (utime follows symlinks, writes/deletes `.fp`) have no guard either. Lens B (A as suggestion) — `marine_bathymetry_store/src/build_depth_overview_parent.cpp:58`, `overview_pyramid.cpp:1238`, `marine_world_store/marine_world_store/fingerprint_sidecar.py:156`
+- [ ] (must-fix) At the default root rev-3 `depths/draft/<origin>` nests inside the legacy store's `draft` layer, and `adapt_depth_tiles` does not refuse a destination inside/equal to `source_layer_dir` — it can write Items/collection.json into the store it promises not to modify. Lens B — `marine_world_store/marine_world_store/depth_subset.py:152`, `layout.py:118`
+- [ ] (must-fix) Tile Items always write `proj:epsg: 9989` even when `frame=` is LEGACY_FRAME (4326, transformation not applied) — the false frame claim the adapter says it avoids. Lens A — `marine_world_store/marine_world_store/item_schema.py:246` (caller `depth_subset.py:221`)
+- [ ] (must-fix) Collection `extent.temporal.interval` lists every Item's interval in id order; STAC reads `interval[0]` as the overall extent, so it is the first tile's window, not the union (and one duplicate per tile). Lens A — `marine_world_store/marine_world_store/item_schema.py:317`
+- [ ] (must-fix) `gti` rule (required by `rule all`) uses `gdaltindex -gti_filename`, GDAL ≥ 3.9; dev host has 3.8.4, so the terminal target always fails here; it also indexes an `overviews/*.tif` glob (no native tiles), not "the Collection" as documented. Lens A — `marine_world_store/snakemake/rules/gti.smk:54`
+- [ ] (must-fix) README says "`--store-root` (every `mws_*` CLI has it)"; `mws_measure_sigma_fold`, `mws_assemble_coverage`, `mws_refresh_fingerprints` do not. Governance — `marine_world_store/README.md:46`
+- [ ] (suggestion) Shared `<name>.tmp` paths and no fsync before rename; two concurrent writers can publish each other's half-written file. Lens B — `depth_subset.py:275`, `stac_catalog.py:249`, `revisions.py:219`, `fingerprint_sidecar.py:134`, `overview_records.py:165`, C++ `writeTileMeta`
+- [ ] (suggestion) Two Snakemake runs on one layer from different cwds are not serialised (no `workdir:`/layer lock); per-parent writer ignores the batch builder's run lock. Lens B — `marine_world_store/snakemake/Snakefile:98`
+- [ ] (suggestion) Shell rules interpolate paths unquoted; use `{params.layer:q}`. Lens B — `rules/fingerprints.smk:49`, `overviews.smk:86`, `catalog.smk:54`, `gti.smk:54`
+- [ ] (suggestion) Relative `WORLD_STORE_ROOT` / config `store_root:` resolves against cwd; refuse non-absolute or resolve against the config file dir. Lens A + B — `marine_world_store/marine_world_store/store_root.py:214`
+- [ ] (suggestion) Coverage reader: `float(error)` outside try raises despite the never-raises contract; NaN/negative/inf errors accepted (C++ rejects); huge `col_max` expands unbounded. Lens A + B — `marine_world_store/marine_world_store/coverage.py:133`
+- [ ] (suggestion) Python `parse_tile_filename` accepts `01_2_3.tif` / leading space; C++ regex does not — two files can alias one (level,row,col). Lens B — `marine_world_store/marine_world_store/layout.py:204`
+- [ ] (suggestion) `mws_assemble_coverage` drops tiles with no per-tile record (batch-built or crash between rename and record) and overwrites coverage.json with fewer tiles. Lens A — `marine_world_store/marine_world_store/overview_records.py:93`
+- [ ] (suggestion) Fingerprint sorts but does not de-duplicate `source_ids`/`revision_ids`; a source listed twice changes the fingerprint and writes its Item twice. Lens A — `marine_world_store/marine_world_store/fingerprint.py:101`
+- [ ] (suggestion) Manifest-level `start:`/`end:` override every source, including bags that record their interval, and can mix per-entry start with global end. Lens A — `marine_world_store/marine_world_store/cli/mws_link_depth_subset.py:156`
+- [ ] (suggestion) σ measurement: band check is `< 2` not `!= 2` (a 4-band overview reads MIN as depth, MEAN as σ); `_blocks` reshape raises an unexplained ValueError on odd grids (960 → 15×15). Lens A — `marine_world_store/marine_world_store/sigma_fold_measure.py:352`, `:155`
+- [ ] (suggestion) Unquoted YAML timestamps nested in `applies_to` load as `datetime` and crash `revision_id` json.dumps with a raw traceback. Lens A — `marine_world_store/marine_world_store/revisions.py:142`
+- [ ] (suggestion) `files:` fallback does not skip `message_count: 0` splits, whose `starting_time` is time_point::max (~2262). Lens A — `marine_world_store/marine_world_store/source_time.py:261`
+- [ ] (suggestion) Header promises σ rule/geometric error "in its STAC Item" for overview tiles, but nothing builds Items for derived tiles. Lens A — `marine_bathymetry_store/include/marine_bathymetry_store/overview_pyramid.hpp`
+- [ ] (suggestion) Plan bookkeeping: `source_time.py`, `overview_records.py`, `docs/world_store_prototype_log.md` not in plan.md's records; planned `build_depth_overview_parent_main.cpp` shipped as `build_depth_overview_parent.cpp`. Plan Drift — `.agent/work-plans/issue-397/plan.md`
