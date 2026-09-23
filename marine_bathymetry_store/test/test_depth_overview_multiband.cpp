@@ -838,6 +838,44 @@ TEST(PruneOverviewLevel, RemovesOnlyTheTilesThatDescribeNothing)
     std::invalid_argument);
 }
 
+TEST(PruneOverviewLevel, RemoveLevelTakesEveryDerivedTileAndNoNativeOne)
+{
+  // A level the regenerate no longer builds (min_level raised, say) still has
+  // children, so --prune keeps it; the manifest and the Items scan all of
+  // overviews/, so without this it stayed published and went stale.
+  ScratchDir dir("remove_level");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  ASSERT_TRUE(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column())
+    .written);
+  const fs::path derived = dir.path() / "overviews" / mtrs::tileFilename(parent);
+  std::ofstream(fs::path(derived).concat(".fp")) << "{}";
+  // It describes something, so a prune keeps it ...
+  EXPECT_TRUE(
+    mbs::pruneMultiBandOverviewLevel(dir.path().string(), parent.level()).empty());
+  // ... and removing the level takes it, its record and its sidecar.
+  EXPECT_EQ(
+    mbs::removeMultiBandOverviewLevel(dir.path().string(), parent.level()),
+    std::vector<gggs::GridIndex>{parent});
+  EXPECT_FALSE(fs::exists(derived));
+  EXPECT_FALSE(fs::exists(recordOf(derived)));
+  EXPECT_FALSE(fs::exists(fs::path(derived).concat(".fp")));
+  // Native tiles, at the level or anywhere, are never touched.
+  for (const gggs::GridIndex & g : fine) {
+    EXPECT_TRUE(
+      mbs::removeMultiBandOverviewLevel(dir.path().string(), g.level()).empty());
+    EXPECT_TRUE(fs::exists(dir.path() / mtrs::tileFilename(g)));
+  }
+  EXPECT_THROW(
+    mbs::removeMultiBandOverviewLevel(dir.path().string(), 21),
+    std::invalid_argument);
+}
+
 TEST(LegacyLayerRefusal, EveryFourBandEntryPointRefusesALegacyLayer)
 {
   // Regression: the 4-band writers refused a legacy layer only when its

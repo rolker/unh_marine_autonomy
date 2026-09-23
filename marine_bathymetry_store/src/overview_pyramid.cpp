@@ -1364,8 +1364,15 @@ std::vector<MultiBandOverviewParent> listMultiBandOverviewParentInputs(
   return out;
 }
 
-std::vector<gggs::GridIndex> pruneMultiBandOverviewLevel(
-  const std::string & layer_dir_s, int level)
+namespace
+{
+
+// The shared body of pruneMultiBandOverviewLevel (@p everything false: only the
+// tiles that describe nothing) and removeMultiBandOverviewLevel (true: every
+// derived tile at the level).
+std::vector<gggs::GridIndex> removeDerivedTilesAtLevel(
+  const std::string & layer_dir_s, int level, bool everything,
+  const char * caller)
 {
   const fs::path layer_dir(layer_dir_s);
   if (!fs::is_directory(layer_dir)) {
@@ -1373,7 +1380,7 @@ std::vector<gggs::GridIndex> pruneMultiBandOverviewLevel(
   }
   if (level < 0 || static_cast<std::size_t>(level) >= gggs::levels.size()) {
     throw std::invalid_argument(
-      "pruneMultiBandOverviewLevel: " + std::to_string(level) +
+      std::string(caller) + ": " + std::to_string(level) +
       " is not a GGGS level");
   }
   refuseLegacyDepthLayer(layer_dir_s);
@@ -1388,10 +1395,10 @@ std::vector<gggs::GridIndex> pruneMultiBandOverviewLevel(
     marine_tiled_raster_store::gridsInDir(
       overviews.string(), static_cast<uint8_t>(level), skipped))
   {
-    const bool native_here =
+    const bool native_here = !everything &&
       fs::exists(layer_dir / marine_tiled_raster_store::tileFilename(grid));
     bool any_child = false;
-    if (!native_here && has_child_level) {
+    if (!everything && !native_here && has_child_level) {
       for (const gggs::GridIndex & child : gggs::children(grid)) {
         const std::string name = marine_tiled_raster_store::tileFilename(child);
         if (fs::exists(layer_dir / name) || fs::exists(overviews / name)) {
@@ -1406,6 +1413,22 @@ std::vector<gggs::GridIndex> pruneMultiBandOverviewLevel(
   }
   std::sort(removed.begin(), removed.end());
   return removed;
+}
+
+}  // namespace
+
+std::vector<gggs::GridIndex> pruneMultiBandOverviewLevel(
+  const std::string & layer_dir_s, int level)
+{
+  return removeDerivedTilesAtLevel(
+    layer_dir_s, level, false, "pruneMultiBandOverviewLevel");
+}
+
+std::vector<gggs::GridIndex> removeMultiBandOverviewLevel(
+  const std::string & layer_dir_s, int level)
+{
+  return removeDerivedTilesAtLevel(
+    layer_dir_s, level, true, "removeMultiBandOverviewLevel");
 }
 
 MultiBandParentResult buildMultiBandDepthOverviewParent(

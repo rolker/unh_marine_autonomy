@@ -431,6 +431,21 @@ std::vector<MultiBandOverviewParent> listMultiBandOverviewParentInputs(
 std::vector<gggs::GridIndex> pruneMultiBandOverviewLevel(
   const std::string & layer_dir, int level);
 
+/// @brief Remove EVERY derived tile at @p level, with its record and `.fp`.
+///
+/// For a level the pyramid no longer builds: a regenerate configured with a
+/// coarser `min_level`, or a finer `fine_level`, than the run that wrote
+/// `overviews/` leaves whole levels nothing would ever rebuild or prune — yet
+/// the coverage manifest and the overview Items scan all of `overviews/`, so
+/// they would stay published, going stale. The regenerate DAG calls this for
+/// every derived level outside its configured range. Native tiles are never
+/// touched.
+///
+/// @return The indices removed, in GGGS order.
+/// @throws Everything `pruneMultiBandOverviewLevel` throws.
+std::vector<gggs::GridIndex> removeMultiBandOverviewLevel(
+  const std::string & layer_dir, int level);
+
 /// @brief Refuse a legacy `draft/processed/reference/chart` layer by POSITIVE
 ///        identification, not by what its `overviews/` happens to hold.
 ///

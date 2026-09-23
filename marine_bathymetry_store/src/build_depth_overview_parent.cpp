@@ -87,7 +87,12 @@ void usage()
     "  native tile now covers the index, or no child of it exists — with their\n"
     "  records and .fp sidecars, printing each removed `<level>_<row>_<col>`.\n"
     "  A per-parent DAG only schedules parents that have children, so nothing\n"
-    "  else would ever remove one. Run it once the level below is final.\n";
+    "  else would ever remove one. Run it once the level below is final.\n"
+    "\n"
+    "usage: build_depth_overview_parent --remove-level <layer_dir> <level>\n"
+    "  Removes EVERY derived tile at <level> (with records and .fp sidecars),\n"
+    "  printing each: for a level the regenerate no longer builds (outside its\n"
+    "  configured min_level..fine_level-1). Native tiles are never touched.\n";
 }
 
 // Strict unsigned parse: an empty, negative, non-numeric or trailing-garbage
@@ -153,14 +158,19 @@ int main(int argc, char ** argv)
       return 1;
     }
   }
-  if (argc == 4 && std::string(argv[1]) == "--prune") {
+  if (argc == 4 &&
+    (std::string(argv[1]) == "--prune" || std::string(argv[1]) == "--remove-level"))
+  {
     uint32_t prune_level = 0;
     if (!parseU32(argv[3], prune_level)) {
       usage();
       return 2;
     }
+    const bool everything = std::string(argv[1]) == "--remove-level";
     try {
       for (const gggs::GridIndex & removed :
+        everything ?
+        mbs::removeMultiBandOverviewLevel(argv[2], static_cast<int>(prune_level)) :
         mbs::pruneMultiBandOverviewLevel(argv[2], static_cast<int>(prune_level)))
       {
         std::cout << gridName(removed) << "\n";
