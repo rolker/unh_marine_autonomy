@@ -235,6 +235,60 @@ def test_an_empty_collection_declares_an_honest_extent():
     assert collection['extent']['spatial']['bbox'] == [[-180, -90, 180, 90]]
 
 
+def test_collection_temporal_extent_is_the_union_of_its_items():
+    """STAC reads interval[0] as the overall extent; it must cover them all.
+
+    Regression: every Item's interval was listed in id order, so interval[0]
+    -- the Collection's declared extent -- was the first tile's window only,
+    followed by one duplicate per tile.
+    """
+    items = [
+        a_tile_item(row=5, start_datetime='2026-07-01T00:00:00Z',
+                    end_datetime='2026-07-02T00:00:00Z'),
+        a_tile_item(row=3, start_datetime='2026-06-01T00:00:00Z',
+                    end_datetime='2026-06-02T00:00:00Z'),
+        a_tile_item(row=4, start_datetime='2026-06-01T00:00:00Z',
+                    end_datetime='2026-06-02T00:00:00Z'),
+    ]
+    collection = build_collection(
+        quantity=Quantity.DEPTHS, state=State.REVIEWED,
+        origin=Origin.SURVEYED, description='test', items=items)
+    assert collection['extent']['temporal']['interval'] == [
+        ['2026-06-01T00:00:00Z', '2026-07-02T00:00:00Z']]
+
+
+def test_an_empty_collection_has_an_open_temporal_extent():
+    """No Item yet: STAC's open-ended interval, never an invented one."""
+    collection = build_collection(
+        quantity=Quantity.DEPTHS, state=State.DRAFT, origin=Origin.SURVEYED,
+        description='empty', items=[])
+    assert collection['extent']['temporal']['interval'] == [[None, None]]
+
+
+def test_collection_declares_the_frame_its_items_declare():
+    """Regression: the Collection claimed the store frame over 4326 Items."""
+    legacy = {'name': 'WGS84 as written', 'epsg': 4326}
+    items = [a_tile_item(frame=legacy), a_tile_item(row=4, frame=legacy)]
+    collection = build_collection(
+        quantity=Quantity.DEPTHS, state=State.REVIEWED,
+        origin=Origin.SURVEYED, description='test', items=items)
+    assert collection['properties'][CONTRACT_FIELDS['frame']] == legacy
+    native = build_collection(
+        quantity=Quantity.DEPTHS, state=State.REVIEWED,
+        origin=Origin.SURVEYED, description='test', items=[a_tile_item()])
+    assert native['properties'][CONTRACT_FIELDS['frame']]['epsg'] == 9989
+
+
+def test_a_collection_over_items_in_two_frames_is_refused():
+    """One tile tree, one frame; a mixed one has no honest declaration."""
+    items = [a_tile_item(),
+             a_tile_item(row=4, frame={'name': 'WGS84', 'epsg': 4326})]
+    with pytest.raises(ItemSchemaError, match='frames'):
+        build_collection(
+            quantity=Quantity.DEPTHS, state=State.REVIEWED,
+            origin=Origin.SURVEYED, description='test', items=items)
+
+
 def test_source_item_keeps_identity_and_lookup_metadata_apart():
     """Design section 3: platform is lookup metadata, never identity."""
     item = a_source_item(

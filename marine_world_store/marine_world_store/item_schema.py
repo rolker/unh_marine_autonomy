@@ -339,11 +339,6 @@ def build_collection(
         # A Collection must declare an extent; unknown is the whole world,
         # which is honest, where a zero-size box would be a false claim.
         spatial = [[-180.0, -90.0, 180.0, 90.0]]
-    intervals = [
-        [item['properties'].get('start_datetime'),
-         item['properties'].get('end_datetime')]
-        for item in items
-        if item['properties'].get('start_datetime')]
     return {
         'type': 'Collection',
         'stac_version': STAC_VERSION,
@@ -352,14 +347,14 @@ def build_collection(
         'license': license_id,
         'extent': {
             'spatial': {'bbox': spatial},
-            'temporal': {'interval': intervals or [[None, None]]},
+            'temporal': {'interval': [collection_interval(items)]},
         },
         'links': [],
         'properties': {
             CONTRACT_FIELDS['quantity']: Quantity(quantity).value,
             CONTRACT_FIELDS['state']: State(state).value,
             CONTRACT_FIELDS['origin']: Origin(origin).value,
-            CONTRACT_FIELDS['frame']: store_frame(),
+            CONTRACT_FIELDS['frame']: collection_frame(items),
         },
         'summaries': {
             CONTRACT_FIELDS['levels']: sorted({
@@ -368,6 +363,67 @@ def build_collection(
                     CONTRACT_FIELDS['levels'], [])}),
         },
     }
+
+
+def collection_interval(items: Sequence[Mapping[str, Any]]) -> List[Any]:
+    """
+    The Collection's overall temporal extent: the union of its Items'.
+
+    STAC reads ``extent.temporal.interval[0]`` as the Collection's overall
+    extent (later entries are optional sub-intervals). Listing every Item's
+    interval in id order therefore declared the FIRST tile's window as the
+    whole Collection's, with one duplicate per tile after it. The union is the
+    one honest answer; ``[None, None]`` (open at both ends) is STAC's spelling
+    of "unknown" for a Collection with no Item yet.
+
+    An Item with a single ``datetime`` contributes that instant.
+
+    :raises ItemSchemaError: when an Item carries neither shape -- an undated
+        Item is refused by every writer, so reaching one here is a defect.
+    """
+    pairs = []
+    for item in items:
+        properties = item.get('properties') or {}
+        instant = properties.get('datetime')
+        if instant is not None:
+            pairs.append((instant, instant))
+        else:
+            pairs.append((properties.get('start_datetime'),
+                          properties.get('end_datetime')))
+    if not pairs:
+        return [None, None]
+    try:
+        start, end = source_time.union_intervals(pairs, what='a Collection')
+    except source_time.TimeIntervalError as exc:
+        raise ItemSchemaError(str(exc)) from exc
+    return [start, end]
+
+
+def collection_frame(items: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """
+    The frame a Collection declares: the one its Items all declare.
+
+    A Collection that named the store frame over Items that declare an
+    untransformed legacy frame repeats the false claim the Item-level
+    ``frame=`` override exists to avoid. With no Item yet, the store frame is
+    what the cell will hold.
+
+    :raises ItemSchemaError: when the Items disagree -- one tile tree in two
+        frames is not a Collection a consumer can read by one declaration.
+    """
+    frames = []
+    for item in items:
+        frame = (item.get('properties') or {}).get(CONTRACT_FIELDS['frame'])
+        if frame is not None and frame not in frames:
+            frames.append(frame)
+    if not frames:
+        return store_frame()
+    if len(frames) > 1:
+        raise ItemSchemaError(
+            f'the Items of one Collection declare {len(frames)} different '
+            f'frames ({[f.get("epsg") for f in frames]}); one tile tree must '
+            'be in one frame')
+    return dict(frames[0])
 
 
 def validate_contract(item: Mapping[str, Any]) -> None:
