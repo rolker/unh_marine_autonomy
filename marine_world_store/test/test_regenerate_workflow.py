@@ -304,3 +304,66 @@ def test_snakemake_accepts_the_workflow(tmp_path):
          '--config', f'layer_dir={layer}', 'fine_level=13', 'min_level=11'],
         capture_output=True, text=True, cwd=str(tmp_path))
     assert result.returncode == 0, result.stderr
+
+
+# --- what the pre-step must never touch --------------------------------------
+
+
+@pytest.mark.parametrize('name', ['draft', 'processed', 'reference', 'chart'])
+def test_the_pre_step_refuses_a_legacy_layer(tmp_path, name):
+    """
+    Refuse the legacy tree: the pass writes .fp files and moves mtimes.
+
+    Regression: mws_refresh_fingerprints had no layer guard at all, so pointed
+    at a legacy draft/processed/reference/chart layer it wrote and deleted
+    .fp files there and reset its tiles' mtimes.
+    """
+    from marine_world_store.layout import LayoutError
+    layer = tmp_path / name
+    tile = _tile(layer, '13_1_1.tif')
+    before = tile.stat().st_mtime
+    with pytest.raises(LayoutError, match='legacy'):
+        fingerprint_sidecar.refresh_layer(layer)
+    assert sorted(p.name for p in layer.iterdir()) == ['13_1_1.tif']
+    assert tile.stat().st_mtime == before
+
+
+def test_the_pre_step_refuses_a_layer_beside_the_legacy_registry(tmp_path):
+    """Any name, where the legacy store's registry.json sits beside it."""
+    from marine_world_store.layout import LayoutError
+    (tmp_path / 'registry.json').write_text('{}')
+    _tile(tmp_path / 'renamed', '13_1_1.tif')
+    with pytest.raises(LayoutError, match='registry'):
+        fingerprint_sidecar.refresh_layer(tmp_path / 'renamed')
+
+
+def test_a_symlinked_tile_is_never_reached_through(tmp_path):
+    """
+    Leave a linked tile alone: utime would move its target's mtime.
+
+    Regression: os.utime follows symlinks, so an unchanged linked tile had the
+    mtime of the file it pointed at -- possibly in another store -- reset.
+    """
+    elsewhere = _tile(tmp_path / 'elsewhere', 'real.tif')
+    layer = tmp_path / 'depths' / 'reviewed' / 'surveyed'
+    layer.mkdir(parents=True)
+    link = layer / '13_1_1.tif'
+    link.symlink_to(elsewhere)
+    fingerprint_sidecar.refresh_directory(layer)
+    target_mtime = elsewhere.stat().st_mtime
+    os.utime(elsewhere, (target_mtime + 500, target_mtime + 500))
+    report = fingerprint_sidecar.refresh_directory(layer)
+    assert report.symlinks_skipped == [str(link)]
+    assert report.unchanged == report.changed == report.created == 0
+    assert elsewhere.stat().st_mtime == pytest.approx(target_mtime + 500)
+    assert not fingerprint_sidecar.sidecar_path(link).exists()
+
+
+def test_assembling_coverage_refuses_a_legacy_layer(tmp_path):
+    """The legacy layer's overviews/coverage.json is the legacy writer's."""
+    from marine_world_store.cli import mws_assemble_coverage
+    from marine_world_store.layout import LayoutError
+    (tmp_path / 'processed' / 'overviews').mkdir(parents=True)
+    with pytest.raises(LayoutError):
+        mws_assemble_coverage.main([str(tmp_path / 'processed')])
+    assert not (tmp_path / 'processed' / 'overviews' / 'coverage.json').exists()

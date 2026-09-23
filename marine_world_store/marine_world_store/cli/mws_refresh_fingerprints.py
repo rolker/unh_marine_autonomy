@@ -77,6 +77,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             # Named, not counted: an unreadable sidecar was treated as absent,
             # so the tile it belongs to will look changed to the DAG once.
             print(f'  unreadable sidecar, rewritten: {unreadable}')
+        for link in report.symlinks_skipped:
+            # Never reconciled: utime would reach through the link.
+            print(f'  symbolic link, left alone: {link}')
     return 0
 
 

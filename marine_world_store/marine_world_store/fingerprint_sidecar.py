@@ -109,11 +109,20 @@ class RefreshReport:
     orphans_removed: int = 0
     #: Sidecars that could not be read and were treated as absent.
     unreadable: List[str] = None    # type: ignore[assignment]
+    #: Tiles that are symbolic links, left entirely alone. ``os.utime``
+    #: follows a link, so "resetting the tile's mtime" would reach through it
+    #: and rewrite the mtime of whatever it points at -- possibly a file in a
+    #: store this pass has no business touching. A rev-3 layer holds real
+    #: copies (the adapter copies byte-identical); a link is named, not
+    #: reconciled.
+    symlinks_skipped: List[str] = None    # type: ignore[assignment]
 
     def __post_init__(self) -> None:
-        """Give ``unreadable`` a per-instance list."""
+        """Give the list fields per-instance lists."""
         if self.unreadable is None:
             self.unreadable = []
+        if self.symlinks_skipped is None:
+            self.symlinks_skipped = []
 
 
 def _read_sidecar(path: Path) -> Dict[str, object]:
@@ -173,9 +182,12 @@ def refresh_directory(
         raise OSError(f'not a directory: {directory}')
     tiles = sorted(layout.tiles_in_dir(directory))
     for tile in tiles:
+        if tile.is_symlink():
+            report.symlinks_skipped.append(str(tile))
+            continue
         refresh_tile(tile, report)
     if remove_orphans:
-        live = {sidecar_path(tile) for tile in tiles}
+        live = {sidecar_path(tile) for tile in tiles if not tile.is_symlink()}
         for sidecar in sorted(directory.glob('*' + SUFFIX)):
             if sidecar not in live:
                 sidecar.unlink()
@@ -190,8 +202,13 @@ def refresh_layer(layer_dir: PathLike) -> Dict[str, RefreshReport]:
     Reported separately, because the two are different kinds of thing: the
     native tiles are the compile this store does not own, and the overviews are
     the derived product the DAG rebuilds.
+
+    :raises marine_world_store.layout.LayoutError: on a legacy
+        ``draft/processed/reference/chart`` layer -- this pass writes and
+        deletes ``.fp`` files and moves tile mtimes, none of which it may do
+        to the legacy tree (:func:`marine_world_store.layout.refuse_legacy_layer`).
     """
-    layer_dir = Path(layer_dir)
+    layer_dir = layout.refuse_legacy_layer(layer_dir)
     reports = {'native': refresh_directory(layer_dir)}
     overviews = layout.overviews_dir(layer_dir)
     if overviews.is_dir():

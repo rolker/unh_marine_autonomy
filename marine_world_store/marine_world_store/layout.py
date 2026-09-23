@@ -44,6 +44,7 @@ writes ``draft/``, ``processed/``, ``reference/`` or ``chart/``, which are
 from __future__ import annotations
 
 from enum import Enum
+import os
 from pathlib import Path
 from typing import Iterable, Union
 
@@ -185,6 +186,34 @@ def writable_quantity_dir(
             f'shares its name with the rev-3 state: {path} would nest inside '
             'it. Build rev 3 under a different store root (--store-root).')
     return path
+
+
+def refuse_legacy_layer(layer_dir: PathLike) -> Path:
+    """
+    Refuse a legacy ``marine_bathymetry_store`` layer, positively.
+
+    The Python half of the C++ ``refuseLegacyDepthLayer``, with the same two
+    rules, so a tool that writes beside a layer's tiles (``.fp`` sidecars, the
+    assembled ``coverage.json``, Items) cannot be pointed at the legacy tree
+    either: the directory's name is one of :data:`LEGACY_LAYER_NAMES`, or its
+    parent holds the legacy ``registry.json``. A rev-3 layer is
+    ``<root>/<quantity>/<state>/<origin>/`` and matches neither.
+
+    :returns: the layer directory, for chaining.
+    :raises LayoutError: naming the layer and which rule it met.
+    """
+    layer = Path(os.path.abspath(str(layer_dir)))
+    if layer.name in LEGACY_LAYER_NAMES:
+        raise LayoutError(
+            f'{layer_dir}: {layer.name!r} is a legacy marine_bathymetry_store '
+            'layer, not a world-store quantity layer '
+            '(<root>/<quantity>/<state>/<origin>/)')
+    if (layer.parent / LEGACY_REGISTRY_FILENAME).is_file():
+        raise LayoutError(
+            f"{layer_dir}: its parent holds the legacy store's "
+            f'{LEGACY_REGISTRY_FILENAME}, so it is a legacy '
+            'marine_bathymetry_store layer, not a world-store quantity layer')
+    return Path(layer_dir)
 
 
 def sources_dir(root: PathLike) -> Path:
