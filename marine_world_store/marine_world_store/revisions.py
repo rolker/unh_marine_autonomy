@@ -58,7 +58,7 @@ import math
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Union
 
-from marine_world_store import item_schema, layout, source_time
+from marine_world_store import atomic_io, item_schema, layout, source_time
 from marine_world_store.fingerprint import canonical_json, content_hash
 
 PathLike = Union[str, Path]
@@ -258,7 +258,5 @@ def read_revision(path: PathLike) -> Dict[str, Any]:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    """tmp-then-rename, so a reader never sees half a record."""
-    tmp = path.with_suffix(path.suffix + '.tmp')
-    tmp.write_text(text)
-    tmp.replace(path)
+    """Publish whole (:mod:`marine_world_store.atomic_io`)."""
+    atomic_io.write_text(path, text)

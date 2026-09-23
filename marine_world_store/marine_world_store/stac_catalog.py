@@ -55,7 +55,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple, Union
 import warnings
 
-from marine_world_store import item_schema, layout
+from marine_world_store import atomic_io, item_schema, layout
 from marine_world_store.fingerprint import canonical_json
 import pystac
 
@@ -236,7 +236,7 @@ def regenerate_collection(
 
 
 def _write_if_changed(path: Path, document: Mapping[str, Any]) -> bool:
-    """tmp-then-rename ``document`` into ``path`` unless it is already there."""
+    """Publish ``document`` as ``path`` unless it is already there."""
     text = json.dumps(document, indent=2, sort_keys=True) + '\n'
     if path.exists():
         try:
@@ -246,7 +246,5 @@ def _write_if_changed(path: Path, document: Mapping[str, Any]) -> bool:
         if existing is not None and \
                 canonical_json(existing) == canonical_json(document):
             return False
-    tmp = path.with_suffix(path.suffix + '.tmp')
-    tmp.write_text(text)
-    tmp.replace(path)
+    atomic_io.write_text(path, text)
     return True

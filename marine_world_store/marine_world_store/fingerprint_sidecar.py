@@ -63,7 +63,7 @@ import os
 from pathlib import Path
 from typing import Dict, List, Union
 
-from marine_world_store import layout
+from marine_world_store import atomic_io, layout
 
 PathLike = Union[str, Path]
 
@@ -131,10 +131,8 @@ def _read_sidecar(path: Path) -> Dict[str, object]:
 def _write_sidecar(path: Path, fingerprint: str) -> None:
     # Atomic: a reader sees the old document or the new one, never a half
     # one, and a crashed run leaves no sidecar claiming a truncated hash.
-    tmp = path.with_name(path.name + '.tmp')
-    tmp.write_text(json.dumps(
+    atomic_io.write_text(path, json.dumps(
         {'schema': SCHEMA, 'fingerprint': fingerprint}, indent=2) + '\n')
-    os.replace(tmp, path)
 
 
 def refresh_tile(tile: PathLike, report: RefreshReport) -> str:

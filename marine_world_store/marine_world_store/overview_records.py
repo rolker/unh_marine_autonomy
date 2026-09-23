@@ -52,11 +52,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-from marine_world_store import layout
+from marine_world_store import atomic_io, layout
 
 PathLike = Union[str, Path]
 
@@ -162,9 +161,7 @@ def assemble(overviews_dir: PathLike, kind: str = 'derived') -> Path:
         raise OSError(f'not a directory: {overviews_dir}')
     document = encode_manifest(read_tile_records(overviews_dir), kind=kind)
     path = layout.coverage_manifest_path(overviews_dir)
-    tmp = path.with_name(path.name + '.tmp')
-    tmp.write_text(json.dumps(document, indent=2) + '\n')
-    os.replace(tmp, path)
+    atomic_io.write_text(path, json.dumps(document, indent=2) + '\n')
     return path
 
 

@@ -61,10 +61,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 from pathlib import Path
-import shutil
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
-from marine_world_store import coverage, footprint, item_schema, layout
+from marine_world_store import atomic_io, coverage, footprint, item_schema
+from marine_world_store import layout
 from marine_world_store import source_time
 from marine_world_store.layout import Origin, Quantity, State
 
@@ -272,13 +272,12 @@ def _copy_identical(source: Path, target: Path) -> bool:
     digest = file_sha256(source)
     if target.exists() and file_sha256(target) == digest:
         return False
-    tmp = target.with_suffix(target.suffix + '.tmp')
-    shutil.copy2(source, tmp)
-    if file_sha256(tmp) != digest:
-        tmp.unlink(missing_ok=True)
-        raise AdapterError(
-            f'{source} -> {target}: copy is not byte-identical')
-    tmp.replace(target)
+
+    def identical(tmp: Path) -> None:
+        if file_sha256(tmp) != digest:
+            raise AdapterError(
+                f'{source} -> {target}: copy is not byte-identical')
+    atomic_io.copy_file(source, target, check=identical)
     return True
 
 
