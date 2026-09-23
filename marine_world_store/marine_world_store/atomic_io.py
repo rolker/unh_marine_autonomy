@@ -37,7 +37,7 @@ pattern needs and the first versions of it here did not have:
   every writer of ``<name>``: two concurrent runs write into the same
   temporary, and whichever renames first can publish the OTHER run's
   half-written bytes. The temporary here is unique per call
-  (:func:`tempfile.mkstemp`), in the destination's own directory so the rename
+  (``O_EXCL`` under a random name), in the destination's own directory so the rename
   stays within one filesystem and therefore atomic.
 * **fsync before the rename, and of the directory after it.** ``rename(2)`` is
   atomic, not durable: after a crash, a renamed file whose data never reached
@@ -49,21 +49,34 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import secrets
 import shutil
-import tempfile
+import stat
 from typing import Callable, Union
 
 PathLike = Union[str, Path]
 
-#: The mode ``open(path, 'w')`` asks for, before the umask is applied.
+#: The mode ``open(path, 'w')`` asks for; the kernel applies the umask.
 _PUBLISHED_MODE = 0o666
 
 
-def _current_umask() -> int:
-    """Return the process umask (reading it means setting it; put it back)."""
-    mask = os.umask(0o022)
-    os.umask(mask)
-    return mask
+def _create_temporary(path: Path):
+    """
+    Create a temporary beside ``path``, exclusively, as ``open()`` would.
+
+    ``O_EXCL`` under a random name, so no two writers share one; created
+    ``0666`` and left to the KERNEL to apply the umask -- not read with
+    ``os.umask``, which can only be read by setting it, process-wide.
+    """
+    for _ in range(64):
+        tmp = path.with_name(f'.{path.name}.{secrets.token_hex(8)}.tmp')
+        try:
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                         getattr(os, 'O_CLOEXEC', 0), _PUBLISHED_MODE)
+        except FileExistsError:
+            continue
+        return fd, tmp
+    raise FileExistsError(f'no free temporary name beside {path}')
 
 
 def _fsync_directory(directory: Path) -> None:
@@ -91,20 +104,25 @@ def publish(path: PathLike, fill: Callable[[Path], None]) -> Path:
     :returns: ``path``.
     """
     path = Path(path)
-    fd, name = tempfile.mkstemp(
-        prefix=f'.{path.name}.', suffix='.tmp', dir=str(path.parent))
-    tmp = Path(name)
     try:
-        # mkstemp creates the temporary 0600, which is right for a scratch
-        # file and wrong for a published one: every Item, Collection and
-        # manifest would be owner-only, unreadable to the renderers, CAMP, a
-        # container run as another uid or a NAS sync. Give it the mode a plain
-        # open() would have given the file -- 0666 less the umask. (A fill
-        # that copies metadata, as copy_file does, may set its own.)
-        os.fchmod(fd, _PUBLISHED_MODE & ~_current_umask())
+        # Rewriting a file keeps its mode: an operator's g+w on a
+        # collection.json is not the writer's to take away.
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        mode = None
+    fd, tmp = _create_temporary(path)
+    try:
+        if mode is None:
+            # A new file gets the mode a plain open() would give it: 0666
+            # less the umask, readable by the renderers, CAMP, a container
+            # run as another uid or a NAS sync.
+            mode = stat.S_IMODE(os.fstat(fd).st_mode)
         os.close(fd)
         fd = -1
         fill(tmp)
+        # After the fill: one that copies metadata (copy_file's copy2) must
+        # not publish its SOURCE's mode -- a 0600 or 0444 source included.
+        os.chmod(tmp, mode)
         with open(tmp, 'rb') as handle:
             os.fsync(handle.fileno())
         os.replace(tmp, path)
@@ -125,7 +143,9 @@ def write_text(path: PathLike, text: str) -> Path:
 def copy_file(source: PathLike, path: PathLike,
               check: Callable[[Path], None] = lambda tmp: None) -> Path:
     """
-    Publish a copy of ``source`` as ``path``, metadata included.
+    Publish a copy of ``source`` as ``path``, its times included.
+
+    The published mode is :func:`publish`'s, never the source's.
 
     :param check: called on the temporary before it is published; raise to
         refuse the copy (the byte-identical check lives here, so a copy that

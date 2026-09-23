@@ -112,13 +112,58 @@ def test_a_published_file_gets_the_mode_open_would_give_it(tmp_path, umask):
         stat.S_IMODE(plain.stat().st_mode)
 
 
-def test_a_copy_keeps_its_sources_mode(tmp_path):
-    """copy_file is copy2: the published copy has the source's permissions."""
+@pytest.mark.parametrize('source_mode', [0o600, 0o444, 0o777])
+def test_a_copy_gets_the_published_mode_not_its_sources(tmp_path, source_mode):
+    """
+    copy_file keeps the source's times, never its mode.
+
+    Regression: copy_file was copy2 end to end, so a 0600 source published
+    an owner-only tile and a 0444 one a read-only tile, bypassing the
+    publish mode.
+    """
     source = tmp_path / 'source.tif'
     source.write_bytes(b'pixels')
-    source.chmod(0o644)
-    target = atomic_io.copy_file(source, tmp_path / 'target.tif')
+    os.utime(source, ns=(10**18, 10**18))
+    source.chmod(source_mode)
+    old = os.umask(0o022)
+    try:
+        target = atomic_io.copy_file(source, tmp_path / 'target.tif')
+    finally:
+        os.umask(old)
     assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    assert target.stat().st_mtime_ns == 10**18
+
+
+def test_a_rewrite_keeps_the_files_mode(tmp_path):
+    """
+    An operator's mode on a published file survives a rewrite.
+
+    Regression: every rewrite reset it to 0666 less the umask, so a g+w
+    given to collection.json was lost on the next regenerate.
+    """
+    path = atomic_io.write_text(tmp_path / 'collection.json', '{}')
+    path.chmod(0o664)
+    old = os.umask(0o077)
+    try:
+        atomic_io.write_text(path, '{"a": 1}')
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o664
+    assert path.read_text() == '{"a": 1}'
+
+
+def test_publishing_never_changes_the_process_umask(tmp_path, monkeypatch):
+    """
+    The umask is the kernel's to apply, not read by setting it.
+
+    Regression: reading it meant os.umask(), which changes it process-wide
+    for a moment -- a race with any other thread creating a file.
+    """
+    def forbidden(mask):
+        raise AssertionError('os.umask called')
+
+    monkeypatch.setattr(atomic_io.os, 'umask', forbidden)
+    atomic_io.write_text(tmp_path / 'item.json', '{}')
 
 
 def test_the_data_is_synced_before_the_rename(tmp_path, monkeypatch):
