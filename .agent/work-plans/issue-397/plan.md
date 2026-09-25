@@ -705,3 +705,7 @@ suggestions. What they change about the notes above:
   hashes like the writer's document or is refused; a child whose inputs cannot
   be fingerprinted, or that carries none, is an `OverviewItemError` naming it
   and joins the batch's problem list instead of aborting with a bare exception.
+- **Both batch builders take the writer lock after their guards**, inside
+  `buildPyramidCore` (directory, native scan, band shape, completeness), and
+  re-run the cross-schema guard under it; a refused or mis-pointed layer gains
+  no `overviews.lock` and gets its own diagnostic.

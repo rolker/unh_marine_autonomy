@@ -1320,6 +1320,30 @@ TEST(LayerWriterLock, PerParentWritesAndABatchBuildExcludeEachOther)
     std::runtime_error);
 }
 
+TEST(LayerWriterLock, ABatchBuildRefusedByItsGuardsLeavesNoLockFile)
+{
+  // Regression (round-5 review): the single-band builder took overviews.lock
+  // before its path guards, so a mis-pointed directory gained a lock file and a
+  // read-only one reported the lock instead of the path problem.
+  ScratchDir dir("lock_after_guards");
+  fs::create_directories(dir.path());
+  mbs::DepthOverviewOptions single;
+  single.layer_dir = dir.path().string();
+  single.min_level = kFineLevel - 1;
+  try {
+    mbs::buildDepthOverviewPyramid(single);
+    ADD_FAILURE() << "an empty layer must be refused";
+  } catch (const std::runtime_error & e) {
+    EXPECT_NE(std::string(e.what()).find("no usable native tiles"), std::string::npos) <<
+      e.what();
+  }
+  mbs::MultiBandOverviewOptions multi;
+  multi.layer_dir = dir.path().string();
+  multi.min_level = kFineLevel - 1;
+  EXPECT_THROW(mbs::buildMultiBandDepthOverviewPyramid(multi), std::runtime_error);
+  EXPECT_FALSE(fs::exists(dir.path() / "overviews.lock"));
+}
+
 int main(int argc, char ** argv)
 {
   ::testing::InitGoogleTest(&argc, argv);

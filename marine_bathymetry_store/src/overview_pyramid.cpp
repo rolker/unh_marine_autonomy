@@ -660,7 +660,8 @@ void publishText(const fs::path & path, const std::string & text)
 // the per-parent writer and the prune write into it tile by tile. Interleaved,
 // the swap retires every tile a per-parent run wrote meanwhile, or a
 // per-parent run writes into a directory about to be retired. So the batch
-// builder holds the lock EXCLUSIVELY for its whole run, and each per-parent
+// builder holds the lock EXCLUSIVELY for its whole write phase (taken once its
+// guards pass, held through the swap), and each per-parent
 // write or prune holds it SHARED — many of those may run at once, which is
 // the point of the per-parent mode, but never beside a batch build. Both
 // refuse rather than wait: a DAG job that blocked on a batch build would hold
@@ -1153,6 +1154,19 @@ DepthOverviewBuildResult buildPyramidCore(
     return result;
   }
 
+  // The exclusive layer writer lock, taken only NOW — after the directory,
+  // native-scan, band-shape and completeness guards — so a mistyped or
+  // read-only path gets its own diagnostic rather than "cannot open the layer
+  // writer lock", and a layer the builder refuses gains no lock file. Both batch
+  // builders swap overviews/ wholesale, so a per-parent write or prune (shared
+  // lock) must not interleave with the swap. The cross-schema guard is re-run
+  // under the lock: a per-parent writer may have written the schema record
+  // between the first check and here.
+  const LayerWriterLock lock(layer_dir, true);
+  refuseCrossSchemaSidecar(
+    layer_dir / "overviews", bands,
+    sigma_rule.has_value() ? "multi-band" : "single-band");
+
   const fs::path overviews = layer_dir / "overviews";
   const fs::path staging = layer_dir / "overviews.tmp";
   const fs::path retired = layer_dir / "overviews.old";
@@ -1359,15 +1373,9 @@ DepthOverviewBuildResult buildPyramidCore(
 DepthOverviewBuildResult buildDepthOverviewPyramid(
   const DepthOverviewOptions & opts, std::ostream * progress)
 {
-  // The same exclusive writer lock the multi-band batch builder takes: this
-  // builder swaps overviews/ wholesale too, so a per-parent write or prune
-  // pointed at the same layer (which the cross-schema guard would refuse, but
-  // only once it looks) must not interleave with the swap. A dry run writes
-  // nothing and takes no lock.
-  std::optional<LayerWriterLock> lock;
-  if (!opts.dry_run && fs::is_directory(opts.layer_dir)) {
-    lock.emplace(fs::path(opts.layer_dir), true);
-  }
+  // Takes the same exclusive writer lock as the multi-band batch builder,
+  // inside buildPyramidCore once its guards have passed (a dry run writes
+  // nothing and takes none).
   return buildPyramidCore(
     opts.layer_dir, opts.min_level, opts.dry_run, kBands,
     detail::depthShallowestFold, std::nullopt, "buildDepthOverviewPyramid",
@@ -1391,12 +1399,9 @@ DepthOverviewBuildResult buildMultiBandDepthOverviewPyramid(
   const MultiBandOverviewOptions & opts, std::ostream * progress)
 {
   const SigmaFold rule = opts.sigma_fold;
-  // A dry run writes nothing, so it needs no writer lock (and must not create
-  // the lock file in a layer it only inspects).
-  std::optional<LayerWriterLock> lock;
-  if (!opts.dry_run && fs::is_directory(opts.layer_dir)) {
-    lock.emplace(fs::path(opts.layer_dir), true);
-  }
+  // The exclusive writer lock is taken inside buildPyramidCore after its
+  // guards; a dry run writes nothing and takes none (and so creates no lock
+  // file in a layer it only inspects).
   return buildPyramidCore(
     opts.layer_dir, opts.min_level, opts.dry_run, detail::kMultiBandCount,
     [rule](const std::vector<std::vector<double>> & contributors) {
