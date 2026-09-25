@@ -351,6 +351,50 @@ TEST(MultiBandFold, MalformedCountAndMeanSubstituteConservatively)
     "the malformed contributor's MIN stands in for its missing MEAN";
 }
 
+TEST(MultiBandFold, AnInfiniteMeanSubstitutesTheMinLikeANaNOne)
+{
+  // Regression: only NaN was caught, so a ±inf MEAN reached the weighted
+  // accumulation and the parent's MEAN (and a pooled σ over it) went infinite.
+  const double inf = std::numeric_limits<double>::infinity();
+  for (const double bad : {inf, -inf}) {
+    const std::vector<std::vector<double>> contributors{
+      cell(-10.0, bad, 1.0, 0.5), cell(-2.0, -2.0, 1.0, 0.5)};
+    const std::vector<double> folded = det::depthMultiBandFold(contributors);
+    EXPECT_DOUBLE_EQ(folded[det::kMultiMeanBand], -6.0) << "MEAN " << bad;
+    EXPECT_TRUE(
+      std::isfinite(
+        det::depthMultiBandFold(contributors, mbs::SigmaFold::kPooled)[
+          det::kMultiSigmaBand])) << "MEAN " << bad;
+  }
+}
+
+TEST(MultiBandFold, ANegativeOrInfiniteSigmaIsNoSigma)
+{
+  // A 1-sigma is a non-negative length. Regression: only NaN was treated as
+  // "no σ", so a negative or infinite σ was folded as if measured.
+  const double inf = std::numeric_limits<double>::infinity();
+  for (const double bad : {-0.5, inf, -inf}) {
+    const std::vector<std::vector<double>> with_bad{
+      cell(-10.0, -10.0, 1.0, bad), cell(-2.0, -2.0, 1.0, 0.25)};
+    const std::vector<std::vector<double>> without{
+      cell(-10.0, -10.0, 1.0, kNaN), cell(-2.0, -2.0, 1.0, 0.25)};
+    for (const mbs::SigmaFold rule : {mbs::SigmaFold::kPooled,
+        mbs::SigmaFold::kMaxChild, mbs::SigmaFold::kMeanChild})
+    {
+      EXPECT_DOUBLE_EQ(
+        det::depthMultiBandFold(with_bad, rule)[det::kMultiSigmaBand],
+        det::depthMultiBandFold(without, rule)[det::kMultiSigmaBand]) <<
+        "rule " << mbs::sigmaFoldName(rule) << ", σ " << bad;
+    }
+    const std::vector<std::vector<double>> only_bad{
+      cell(-10.0, -10.0, 1.0, bad)};
+    EXPECT_TRUE(
+      std::isnan(
+        det::depthMultiBandFold(only_bad, mbs::SigmaFold::kMaxChild)[
+          det::kMultiSigmaBand])) << "σ " << bad;
+  }
+}
+
 TEST(MultiBandFold, IsOrderIndependent)
 {
   // The fold engine buckets contributors in filesystem-iteration order, which

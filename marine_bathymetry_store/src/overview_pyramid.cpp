@@ -206,13 +206,24 @@ double contributorCount(const std::vector<double> & cell)
   return (std::isfinite(n) && n >= 1.0) ? n : 1.0;
 }
 
-// Representative value of one contributor for the MEAN accumulation. A NaN MEAN
-// on a cell that passed the valid gate (its MIN is finite) is likewise a
-// malformed upstream tile; its MIN is the one value known to be real.
+// Representative value of one contributor for the MEAN accumulation. A MEAN
+// that is not finite (NaN, or ±inf) on a cell that passed the valid gate is
+// likewise a malformed upstream tile; its MIN is the one value known to be
+// real. An infinite MEAN let through would make the weighted MEAN — and the
+// pooled σ built on it — infinite or NaN for every level above.
 double contributorMean(const std::vector<double> & cell)
 {
   const double m = cell[kMultiMeanBand];
-  return std::isnan(m) ? cell[kMultiMinBand] : m;
+  return std::isfinite(m) ? m : cell[kMultiMinBand];
+}
+
+// Whether a contributor carries a usable σ: finite and not negative. A 1-sigma
+// is a non-negative length, so NaN (no σ), ±inf or a negative value is a σ the
+// fold must not use — it is treated exactly as a child with no σ.
+bool hasSigma(const std::vector<double> & cell)
+{
+  const double s = cell[kMultiSigmaBand];
+  return std::isfinite(s) && s >= 0.0;
 }
 
 // The σ band, per rule. Returns NaN for kUndecided and whenever no contributor
@@ -227,7 +238,7 @@ double foldSigma(
   }
   bool any_sigma = false;
   for (const std::vector<double> & c : contributors) {
-    if (!std::isnan(c[kMultiSigmaBand])) {
+    if (hasSigma(c)) {
       any_sigma = true;
       break;
     }
@@ -239,16 +250,17 @@ double foldSigma(
     case SigmaFold::kMaxChild: {
         double best = nan;
         for (const std::vector<double> & c : contributors) {
+          if (!hasSigma(c)) {continue;}
           const double s = c[kMultiSigmaBand];
-          if (!std::isnan(s) && (std::isnan(best) || s > best)) {best = s;}
+          if (std::isnan(best) || s > best) {best = s;}
         }
         return best;
       }
     case SigmaFold::kMeanChild: {
         double weighted = 0.0, weight = 0.0;
         for (const std::vector<double> & c : contributors) {
+          if (!hasSigma(c)) {continue;}
           const double s = c[kMultiSigmaBand];
-          if (std::isnan(s)) {continue;}
           const double n = contributorCount(c);
           weighted += s * n;
           weight += n;
@@ -281,7 +293,7 @@ double foldSigma(
         // test change. sigma_fold_measure.py carries that state and is exact.
         double weight = 0.0, weighted_mean = 0.0;
         for (const std::vector<double> & c : contributors) {
-          if (std::isnan(c[kMultiSigmaBand])) {continue;}
+          if (!hasSigma(c)) {continue;}
           const double n = contributorCount(c);
           weight += n;
           weighted_mean += n * contributorMean(c);
@@ -292,8 +304,8 @@ double foldSigma(
         const double mean_s = weighted_mean / weight;
         double accum = 0.0;
         for (const std::vector<double> & c : contributors) {
+          if (!hasSigma(c)) {continue;}
           const double s = c[kMultiSigmaBand];
-          if (std::isnan(s)) {continue;}
           const double d = contributorMean(c) - mean_s;
           accum += contributorCount(c) * (s * s + d * d);
         }
