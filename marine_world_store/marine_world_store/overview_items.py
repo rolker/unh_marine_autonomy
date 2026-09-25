@@ -43,9 +43,13 @@ Nothing about an overview is invented here; each field comes from its lineage:
   the native tiles' Items, which are dated from their source bags. A tile whose
   lineage cannot be dated is refused, like every other undated Item;
 * **the fingerprint inputs** are the union of its children's sources and
-  revisions, with a builder version naming the fold (and its sigma rule) over
-  the children's own builder versions, so a changed rule or a re-linked child
-  is a new fingerprint rather than a silent migration;
+  revisions (what a search by source finds), plus a builder version naming
+  the fold, its sigma rule, and every child by tile AND complete fingerprint.
+  The child fingerprints are what make the parent's honest: a child whose
+  trajectory, geometry revision, decoder, cache method or consumer ordering
+  changed has a new fingerprint, and so therefore does every ancestor -- a
+  changed rule or a re-linked child is a new fingerprint rather than a silent
+  migration;
 * **the frame** is its children's, which must agree;
 * **the footprint** is read from the tile itself (:mod:`marine_world_store.
   footprint`), as for a native tile.
@@ -56,6 +60,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence, Tuple, Union
 
+from marine_world_store import fingerprint as fingerprint_module
 from marine_world_store import footprint, item_schema, layout
 from marine_world_store import overview_records, source_time
 from marine_world_store.item_schema import CONTRACT_FIELDS
@@ -160,6 +165,35 @@ def build_overview_items(
     return built
 
 
+def overview_builder_version(sigma_fold: str, child_names: Sequence[str],
+                             child_inputs: Sequence[Mapping[str, Any]]) -> str:
+    """
+    Name the fold that built an overview tile, and exactly what it folded.
+
+    The fold version (:data:`OVERVIEW_BUILDER` and the sigma rule), then each
+    child as ``<tile>=<fingerprint>``, sorted by tile. The fingerprint is
+    recomputed from the child's COMPLETE inputs document rather than read from
+    the child's Item, so every input section 9 names -- not only the sources,
+    revisions and builder a union can carry -- reaches the parent, and a
+    child Item whose stored hash disagrees with its inputs cannot vouch for
+    itself. The tile identity is there because the same product placed under
+    a different parent cell is a different fold.
+
+    Carried in ``builder_version`` because section 9's input set is closed
+    (:data:`marine_world_store.fingerprint.FINGERPRINT_KEYS`): an overview's
+    process IS "this fold over these children", so that is what it names.
+    """
+    if len(child_names) != len(child_inputs):
+        raise OverviewItemError(
+            f'{len(child_names)} child name(s) for {len(child_inputs)} '
+            'child input document(s)')
+    parts = sorted(
+        f'{name}={fingerprint_module.fingerprint_of(document)}'
+        for name, document in zip(child_names, child_inputs))
+    return (f'{OVERVIEW_BUILDER} sigma_fold={sigma_fold} over '
+            f'[{"; ".join(parts)}]')
+
+
 def _overview_item(tile: Path, key, record, children, *, quantity, state,
                    origin) -> Dict[str, Any]:
     level, row, col = key
@@ -168,13 +202,10 @@ def _overview_item(tile: Path, key, record, children, *, quantity, state,
                          for s in doc.get('source_ids', [])})
     revision_ids = sorted({r for doc in inputs
                            for r in doc.get('revision_ids', [])})
-    child_builders = sorted({doc.get('builder_version', '?')
-                             for doc in inputs})
     sigma_fold = record.sigma_fold or 'unrecorded'
     fingerprint_inputs: Dict[str, Any] = {
-        'builder_version': (
-            f'{OVERVIEW_BUILDER} sigma_fold={sigma_fold} over '
-            f'[{"; ".join(child_builders)}]'),
+        'builder_version': overview_builder_version(
+            sigma_fold, record.children, inputs),
     }
     if source_ids:
         fingerprint_inputs['source_ids'] = source_ids

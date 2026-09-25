@@ -69,14 +69,15 @@ def raster(path, bands):
     return path
 
 
-def native(layer, name, start, end, sources, frame=None):
+def native(layer, name, start, end, sources, frame=None, extra_inputs=None):
     """Write a native tile and its Item, as the adapter leaves them."""
     raster(layer / name, 2)
     level, row, col = (int(p) for p in name[:-4].split('_'))
     return item_schema.build_tile_item(
         **CELL, level=level, row=row, col=col, asset_href=f'./{name}',
         fingerprint_inputs={'source_ids': sources,
-                            'builder_version': 'mws_link_depth_subset/1'},
+                            'builder_version': 'mws_link_depth_subset/1',
+                            **(extra_inputs or {})},
         uncertainty_basis='per-cell 1 sigma', resolution_m=2.0,
         start_datetime=start, end_datetime=end, frame=frame or LEGACY)
 
@@ -155,6 +156,58 @@ def test_a_changed_sigma_rule_is_a_new_fingerprint(tmp_path):
             directory, **CELL, existing_items=natives)[0]
         fingerprints.append(item['properties'][CONTRACT_FIELDS['fingerprint']])
     assert fingerprints[0] != fingerprints[1]
+
+
+def _lineage_fingerprints(root, extra_inputs):
+    """Fingerprints of 12_1_1 and 11_0_0 over natives with ``extra_inputs``."""
+    directory = root / 'depths' / 'reviewed' / 'surveyed'
+    natives = [
+        native(directory, '13_2_2.tif', '2026-06-22T13:00:00Z',
+               '2026-06-22T14:00:00Z', ['bag-a'], extra_inputs=extra_inputs),
+        native(directory, '13_2_3.tif', '2026-06-23T09:00:00Z',
+               '2026-06-23T10:00:00Z', ['bag-b']),
+    ]
+    overview(directory, '12_1_1.tif', ['13_2_2.tif', '13_2_3.tif'])
+    overview(directory, '11_0_0.tif', ['overviews/12_1_1.tif'])
+    return {i['id']: i['properties'][CONTRACT_FIELDS['fingerprint']]
+            for i in overview_items.build_overview_items(
+                directory, **CELL, existing_items=natives)}
+
+
+@pytest.mark.parametrize('changed', [
+    {'trajectory_id': 'trajectory-2'},
+    {'geometry_revision_id': 'geometry-2'},
+    {'decoder_version': 'decoder/2'},
+    {'cache_method': 'cache/2'},
+    {'consumer_ordering': ['surveyed', 'charted']},
+])
+def test_any_changed_child_input_changes_every_ancestor(tmp_path, changed):
+    """
+    Section 9: a fingerprint covers ALL of a product's inputs.
+
+    Regression: an overview's fingerprint kept only its children's source and
+    revision ids and builder versions, so a child whose trajectory, geometry
+    revision, decoder, cache method or consumer ordering changed left every
+    ancestor's fingerprint -- and therefore the decision to rebuild it --
+    unchanged.
+    """
+    key = next(iter(changed))
+    baseline = _lineage_fingerprints(
+        tmp_path / 'base', {key: {'consumer_ordering': ['charted']}.get(
+            key, 'version-1')})
+    after = _lineage_fingerprints(tmp_path / 'changed', changed)
+    for name in ('depths-reviewed-surveyed-12_1_1',
+                 'depths-reviewed-surveyed-11_0_0'):
+        assert baseline[name] != after[name], name
+
+
+def test_the_same_child_under_another_name_is_another_fold(tmp_path):
+    """The tile identity of each child is part of the parent's inputs."""
+    names = (['13_2_2.tif'], ['13_2_3.tif'])
+    documents = [{'source_ids': ['bag-a'], 'builder_version': 'x/1'}]
+    first, second = (overview_items.overview_builder_version(
+        'undecided', n, documents) for n in names)
+    assert first != second
 
 
 @pytest.mark.parametrize('children,match', [
