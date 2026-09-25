@@ -972,4 +972,63 @@ Lens B's STAC-validation point is the known jsonschema-4.10 gap from round 3, re
 - [x] (suggestion) A schema record with no tiles (a per-parent write that failed after `ensureOverviewSchema`, or a level emptied by prune/remove-level) makes the single-band builder refuse, with "it holds 4-band tiles", which is untrue. Correct the message. — `marine_bathymetry_store/src/overview_pyramid.cpp:758-763`
 - [x] (suggestion) The README says the lock keeps a batch swap from retiring per-parent output, but the Python steps run unlocked: `mws_refresh_fingerprints --record` after the C++ writer exits, `mws_assemble_coverage`, the load-time `refresh_layer` and `mws_regenerate_catalog`. Narrow the claim to the C++ steps, or have them take `LOCK_SH`. — `marine_bathymetry_store/README.md:376-382`, `marine_world_store/snakemake/rules/overviews.smk` `build_parent`
 - [x] (suggestion) σ-rule check-then-write: `refuseOtherSigmaRule` runs at entry, and `ensureOverviewSchema` writes the record later without re-checking it or the per-tile records' `sigma_fold`. This is theoretical while no CLI selects a rule; fold the check into the write. — `marine_bathymetry_store/src/overview_pyramid.cpp:1555,1652,758-763`
-- [ ] (suggestion) Re-run Codex when its quota resets. This round's cross-model read is Gemini only. — `.agent/scripts/cross_model_review.sh`
+- [ ] (suggestion) Re-run Codex when its quota resets. This round's cross-model read is Gemini only. (left open by address-findings 2026-09-25: re-running Codex is the host's job, not a code change) — `.agent/scripts/cross_model_review.sh`
+
+## Implementation
+**Status**: complete
+**When**: 2026-09-25 13:01 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-397 at `b05f304`
+**Addressed**: Local Review (Pre-Push), round 5, 2026-09-25 12:25 -04:00, reviewed at `b837fd3` (entry committed as `8469c74`)
+**Commits**: `c882425`, `6da4207`, `91af8fa`, `8e8bf43`, `0f880bc`, `daa8687`, `418a76f`, `2ba4d18`, `f0b52ca`, `b05f304`
+
+**Owner ground truth for must-fix 1.** Roland, 2026-09-25, verbatim: "I want to think more deeply about uncertainty at some point, so do what's a good placeholder until that happens". The host chose the placeholder, and this pass implemented exactly that. The measurement is exact at every level. The writer is unchanged, and it is documented as exact at the first fold only. No other rationale is attributed to Roland.
+
+### Actions
+- [x] (must-fix) Pooled σ re-admitted σ-less data above the first fold. `c882425`:
+  - `sigma_fold_measure.py` carries the σ-carrying natives' own count and mean (`_State.sigma_n` / `sigma_mean`) through every fold. The two new tests fail on the old code. In the review's case, one fold and two folds both give 2.60 m. Two folds over natives equal one pooling of the σ carriers.
+  - `overview_pyramid.cpp` `kPooled` is unchanged: no new bands, no schema change. The code comment, design §7 and change log (k) say it is exact at the first fold only, and that the fix needs σ-carrier count/mean state in the tile. That fix is deferred to the open σ-rule decision.
+  - The gtest `PooledReAdmitsSigmaLessDataAboveFirstFold` pins the current two-level behaviour and is named for it.
+  - Writers still emit σ as nodata. The plan records the owner quote and the placeholder.
+  - `marine_world_store/marine_world_store/sigma_fold_measure.py`, `marine_bathymetry_store/src/overview_pyramid.cpp`, `docs/world_store_design.md`
+- [x] (must-fix) The fail-closed probe blocked legacy repair. `6da4207`:
+  - `sidecarBandCount` skips unreadable tiles and takes the band count from the first tile that reads.
+  - It refuses only when no tile reads, or when readable tiles disagree on band count.
+  - New tests:
+    - The repair case: first tile corrupt, the rest fine. The multi-band writer still refuses, and the single-band builder rebuilds the sidecar.
+    - The mixed case.
+  - The existing none-readable refusal test still passes.
+  - `marine_bathymetry_store/src/overview_pyramid.cpp`
+- [x] (suggestion) STAC validation cannot run on apt Noble. `91af8fa`:
+  - A validator that cannot load (pystac's bare `ImportError`) is now its own `ValidatorMissing` warning. It says "STAC VALIDATION IS OFF" and names `jsonschema >= 4.18 and referencing`, so it reads differently from a schema host that cannot be reached.
+  - The README documents the version need.
+  - Nothing was installed.
+  - `marine_world_store/marine_world_store/stac_catalog.py`, `marine_world_store/README.md`
+- [x] (suggestion) Source Items had `collection: sources` but no link. The field is dropped, and a comment says to add it together with a link if a `sources/` Collection is ever written. Test added. `8e8bf43`. `marine_world_store/marine_world_store/item_schema.py`
+- [x] (suggestion) `overview_builder_version` did not normalise child inputs. `0f880bc`:
+  - It now hashes through `fingerprint(**document)`.
+  - A child whose inputs cannot be fingerprinted, or that has no inputs document, is an `OverviewItemError` that names it and joins the problem list.
+  - Three tests added.
+  - `marine_world_store/marine_world_store/overview_items.py`
+- [x] (suggestion) The single-band builder took the lock before its path guards. `daa8687`:
+  - Both batch builders now take the exclusive lock inside `buildPyramidCore`, after the directory, native-scan, band-shape and completeness guards, and re-run the cross-schema guard under the lock.
+  - Test: a layer that gets refused gains no `overviews.lock`.
+  - `marine_bathymetry_store/src/overview_pyramid.cpp`
+- [x] (suggestion) A tileless schema record gave an untrue "holds 4-band tiles" refusal. The message now says the record states the schema. Test added. `418a76f`. `marine_bathymetry_store/src/overview_pyramid.cpp`
+- [x] (suggestion) The README over-claimed what the lock covers. The claim is narrowed to the C++ writers, and the README says not to run a batch build beside a regenerate. The `build_parent` docstring says the same. `2ba4d18`. `marine_bathymetry_store/README.md`, `marine_world_store/snakemake/rules/overviews.smk`
+- [x] (suggestion) The σ rule was checked, then the record written separately. `f0b52ca`:
+  - `ensureOverviewSchema` re-checks an existing record at the point of writing.
+  - The residual race (two writers under different rules on an empty directory) is noted in the code and the plan. Per-tile `sigma_fold` records are not checked. No CLI selects a rule, so both stay theoretical.
+  - No deterministic test for the race.
+  - `marine_bathymetry_store/src/overview_pyramid.cpp`
+- [ ] (suggestion) Re-run Codex when its quota resets. Left open: this is the host's job.
+
+### Checks
+- `./core_ws/test.sh marine_bathymetry_store marine_world_store`: 798 tests, 0 errors, 0 failures, 45 skipped.
+  - This includes `test_depth_overview_multiband` at 39/39, and marine_world_store pytest plus flake8/pep257/copyright.
+  - This run's first pass found 4 Python lint issues from this pass. They are fixed in `b05f304`.
+- Nothing pushed (host pushes). The untracked `review-*.md` files and `.cross-model-review.lock` were left as found.
+
+### Next step
+Dispatch `review-code` (pre-push) for a scoped re-check of `b05f304` against round 5. Per round 5's Ship line, a scoped check is enough, not a full round. When the quota allows, re-run Codex.
