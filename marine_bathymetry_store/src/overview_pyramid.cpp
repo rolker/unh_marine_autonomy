@@ -266,6 +266,19 @@ double foldSigma(
         // σ toward zero: a 1000-count σ-less child beside a 1-count σ = 1 m
         // child gave ~0.03 m, a confidence nothing measured. All children
         // without σ is nodata (the any_sigma check above), never zero.
+        //
+        // KNOWN LIMIT — correct at the FIRST fold only. n_i and μ_i here are
+        // the child's COUNT and MEAN bands, and above the first fold those
+        // include σ-less natives the child's own σ left out, so every higher
+        // level re-admits them and σ drifts back toward zero (round-5 review:
+        // (1, 0, σ1), (1000, 0, no σ), (1, 5, σ0.1) pool to 2.60 m in one
+        // fold, 1.01 m through two). Fixing it needs σ-carrier count/mean
+        // state in the tile (new bands, a schema change); that is deferred to
+        // the open σ-rule decision (design §7) — a placeholder until the owner
+        // thinks uncertainty through. The writers emit σ as nodata regardless
+        // (kUndecided), and the test PooledReAdmitsSigmaLessDataAboveFirstFold
+        // pins this behaviour so the eventual fix shows up as a deliberate
+        // test change. sigma_fold_measure.py carries that state and is exact.
         double weight = 0.0, weighted_mean = 0.0;
         for (const std::vector<double> & c : contributors) {
           if (std::isnan(c[kMultiSigmaBand])) {continue;}

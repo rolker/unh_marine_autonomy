@@ -668,3 +668,22 @@ PR. What they change about the notes above:
   `pooled` follow it; design §7 and its change log (j) record it, and note the
   §7 evidence table predates it (re-run owed). The σ rule itself stays open —
   the writers still emit σ as nodata with `sigma_fold: undecided`.
+
+## Implementation notes — round-5 review fix pass (2026-09-25)
+
+The round-5 Local Review (Pre-Push) at `b837fd3` raised two must-fixes and eight
+suggestions. What they change about the notes above:
+
+- **Pooled σ above the first fold (placeholder).** Owner, 2026-09-25, verbatim:
+  "I want to think more deeply about uncertainty at some point, so do what's a
+  good placeholder until that happens". The placeholder: the measurement's
+  `pooled` carries the σ-carrying natives' own count and mean
+  (`_State.sigma_n` / `sigma_mean`) through every fold step, so σ-less data is
+  excluded at every level and folding once or twice over the same natives
+  agrees (tested). The writer's `kPooled` is **unchanged** — no new bands, no
+  schema change: it is documented (code comment, design §7 and change log (k))
+  as exact at the first fold only, because the tile's COUNT/MEAN bands include
+  σ-less children and the next level re-admits them; fixing it needs σ-carrier
+  count/mean state in the tile and is deferred to the open σ-rule decision. A
+  two-level gtest (`PooledReAdmitsSigmaLessDataAboveFirstFold`) pins the current
+  behaviour. Writers keep emitting σ as nodata.

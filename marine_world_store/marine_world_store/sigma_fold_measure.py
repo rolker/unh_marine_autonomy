@@ -48,8 +48,13 @@ The candidates, exactly as section 7 lists them:
     over the children S that carry a sigma:
     ``sigma^2 = sum_S(n_i (sigma_i^2 + (mu_i - mu_S)^2)) / sum_S(n_i)``, with
     ``mu_S`` the count-weighted mean of those children. A child with no sigma
-    is left out of the sigma fold (owner decision 2026-09-25), the same
-    arithmetic ``marine_bathymetry_store``'s ``kPooled`` writes.
+    is left out of the sigma fold (owner decision 2026-09-25). ``n_i`` and
+    ``mu_i`` are the child's sigma-carrying natives' own count and mean,
+    carried forward through every fold step, so sigma-less data stays out at
+    every level and folding once or twice over the same natives agrees. At the
+    first fold this is the arithmetic ``marine_bathymetry_store``'s ``kPooled``
+    writes; above it the writer differs, because its tile holds no sigma-carrier
+    count/mean (see design section 7).
 ``max_child``
     The largest child sigma.
 ``mean_child``
@@ -134,6 +139,21 @@ class _State:
     ss: np.ndarray     # sum of their squares
     mean: np.ndarray   # the MEAN band this cell would hold
     sigma: Dict[str, np.ndarray]   # the sigma band, per candidate rule
+    #: How many native cells under this cell carry a sigma, and their mean --
+    #: the ``pooled`` rule's own count and mean, carried forward separately
+    #: from ``n``/``mean`` so a sigma-less child stays out of the sigma fold at
+    #: EVERY level, not only the first. ``None`` (a hand-built state) means
+    #: "every populated cell whose pooled sigma is finite carries one, summarised
+    #: by ``n``/``mean``" -- which is what a native or first-fold cell is.
+    sigma_n: Optional[np.ndarray] = None
+    sigma_mean: Optional[np.ndarray] = None
+
+    def __post_init__(self) -> None:
+        carries = (self.n > 0) & np.isfinite(self.sigma['pooled'])
+        if self.sigma_n is None:
+            self.sigma_n = np.where(carries, self.n, 0.0)
+        if self.sigma_mean is None:
+            self.sigma_mean = np.where(carries, self.mean, np.nan)
 
 
 def _initial_state(depth: np.ndarray, sigma: np.ndarray) -> _State:
@@ -194,6 +214,8 @@ def _fold(state: _State) -> _State:
     mean = _blocks(state.mean)
     contributes = n > 0
 
+    sigma_n = _blocks(state.sigma_n)
+    sigma_mean = _blocks(state.sigma_mean)
     parent_n = n.sum(axis=-1)
     parent_s = s.sum(axis=-1)
     parent_ss = ss.sum(axis=-1)
@@ -214,14 +236,22 @@ def _fold(state: _State) -> _State:
             # 2026-09-25): a sigma-less child is left out of the sigma fold --
             # its count and its mean alike. Counting it as zero within-variance
             # while adding its count pulled the pooled sigma toward zero.
-            weights = np.where(usable, n, 0.0)
+            # The weights and means are the sigma carriers' OWN (sigma_n,
+            # sigma_mean), not the cell's n/mean: those include sigma-less
+            # natives, and using them one level up re-admitted exactly the
+            # data the first fold left out (round-5 review).
+            usable = (sigma_n > 0) & np.isfinite(child_sigma)
+            weights = np.where(usable, sigma_n, 0.0)
             weight = weights.sum(axis=-1)
             with np.errstate(invalid='ignore', divide='ignore'):
-                mean_s = (np.where(usable, mean, 0.0) * weights).sum(
+                mean_s = (np.where(usable, sigma_mean, 0.0) * weights).sum(
                     axis=-1) / weight
             within = np.where(usable, child_sigma, 0.0) ** 2
             between = np.where(
-                usable, (mean - mean_s[..., None]) ** 2, 0.0)
+                usable, (sigma_mean - mean_s[..., None]) ** 2, 0.0)
+            any_sigma = usable.any(axis=-1)
+            pooled_n = weight
+            pooled_mean = np.where(weight > 0, mean_s, np.nan)
             accum = (weights * (within + between)).sum(axis=-1)
             with np.errstate(invalid='ignore', divide='ignore'):
                 folded = np.sqrt(
@@ -231,7 +261,7 @@ def _fold(state: _State) -> _State:
         sigma[rule] = np.where(any_sigma, folded, np.nan)
 
     return _State(n=parent_n, s=parent_s, ss=parent_ss, mean=parent_mean,
-                  sigma=sigma)
+                  sigma=sigma, sigma_n=pooled_n, sigma_mean=pooled_mean)
 
 
 def _true_spread(state: _State) -> np.ndarray:

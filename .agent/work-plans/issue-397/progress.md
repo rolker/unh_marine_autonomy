@@ -957,7 +957,7 @@ Gemini output was checked item by item. None survives:
 Lens B's STAC-validation point is the known jsonschema-4.10 gap from round 3, re-rated to a suggestion. It is now reproduced as permanent on apt Noble, with the cause named.
 
 ### Findings
-- [ ] (must-fix) Pooled σ drops a σ-less child only at the FIRST fold. The parent's COUNT and MEAN bands still include that child, and the next level's `kPooled` uses them as `n_i` and `μ_i`, so the σ-less data comes back in and pulls σ toward zero. That is the effect the 2026-09-25 owner decision removed. Reproduced:
+- [x] (must-fix) Pooled σ drops a σ-less child only at the FIRST fold. The parent's COUNT and MEAN bands still include that child, and the next level's `kPooled` uses them as `n_i` and `μ_i`, so the σ-less data comes back in and pulls σ toward zero. That is the effect the 2026-09-25 owner decision removed. Reproduced:
   - Natives: (1, 0, σ1), (1000, 0, no σ), (1, 5, σ0.1).
   - One level gives σ = 2.60; the same natives over two levels give 1.01.
   - The Python `pooled` has the same flaw, so the measurement cannot catch it.

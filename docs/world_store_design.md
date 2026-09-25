@@ -228,6 +228,17 @@ revisions concept are the later upstream contribution.
   Σ_S n_i with μ_S the count-weighted mean of those children; a child with no σ is left out
   of the σ fold, and a parent with none is nodata — Roland, 2026-09-25); max child σ; mean
   child σ; and the literal "mean and max" as two bands.
+  **Pooled is exact at the first fold only, in the writer** (placeholder; Roland,
+  2026-09-25: "I want to think more deeply about uncertainty at some point, so do what's a
+  good placeholder until that happens"). Excluding σ-less data at every level needs each
+  tile to carry its σ-carrying natives' own count and mean; the 4-band tile carries only
+  COUNT and MEAN over *all* its natives, so one level up the writer's `kPooled` weights by
+  those and re-admits the σ-less data the first fold left out (children (1, 0 m, σ 1 m),
+  (1000, 0 m, no σ), (1, 5 m, σ 0.1 m) pool to 2.60 m in one fold and 1.01 m through two).
+  Carrying that state is a schema change (new bands) and is deferred to this open σ-rule
+  decision; a test pins the current two-level behaviour. The measurement's `pooled` carries
+  the σ-carrier count and mean forward and is exact at every step, so the evidence below is
+  not affected by the writer's limit. Writers emit σ as nodata regardless.
   The rule is decided from a measurement over the store's native depth tiles — how often each
   candidate's σ covers the true spread of the native cells under the parent — in the style of
   spine decision 2's own `fold_measure` evidence. Until then the 4-band schema is reserved and
@@ -459,6 +470,11 @@ product and source frames a given import declares are still verified case by cas
   pulls the pooled σ toward zero — a 1000-count σ-less child beside a 1-count σ = 1 m child
   gave ≈ 0.03 m, a confidence nothing measured. The writer's `kPooled` and the measurement's
   `pooled` both follow it; the §7 evidence table predates it. The rule itself **stays open**.
+  (k) Placeholder for the multi-level case (Roland, 2026-09-25: "I want to think more deeply
+  about uncertainty at some point, so do what's a good placeholder until that happens"): the
+  measurement carries the σ-carriers' count and mean through every fold step; the writer's
+  `kPooled` does not (no new bands, no schema change) and is documented as exact at the
+  first fold only — see §7.
 
 - 2026-09-22 (fix pass) — **decided by the operator** (Roland, 2026-09-22), from the
   `datetime` defect implementing rev 3 exposed: (h) Part 2 line 2 — the promised *time

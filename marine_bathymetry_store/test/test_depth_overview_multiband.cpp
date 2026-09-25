@@ -285,6 +285,42 @@ TEST(MultiBandFold, PooledLeavesChildrenWithoutSigmaOutOfTheSigmaFold)
     9.0);
 }
 
+TEST(MultiBandFold, PooledReAdmitsSigmaLessDataAboveFirstFold)
+{
+  // PINS A KNOWN LIMIT, not a desired behaviour. kPooled pools correctly at the
+  // first fold only: a tile carries no σ-carrier count/mean, so one level up it
+  // weights by the COUNT/MEAN bands, which include the σ-less children the
+  // first fold left out. Fixing it needs new bands (a schema change) and is
+  // deferred to the open σ-rule decision (design §7; owner, 2026-09-25: "I want
+  // to think more deeply about uncertainty at some point, so do what's a good
+  // placeholder until that happens"). Writers still emit σ as nodata. When the
+  // fix lands, this test should change to expect `one_fold` from `two_folds`.
+  const std::vector<double> a = cell(0.0, 0.0, 1.0, 1.0);
+  const std::vector<double> blind = cell(0.0, 0.0, 1000.0, kNaN);
+  const std::vector<double> b = cell(5.0, 5.0, 1.0, 0.1);
+
+  const double one_fold =
+    det::depthMultiBandFold({a, blind, b}, mbs::SigmaFold::kPooled)[
+    det::kMultiSigmaBand];
+  EXPECT_DOUBLE_EQ(one_fold, std::sqrt((1.0 + 6.25 + 0.01 + 6.25) / 2.0));
+
+  const std::vector<double> first =
+    det::depthMultiBandFold({a, blind}, mbs::SigmaFold::kPooled);
+  EXPECT_DOUBLE_EQ(first[det::kMultiSigmaBand], 1.0);  // first fold: correct
+  EXPECT_DOUBLE_EQ(first[det::kMultiCountBand], 1001.0);  // σ-less count kept
+  const double two_folds =
+    det::depthMultiBandFold({first, b}, mbs::SigmaFold::kPooled)[
+    det::kMultiSigmaBand];
+  // Current behaviour: the 1000 σ-less cells re-enter via COUNT/MEAN.
+  const double mu = 5.0 / 1002.0;
+  EXPECT_DOUBLE_EQ(
+    two_folds,
+    std::sqrt(
+      (1001.0 * (1.0 + mu * mu) + 1.0 * (0.01 + (5.0 - mu) * (5.0 - mu))) /
+      1002.0));
+  EXPECT_LT(two_folds, one_fold) << "the known limit: σ drifts toward zero";
+}
+
 TEST(MultiBandFold, SigmaStaysNodataWhenNoContributorCarriesOne)
 {
   // No uncertainty information must read as nodata, never as zero uncertainty —

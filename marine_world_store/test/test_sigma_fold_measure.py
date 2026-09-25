@@ -175,6 +175,75 @@ def test_pooled_is_not_pulled_down_by_a_heavy_sigma_less_child():
     assert folded.sigma['pooled'][0, 0] == pytest.approx(1.0)
 
 
+def _hand_state(n, mean, sigma):
+    n = np.asarray(n, dtype=float)
+    mean = np.asarray(mean, dtype=float)
+    sigma = np.asarray(sigma, dtype=float)
+    d = np.where(n > 0, mean, 0.0)
+    return sfm._State(n=n, s=n * d, ss=n * d * d, mean=mean,
+                      sigma={rule: sigma for rule in sfm.CANDIDATES})
+
+
+def test_pooled_folded_once_or_twice_over_the_same_children_agrees():
+    """
+    A sigma-less child stays out of the pooled sigma at EVERY level.
+
+    Round-5 review's reproduction: children (1, 0 m, sigma 1), (1000, 0 m, no
+    sigma) and (1, 5 m, sigma 0.1). Pooled in one fold they give 2.60 m.
+    Folded through an intermediate level the parent's n/mean include the 1000
+    sigma-less cells, and pooling on those one level up pulled sigma to 1.01 m.
+    Carrying the sigma carriers' own count and mean forward makes the two
+    agree.
+    """
+    nan = np.nan
+    expected = math.sqrt(((1.0 + 2.5 ** 2) + (0.01 + 2.5 ** 2)) / 2.0)
+
+    once = sfm._fold(_hand_state(
+        [[1.0, 1000.0], [1.0, 0.0]],
+        [[0.0, 0.0], [5.0, nan]],
+        [[1.0, nan], [0.1, nan]]))
+    assert once.sigma['pooled'][0, 0] == pytest.approx(expected)
+
+    # The same three children, spread over two first-fold parents.
+    twice = sfm._fold(sfm._fold(_hand_state(
+        [[1.0, 1000.0, 1.0, 0.0],
+         [0.0, 0.0, 0.0, 0.0],
+         [0.0, 0.0, 0.0, 0.0],
+         [0.0, 0.0, 0.0, 0.0]],
+        [[0.0, 0.0, 5.0, nan],
+         [nan, nan, nan, nan],
+         [nan, nan, nan, nan],
+         [nan, nan, nan, nan]],
+        [[1.0, nan, 0.1, nan],
+         [nan, nan, nan, nan],
+         [nan, nan, nan, nan],
+         [nan, nan, nan, nan]])))
+    assert twice.sigma['pooled'][0, 0] == pytest.approx(expected)
+
+
+def test_pooled_over_natives_matches_one_pooling_of_the_sigma_carriers():
+    """
+    Two fold steps over native cells equal one pooling of every native that
+    carries a sigma -- the law of total variance, with sigma-less natives
+    excluded at both steps.
+    """
+    rng = np.random.default_rng(397)
+    depth = rng.normal(-12.0, 3.0, size=(4, 4))
+    sigma = rng.uniform(0.05, 0.8, size=(4, 4))
+    sigma[0, 1] = np.nan
+    sigma[2, 2] = np.nan
+    sigma[3, 0] = np.nan
+    carriers = np.isfinite(sigma)
+    mu = depth[carriers].mean()
+    expected = math.sqrt(float(np.mean(
+        sigma[carriers] ** 2 + (depth[carriers] - mu) ** 2)))
+
+    state = sfm._initial_state(depth, sigma)
+    state = sfm._fold(sfm._fold(state))
+    assert state.sigma['pooled'][0, 0] == pytest.approx(expected)
+    assert state.sigma_n[0, 0] == pytest.approx(carriers.sum())
+
+
 def test_nodata_depth_cells_do_not_contribute():
     """Skip no-data cells: a NaN depth is the store's sentinel."""
     depth = np.array([[-4.0, np.nan], [np.nan, np.nan]])
