@@ -76,6 +76,17 @@ def _tile(directory: Path, name: str, content: bytes = b'tile') -> Path:
     return path
 
 
+def _rev3_overviews(layer: Path) -> Path:
+    """Make ``layer/overviews`` a rev-3 sidecar: its schema record, no tiles."""
+    overviews = layer / 'overviews'
+    overviews.mkdir(parents=True, exist_ok=True)
+    (overviews / fingerprint_sidecar.OVERVIEW_SCHEMA_FILENAME).write_text(
+        json.dumps({'schema': fingerprint_sidecar.OVERVIEW_SCHEMA_NAME,
+                    'bands': ['min', 'mean', 'count', 'sigma'],
+                    'sigma_fold': 'undecided', 'sigma_band_written': False}))
+    return overviews
+
+
 # --- the fingerprint pre-step -----------------------------------------------
 
 
@@ -295,7 +306,7 @@ def test_a_layer_reports_its_native_tiles_and_overviews_apart(tmp_path):
     the derived product the DAG rebuilds.
     """
     _tile(tmp_path, '13_1_1.tif')
-    derived = _tile(tmp_path / 'overviews', '12_0_0.tif')
+    derived = _tile(_rev3_overviews(tmp_path), '12_0_0.tif')
     fingerprint_sidecar.record_tile(derived)
     reports = fingerprint_sidecar.refresh_layer(tmp_path)
     assert set(reports) == {'native', 'overviews'}
@@ -306,12 +317,55 @@ def test_a_layer_reports_its_native_tiles_and_overviews_apart(tmp_path):
 def test_a_first_refresh_removes_every_overview(tmp_path):
     """No sidecars prove any overview was built from these natives: redo all."""
     native = _tile(tmp_path, '13_1_1.tif', b'native')
-    derived = _tile(tmp_path / 'overviews', '12_0_0.tif', b'derived')
-    record = _tile(tmp_path / 'overviews', '12_0_0.json', b'{}')
+    overviews = _rev3_overviews(tmp_path)
+    derived = _tile(overviews, '12_0_0.tif', b'derived')
+    record = _tile(overviews, '12_0_0.json', b'{}')
     reports = fingerprint_sidecar.refresh_layer(tmp_path)
     assert reports['overviews'].removed == [str(derived)]
     assert not derived.exists() and not record.exists()
     assert native.exists()
+
+
+def _snapshot(directory: Path):
+    """Every file under ``directory``: (relative path, bytes, mtime)."""
+    return sorted((p.relative_to(directory), p.read_bytes(),
+                   p.stat().st_mtime_ns)
+                  for p in directory.rglob('*') if p.is_file())
+
+
+@pytest.mark.parametrize('record', [
+    None, '{ not json', json.dumps({'schema': 'something-else/1',
+                                    'bands': ['depth', 'sigma']})])
+def test_a_legacy_overviews_is_refused_untouched(tmp_path, record):
+    """
+    Refuse an ``overviews/`` that is not rev 3's; touch nothing in the layer.
+
+    Regression: a legacy tree has no ``.fp`` sidecars, so the derived refresh
+    removed every one of its tiles, and the C++ cross-schema guard then saw an
+    empty directory and let the rebuild through -- a legacy directory
+    emptied, where the rule is refused and left untouched.
+    """
+    _tile(tmp_path, '13_1_1.tif', b'native')
+    overviews = tmp_path / 'overviews'
+    _tile(overviews, '12_0_0.tif', b'legacy 2-band tile')
+    if record is not None:
+        (overviews / fingerprint_sidecar.OVERVIEW_SCHEMA_FILENAME).write_text(
+            record)
+    before = _snapshot(tmp_path)
+    with pytest.raises(fingerprint_sidecar.NotRev3OverviewsError,
+                       match='refusing to refresh'):
+        fingerprint_sidecar.refresh_layer(tmp_path)
+    with pytest.raises(fingerprint_sidecar.NotRev3OverviewsError):
+        fingerprint_sidecar.refresh_directory(overviews, derived=True)
+    assert _snapshot(tmp_path) == before
+
+
+def test_an_overviews_with_no_tiles_needs_no_schema_record(tmp_path):
+    """Nothing to remove, nothing to refuse: an empty sidecar refreshes."""
+    (tmp_path / 'overviews').mkdir()
+    _tile(tmp_path, '13_1_1.tif')
+    reports = fingerprint_sidecar.refresh_layer(tmp_path)
+    assert reports['native'].created == 1
 
 
 @pytest.mark.parametrize('damage', ['changed', 'no-sidecar', 'unreadable'])
@@ -325,7 +379,7 @@ def test_a_derived_tile_not_built_from_what_is_there_is_removed(
     parents were rebuilt FROM its stale content (a restore from a backup, a
     partial copy, bit rot).
     """
-    overviews = tmp_path / 'overviews'
+    overviews = _rev3_overviews(tmp_path)
     derived = _tile(overviews, '12_0_0.tif', b'built')
     record = _tile(overviews, '12_0_0.json', b'{}')
     fingerprint_sidecar.record_tile(derived)
@@ -993,6 +1047,29 @@ def test_a_derived_tile_at_or_finer_than_fine_level_is_refused(
     output = workflow.refused()
     assert stray in output and 'fine_level=13' in output
     assert (overviews / stray).is_file()
+    assert workflow.log.read_text() == ''
+
+
+def test_a_legacy_overviews_survives_the_regenerate_untouched(workflow):
+    """
+    Refuse a layer whose ``overviews/`` is a legacy 2-band tree, byte for byte.
+
+    Regression: the fingerprint pre-step ran before any C++ guard and removed
+    every legacy tile (none has a ``.fp``); the writers' cross-schema guard
+    then saw an empty directory and built rev-3 tiles in its place.
+    """
+    gdal = pytest.importorskip('osgeo.gdal')
+    workflow.native('13_0_0.tif')
+    overviews = workflow.layer / 'overviews'
+    overviews.mkdir()
+    dataset = gdal.GetDriverByName('GTiff').Create(
+        str(overviews / '12_0_0.tif'), 128, 128, 2, gdal.GDT_Float64)
+    dataset.SetGeoTransform((-70.0, 0.001, 0.0, 42.1, 0.0, -0.001))
+    dataset = None
+    before = _snapshot(overviews)
+    output = workflow.refused()
+    assert 'refusing to refresh' in output
+    assert _snapshot(overviews) == before
     assert workflow.log.read_text() == ''
 
 

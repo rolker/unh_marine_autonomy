@@ -66,7 +66,10 @@ its sidecar, and the DAG rebuilds it as a missing product.
 The first refresh over a layer with no sidecars therefore marks every native
 tile as changed and removes every derived tile: with nothing recorded, there is
 nothing to prove any product was built from what is there now, so the whole
-pyramid is rebuilt once.
+pyramid is rebuilt once. That holds only for a rev-3 ``overviews/`` (one whose
+``overview_schema.json`` names the multi-band schema): a directory holding
+tiles and no such record -- a legacy tree -- is refused before anything is
+touched, never emptied (:func:`refuse_non_rev3_overviews`).
 
 **This is not section 9's fingerprint.** That one is over a product's *inputs*
 (sources, revisions, decoder and builder versions) and lives in the tile's Item;
@@ -108,6 +111,62 @@ _SUPERSEDED_SCHEMAS = frozenset({'tile-content-fingerprint/1'})
 SUFFIX = '.fp'
 
 _CHUNK = 1 << 20
+
+#: The rev-3 overview sidecar's schema record, as the C++ multi-band writers
+#: spell it (``overview_pyramid.cpp``). Both writers leave it beside the tiles
+#: before the first one is published, so a rev-3 ``overviews/`` holding tiles
+#: always carries it.
+OVERVIEW_SCHEMA_FILENAME = 'overview_schema.json'
+OVERVIEW_SCHEMA_NAME = 'depth-overview-multiband/1'
+_OVERVIEW_BAND_COUNT = 4
+
+
+class NotRev3OverviewsError(RuntimeError):
+    """An ``overviews/`` this module must not touch: it is not rev 3's."""
+
+
+def refuse_non_rev3_overviews(directory: PathLike) -> None:
+    """
+    Refuse a derived directory that is not a rev-3 multi-band sidecar.
+
+    The derived refresh REMOVES every tile it cannot prove it built, and a
+    legacy (pre-rev-3) ``overviews/`` has no sidecars at all -- so without this
+    check the first refresh emptied it, and the C++ writers' own cross-schema
+    guard then saw an empty directory and let the rebuild through. A legacy
+    directory is refused and left untouched, never converted or emptied.
+
+    Passes an ``overviews/`` holding no tiles (nothing to remove), or one
+    whose schema record names the rev-3 schema. Anything else -- tiles with
+    no record, an unreadable record, another schema's record -- raises
+    :class:`NotRev3OverviewsError` before anything is read or written.
+    """
+    directory = Path(directory)
+    record = directory / OVERVIEW_SCHEMA_FILENAME
+    if not record.exists() and not list(layout.tiles_in_dir(directory)):
+        return
+    reason = None
+    if not record.exists():
+        reason = f'it holds tiles and no {OVERVIEW_SCHEMA_FILENAME}'
+    else:
+        try:
+            document = json.loads(record.read_text())
+        except (OSError, ValueError) as exc:
+            reason = f'its {OVERVIEW_SCHEMA_FILENAME} cannot be read ({exc})'
+        else:
+            bands = document.get('bands') if isinstance(document, dict) \
+                else None
+            if not isinstance(document, dict) \
+                    or document.get('schema') != OVERVIEW_SCHEMA_NAME \
+                    or not isinstance(bands, list) \
+                    or len(bands) != _OVERVIEW_BAND_COUNT:
+                reason = (f'its {OVERVIEW_SCHEMA_FILENAME} is not a '
+                          f'{OVERVIEW_SCHEMA_NAME} record')
+    if reason is not None:
+        raise NotRev3OverviewsError(
+            f'refusing to refresh {directory}: {reason}, so it is not a rev-3 '
+            'overview sidecar (a legacy tree, or a mis-pointed layer path). '
+            'Nothing was touched; the rev-3 store does not convert or empty '
+            'a legacy directory -- move it aside or point at the right layer')
 
 
 def sidecar_path(tile: PathLike) -> Path:
@@ -289,11 +348,17 @@ def refresh_directory(
 
     :param derived: the directory holds DERIVED tiles (``overviews/``): one
         whose content is not the recorded content is removed, not advanced.
+        A derived directory that is not a rev-3 sidecar is refused first
+        (:func:`refuse_non_rev3_overviews`), untouched.
     """
     directory = Path(directory)
     report = RefreshReport()
     if not directory.is_dir():
         raise OSError(f'not a directory: {directory}')
+    if derived:
+        # Before anything is read or written: this pass removes what it
+        # cannot prove it built, and a legacy tree has nothing recorded.
+        refuse_non_rev3_overviews(directory)
     tiles = sorted(layout.tiles_in_dir(directory))
     for tile in tiles:
         if tile.is_symlink():
@@ -321,6 +386,9 @@ def refresh_layer(layer_dir: PathLike) -> Dict[str, RefreshReport]:
     reports = {}
     overviews = layout.overviews_dir(layer_dir)
     if overviews.is_dir():
+        # Checked before the NATIVE tiles are refreshed too, so a refused
+        # layer is left exactly as it was found -- no mtime moved, no .fp.
+        refuse_non_rev3_overviews(overviews)
         reports['overviews'] = refresh_directory(overviews, derived=True)
     reports['native'] = refresh_directory(layer_dir)
     return reports
