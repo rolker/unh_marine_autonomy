@@ -118,7 +118,7 @@ COLLECTION_HREF = f'./{layout.COLLECTION_FILENAME}'
 
 def tile_item_links() -> List[Dict[str, str]]:
     """
-    The links every tile Item carries: to its Collection, as parent and root.
+    Return the links every tile Item carries: its Collection, parent and root.
 
     A cell's Collection is the root of its own self-contained catalog: there
     is no store-wide catalog above it yet, so ``root`` and ``parent`` both

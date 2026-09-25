@@ -176,7 +176,7 @@ def test_a_split_missing_its_start_or_duration_is_refused(tmp_path, missing):
         f'      message_count: 6\n'
         f'    - path: bag_1.mcap\n'
         + second +
-        f'      message_count: 6\n'))
+        '      message_count: 6\n'))
     with pytest.raises(TimeIntervalError) as caught:
         source_time.bag_interval(bag)
     message = str(caught.value)
