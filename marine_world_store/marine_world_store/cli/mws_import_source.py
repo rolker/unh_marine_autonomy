@@ -47,6 +47,7 @@ and stays where it is. Annexing it (prototype component 10) is future work.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -118,7 +119,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         recorder=args.recorder,
         start_datetime=start,
         end_datetime=end,
-        href=str(path),
+        # Absolute: the Item is written under <root>/sources/, and a
+        # relative href resolves against the Item's own location, not
+        # against wherever this command was run from.
+        href=os.path.abspath(path),
         notes=args.notes,
     )
     written_path, changed = stac_catalog().write_item(

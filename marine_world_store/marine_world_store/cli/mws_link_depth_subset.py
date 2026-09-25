@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -203,7 +204,9 @@ def resolve_sources(entries, start=None, end=None):
             recorder=entry.get('recorder'),
             start_datetime=entry_start,
             end_datetime=entry_end,
-            href=str(path),
+            # Absolute: the Item lives under <root>/sources/, and a relative
+            # href resolves against the Item's location, not this cwd.
+            href=os.path.abspath(path),
         ))
         print(f'source {path.name}: {identifier} '
               f'({entry_start} .. {entry_end})')

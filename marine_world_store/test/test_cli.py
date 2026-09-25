@@ -102,6 +102,24 @@ def test_import_source_writes_the_source_item(tmp_path, store_root):
     assert properties['datetime'] is None
 
 
+def test_import_source_records_an_absolute_href_for_a_relative_path(
+        tmp_path, store_root, monkeypatch):
+    """
+    A relative invocation path is recorded absolute.
+
+    Regression: it was stored verbatim, and a relative href inside
+    ``<root>/sources/`` resolves against that directory, not the cwd.
+    """
+    pytest.importorskip('pystac', reason='declared dependency; run rosdep')
+    bag = make_bag(tmp_path / 'work' / 'bag')
+    monkeypatch.chdir(tmp_path / 'work')
+    assert mws_import_source.main(['bag']) == 0
+    identifier = source_identity.bag_source_id(bag)
+    path = layout.sources_dir(store_root) / f'{identifier}.json'
+    href = json.loads(path.read_text())['assets']['source']['href']
+    assert href == str(bag)
+
+
 def test_import_source_refuses_an_undated_bag(tmp_path, store_root):
     """A source nobody can date is a provenance defect; nothing is written."""
     bag = make_bag(tmp_path / 'bag', dated=False)
@@ -153,6 +171,15 @@ def test_link_subset_counts_a_repeated_source_once(tmp_path, capsys):
     assert ids == [source_identity.bag_source_id(bag)]
     assert len(items) == 1 and len(intervals) == 1
     assert 'counted once' in capsys.readouterr().out
+
+
+def test_link_subset_records_an_absolute_href_for_a_relative_path(
+        tmp_path, monkeypatch):
+    """A relative source path is recorded absolute, as the import does."""
+    bag = make_bag(tmp_path / 'work' / 'bag')
+    monkeypatch.chdir(tmp_path / 'work')
+    _, items, _ = mws_link_depth_subset.resolve_sources([{'path': 'bag'}])
+    assert items[0]['assets']['source']['href'] == str(bag)
 
 
 def test_link_subset_global_interval_never_overrides_a_recorded_one(
