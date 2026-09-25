@@ -1032,3 +1032,30 @@ Lens B's STAC-validation point is the known jsonschema-4.10 gap from round 3, re
 
 ### Next step
 Dispatch `review-code` (pre-push) for a scoped re-check of `b05f304` against round 5. Per round 5's Ship line, a scoped check is enough, not a full round. When the quota allows, re-run Codex.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-09-25 14:35 -04:00
+**By**: Claude Code Agent (Claude Opus 5.5)
+
+Round 6: external cross-model review of branch `feature/issue-397` at `b4084d0` (Gemini 13:04, Codex 13:50 after its usage limit reset), in place of an owner read. Each claim was checked against the code; everything confirmed is introduced by this PR. Owner decision 2026-09-25: fix all ten below in one pass, then a quick check of that pass only (no full round 7), then push.
+
+### Actions
+- [ ] (must-fix, Codex 1) `snakemake/Snakefile` ~L366 runs `mws_refresh_fingerprints` before any C++ guard; `fingerprint_sidecar.refresh_tile` (derived=True, ~L215-250) deletes every overview tile without a `.fp`, which is every tile of a legacy `overviews/`; the C++ `refuseCrossSchemaSidecar` then sees an empty dir and passes. Refuse a non-rev-3 `overviews/` in the refresh step itself (or run the schema check before it) so a legacy dir is refused untouched, never emptied. Test: a legacy 2-band `overviews/` survives the regenerate entry point byte-for-byte and the run is refused.
+- [ ] (must-fix, Codex 3) `depth_subset.py` ~L198-202: the adapter's `fingerprint_inputs` omit the raster it adapts, so re-cleaned/recompiled pixels keep the same fingerprint. Add the source tile's content identity (its complete producing fingerprint, or a content digest) to the inputs. Test: changed tile bytes with unchanged sources give a different fingerprint.
+- [ ] (must-fix, Codex 4) `revisions.py` ~L161-163 sets `collection: revisions` with `links: []`; STAC 1.0 requires a `rel: collection` link when `collection` is set, and no revisions Collection exists; `write_revision` never validates. Drop the `collection` field until a Collection exists (as was done for source Items in `8e8bf43`). Test: a written revision validates.
+- [ ] (must-fix, Codex 5) `cli/mws_import_source.py` ~L92/L120-121 stores a relative source path verbatim as `href` inside `<root>/sources/`, where consumers resolve it against the wrong directory; the subset CLI's `resolve_sources` has the same defect. Resolve to an absolute path (or compute the href relative to the Item's own location) in both. Test with a relative invocation path.
+- [ ] (Codex 2) `snakemake/rules/overviews.smk` `rule build_parent` (~L132-149) has no input or param tied to the builder's identity, so an updated fold implementation never re-runs existing parents. Add a `params:` value carrying the builder's version/content identity so a changed builder re-triggers the rule, independent of its install path.
+- [ ] (Gemini 2) the batch builder (`buildLevel`, ~L895-982) writes no per-tile `.json`, so a later per-parent fold over batch-built children gets no child geometric error and substitutes the child GSD, understating error (uma-ADR-0013 D2 monotonicity). Only reachable by mixing the two builders on one layer, which nothing forbids. Have the batch builder write the same per-tile record the per-parent writer does.
+- [ ] (Gemini 4) `buildMultiBandDepthOverviewParent` (~L1737-1753) renames the `.tif` into place before writing its `.json`; a metadata failure leaves an unprovable raster. Write the record first, or remove the published `.tif` when the record write fails.
+- [ ] (Gemini 6) `contributorMean` (~L210-215) checks only `isnan`, so a ±inf MEAN reaches the weighted accumulation; `foldSigma` never guards `s >= 0`. Use `std::isfinite` and treat a negative σ as invalid.
+- [ ] (Gemini 7) `fsyncPath` (~L600-617) opens without `O_CLOEXEC`; add it, as `LayerWriterLock` does.
+- [ ] (Gemini 8) `.github/workflows/ros-base-docker.yml` ~L32-35 copies `*.list` under `set -euo pipefail` with no nullglob guard; use `shopt -s nullglob` plus an explicit empty check.
+
+### Not acted on
+- Gemini 1: `buildLevel` dangling pointers — refuted a third time; `child_tiles.reserve` is at L943 (Gemini's quote omitted it).
+- Gemini 3: missing `overviews/` crash — false; `gridsInDir` returns empty for a non-directory (`coverage_manifest.cpp:110-112`).
+- Gemini 5: Python steps take no layer lock — already documented in `marine_bathymetry_store/README.md`; not a new defect.
+
+### Next step
+Dispatch `address-findings` for the ten actions, then a Codex check scoped to that fix pass, then the host pushes (owner-approved).
