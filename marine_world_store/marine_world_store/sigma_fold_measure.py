@@ -44,8 +44,12 @@ anything this module touches; the writers keep emitting nodata with
 The candidates, exactly as section 7 lists them:
 
 ``pooled``
-    Within-child variance plus the spread of the child means, count-weighted:
-    ``sigma^2 = sum(n_i (sigma_i^2 + (mu_i - mu)^2)) / sum(n_i)``.
+    Within-child variance plus the spread of the child means, count-weighted,
+    over the children S that carry a sigma:
+    ``sigma^2 = sum_S(n_i (sigma_i^2 + (mu_i - mu_S)^2)) / sum_S(n_i)``, with
+    ``mu_S`` the count-weighted mean of those children. A child with no sigma
+    is left out of the sigma fold (owner decision 2026-09-25), the same
+    arithmetic ``marine_bathymetry_store``'s ``kPooled`` writes.
 ``max_child``
     The largest child sigma.
 ``mean_child``
@@ -206,17 +210,22 @@ def _fold(state: _State) -> _State:
         elif rule == 'mean_child':
             folded = _weighted(child_sigma, np.where(contributes, n, 0.0))
         else:   # pooled
-            # A child with no sigma still contributes its mean's distance from
-            # the pooled mean; dropping it would understate the spread the band
-            # exists to report. Its within-child variance counts as zero.
+            # Over the children that carry a sigma ONLY (owner decision
+            # 2026-09-25): a sigma-less child is left out of the sigma fold --
+            # its count and its mean alike. Counting it as zero within-variance
+            # while adding its count pulled the pooled sigma toward zero.
+            weights = np.where(usable, n, 0.0)
+            weight = weights.sum(axis=-1)
+            with np.errstate(invalid='ignore', divide='ignore'):
+                mean_s = (np.where(usable, mean, 0.0) * weights).sum(
+                    axis=-1) / weight
             within = np.where(usable, child_sigma, 0.0) ** 2
             between = np.where(
-                contributes, (mean - parent_mean[..., None]) ** 2, 0.0)
-            weights = np.where(contributes, n, 0.0)
+                usable, (mean - mean_s[..., None]) ** 2, 0.0)
             accum = (weights * (within + between)).sum(axis=-1)
             with np.errstate(invalid='ignore', divide='ignore'):
                 folded = np.sqrt(
-                    np.where(parent_n > 0, accum / parent_n, np.nan))
+                    np.where(weight > 0, accum / weight, np.nan))
         # No contributor carried a sigma at all: nodata, never zero. Zero
         # uncertainty is the most dangerous number this band could hold.
         sigma[rule] = np.where(any_sigma, folded, np.nan)

@@ -219,8 +219,7 @@ double contributorMean(const std::vector<double> & cell)
 // carries a σ at all — "no uncertainty information" must read as nodata, never
 // as zero uncertainty, which is the most dangerous number this band could hold.
 double foldSigma(
-  const std::vector<std::vector<double>> & contributors, SigmaFold rule,
-  double pooled_mean, double total_count)
+  const std::vector<std::vector<double>> & contributors, SigmaFold rule)
 {
   const double nan = std::numeric_limits<double>::quiet_NaN();
   if (rule == SigmaFold::kUndecided) {
@@ -258,19 +257,34 @@ double foldSigma(
       }
     case SigmaFold::kPooled: {
         // Within-child variance plus the spread of the child means, weighted by
-        // lineage: σ² = Σ n_i (σ_i² + (μ_i − μ)²) / Σ n_i. A contributor with no
-        // σ still contributes its mean's distance from the pooled mean (its
-        // within-variance counts as 0) — dropping it entirely would understate
-        // the spread the band exists to report.
+        // lineage, over the children that CARRY a σ (S) only:
+        //   μ_S = Σ_S n_i μ_i / Σ_S n_i
+        //   σ²  = Σ_S n_i (σ_i² + (μ_i − μ_S)²) / Σ_S n_i
+        // Owner decision 2026-09-25 (uma#397): a child with no σ is left out
+        // of the σ fold entirely — its count, its mean, everything. Counting
+        // it as zero within-variance while adding its count pulled the pooled
+        // σ toward zero: a 1000-count σ-less child beside a 1-count σ = 1 m
+        // child gave ~0.03 m, a confidence nothing measured. All children
+        // without σ is nodata (the any_sigma check above), never zero.
+        double weight = 0.0, weighted_mean = 0.0;
+        for (const std::vector<double> & c : contributors) {
+          if (std::isnan(c[kMultiSigmaBand])) {continue;}
+          const double n = contributorCount(c);
+          weight += n;
+          weighted_mean += n * contributorMean(c);
+        }
+        if (!(weight > 0.0)) {
+          return nan;
+        }
+        const double mean_s = weighted_mean / weight;
         double accum = 0.0;
         for (const std::vector<double> & c : contributors) {
-          const double n = contributorCount(c);
           const double s = c[kMultiSigmaBand];
-          const double within = std::isnan(s) ? 0.0 : s * s;
-          const double d = contributorMean(c) - pooled_mean;
-          accum += n * (within + d * d);
+          if (std::isnan(s)) {continue;}
+          const double d = contributorMean(c) - mean_s;
+          accum += contributorCount(c) * (s * s + d * d);
         }
-        return total_count > 0.0 ? std::sqrt(accum / total_count) : nan;
+        return std::sqrt(accum / weight);
       }
     case SigmaFold::kUndecided:
     default:
@@ -303,7 +317,7 @@ std::vector<double> depthMultiBandFold(
   out[kMultiMinBand] = min_band;
   out[kMultiMeanBand] = mean_band;
   out[kMultiCountBand] = total_count;
-  out[kMultiSigmaBand] = foldSigma(contributors, rule, mean_band, total_count);
+  out[kMultiSigmaBand] = foldSigma(contributors, rule);
   return out;
 }
 

@@ -224,7 +224,10 @@ revisions concept are the later upstream contribution.
   should be thought about much more"). Rev 2's "mean and max of the children" named two
   numbers without saying how they combine into one stored value, so it was never a decision.
   Candidates: pooled variance (within-child σ² plus the spread of the child means,
-  count-weighted); max child σ; mean child σ; and the literal "mean and max" as two bands.
+  count-weighted, over the children that carry a σ — σ² = Σ_S n_i (σ_i² + (μ_i − μ_S)²) /
+  Σ_S n_i with μ_S the count-weighted mean of those children; a child with no σ is left out
+  of the σ fold, and a parent with none is nodata — Roland, 2026-09-25); max child σ; mean
+  child σ; and the literal "mean and max" as two bands.
   The rule is decided from a measurement over the store's native depth tiles — how often each
   candidate's σ covers the true spread of the native cells under the parent — in the style of
   spine decision 2's own `fold_measure` evidence. Until then the 4-band schema is reserved and
@@ -233,7 +236,10 @@ revisions concept are the later upstream contribution.
   (uma#397 Group B.)
 
   **Evidence** (`mws_measure_sigma_fold`, 2026-09-22, 140 processed tiles — Massabesic and
-  Shoals **blended**, 3 fold steps). *Truth* is the population standard deviation of the
+  Shoals **blended**, 3 fold steps). *Measured before the 2026-09-25 pooled refinement*: the
+  `pooled` columns counted a σ-less child as zero within-variance while adding its count. The
+  two definitions differ only in parent cells where some children carry a σ and others do
+  not; a re-run over the same tiles is owed before the numbers are read as final. *Truth* is the population standard deviation of the
   native depth cells under a parent cell; a rule *covers* a cell when its σ is at least that
   spread. Rev 2's literal "mean and max of the children" is the `mean_child` and `max_child`
   columns read together — two numbers, which is exactly why it was never a decision.
@@ -444,6 +450,15 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-09-25 — **decided by the operator** (Roland, 2026-09-25, uma#397 external review):
+  (j) §7's `pooled` candidate pools **only over the children that carry a σ**, weighted by
+  their own counts; a child with no σ is left out of the σ fold (its count and its mean
+  alike), and a parent none of whose children carries a σ stays nodata. The earlier
+  arithmetic counted a σ-less child as zero within-variance while adding its count, which
+  pulls the pooled σ toward zero — a 1000-count σ-less child beside a 1-count σ = 1 m child
+  gave ≈ 0.03 m, a confidence nothing measured. The writer's `kPooled` and the measurement's
+  `pooled` both follow it; the §7 evidence table predates it. The rule itself **stays open**.
 
 - 2026-09-22 (fix pass) — **decided by the operator** (Roland, 2026-09-22), from the
   `datetime` defect implementing rev 3 exposed: (h) Part 2 line 2 — the promised *time

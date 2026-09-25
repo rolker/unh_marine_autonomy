@@ -244,7 +244,9 @@ enum class SigmaFold
 {
   /// Write nodata. The default, and the only rule the CLI can select.
   kUndecided,
-  /// Within-child variance plus the spread of the child means, count-weighted.
+  /// Within-child variance plus the spread of the child means, count-weighted,
+  /// over the children that carry a σ only (owner decision 2026-09-25): a
+  /// σ-less child is left out of the σ fold, never counted as zero variance.
   kPooled,
   /// The largest child σ.
   kMaxChild,
@@ -527,11 +529,12 @@ std::vector<double> promoteNativeDepthCell(const std::vector<double> & native);
 ///
 /// **σ beyond the first derived level.** Only the first fold above the native
 /// level sees real per-cell σ: from there up the σ band is whatever the rule
-/// wrote, which under @c kUndecided is NaN. @c kPooled therefore degenerates to
-/// the spread of the child means alone at level 2 and above. That is a property
-/// of leaving the rule open, not a defect of the arithmetic, and it is exactly
-/// why the measurement that decides the rule reads NATIVE cells rather than
-/// re-folding the pyramid.
+/// wrote, which under @c kUndecided is NaN. Every candidate leaves a σ-less
+/// child out of the σ fold, so over such children each one yields nodata at
+/// level 2 and above. That is a property of leaving the rule open, not a
+/// defect of the arithmetic, and it is exactly why the measurement that decides
+/// the rule reads NATIVE cells and carries each candidate's own σ forward
+/// rather than re-folding the pyramid.
 ///
 /// Precondition: at least one contributor, each with a non-NaN MIN band (the
 /// engine's valid-cell gate) and exactly @c kMultiBandCount bands.

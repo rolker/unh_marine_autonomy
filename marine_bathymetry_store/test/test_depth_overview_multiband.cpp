@@ -255,6 +255,36 @@ TEST(MultiBandFold, CandidateRulesProduceDifferentSigmas)
     "per-child statistic can";
 }
 
+TEST(MultiBandFold, PooledLeavesChildrenWithoutSigmaOutOfTheSigmaFold)
+{
+  // Owner decision 2026-09-25 (uma#397): pool only over the children that
+  // carry a σ, weighted by their own counts. Regression: a σ-less child was
+  // counted as zero within-variance while its count was added, so a
+  // 1000-count σ-less child beside a 1-count σ = 1 m child pooled to ~0.03 m.
+  const std::vector<std::vector<double>> big_blind_small_known{
+    cell(-10.0, -10.0, 1000.0, kNaN), cell(-10.0, -10.0, 1.0, 1.0)};
+  EXPECT_DOUBLE_EQ(
+    det::depthMultiBandFold(
+      big_blind_small_known, mbs::SigmaFold::kPooled)[det::kMultiSigmaBand],
+    1.0);
+
+  // The spread term is taken about the mean of the σ-carrying children only:
+  // a σ-less child far from them does not widen (or narrow) the band.
+  const std::vector<std::vector<double>> mixed{
+    cell(-10.0, -10.0, 1.0, 0.2), cell(-2.0, -2.0, 1.0, 0.8),
+    cell(-50.0, -50.0, 7.0, kNaN)};
+  const std::vector<std::vector<double>> known_only{
+    cell(-10.0, -10.0, 1.0, 0.2), cell(-2.0, -2.0, 1.0, 0.8)};
+  EXPECT_DOUBLE_EQ(
+    det::depthMultiBandFold(mixed, mbs::SigmaFold::kPooled)[det::kMultiSigmaBand],
+    det::depthMultiBandFold(
+      known_only, mbs::SigmaFold::kPooled)[det::kMultiSigmaBand]);
+  // ... while MEAN and COUNT still fold every contributor.
+  EXPECT_DOUBLE_EQ(
+    det::depthMultiBandFold(mixed, mbs::SigmaFold::kPooled)[det::kMultiCountBand],
+    9.0);
+}
+
 TEST(MultiBandFold, SigmaStaysNodataWhenNoContributorCarriesOne)
 {
   // No uncertainty information must read as nodata, never as zero uncertainty —

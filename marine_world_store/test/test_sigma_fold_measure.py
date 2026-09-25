@@ -142,19 +142,37 @@ def test_no_sigma_anywhere_reports_nodata_not_zero():
         assert math.isnan(first.coverage[rule]) or first.coverage[rule] == 0.0
 
 
-def test_a_missing_child_sigma_still_contributes_its_mean_to_pooled():
+def test_pooled_leaves_a_sigma_less_child_out_of_the_sigma_fold():
     """
-    Keep a sigma-less child in the pooled spread.
+    Pool only over the children that carry a sigma (owner decision 2026-09-25).
 
-    Dropping it entirely would understate the spread the band exists to report
-    -- its within-child variance is zero, its distance from the pooled mean is
-    not.
+    Regression: a sigma-less child was counted as zero within-variance while
+    its mean's distance still entered the spread. Now it is left out entirely:
+    two sigma-carrying children at the same depth pool to their own sigma,
+    whatever the sigma-less children beside them hold.
     """
     depth = np.array([[-10.0, -2.0], [-2.0, -10.0]])
     sigma = np.array([[np.nan, 0.1], [0.1, np.nan]])
     [first] = sfm.measure_arrays([(depth, sigma, 13)], steps=1)
-    assert first.mean_sigma['pooled'] > 3.9
-    assert first.coverage['pooled'] == 1.0
+    assert first.mean_sigma['pooled'] == pytest.approx(0.1)
+
+
+def test_pooled_is_not_pulled_down_by_a_heavy_sigma_less_child():
+    """
+    The owner's worked case: 1000 sigma-less cells beside one with sigma 1 m.
+
+    Counting the 1000 as zero within-variance pooled to ~0.03 m; leaving them
+    out of the sigma fold gives the 1 m the one measured child carries.
+    """
+    state = sfm._State(
+        n=np.array([[1000.0, 1.0], [0.0, 0.0]]),
+        s=np.array([[-10000.0, -10.0], [0.0, 0.0]]),
+        ss=np.array([[100000.0, 100.0], [0.0, 0.0]]),
+        mean=np.array([[-10.0, -10.0], [np.nan, np.nan]]),
+        sigma={rule: np.array([[np.nan, 1.0], [np.nan, np.nan]])
+               for rule in sfm.CANDIDATES})
+    folded = sfm._fold(state)
+    assert folded.sigma['pooled'][0, 0] == pytest.approx(1.0)
 
 
 def test_nodata_depth_cells_do_not_contribute():
