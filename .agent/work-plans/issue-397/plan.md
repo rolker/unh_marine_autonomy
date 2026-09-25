@@ -720,3 +720,44 @@ suggestions. What they change about the notes above:
   residual race (two writers under different rules on an empty directory, both
   under the shared lock) and the per-tile records' `sigma_fold` are not checked;
   no CLI selects a rule, so every writer folds under `undecided` today.
+
+## Implementation notes — round-6 review fix pass (2026-09-25)
+
+The round-6 Integrated Review at `6e264b6` (Codex + Gemini) listed ten actions;
+all ten landed. What they change about the notes above:
+
+- **A non-rev-3 `overviews/` is refused before the fingerprint pre-step touches
+  the layer.** The derived refresh removes every overview tile it cannot prove
+  it built, and a legacy tree has no `.fp` sidecars, so the pre-step emptied it
+  and the C++ cross-schema guard then passed on an empty directory.
+  `fingerprint_sidecar.refuse_non_rev3_overviews` now runs first in
+  `refresh_layer` (before the native tiles too) and in
+  `refresh_directory(derived=True)`: a derived directory holding tiles and no
+  `overview_schema.json` naming `depth-overview-multiband/1` (or an unreadable
+  one) is refused and left byte-for-byte untouched. No conversion path.
+- **An adapted tile's fingerprint covers the tile itself.** Its content id
+  (§3's single-file source id, the git-annex file key) rides `source_ids`
+  beside the bags, so re-cleaned or recompiled pixels over the same bags are a
+  new fingerprint. `source_ids` rather than a new key because §9's input set is
+  closed and the tile is, for the adapter, a single-file source.
+- **Revision Items carry no `collection` field**, for the same reason source
+  Items do not: no `revisions` Collection exists to link.
+- **Source Item hrefs are absolute** (`os.path.abspath`) in `mws_import_source`
+  and the subset CLI's `resolve_sources`; a relative href in `sources/`
+  resolved against the wrong directory.
+- **`rule build_parent` carries one param: the builder's content digest**
+  (`OVERVIEW_TOOL_ID`, sha256 of the executable), so an updated fold reruns
+  every parent while the same bytes at another path rerun nothing. This
+  amends "no rule carries paths as `params:`" above — still no paths.
+- **The batch multi-band builder writes the per-tile record** the per-parent
+  writer does (`depth-overview-tile/1`: error, bands, σ rule, children named
+  as they read after the swap), into staging, so a per-parent fold over
+  batch-built children reads their error instead of substituting a GSD. The
+  single-band tree keeps no per-tile records.
+- **A per-parent tile whose record write fails is unpublished** (tile, record
+  and `.fp` removed), so no published raster lacks a provable record.
+- **The fold admits only a finite MEAN and a finite, non-negative σ**; a
+  non-finite MEAN falls back to the MIN, a bad σ is treated as no σ. Writers
+  still emit σ as nodata.
+- `fsyncPath` opens with `O_CLOEXEC`; the CI rosdep step copies the system
+  `*.list` files under `nullglob` with an explicit empty check.
