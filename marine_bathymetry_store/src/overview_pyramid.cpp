@@ -1357,6 +1357,9 @@ std::vector<gggs::GridIndex> removeDerivedTilesAtLevel(
   const LayerWriterLock lock(layer_dir, false);
   refuseBatchDebris(layer_dir);
   const fs::path overviews = layer_dir / "overviews";
+  // Before anything is removed: a prune pointed at a single-band sidecar would
+  // otherwise delete its tiles by the multi-band rules.
+  refuseCrossSchemaSidecar(overviews, detail::kMultiBandCount, "multi-band");
   const bool has_child_level =
     static_cast<std::size_t>(level) + 1 < gggs::levels.size();
   std::vector<gggs::GridIndex> removed;
@@ -1416,6 +1419,12 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
   }
   const LayerWriterLock lock(layer_dir, false);
   refuseBatchDebris(layer_dir);
+  const fs::path overviews = layer_dir / "overviews";
+  // Cross-schema guard FIRST — before the native-wins and no-children paths
+  // remove a derived tile, and before any child is loaded under the 4-band
+  // assumption. A single-band sidecar reached here is a mis-pointed path, and
+  // it must leave this call exactly as it arrived.
+  refuseCrossSchemaSidecar(overviews, detail::kMultiBandCount, "multi-band");
   // gridFromTileName round-trips its answer through tileFilename and compares
   // it with this string, so the label must be the FILENAME, extension included
   // — a bare "<level>_<row>_<col>" never matches and every index reads as
@@ -1430,7 +1439,6 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
       " does not name a grid at level " + std::to_string(level));
   }
 
-  const fs::path overviews = layer_dir / "overviews";
   MultiBandParentResult result;
   result.geometric_error_m = std::numeric_limits<double>::quiet_NaN();
 
@@ -1511,10 +1519,6 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
     throw std::runtime_error(
       "cannot create " + overviews.string() + ": " + ec.message());
   }
-  // Cross-schema guard applies per tile too: a directory of single-band
-  // overviews must not gain a 4-band tile among them.
-  refuseCrossSchemaSidecar(overviews, detail::kMultiBandCount, "multi-band");
-
   // Tile-level atomicity: write beside the destination, then rename over it.
   // rename(2) within one directory is atomic, so a reader sees the previous
   // tile or the new one and never a half-written raster. No overviews.tmp/

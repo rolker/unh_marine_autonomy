@@ -120,6 +120,24 @@ void writeUniformNativeTile(
     {std::optional<double>(kNaN), std::optional<double>(kNaN)});
 }
 
+// Write a 4-band Float64 derived-schema tile filled uniformly.
+void writeUniformMultiBandTile(
+  const fs::path & dir, const gggs::GridIndex & grid, double depth)
+{
+  fs::create_directories(dir);
+  mtrs::TiledRasterTile<double> tile(grid, kMB, kNaN);
+  for (uint16_t r = 0; r < tile.edge; ++r) {
+    for (uint16_t c = 0; c < tile.edge; ++c) {
+      tile.set(r, c, det::kMultiMinBand, depth);
+      tile.set(r, c, det::kMultiMeanBand, depth);
+      tile.set(r, c, det::kMultiCountBand, 1.0);
+    }
+  }
+  mtrs::saveTile<double>(
+    tile, (dir / mtrs::tileFilename(grid)).string(),
+    std::vector<std::optional<double>>(kMB, std::optional<double>(kNaN)));
+}
+
 std::vector<gggs::GridIndex> fineSiblings()
 {
   const gggs::GridIndex fine = gggs::Level(kFineLevel).gridIndex(kLat, kLon);
@@ -473,6 +491,72 @@ TEST(MultiBandPyramid, SingleBandWriterRefusesAMultiBandSidecar)
   EXPECT_THROW(mbs::buildDepthOverviewPyramid(single), std::runtime_error);
 }
 
+// Every file under @p root, by relative path, with its bytes: what "left
+// byte-for-byte untouched" is compared against.
+std::map<std::string, std::string> snapshotTree(const fs::path & root)
+{
+  std::map<std::string, std::string> out;
+  for (const auto & e : fs::recursive_directory_iterator(root)) {
+    if (!e.is_regular_file()) {
+      continue;
+    }
+    std::ifstream in(e.path(), std::ios::binary);
+    out[fs::relative(e.path(), root).string()] = std::string(
+      (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  }
+  return out;
+}
+
+TEST(MultiBandPyramid, PerParentWritersRefuseASingleBandSidecarBeforeTouchingIt)
+{
+  // Regression: the per-parent writer ran the cross-schema guard only after
+  // its native-wins and no-children paths had already removed a derived tile
+  // (and after loading children as 4-band), so a legacy single-band
+  // overviews/ could be mutated before the refusal. Prune and remove-level
+  // had no guard at all.
+  ScratchDir dir("cross_schema_parent");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  mbs::DepthOverviewOptions single;
+  single.layer_dir = dir.path().string();
+  single.min_level = kFineLevel - 1;
+  ASSERT_TRUE(mbs::buildDepthOverviewPyramid(single).sidecar_replaced);
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  const fs::path overviews = dir.path() / "overviews";
+  ASSERT_TRUE(fs::exists(overviews / mtrs::tileFilename(parent)));
+
+  // Native-wins path: a native tile at the parent would remove the derived one.
+  writeUniformNativeTile(dir.path(), parent, -3.0, 0.2);
+  const std::map<std::string, std::string> before = snapshotTree(overviews);
+  EXPECT_THROW(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column()),
+    std::runtime_error);
+  EXPECT_EQ(snapshotTree(overviews), before);
+  fs::remove(dir.path() / mtrs::tileFilename(parent));
+
+  // No-children path: with the natives gone the derived tile would be removed.
+  for (const gggs::GridIndex & g : fine) {
+    fs::remove(dir.path() / mtrs::tileFilename(g));
+  }
+  EXPECT_THROW(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column()),
+    std::runtime_error);
+  EXPECT_EQ(snapshotTree(overviews), before);
+
+  // Prune and remove-level delete tiles too.
+  EXPECT_THROW(
+    mbs::pruneMultiBandOverviewLevel(dir.path().string(), parent.level()),
+    std::runtime_error);
+  EXPECT_THROW(
+    mbs::removeMultiBandOverviewLevel(dir.path().string(), parent.level()),
+    std::runtime_error);
+  EXPECT_EQ(snapshotTree(overviews), before);
+}
+
 // --- the per-parent work unit -----------------------------------------------
 
 TEST(PerParentOverview, MatchesTheBatchBuilderForTheSameParent)
@@ -626,8 +710,9 @@ TEST(PerParentOverview, RefusesAChildThatIsBothNativeAndDerived)
   for (const gggs::GridIndex & g : fine) {
     writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
   }
-  fs::create_directories(dir.path() / "overviews");
-  writeUniformNativeTile(dir.path() / "overviews", fine.front(), -8.0, 0.4);
+  // A 4-band tile, so it is the disjointness check that refuses and not the
+  // cross-schema guard (which runs first).
+  writeUniformMultiBandTile(dir.path() / "overviews", fine.front(), -8.0);
   const gggs::GridIndex parent = gggs::parent(fine.front());
   try {
     mbs::buildMultiBandDepthOverviewParent(
