@@ -179,3 +179,22 @@ def test_a_value_json_cannot_spell_is_refused_by_name():
     """A set (or any object) is named with where it sits."""
     with pytest.raises(RevisionError, match=r'parameters\.bad'):
         a_datum_record(parameters={'bad': {1, 2}})
+
+
+def test_a_written_revision_is_a_valid_stac_item(tmp_path):
+    """
+    A revision names no Collection it cannot link, and validates as STAC.
+
+    Regression: it carried ``collection: revisions`` with no links -- STAC 1.0
+    requires a ``rel: collection`` link when ``collection`` is set, and no
+    revisions Collection exists.
+    """
+    path = revisions.write_revision(tmp_path, a_datum_record())
+    written = json.loads(path.read_text())
+    assert 'collection' not in written
+    assert not any(link.get('rel') == 'collection'
+                   for link in written['links'])
+    stac_catalog = pytest.importorskip(
+        'marine_world_store.stac_catalog',
+        reason='pystac is a declared dependency; rosdep')
+    stac_catalog.validate_item(written)

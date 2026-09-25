@@ -155,10 +155,12 @@ def build_revision(
     if notes:
         properties[f'{item_schema.PREFIX}:notes'] = notes
 
+    # No ``collection`` field: STAC 1.0 requires a ``rel: collection`` link
+    # whenever it is set, and ``revisions/`` has no Collection document to
+    # link to (as for source Items).
     body = {
         'type': 'Feature',
         'stac_version': item_schema.STAC_VERSION,
-        'collection': 'revisions',
         'geometry': None,
         'properties': properties,
         'links': [],
