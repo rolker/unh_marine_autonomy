@@ -906,3 +906,70 @@ Dispatch `address-findings` for the ten actions above, then re-run `review-code`
 
 ### Next step
 Dispatch `review-code` (pre-push, with Gemini + Codex per the Integrated Review) to re-review these fixes before any push.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-09-25 12:25 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-397 at `b837fd3` (diff base `origin/feature/issue-391` @ `50b33d4`; whole PR reviewed, `8a276f8..b837fd3` fix pass weighted)
+**Mode**: pre-push
+**Depth**: Deep (reason: ~17,400 added lines / 73 files, cross-package C++ + Python + Snakemake)
+**Must-fix**: 2 | **Suggestions**: 8
+**Round**: 5 | **Ship**: continue — both must-fixes are real regressions in this fix pass. One is a design question about carrying σ-subset state across folds, which needs an owner choice. After the fix, a scoped check (like round 4) should be enough; a full round is not needed.
+
+Specialists:
+- Static analysis (ament flake8/pep257 under the package config, cpplint, uncrustify, xmllint, `rosdep_yaml_validate.sh`) was clean on the fix-pass files.
+- Governance and plan drift were done by the lead. The plan's 2026-09-25 notes, design §7 and change log (j), and the bathymetry README all track the fix pass.
+- Claude Adversarial ran Lens A and Lens B at Deep, each with reproductions in scratch.
+- Cross-Model ran with gemini (complete, 11 items). Codex **failed**: its usage limit was hit, and it said to retry after 1:48 PM.
+- Local model off.
+
+Tests at HEAD:
+- marine_world_store pytest: 362 passed.
+- `test_depth_overview_multiband` gtest: 34/34, rebuilt after the last .cpp change (Lens A).
+
+All ten Integrated Review actions were confirmed landed, and the lenses confirmed each:
+- Collection↔Item links resolve and are deterministic, with no spurious rewrite.
+- `read_item_files` breaks no layout.
+- The overview fingerprint changes with every child input and ignores child order.
+- A split missing its start or duration is refused.
+- The guard runs first on all per-parent, prune and remove-level paths.
+- There is no double lock.
+- The random bits are seeded per thread.
+- The snakemake pin is consistent.
+- The single-fold pooled formula is correct, and C++ matches Python.
+
+Gemini output was checked item by item. None survives:
+- Already refuted: 1.1 `buildLevel` dangling pointers (`child_tiles.reserve` at L874) and 3.2 MissingOutputException.
+- 4.2 missing `overviews/` throws: `gridsInDir` returns empty when the directory is absent.
+- 4.3 `parseU32`: `unsigned long` is 64-bit on the target, so " -10" exceeds UINT32_MAX and is rejected.
+- 5.1 axis order: the footprint uses the raw geotransform, with no CRS transform.
+- 5.2 `.db3`: `source_identity` raises when it finds no data file.
+- By design, documented, and not reachable from the DAG:
+  - 2.1 the batch builder writes no per-tile records.
+  - 2.2 no CLI selects a σ rule.
+  - 3.1 prune takes a shared lock.
+  - 3.3 `--list-parents` has no guard; the checkpoint's `--prune &&` runs the guard first.
+  - 4.1 native+derived conflict.
+
+Lens B's STAC-validation point is the known jsonschema-4.10 gap from round 3, re-rated to a suggestion. It is now reproduced as permanent on apt Noble, with the cause named.
+
+### Findings
+- [ ] (must-fix) Pooled σ drops a σ-less child only at the FIRST fold. The parent's COUNT and MEAN bands still include that child, and the next level's `kPooled` uses them as `n_i` and `μ_i`, so the σ-less data comes back in and pulls σ toward zero. That is the effect the 2026-09-25 owner decision removed. Reproduced:
+  - Natives: (1, 0, σ1), (1000, 0, no σ), (1, 5, σ0.1).
+  - One level gives σ = 2.60; the same natives over two levels give 1.01.
+  - The Python `pooled` has the same flaw, so the measurement cannot catch it.
+  - The existing test covers one fold only.
+  - Owner choice: carry the σ-subset count and mean forward (extra bands in the writer, and state in the measure's `_State`), or document first-fold-only. Either way, add a two-level test.
+  - `marine_bathymetry_store/src/overview_pyramid.cpp:258-287,300-312`, `marine_world_store/marine_world_store/sigma_fold_measure.py:212-228`
+- [ ] (must-fix) The fail-closed probe now stops the single-band batch builder from repairing a legacy sidecar whose first tile is unreadable. Legacy sidecars have no `overview_schema.json`, so they always go through the probe, and a wholesale rebuild was how a corrupt tile got repaired. Reproduced on a scratch copy of `depths/reference`: the branch refuses, main rebuilds all 40. Fix: probe until one tile reads, and refuse only when none reads or they disagree (or treat "no record + unreadable probe" as no conflict in the batch builder). Add a single-band test. The same fix covers Lens A's transient probe-tile-deleted-by-concurrent-prune case. — `marine_bathymetry_store/src/overview_pyramid.cpp:485-511`
+- [ ] (suggestion) STAC validation never runs on an apt Noble host. pystac 1.9 needs jsonschema ≥ 4.18 plus `referencing`, and Noble has 4.10.3 with no `referencing`. So the "malformed Item never enters the store" claim is off everywhere, and the new Collection/Item links (and source Items' `collection` with no link) are never schema-checked. Either make "validator import failed" a louder outcome than "schema host unreachable" and document it, or supply a validator. — `marine_world_store/marine_world_store/stac_catalog.py:86-104`
+- [ ] (suggestion) Source Items set `collection: sources` with `links: []`, and no `sources/collection.json` exists. STAC 1.0 requires a `rel: collection` link when `collection` is set. Drop the field or add the link. — `marine_world_store/marine_world_store/item_schema.py:591-599`
+- [ ] (suggestion) `overview_builder_version` hashes a child's stored inputs without normalising them. A hand-edited child (unsorted or duplicate ids, unknown key) is hashed as it stands. `FingerprintError` and `KeyError` (a child with no inputs) are not in `build_overview_items`' caught set, so they abort with a bare exception. Use `fingerprint(**document)` and name the child. — `marine_world_store/marine_world_store/overview_items.py:190-192`
+- [ ] (suggestion) The single-band builder takes `overviews.lock` before its path guards. A mistyped path gains a lock file, a read-only one gets "cannot open the layer writer lock" instead of the path diagnostic, and every legacy layer gains the file. Run the `is_directory` and native-scan guard first. — `marine_bathymetry_store/src/overview_pyramid.cpp:1319-1322`
+- [ ] (suggestion) A schema record with no tiles (a per-parent write that failed after `ensureOverviewSchema`, or a level emptied by prune/remove-level) makes the single-band builder refuse, with "it holds 4-band tiles", which is untrue. Correct the message. — `marine_bathymetry_store/src/overview_pyramid.cpp:758-763`
+- [ ] (suggestion) The README says the lock keeps a batch swap from retiring per-parent output, but the Python steps run unlocked: `mws_refresh_fingerprints --record` after the C++ writer exits, `mws_assemble_coverage`, the load-time `refresh_layer` and `mws_regenerate_catalog`. Narrow the claim to the C++ steps, or have them take `LOCK_SH`. — `marine_bathymetry_store/README.md:376-382`, `marine_world_store/snakemake/rules/overviews.smk` `build_parent`
+- [ ] (suggestion) σ-rule check-then-write: `refuseOtherSigmaRule` runs at entry, and `ensureOverviewSchema` writes the record later without re-checking it or the per-tile records' `sigma_fold`. This is theoretical while no CLI selects a rule; fold the check into the write. — `marine_bathymetry_store/src/overview_pyramid.cpp:1555,1652,758-763`
+- [ ] (suggestion) Re-run Codex when its quota resets. This round's cross-model read is Gemini only. — `.agent/scripts/cross_model_review.sh`
