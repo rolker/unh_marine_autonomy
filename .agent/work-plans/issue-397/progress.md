@@ -874,3 +874,35 @@ External cross-model review of PR #399 at `9b0906a` in place of an owner read (C
 
 ### Next step
 Dispatch `address-findings` for the ten actions above, then re-run `review-code` (pre-push, with Gemini+Codex) before any push.
+
+## Implementation
+**Status**: complete
+**When**: 2026-09-25 12:10 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-397 at `694dd92`
+**Addressed**: Integrated Review of 2026-09-25 11:39 -04:00 (external Codex + Gemini review of PR #399 at `9b0906a`), all ten actions
+**Commits**: f64186d, 0aa835e, 77e7982, 0c9bd75, 7e823fc, 35be4e2, 33e6a28, b3bb286, 7b95d65, c804ecb (lint), 0ca918d, 694dd92 (plan)
+
+### Actions
+- [x] Codex 1: the Collection links every Item (`rel: item`, relative, from the files actually read, plus `rel: root`); each tile Item links `collection`/`parent`/`root` to the `collection.json` beside it. Test resolves every link to exactly the Item files (coverage.json excluded), round-trips through `pystac.Collection.get_items()`, and drops a removed Item — `item_schema.py`, `stac_catalog.py` (0c9bd75). Source Items in `sources/` unchanged: no Collection exists there yet.
+- [x] Codex 2: `read_item_files` skips `collection.json` and `coverage.json`, and refuses (by path) any other `.json` that is not a STAC Item — `stac_catalog.py` (77e7982)
+- [x] Codex 3: an overview's `builder_version` names the fold, σ rule and each child as `<tile>=<fingerprint of its full inputs doc>`; tests for all five inputs (trajectory, geometry revision, decoder, cache method, consumer ordering) changing both parent and grandparent, plus tile identity — `overview_items.py` (7e823fc). Carried in `builder_version` because §9's input set is closed.
+- [x] Codex 4: a non-empty split missing start or duration raises `TimeIntervalError` naming the split, with `OVERRIDE_HINT`; tests for both — `source_time.py` (f64186d)
+- [x] Codex 5: `snakemake>=7,<8` in `setup.cfg`, `version_gte="7" version_lt="8"` on the package.xml depend, comment in `rosdep.yaml` (validator passes); test that both lists carry the bound (0aa835e)
+- [x] Gemini 3: cross-schema guard now runs first in the per-parent writer, and in prune/remove-level (which had none); test that a 2-band `overviews/` is refused and left byte-for-byte untouched on the native-wins, no-children, prune and remove-level paths — `overview_pyramid.cpp` (35be4e2). The existing both-native-and-derived test now uses a 4-band tile so the disjointness check, not the guard, is what refuses it.
+- [x] Gemini 4: `buildDepthOverviewPyramid` takes `LayerWriterLock(layer_dir, true)` (not on a dry run); test + README (33e6a28)
+- [x] Gemini 9: guard prefers `overview_schema.json`, fails closed naming an unreadable record or probe tile; the per-parent writer writes the record before its first tile (same bytes as the batch builder's) and refuses a sidecar recorded under another σ rule; tests for each; test fake mirrors the record (b3bb286)
+- [x] Gemini 6: private temporaries add 64 random bits to pid + counter (7b95d65). No direct unit test (internal helper); existing no-leftover-temporary tests cover it.
+- [x] Owner decision (Gemini 2): `kPooled` and the measurement's `pooled` pool only over σ-carrying children about their own count-weighted mean; all-σ-less stays NaN. C++ test gives exactly 1 m for the 1000-count σ-less + 1-count σ=1 m case; Python tests likewise. Design §7 and change log (j), header docs updated; §7's evidence table is annotated as predating the refinement (re-run owed). The σ rule stays open (0ca918d)
+
+### Checks
+- `./core_ws/test.sh marine_bathymetry_store marine_world_store`: marine_bathymetry_store 423 tests, 0 errors, 0 failures, 45 skipped; marine_world_store 362 tests, 0 errors, 0 failures, 0 skipped.
+- ament_uncrustify / ament_cpplint clean on the touched C++ files; flake8/pep257 clean (c804ecb fixed an F541 and a D401 this pass had introduced).
+
+### Owed / not done
+- Re-run `mws_measure_sigma_fold` over the §7 evidence tiles under the refined `pooled` (not run from this pass; no real store data touched).
+- Nothing pushed (host pushes). Untracked `review-gemini-*.md` and `.cross-model-review.lock` left as found.
+
+### Next step
+Dispatch `review-code` (pre-push, with Gemini + Codex per the Integrated Review) to re-review these fixes before any push.
