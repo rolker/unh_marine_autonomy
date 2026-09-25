@@ -54,6 +54,7 @@ pytestmark = pytest.mark.skipif(
            'raster itself rather than from a second GGGS implementation.')
 
 from marine_world_store import coverage, depth_subset, item_schema  # noqa: E402,I100
+from marine_world_store import source_identity  # noqa: E402
 from marine_world_store.depth_subset import AdapterError  # noqa: E402
 from marine_world_store.item_schema import CONTRACT_FIELDS  # noqa: E402
 from marine_world_store.layout import Origin, Quantity, State  # noqa: E402
@@ -223,8 +224,28 @@ def test_items_fingerprint_over_the_named_sources(source_layer, tmp_path):
     item = adapt(source_layer, tmp_path / 'rev3',
                  source_ids=['abc123', 'def456']).items[0]
     inputs = item['properties'][CONTRACT_FIELDS['inputs']]
-    assert inputs['source_ids'] == ['abc123', 'def456']
+    tile_id = source_identity.file_source_id(source_layer / '12_3_4.tif')
+    assert inputs['source_ids'] == sorted(['abc123', 'def456', tile_id])
     assert inputs['builder_version'] == 'test/1'
+
+
+def test_changed_tile_bytes_over_the_same_sources_are_a_new_fingerprint(
+        source_layer, tmp_path):
+    """
+    The adapted tile's content is an input, not only the bags behind it.
+
+    Regression: the inputs named the bags and the builder only, so a
+    re-cleaned or recompiled tile over the same bags kept its fingerprint.
+    """
+    def fingerprints():
+        return {item['id']: item['properties'][CONTRACT_FIELDS['fingerprint']]
+                for item in adapt(source_layer, tmp_path / 'rev3',
+                                  dry_run=True).items}
+    before = fingerprints()
+    make_tile(source_layer, row=3, col=4, value=-9.0)    # re-cleaned
+    after = fingerprints()
+    changed = [key for key in before if before[key] != after[key]]
+    assert changed == ['depths-reviewed-surveyed-12_3_4']
 
 
 def test_unnamed_sources_are_refused(source_layer, tmp_path):

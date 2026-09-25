@@ -65,7 +65,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 from marine_world_store import atomic_io, coverage, footprint, item_schema
 from marine_world_store import layout
-from marine_world_store import source_time
+from marine_world_store import source_identity, source_time
 from marine_world_store.layout import Origin, Quantity, State
 
 PathLike = Union[str, Path]
@@ -139,7 +139,9 @@ def adapt_depth_tiles(
         ``<store>/processed``. Read-only.
     :param source_ids: the content ids of the bags these tiles came from.
         Required, and required to be non-empty: a product whose inputs are
-        unrecorded has no fingerprint worth writing.
+        unrecorded has no fingerprint worth writing. Each Item's
+        ``source_ids`` also carries the content id of the tile it adapts, so
+        changed pixels over unchanged bags are a different fingerprint.
     :param levels: when given, only tiles at these levels are adapted.
     :param start_datetime: the observation interval the tiles' material was
         recorded over -- the union of the source bags' intervals, which
@@ -199,8 +201,13 @@ def adapt_depth_tiles(
         geometric_error = manifest.geometric_error(key)
         if geometric_error is None:
             report.missing_geometric_error += 1
+        # The tile this Item re-expresses is itself an input: a re-cleaned
+        # or recompiled tile over the same bags is different material, and a
+        # fingerprint over the bags alone would call it the same product. Its
+        # content id is the single-file source id of design section 3 (the
+        # git-annex file key), so it rides source_ids beside the bags.
         fingerprint_inputs: Dict[str, Any] = {
-            'source_ids': list(source_ids),
+            'source_ids': [*source_ids, source_identity.file_source_id(tile)],
             'builder_version': builder_version,
         }
         if revision_ids:
