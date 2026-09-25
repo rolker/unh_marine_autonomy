@@ -28,11 +28,21 @@ jobs:
     # copied, not just 20-default.list, or a source the image has is dropped.
     - name: Install repo-local rosdep keys
       if: hashFiles('rosdep.yaml') != ''
+      shell: bash
       run: |
         set -euo pipefail
         SRC=/opt/rosdep-sources
         mkdir -p "$SRC"
-        cp /etc/ros/rosdep/sources.list.d/*.list "$SRC/"
+        # An unmatched glob must not reach cp as a literal pattern: with no
+        # system list, the local list alone would shadow the default sources.
+        shopt -s nullglob
+        lists=(/etc/ros/rosdep/sources.list.d/*.list)
+        if [ "${#lists[@]}" -eq 0 ]; then
+          echo "no *.list under /etc/ros/rosdep/sources.list.d:" \
+            "rosdep is not initialized" >&2
+          exit 1
+        fi
+        cp "${lists[@]}" "$SRC/"
         echo "yaml file://$GITHUB_WORKSPACE/rosdep.yaml" \
           > "$SRC/30-workspace-local.list"
         echo "ROSDEP_SOURCE_PATH=$SRC" >> "$GITHUB_ENV"
