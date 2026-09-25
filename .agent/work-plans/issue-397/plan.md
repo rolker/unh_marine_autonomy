@@ -714,3 +714,9 @@ suggestions. What they change about the notes above:
   `mws_regenerate_catalog`) run unlocked; the bathymetry README and the
   `build_parent` rule now say so, and say not to run a batch build beside a
   regenerate over one layer, rather than claiming the lock covers them.
+- **The σ-rule check is folded into the schema write.** `ensureOverviewSchema`
+  re-checks an existing record's `sigma_fold` at the point of writing, so a
+  record published under another rule after the entry check is refused. The
+  residual race (two writers under different rules on an empty directory, both
+  under the shared lock) and the per-tile records' `sigma_fold` are not checked;
+  no CLI selects a rule, so every writer folds under `undecided` today.

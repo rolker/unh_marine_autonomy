@@ -815,11 +815,20 @@ void refuseOtherSigmaRule(const fs::path & overviews, SigmaFold rule)
   }
 }
 
+// Write the record if it is absent, and otherwise re-check it at the point of
+// writing: the entry-time refuseOtherSigmaRule ran before the children were
+// folded, and a record another writer published since then under a different
+// rule must not be silently accepted as this tile's. Checking and publishing are
+// still two steps (per-parent writers share the lock), so two writers under
+// DIFFERENT rules racing on an empty directory remain possible in principle;
+// no CLI selects a rule today, so every writer folds under kUndecided.
 void ensureOverviewSchema(const fs::path & overviews, SigmaFold rule)
 {
-  if (!readOverviewSchema(overviews).has_value()) {
-    writeOverviewSchema(overviews, rule);
+  if (readOverviewSchema(overviews).has_value()) {
+    refuseOtherSigmaRule(overviews, rule);
+    return;
   }
+  writeOverviewSchema(overviews, rule);
 }
 
 // One derived tile's own record: its geometric error and the schema it was
