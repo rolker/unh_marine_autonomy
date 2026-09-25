@@ -23,8 +23,31 @@ jobs:
       uses: actions/checkout@v3
     - name: Init rosdep
       run: rosdep init
+    # The job runs in a ros:jazzy-ros-core container as root, so no sudo.
+    # ROSDEP_SOURCE_PATH REPLACES sources.list.d -- every system list is
+    # copied, not just 20-default.list, or a source the image has is dropped.
+    - name: Install repo-local rosdep keys
+      if: hashFiles('rosdep.yaml') != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        SRC=/opt/rosdep-sources
+        mkdir -p "$SRC"
+        # An unmatched glob must not reach cp as a literal pattern: with no
+        # system list, the local list alone would shadow the default sources.
+        shopt -s nullglob
+        lists=(/etc/ros/rosdep/sources.list.d/*.list)
+        if [ "${#lists[@]}" -eq 0 ]; then
+          echo "no *.list under /etc/ros/rosdep/sources.list.d:" \
+            "rosdep is not initialized" >&2
+          exit 1
+        fi
+        cp "${lists[@]}" "$SRC/"
+        echo "yaml file://$GITHUB_WORKSPACE/rosdep.yaml" \
+          > "$SRC/30-workspace-local.list"
+        echo "ROSDEP_SOURCE_PATH=$SRC" >> "$GITHUB_ENV"
     - name: Update rosdep
-      run: rosdep update
+      run: rosdep update   # must run AFTER ROSDEP_SOURCE_PATH is in the env
     - name: Create workspace
       run: mkdir -p ../jazzy_ws/src
     - name: Install repos

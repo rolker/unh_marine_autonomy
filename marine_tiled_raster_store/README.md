@@ -113,6 +113,13 @@ sidecar are the same model over the same GGGS.
   atomic publish, tolerant read (a missing, malformed, or wrong-schema document
   warns and yields `nullopt` instead of throwing).
 
+**Consumers of the manifest today.** Besides this package's own overview
+builders, `marine_world_store` (the rev-3 world store, uma#397) reads
+`coverage.json` from Python to put each tile's `geometric_error_m` into its STAC
+Item — the same convention, read rather than reimplemented, so a rev-3 overview
+tile satisfies uma-ADR-0013 D2/D3 and the D7 selection core (uma#395) needs no
+special case for it.
+
 **The manifest is derived and advisory.** uma-ADR-0013 D8: a stale or absent
 manifest is a rendering artifact, never a safety one. Shoal-finding, least-depth
 and clearance queries must keep reading tiles to the finest available level and

@@ -221,6 +221,27 @@ Reading: one fold step is within uncertainty almost everywhere; by three steps a
 than its own uncertainty in half the cells — on a SMOOTH lake bed (rock/wreck areas would be worse). Supports: overviews
 carry MIN + MEAN + COUNT (+σ); nav-surface view reads MIN; R19 (safety never from folded levels) stands on evidence.
 
+## σ-FOLD CANDIDATE EVIDENCE — 2026-09-22 (mws_measure_sigma_fold, uma#397; the rule stays OPEN)
+Spine decision 2 stored a σ band but never said how to fold one (rev 2's "mean and max of the children" is two
+numbers). This is the measurement §7's open rule is to be decided from — 140 processed native depth tiles,
+Massabesic and Shoals BLENDED (a deliberately mixed population), 3 fold steps. Truth = the population standard
+deviation of the native cells under a parent; a rule COVERS a cell when its σ is at least that spread; the truth is
+accumulated exactly through every step, so the candidates are scored against the data and not against a fold of
+themselves. Each candidate is carried forward in its own right.
+  step 1 (level 9): 3,459,403 parents (3,426,861 with a spread); mean true spread 0.080 m
+    pooled σ 0.466 m, covers 99.99 %, σ/spread 13.6 | max_child 0.544 m, 99.77 %, 15.5 | mean_child 0.427 m, 99.60 %, 13.2
+  step 2 (level 8): 886,810 parents (880,768); mean true spread 0.170 m
+    pooled 0.554 m, 99.98 %, 5.93 | max_child 0.784 m, 99.61 %, 8.12 | mean_child 0.454 m, 98.50 %, 5.48
+  step 3 (level 7): 230,283 parents (229,195); mean true spread 0.309 m
+    pooled 0.696 m, 99.98 %, 3.45 | max_child 1.176 m, 98.15 %, 5.75 | mean_child 0.496 m, 84.66 %, 2.91
+Reading: pooled never under-claims and over-claims least by step 3; max_child also covers but is the loosest number at
+every step; mean_child is the only candidate whose coverage DEGRADES with fold depth (99.6 % → 84.7 %), i.e. by three
+steps it under-claims the spread in one parent in six. All ratios sit far above 1 at step 1 because the native per-cell
+σ (the ingest's own uncertainty, median 0.15 m on the Massabesic tiles above) dominates the spread BETWEEN neighbouring
+cells — a property of the data, not of any rule.
+RULE OPEN (Roland 2026-09-22): writers emit σ as nodata and record `sigma_fold: undecided`; the decision when it comes
+is a new fingerprint, never a migration. The measurement recommends nothing, and a test asserts it does not.
+
 ## SPINE DECISION 2 — overview levels — DECIDED 2026-09-21 (Roland: "follow BAG VR's precedent")
 1. A folded level stores MIN, MEAN, COUNT and σ (mean σ + max σ of the children) per parent cell — BAG VR
    RESAMPLED_GRID precedent — never one folded value. Views choose the band: nav-surface view reads MIN (+ max σ),

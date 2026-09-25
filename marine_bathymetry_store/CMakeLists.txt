@@ -99,6 +99,14 @@ target_include_directories(import_geotiff PRIVATE ${GDAL_INCLUDE_DIRS})
 add_executable(build_depth_overviews src/build_depth_overviews.cpp)
 target_link_libraries(build_depth_overviews ${PROJECT_NAME})
 
+# The `build_depth_overview_parent` CLI (uma#397, world_store_design.md §7 /
+# Part 4): folds ONE parent tile of the rev-3 4-band MIN/MEAN/COUNT/σ pyramid.
+# The per-parent work unit a Snakemake DAG invokes, so a regenerate refreshes
+# the stale tiles instead of re-folding a whole layer. Same thin-main() shape
+# over the library's overview_pyramid production path.
+add_executable(build_depth_overview_parent src/build_depth_overview_parent.cpp)
+target_link_libraries(build_depth_overview_parent ${PROJECT_NAME})
+
 # S-102 importer core (#278): discover/fetch/convert/run stages as an internal
 # static library so the pipeline is testable without spawning the CLI. Its
 # headers live under src/s102/ and are NOT installed; nothing here is exported.
@@ -136,6 +144,7 @@ ament_export_dependencies(
   marine_autonomy marine_tiled_raster_store geographic_msgs nlohmann_json GDAL)
 
 install(TARGETS import_geotiff s102_import build_depth_overviews
+    build_depth_overview_parent
   RUNTIME DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
@@ -178,6 +187,19 @@ if(BUILD_TESTING)
   # assumption.
   target_include_directories(test_depth_overview PRIVATE test)
   target_compile_definitions(test_depth_overview PRIVATE
+    DEPTH_OVERVIEW_GOLDEN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/test/data/depth_overview_single_level_golden.txt")
+
+  # The rev-3 MULTI-BAND overview tests (uma#397): the MIN/MEAN/COUNT/sigma fold,
+  # the batch 4-band pyramid, the per-parent work unit, the cross-schema guards,
+  # and the pin that the MIN band equals the single-band fold's depth band over
+  # the committed golden fixture. Same TIMEOUT reasoning as test_depth_overview:
+  # these are integration tests over real 960x960 GeoTIFFs. They read the same
+  # fixture header and the same golden file, injected the same way.
+  ament_add_gtest(test_depth_overview_multiband
+    test/test_depth_overview_multiband.cpp TIMEOUT 300)
+  target_link_libraries(test_depth_overview_multiband ${PROJECT_NAME})
+  target_include_directories(test_depth_overview_multiband PRIVATE test)
+  target_compile_definitions(test_depth_overview_multiband PRIVATE
     DEPTH_OVERVIEW_GOLDEN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/test/data/depth_overview_single_level_golden.txt")
 
   # The GeoTIFF importer test writes fixture rasters with GDAL directly, so it

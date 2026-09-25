@@ -309,6 +309,108 @@ ros2 run marine_bathymetry_store build_depth_overviews /path/to/store/reference 
   data (uma-ADR-0011 Consequences). `coverage.json` is not a `.tif`, so the
   flat-layout loaders already skip it silently too.
 
+#### Rev-3 multi-band overviews (`build_depth_overview_parent`, uma#397)
+
+The world store's rev 3 (`docs/world_store_design.md` §7, spine decision 2)
+folds a level into **four bands — MIN, MEAN, COUNT and σ — per parent cell**
+rather than one `{depth, σ}` pair, so a view chooses its band: the navigation
+surface reads MIN, others read MEAN, and COUNT is the parent's lineage. That
+schema is written by `buildMultiBandDepthOverviewPyramid` (batch) and
+`build_depth_overview_parent` (one tile) into a rev-3 quantity layer. Rev 3
+**replaces** the `draft/processed/reference/chart` tree the single-band writer
+above serves: no compatibility is kept, and the existing stores are wiped and
+rebuilt once rev 3 works. Until then each writer refuses to replace the other's
+`overviews/`, and a changed process is a new fingerprint, never a migration.
+
+```bash
+# One parent tile of a rev-3 quantity layer, from its up-to-four children.
+ros2 run marine_bathymetry_store build_depth_overview_parent \
+  "$WORLD_STORE/depths/reviewed/surveyed" 12 71203 55592
+# What a regenerate should schedule at level 12: the parents that have a child
+# and are not already native, one per line as `<level>_<row>_<col>` followed by
+# the TAB-separated children it folds (`<name>` native, `overviews/<name>`
+# derived) -- a DAG's job inputs.
+ros2 run marine_bathymetry_store build_depth_overview_parent --list-parents \
+  "$WORLD_STORE/depths/reviewed/surveyed" 12
+# Remove the derived tiles at level 12 that describe nothing any more (a native
+# tile now covers the index, or no child of it exists), printing each one.
+ros2 run marine_bathymetry_store build_depth_overview_parent --prune \
+  "$WORLD_STORE/depths/reviewed/surveyed" 12
+```
+
+- **Which tree.** These write a **rev-3 quantity layer**
+  (`<store root>/depths/<state>/<origin>/`), never `draft/processed/reference/
+  chart`. Nothing refuses the old tree by name: rev 3 replaces it, and the
+  existing stores are wiped and rebuilt once rev 3 works (owner decision,
+  2026-09-23) — point these at a rev-3 layer only. Both writers refuse to
+  replace a sidecar written under the other's band count:
+  consumers read these tiles **by band index**, so a schema swapped in place is
+  the one mistake nothing downstream could detect — every read would succeed
+  and every number would mean something else.
+- **"MIN" is the minimum DEPTH.** The tiles hold ellipsoidal height (positive
+  up), so the shoalest cell is the **maximum** stored number. Band 0 is
+  bit-identical to the single-band fold's depth band over the same inputs — the
+  same "shoalest wins" selection — and a regression test pins it, tile by tile,
+  against the same committed golden digest the single-band guard uses.
+- **The pyramid is heterogeneous by design.** The native level stays the 2-band
+  `{depth, σ}` compile; only *folded* levels are 4-band. Native children are
+  promoted to `{depth, depth, 1, σ}` as they are read, so one fold serves the
+  first derived level and every level above it. A reader switches band schema
+  at the native/derived boundary, which is what `overviews/overview_schema.json`
+  exists to state rather than leave to be inferred.
+- **The σ band is RESERVED and written as nodata.** §7's fold rule is **open**
+  (Roland, 2026-09-22): rev 2's "mean and max of the children" named two numbers
+  without saying how they combine, so it was never a decision. Every tile
+  records `sigma_fold: undecided` by name — in `overview_schema.json`, which
+  BOTH writers leave (the per-parent writer before its first tile), and in a
+  per-tile `<level>_<row>_<col>.json` for the per-parent writer — so the later
+  decision produces a different record, a different fingerprint, and no
+  migration. A per-parent write into a sidecar recorded under another rule is
+  refused: one sidecar holds one rule. The candidate rules (`pooled`, `max_child`,
+  `mean_child`) are implemented but no CLI can select one; the evidence for
+  choosing comes from `mws_measure_sigma_fold` in `marine_world_store`.
+- **Per-parent, and why.** `build_depth_overviews` is one batch call, so
+  refreshing one tile re-folds a whole layer. `build_depth_overview_parent`
+  folds exactly one parent, which is what lets a Snakemake DAG
+  (`marine_world_store/snakemake/`) decide what is stale. Atomicity is per
+  **tile** — write a private temporary beside the destination, sync it, rename
+  over it — with no `overviews.tmp/` staging: one tile has no partial-pyramid
+  hazard. Per-parent writes hold `<layer>/overviews.lock` **shared** (many at
+  once) and both batch builders (4-band and single-band) hold it
+  **exclusively**, so a batch swap never retires tiles a per-parent run just
+  wrote; either refuses rather than waits, and a leftover `overviews.tmp/` also
+  stops a per-parent write. The lock covers **these C++ writers only**: the
+  Python steps of the regenerate workflow (`mws_refresh_fingerprints --record`
+  after each per-parent write, `mws_assemble_coverage`, the load-time
+  fingerprint refresh and `mws_regenerate_catalog`) take no lock, so a batch
+  build run beside a Snakemake regenerate over the same layer can still race
+  those steps. Do not run the two over one layer at once.
+- **Native-wins, unchanged.** A parent already covered by a native tile is left
+  alone and reported, in both writers and in `--list-parents`. A child found
+  *both* natively and as a derived overview throws: the two sets are disjoint by
+  construction, so that is a corrupted layer rather than a precedence question,
+  and resolving it silently would make the pyramid depend on which rule ran
+  last.
+- **Stale derived tiles are removed.** A derived tile that a native tile now
+  covers, or whose children are all gone, describes nothing; left in place it
+  would stay in the manifest and the index, and a native-covered one would make
+  the next coarser fold refuse the layer forever. The per-parent writer removes
+  one at the index it was asked to fold (reporting `removed_stale`), and
+  `--prune` removes every such tile at a level — the DAG never schedules those
+  parents, so nothing else would. Each goes with its record and its `.fp`.
+- **Geometric error, still a producer obligation (uma-ADR-0013 D1/D2/D3).** The
+  batch writer stages `overviews/coverage.json` exactly as the single-band one
+  does. The per-parent writer instead records each tile's error in that tile's
+  own JSON, and `mws_assemble_coverage` turns those records into the manifest
+  once, after the DAG — a shared `coverage.json` written by parallel folds would
+  be a race whose only fix is a lock that undoes the parallelism. The record
+  also names the children the tile folded: the lineage `marine_world_store`
+  builds the tile's STAC Item from (its interval and inputs are its
+  children's).
+- **A parent with no children yet is not an error.** A per-parent DAG
+  legitimately enumerates sparse regions; throwing there would turn one into a
+  failed run.
+
 ### Depth-adaptive level selection (`depth_adaptive_level.hpp`, uma-ADR-0010 D9 / uma#369)
 
 `depthAdaptiveLevel(depth_m)` chooses the GGGS level a `processed` store tile

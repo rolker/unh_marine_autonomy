@@ -1,0 +1,411 @@
+# Copyright 2026 University of New Hampshire
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+#    * Redistributions of source code must retain the above copyright
+#      notice, this list of conditions and the following disclaimer.
+#
+#    * Redistributions in binary form must reproduce the above copyright
+#      notice, this list of conditions and the following disclaimer in the
+#      documentation and/or other materials provided with the distribution.
+#
+#    * Neither the name of the University of New Hampshire nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+"""Regenerate one rev-3 quantity layer's overviews, catalog and tile indexes.
+
+Design section 9: a regenerate is a general store process, driven by
+fingerprints rather than mtimes, rebuilding only what changed. This is that
+process for ``depths/``, as a Snakemake workflow over the per-parent work unit
+`build_depth_overview_parent` provides.
+
+Run it as::
+
+    snakemake -s marine_world_store/snakemake/Snakefile -j8 \\
+        --config layer_dir=<a quantity layer> fine_level=<its finest level> \\
+                 min_level=8
+
+``layer_dir`` is REQUIRED and has no default. The store root is resolved by
+``marine_world_store.store_root`` wherever a tool needs it; nothing here writes
+a path down, which is what the repo's literal-path guard test enforces.
+
+Shape of the DAG, and why it is shaped that way:
+
+1. The fingerprint pre-step runs when this file is LOADED, before Snakemake
+   plans anything. Snakemake decides from mtimes; section 9 decides from
+   fingerprints. The pre-step decides from each tile's CONTENT (its ``.fp``
+   sidecar) and then sets the mtime to say so: a tile rewritten byte for byte
+   goes back to its recorded mtime, and a changed native tile is advanced to
+   now -- including one copied in with an OLD mtime (``copy2``, ``rsync -t``,
+   a restore), which by mtime alone would look older than its products and be
+   missed. A DERIVED tile whose content is not the recorded content (a
+   restore, a partial copy, bit rot) is removed with its record, and rebuilt
+   as a missing product: advanced, it would look newer than its children and
+   never be rebuilt. A tile a rule builds is recorded as built (``mws_refresh_fingerprints
+   --record``), so it stays newer than the children it absorbed even when it
+   came out byte for byte the same. As a rule inside the DAG the pre-step could
+   not work: Snakemake compares
+   mtimes while PLANNING, before any rule runs, so a reconciliation scheduled
+   as a job always comes too late -- and a rule with no inputs and a stamp
+   output ran once and never again. An invocation that does not execute the
+   workflow -- a dry run, ``--summary``, ``--list-*-changes``, ``--dag``,
+   ``--lint``, ``--unlock`` and the like, as Snakemake itself parsed them --
+   skips it, and the listing reset, and every other write this file makes
+   when it loads except ``.regenerate/`` itself (Snakemake's ``workdir:``
+   creates it) and its lock.
+
+2. Every rule's inputs and outputs are the real files. A parent tile's rule
+   takes the child TILES it folds as inputs and declares the tile and its
+   record as outputs, so a changed child reruns exactly the parents above it
+   and nothing else; a vanished or added child changes the parent's recorded
+   input set, which reruns it too (Snakemake's default ``input`` rerun
+   trigger). The first version declared only ``.done`` stamps, which satisfied
+   everything after the first run: a rewritten tile produced "Nothing to be
+   done".
+
+3. Each level is a ``checkpoint``. The parents that exist at level N cannot be
+   known until level N+1 has been built, because a derived tile at N+1 is
+   itself a contributor. The checkpoint first PRUNES level N -- removing
+   derived tiles a native tile now covers or whose children are gone, which no
+   per-parent job would ever be scheduled to remove -- then lists level N's
+   parents WITH their children (`build_depth_overview_parent --prune` and
+   `--list-parents`), so the GGGS parent/child mapping is never re-implemented
+   here. Derived levels coarser than ``min_level`` are removed when this file
+   loads (``--remove-level``): a run configured differently from the last
+   would otherwise leave whole levels that nothing rebuilds, still published
+   by the manifest and the Items. A derived tile at or finer than
+   ``fine_level``, or a native tile finer than it, is refused by name before
+   anything is removed.
+
+4. ``assemble_coverage`` is a single serialised step AFTER every parent. The
+   per-parent writer deliberately leaves a per-tile record instead of touching
+   a shared ``coverage.json``, because parallel writers would race over that one
+   file; this turns the records into the manifest uma-ADR-0013 D3 expects. Its
+   output is a stamp (``coverage.done``) deleted when this file loads, so it
+   runs every run; ``coverage.json`` is not a declared output, because
+   Snakemake would touch it after the job even when its bytes did not change.
+
+5. ``catalog`` builds the overview tiles' Items and rewrites only changed ones
+   (section 9's replica rule) -- for THIS layer (``--layer-dir``), not for
+   whatever tree the environment's store root names.
+
+6. The tile indexes are derived from the Items and never synced (design
+   section 7): regenerated locally, one per band schema. See ``rules/gti.smk``
+   for the GDAL version they need to be read as rasters.
+
+Every level's listing is re-derived on every run, and that is what makes a
+MISSING product rebuild. The listings are deleted when this file loads and are
+targets of ``rule all`` (with ``products.done``, a rule that asks for every
+derived tile and its record), so every level's checkpoint runs; its listing
+then names every parent the level should hold, and a derived tile or per-tile
+record deleted since the last run is a missing output of a scheduled job,
+which Snakemake rebuilds. Deleting the listings was not enough on its own: a
+checkpoint's output is only produced when something ASKS for it, and when
+every product downstream exists Snakemake asks for nothing -- so a deleted
+tile got "Nothing to be done" while the manifest and its Item kept
+advertising it. (A dry run keeps the listings, and so may plan from a stale
+one.) Listing is a directory scan, cheap next to a fold, and the parents'
+jobs do not depend on the listing FILE, so a re-derived listing rebuilds no
+tile by itself. It does make the bookkeeping steps -- manifest, catalog,
+indexes -- run on every run; the manifest and the Items/Collection are
+rewritten only when their content changed, so an unchanged layer's published
+files keep their bytes and mtimes (section 9's replica rule).
+
+Two runs over one layer are serialised by a lock taken when this file loads
+(``.regenerate/regenerate.lock``), before the pre-step or the listing reset
+touch anything, whatever directory each run was started from -- the first
+version had nothing but Snakemake's per-working-directory ``.snakemake/``
+lock, so two runs from two directories interleaved. ``workdir:`` also puts
+Snakemake's metadata (the input sets its rerun triggers compare) in the
+layer's ``.regenerate/``, so it is the same record whoever runs it. (The C++
+writers additionally hold ``<layer>/overviews.lock`` against a concurrent
+batch build.)
+
+Snakemake removes a job's existing outputs before running it, so an overview
+tile being rebuilt is briefly absent, and a failed rebuild leaves it absent
+until the next run. Overviews are derived and regenerable; a reader of them
+falls back to the level below.
+"""
+
+import fcntl
+import hashlib
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+
+configfile_layer = config.get("layer_dir")
+if not configfile_layer:
+    raise WorkflowError(
+        "layer_dir is required: --config layer_dir=<quantity layer>. There is "
+        "no default, because the store root is resolved by "
+        "marine_world_store.store_root and a path written down here would be "
+        "the hard-coded path the guard test forbids."
+    )
+
+LAYER_DIR = Path(str(configfile_layer)).expanduser().resolve()
+if not LAYER_DIR.is_dir():
+    raise WorkflowError(f"layer_dir {LAYER_DIR} is not a directory")
+OVERVIEWS = LAYER_DIR / "overviews"
+
+#: Coarsest level to build (0 = apex). The finest level is DISCOVERED from the
+#: layer; asserting it would be meaningless for a mixed-level layer.
+MIN_LEVEL = int(config.get("min_level", 0))
+
+#: The layer's finest native level, needed to know where the ladder starts.
+#: Supplied by the caller: reading it here would mean a scan at DAG-build time,
+#: and `build_depth_overviews --dry-run` already reports it for an operator who
+#: does not know it.
+FINE_LEVEL = config.get("fine_level")
+
+#: ``<level>_<row>_<col>.tif`` exactly -- the canonical tile name.
+_TILE_NAME = re.compile(r"(0|[1-9]\d*)_(0|[1-9]\d*)_(0|[1-9]\d*)\.tif")
+
+
+def _tile_level(path):
+    """The level of a canonically named tile, else ``None``."""
+    match = _TILE_NAME.fullmatch(path.name)
+    return int(match.group(1)) if match else None
+
+
+if FINE_LEVEL is not None:
+    try:
+        FINE_LEVEL = int(FINE_LEVEL)
+    except ValueError:
+        raise WorkflowError(f"fine_level={FINE_LEVEL!r} is not a level")
+    # Checked before anything is written or removed. A fine_level coarser than
+    # the natives is a config slip, not a request: the pyramid would be built
+    # from the wrong level, and the removal of derived levels this run does
+    # not build would empty the published catalog -- exit 0.
+    _finer = sorted(
+        path.name for path in LAYER_DIR.glob("*_*_*.tif")
+        if (_tile_level(path) or 0) > FINE_LEVEL)
+    if _finer:
+        _named = ", ".join(_finer[:3]) + (", ..." if len(_finer) > 3 else "")
+        raise WorkflowError(
+            f"fine_level={FINE_LEVEL}, but {LAYER_DIR} holds native tiles at "
+            f"a finer level ({_named}): refusing before anything is removed. "
+            "Pass the layer's finest native level; "
+            "`build_depth_overviews --dry-run <layer>` reports it.")
+    # A derived tile at or finer than fine_level has no native tile below it
+    # (checked above), so it describes nothing a fold made -- a pyramid built
+    # under another fine_level, or a stray file. Named, not guessed at: the
+    # levels removed automatically are only the coarse ones min_level drops.
+    _derived_finer = sorted(
+        path.name for path in OVERVIEWS.glob("*_*_*.tif")
+        if (_tile_level(path) if _tile_level(path) is not None else -1)
+        >= FINE_LEVEL)
+    if _derived_finer:
+        _named = (", ".join(_derived_finer[:3]) +
+                  (", ..." if len(_derived_finer) > 3 else ""))
+        raise WorkflowError(
+            f"{OVERVIEWS} holds derived tiles at or finer than "
+            f"fine_level={FINE_LEVEL} ({_named}), which no native tile lies "
+            "below: refusing before anything is removed. Remove them (with "
+            "their .json records and .fp sidecars), or pass the fine_level "
+            "they were built under.")
+
+#: Where the run's own bookkeeping goes -- and Snakemake's, via ``workdir:``.
+#: Inside the layer, so a layer carries its regenerate state with it, two
+#: layers never share a DAG's scratch, and two runs over ONE layer share one
+#: lock whatever directory each was started from.
+WORK = LAYER_DIR / ".regenerate"
+WORK.mkdir(exist_ok=True)
+
+#: Held for the life of this Snakemake process; the kernel releases it on exit.
+_RUN_LOCK = open(WORK / "regenerate.lock", "a")
+try:
+    fcntl.flock(_RUN_LOCK, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    raise WorkflowError(
+        f"another regenerate is running over {LAYER_DIR} "
+        f"({WORK / 'regenerate.lock'} is held); retry when it finishes")
+
+#: The arguments of Snakemake 7's ``snakemake()`` that mean "do not execute
+#: the workflow": a dry run, a query, a report, a cleanup. Any one of them set
+#: makes this invocation read-only as far as this file is concerned.
+_NON_EXECUTING = (
+    "dryrun", "touch", "summary", "detailed_summary", "list_version_changes",
+    "list_code_changes", "list_input_changes", "list_params_changes",
+    "list_untracked", "list_resources", "listrules", "list_target_rules",
+    "printdag", "printrulegraph", "printfilegraph", "printd3dag", "lint",
+    "unlock", "cleanup_metadata", "conda_cleanup_envs", "cleanup_shadow",
+    "cleanup_containers", "archive", "delete_all_output",
+    "delete_temp_output", "print_compilation", "report", "containerize",
+    "generate_unit_tests", "list_conda_envs", "conda_create_envs_only",
+    "export_cwl",
+)
+
+
+def _executing():
+    """
+    Whether this invocation will execute the workflow, as Snakemake decided.
+
+    Read from the arguments Snakemake's own ``snakemake()`` call is running
+    with -- after its parser, its argument abbreviations and any profile have
+    been applied -- rather than guessed from ``sys.argv``: a regex over argv
+    missed ``--dry-ru`` and every profile, read ``-sSnakefile`` as a dry run,
+    and knew nothing of ``--summary`` and the other query modes. A job
+    Snakemake re-invokes this file for (``mode`` other than the default: a
+    cluster or subprocess job) is not the run either.
+    """
+    frame = sys._getframe()
+    while frame is not None:
+        if (frame.f_code.co_name == "snakemake" and
+                frame.f_globals.get("__name__") == "snakemake"):
+            invocation = frame.f_locals
+            if str(invocation.get("mode", 0)) not in ("0", "Mode.default"):
+                return False
+            return not any(invocation.get(name) for name in _NON_EXECUTING)
+        frame = frame.f_back
+    raise WorkflowError(
+        "cannot read this Snakemake's invocation, so cannot tell a real run "
+        "from a dry run or a query; the regenerate is written for Snakemake "
+        "7's snakemake() entry point (the declared dependency)")
+
+
+EXECUTING = _executing()
+
+
+# Resolved BEFORE ``workdir:``, which changes directory: a relative
+# ``--config <tool>_tool=`` is relative to where snakemake was started, as
+# ``layer_dir`` is.
+def _tool(name, package):
+    """
+    Locate one of the tools the rules run.
+
+    ``--config <name>_tool=<path>`` wins; then ``PATH``; then the ROS install
+    space, where colcon puts both packages' executables under
+    ``<prefix>/lib/<package>/`` -- NOT on ``PATH``, so a rule that ran the bare
+    name worked only for whoever happened to have that directory there.
+    """
+    override = config.get(f"{name}_tool")
+    if override:
+        path = Path(str(override)).expanduser().resolve()
+        if not (path.is_file() and os.access(path, os.X_OK)):
+            raise WorkflowError(f"{name}_tool={override}: not an executable")
+        return str(path)
+    found = shutil.which(name)
+    if found:
+        # Absolute NOW: a relative PATH entry is relative to where snakemake
+        # was started, and ``workdir:`` is about to change directory.
+        return os.path.abspath(found)
+    for prefix in os.environ.get("AMENT_PREFIX_PATH", "").split(os.pathsep):
+        candidate = Path(prefix) / "lib" / package / name if prefix else None
+        if candidate and candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    raise WorkflowError(
+        f"cannot find {name} (package {package}): source the workspace's "
+        f"install/setup.bash, put it on PATH, or pass --config "
+        f"{name}_tool=<path>"
+    )
+
+
+def _shell_literal(value):
+    """A value quoted for the shell and escaped for Snakemake's formatting."""
+    return shlex.quote(str(value)).replace("{", "{{").replace("}", "}}")
+
+
+OVERVIEW_TOOL = _tool("build_depth_overview_parent", "marine_bathymetry_store")
+
+
+def _content_id(path):
+    """sha256 of a file's bytes: what it IS, whatever path it was found at."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+# The fold's identity, as rule build_parent's one param: an updated builder
+# reruns every parent it built (Snakemake's params rerun trigger), while the
+# same builder found at another path or install space -- byte for byte the
+# same executable -- reruns nothing. By content, not by path or mtime.
+OVERVIEW_TOOL_ID = _content_id(OVERVIEW_TOOL)
+REFRESH_TOOL = _tool("mws_refresh_fingerprints", "marine_world_store")
+ASSEMBLE_TOOL = _tool("mws_assemble_coverage", "marine_world_store")
+CATALOG_TOOL = _tool("mws_regenerate_catalog", "marine_world_store")
+LIST_TILES_TOOL = _tool("mws_list_tiles", "marine_world_store")
+
+workdir: str(WORK)
+
+
+wildcard_constraints:
+    level=r"\d+",
+    row=r"\d+",
+    col=r"\d+",
+
+
+if not EXECUTING:
+    print("not executing (a dry run or a query): the fingerprint pre-step is "
+          "skipped (it writes .fp files, moves mtimes and removes untrusted "
+          "derived tiles), so a tile rewritten byte for byte may be listed "
+          "as a change it is not", file=sys.stderr)
+else:
+    # Derived levels coarser than min_level are no longer built: remove them
+    # now, before the pre-step reads them and before anything is planned, so
+    # nothing publishes them. (In the finest level's listing job, as it first
+    # was, this never ran when min_level >= fine_level: no listing job.)
+    if FINE_LEVEL is not None:
+        _dropped = sorted({
+            _tile_level(path) for path in OVERVIEWS.glob("*_*_*.tif")
+            if _tile_level(path) is not None
+            and _tile_level(path) < MIN_LEVEL})
+        if _dropped:
+            print("min_level is " + str(MIN_LEVEL)
+                  + ": removing derived level(s) "
+                  + ", ".join(str(lv) for lv in _dropped)
+                  + " from " + str(OVERVIEWS), file=sys.stderr)
+        for _level in _dropped:
+            subprocess.run(
+                [OVERVIEW_TOOL, "--remove-level", str(LAYER_DIR), str(_level)],
+                check=True)
+    if str(config.get("refresh_fingerprints", True)).lower() not in (
+            "false", "0", "no"):
+        subprocess.run([REFRESH_TOOL, str(LAYER_DIR)], check=True)
+    # Re-derive every level's listing (see the module docstring).
+    for stale_listing in WORK.glob("parents_*.tsv"):
+        stale_listing.unlink()
+    for stamp in ("products.done", "coverage.done"):
+        (WORK / stamp).unlink(missing_ok=True)
+
+
+def native_tiles(level):
+    """The layer's NATIVE tiles at ``level`` (the compile; no rule makes them)."""
+    return sorted(
+        path for path in LAYER_DIR.glob(f"{int(level)}_*_*.tif")
+        if _TILE_NAME.fullmatch(path.name))
+
+
+include: "rules/overviews.smk"
+include: "rules/catalog.smk"
+include: "rules/gti.smk"
+
+
+rule all:
+    input:
+        # The listings are targets so every level's checkpoint runs every run
+        # (see the module docstring): that is what notices a missing product.
+        expand(str(WORK / "parents_{level}.tsv"), level=_levels()),
+        WORK / "products.done",
+        WORK / "catalog.done",
+        WORK / "gti_native.done",
+        WORK / "gti_overview.done",
