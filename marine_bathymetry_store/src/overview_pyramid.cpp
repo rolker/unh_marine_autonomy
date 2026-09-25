@@ -611,7 +611,11 @@ void refuseCrossSchemaSidecar(
 // durability is the filesystem's call.
 void fsyncPath(const fs::path & path, bool directory)
 {
-  const int fd = ::open(path.c_str(), directory ? (O_RDONLY | O_DIRECTORY) : O_RDONLY);
+  // O_CLOEXEC, as LayerWriterLock: a descriptor must not leak into a child
+  // process another thread forks while this one is open.
+  const int fd = ::open(
+    path.c_str(),
+    (directory ? (O_RDONLY | O_DIRECTORY) : O_RDONLY) | O_CLOEXEC);
   if (fd < 0) {
     if (directory) {
       return;
