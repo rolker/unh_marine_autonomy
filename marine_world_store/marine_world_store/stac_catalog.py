@@ -294,10 +294,12 @@ def regenerate_collection(
     :returns: ``(path, written, items)``; ``written`` is ``False`` when the
         Collection was already exactly this.
     """
-    items = read_items(directory)
+    files = read_item_files(directory)
+    items = [item for _, item in files]
     collection = item_schema.build_collection(
         quantity=quantity, state=state, origin=origin,
-        description=description, items=items)
+        description=description, items=items,
+        item_hrefs=[f'./{path.name}' for path, _ in files])
     path, written = write_collection(directory, collection, validate=validate)
     return path, written, items
 

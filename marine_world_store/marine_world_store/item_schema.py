@@ -56,7 +56,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from marine_world_store import fingerprint as fingerprint_module
-from marine_world_store import source_time
+from marine_world_store import layout, source_time
 from marine_world_store.layout import Origin, Quantity, State
 
 #: STAC version these documents declare.
@@ -106,6 +106,32 @@ REQUIRED_CONTRACT_FIELDS = (
 
 #: Media type of a Cloud-Optimized GeoTIFF asset.
 COG_MEDIA_TYPE = 'image/tiff; application=geotiff; profile=cloud-optimized'
+
+#: Media type of every STAC document the store writes.
+JSON_MEDIA_TYPE = 'application/json'
+
+#: Where a tile Item finds its Collection: the ``collection.json`` beside it.
+#: Relative, so a replica or a copied cell stays navigable (STAC's
+#: "self-contained" catalog form -- no absolute ``self`` link is written).
+COLLECTION_HREF = f'./{layout.COLLECTION_FILENAME}'
+
+
+def tile_item_links() -> List[Dict[str, str]]:
+    """
+    The links every tile Item carries: to its Collection, as parent and root.
+
+    A cell's Collection is the root of its own self-contained catalog: there
+    is no store-wide catalog above it yet, so ``root`` and ``parent`` both
+    name the ``collection.json`` in the Item's own directory, which is where
+    every tile Item is written.
+    """
+    return [{'rel': rel, 'href': COLLECTION_HREF, 'type': JSON_MEDIA_TYPE}
+            for rel in ('collection', 'parent', 'root')]
+
+
+def item_href(item: Mapping[str, Any]) -> str:
+    """Relative href of the file an Item is written as (``<id>.json``)."""
+    return f'./{item["id"]}.json'
 
 
 class ItemSchemaError(ValueError):
@@ -325,7 +351,7 @@ def build_tile_item(
         'collection': collection_id(quantity, state, origin),
         'geometry': dict(geometry) if geometry else None,
         'properties': properties,
-        'links': [],
+        'links': tile_item_links(),
         'assets': {
             'data': {
                 'href': asset_href,
@@ -352,8 +378,28 @@ def build_collection(
     description: str,
     items: Sequence[Mapping[str, Any]],
     license_id: str = 'CC0-1.0',
+    item_hrefs: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
-    """Build the Collection over ``items`` (Part 2 line 1: no globbing)."""
+    """
+    Build the Collection over ``items`` (Part 2 line 1: no globbing).
+
+    The Collection links every Item it covers (``rel: item``, relative
+    hrefs), so a consumer enumerates the products from this one document.
+
+    :param item_hrefs: the href of each Item, in ``items`` order -- the files
+        they were actually read from, when the caller has them. Defaults to
+        ``./<id>.json``, the name every writer here gives an Item.
+    """
+    if item_hrefs is None:
+        item_hrefs = [item_href(item) for item in items]
+    elif len(item_hrefs) != len(items):
+        raise ItemSchemaError(
+            f'{len(item_hrefs)} href(s) for {len(items)} Item(s); a '
+            'Collection must link each Item exactly once')
+    links = [{'rel': 'root', 'href': COLLECTION_HREF,
+              'type': JSON_MEDIA_TYPE}]
+    links.extend({'rel': 'item', 'href': href, 'type': JSON_MEDIA_TYPE}
+                 for href in sorted(item_hrefs))
     bboxes = [item['bbox'] for item in items if item.get('bbox')]
     if bboxes:
         spatial = [[
@@ -373,7 +419,7 @@ def build_collection(
             'spatial': {'bbox': spatial},
             'temporal': {'interval': [collection_interval(items)]},
         },
-        'links': [],
+        'links': links,
         'properties': {
             CONTRACT_FIELDS['quantity']: Quantity(quantity).value,
             CONTRACT_FIELDS['state']: State(state).value,

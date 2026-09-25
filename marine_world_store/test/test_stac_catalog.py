@@ -150,6 +150,52 @@ def test_a_json_that_is_not_an_item_is_refused_by_path(tmp_path, document):
     assert 'not a STAC Item' in str(caught.value)
 
 
+def test_the_collection_links_every_item_and_nothing_else(tmp_path):
+    """
+    Part 2 line 1: a consumer enumerates the products from the Collection.
+
+    Regression: ``collection.json`` carried ``"links": []``, so the only way
+    to find the products was to glob the directory. Every ``rel: item`` link
+    resolves to an Item file, every Item file is linked once, the coverage
+    manifest is not, and each Item links back to the Collection.
+    """
+    items = [a_tile_item(), a_tile_item(row=4), a_tile_item(row=5)]
+    stac_catalog.write_items(tmp_path, items)
+    (tmp_path / layout.COVERAGE_MANIFEST_FILENAME).write_text(json.dumps({
+        'schema': 'coverage-manifest/1', 'tiles': []}))
+    path, _, _ = stac_catalog.regenerate_collection(
+        tmp_path, quantity=Quantity.DEPTHS, state=State.REVIEWED,
+        origin=Origin.SURVEYED, description='test')
+    collection = json.loads(path.read_text())
+    linked = [(tmp_path / link['href']).resolve()
+              for link in collection['links'] if link['rel'] == 'item']
+    on_disk = sorted(p.resolve() for p in tmp_path.glob('*.json')
+                     if p.name not in stac_catalog.NON_ITEM_FILENAMES)
+    assert sorted(linked) == on_disk
+    assert len(linked) == len(items)
+    for item_path in on_disk:
+        item = json.loads(item_path.read_text())
+        targets = {link['rel']: (tmp_path / link['href']).resolve()
+                   for link in item['links']}
+        assert targets['collection'] == path.resolve()
+        assert targets['root'] == path.resolve()
+
+    # And a STAC library walks the same links to the same Items.
+    read_back = pystac.Collection.from_file(str(path))
+    assert sorted(i.id for i in read_back.get_items()) == \
+        sorted(i['id'] for i in items)
+
+    # A removed Item leaves the links on the next regenerate.
+    on_disk[0].unlink()
+    stac_catalog.regenerate_collection(
+        tmp_path, quantity=Quantity.DEPTHS, state=State.REVIEWED,
+        origin=Origin.SURVEYED, description='test')
+    collection = json.loads(path.read_text())
+    assert sorted((tmp_path / link['href']).resolve()
+                  for link in collection['links']
+                  if link['rel'] == 'item') == on_disk[1:]
+
+
 def test_regenerating_an_unchanged_collection_writes_nothing(tmp_path):
     """The whole point of the fingerprint-driven regenerate."""
     stac_catalog.write_items(tmp_path, [a_tile_item()])
