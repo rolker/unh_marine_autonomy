@@ -573,9 +573,20 @@ void refuseCrossSchemaSidecar(
   if (existing.has_value() &&
     *existing != static_cast<int>(writing_bands))
   {
+    // Say what the verdict rests on. A schema record can exist with NO tiles
+    // beside it (a per-parent write that failed after writing it, or a level
+    // emptied by prune/remove-level), and "it holds 4-band tiles" is then
+    // untrue and sends the operator looking for tiles that are not there.
+    const bool from_record =
+      fs::exists(overviews / kOverviewSchemaFilename);
+    const std::string holds = from_record ?
+      std::string("its ") + kOverviewSchemaFilename + " records the " +
+      std::to_string(*existing) + "-band schema (whether or not any tile is "
+      "there yet)" :
+      "it holds " + std::to_string(*existing) + "-band tiles";
     throw std::runtime_error(
-      "refusing to replace " + overviews.string() + ": it holds " +
-      std::to_string(*existing) + "-band tiles and this is the " + schema_name +
+      "refusing to replace " + overviews.string() + ": " + holds +
+      " and this is the " + schema_name +
       " writer (" + std::to_string(writing_bands) + " bands). Consumers read "
       "these tiles by band index, so swapping the schema under them would be "
       "silently wrong — check the layer path");

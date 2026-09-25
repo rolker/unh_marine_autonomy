@@ -732,6 +732,34 @@ TEST(MultiBandPyramid, ASidecarWhoseReadableTilesDisagreeIsRefused)
   }
 }
 
+TEST(MultiBandPyramid, ARefusalOnATilelessSchemaRecordSaysItIsTheRecord)
+{
+  // A schema record with no tiles beside it (a per-parent write that failed
+  // after writing it, or a level emptied by prune) still refuses the
+  // single-band builder — but the message must not claim 4-band tiles exist.
+  ScratchDir dir("tileless_record");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  const fs::path overviews = dir.path() / "overviews";
+  fs::create_directories(overviews);
+  std::ofstream(overviews / "overview_schema.json") <<
+    R"({"schema": "depth-overview-multiband/1",)"
+    R"( "bands": ["min", "mean", "count", "sigma"], "sigma_fold": "undecided"})";
+  mbs::DepthOverviewOptions single;
+  single.layer_dir = dir.path().string();
+  single.min_level = kFineLevel - 1;
+  try {
+    mbs::buildDepthOverviewPyramid(single);
+    ADD_FAILURE() << "a 4-band schema record must refuse the single-band writer";
+  } catch (const std::runtime_error & e) {
+    const std::string what = e.what();
+    EXPECT_NE(what.find("records the 4-band schema"), std::string::npos) << what;
+    EXPECT_EQ(what.find("holds 4-band tiles"), std::string::npos) << what;
+  }
+}
+
 TEST(MultiBandPyramid, TheSchemaRecordIsPreferredAndAnUnreadableOneRefused)
 {
   // overview_schema.json states the schema; a tile is only probed without it.
