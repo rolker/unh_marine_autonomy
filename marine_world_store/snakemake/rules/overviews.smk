@@ -124,7 +124,13 @@ def _children(wildcards):
 
 
 rule build_parent:
-    """Fold ONE parent tile. Per-tile atomic, so `-j` may run many at once."""
+    """
+    Fold ONE parent tile. Per-tile atomic, so `-j` may run many at once.
+
+    The C++ writer holds the layer's writer lock SHARED; the `--record` step
+    after it runs unlocked (marine_bathymetry_store README, "Per-parent, and
+    why"), so a batch build must not run over the same layer meanwhile.
+    """
     input:
         _children,
     output:

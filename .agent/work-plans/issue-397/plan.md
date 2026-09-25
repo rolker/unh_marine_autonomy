@@ -709,3 +709,8 @@ suggestions. What they change about the notes above:
   `buildPyramidCore` (directory, native scan, band shape, completeness), and
   re-run the cross-schema guard under it; a refused or mis-pointed layer gains
   no `overviews.lock` and gets its own diagnostic.
+- **The layer writer lock's claim is narrowed to the C++ writers.** The Python
+  regenerate steps (`--record`, `mws_assemble_coverage`, the load-time refresh,
+  `mws_regenerate_catalog`) run unlocked; the bathymetry README and the
+  `build_parent` rule now say so, and say not to run a batch build beside a
+  regenerate over one layer, rather than claiming the lock covers them.

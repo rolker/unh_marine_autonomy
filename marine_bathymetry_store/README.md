@@ -379,7 +379,12 @@ ros2 run marine_bathymetry_store build_depth_overview_parent --prune \
   once) and both batch builders (4-band and single-band) hold it
   **exclusively**, so a batch swap never retires tiles a per-parent run just
   wrote; either refuses rather than waits, and a leftover `overviews.tmp/` also
-  stops a per-parent write.
+  stops a per-parent write. The lock covers **these C++ writers only**: the
+  Python steps of the regenerate workflow (`mws_refresh_fingerprints --record`
+  after each per-parent write, `mws_assemble_coverage`, the load-time
+  fingerprint refresh and `mws_regenerate_catalog`) take no lock, so a batch
+  build run beside a Snakemake regenerate over the same layer can still race
+  those steps. Do not run the two over one layer at once.
 - **Native-wins, unchanged.** A parent already covered by a native tile is left
   alone and reported, in both writers and in `--list-parents`. A child found
   *both* natively and as a derived overview throws: the two sets are disjoint by
