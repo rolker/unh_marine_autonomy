@@ -1193,6 +1193,15 @@ DepthOverviewBuildResult buildPyramidCore(
 DepthOverviewBuildResult buildDepthOverviewPyramid(
   const DepthOverviewOptions & opts, std::ostream * progress)
 {
+  // The same exclusive writer lock the multi-band batch builder takes: this
+  // builder swaps overviews/ wholesale too, so a per-parent write or prune
+  // pointed at the same layer (which the cross-schema guard would refuse, but
+  // only once it looks) must not interleave with the swap. A dry run writes
+  // nothing and takes no lock.
+  std::optional<LayerWriterLock> lock;
+  if (!opts.dry_run && fs::is_directory(opts.layer_dir)) {
+    lock.emplace(fs::path(opts.layer_dir), true);
+  }
   return buildPyramidCore(
     opts.layer_dir, opts.min_level, opts.dry_run, kBands,
     detail::depthShallowestFold, std::nullopt, "buildDepthOverviewPyramid",

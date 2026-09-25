@@ -374,9 +374,10 @@ ros2 run marine_bathymetry_store build_depth_overview_parent --prune \
   **tile** — write a private temporary beside the destination, sync it, rename
   over it — with no `overviews.tmp/` staging: one tile has no partial-pyramid
   hazard. Per-parent writes hold `<layer>/overviews.lock` **shared** (many at
-  once) and the batch 4-band builder holds it **exclusively**, so a batch swap
-  never retires tiles a per-parent run just wrote; either refuses rather than
-  waits, and a leftover `overviews.tmp/` also stops a per-parent write.
+  once) and both batch builders (4-band and single-band) hold it
+  **exclusively**, so a batch swap never retires tiles a per-parent run just
+  wrote; either refuses rather than waits, and a leftover `overviews.tmp/` also
+  stops a per-parent write.
 - **Native-wins, unchanged.** A parent already covered by a native tile is left
   alone and reported, in both writers and in `--list-parents`. A child found
   *both* natively and as a derived overview throws: the two sets are disjoint by

@@ -1052,6 +1052,29 @@ TEST(LayerWriterLock, PerParentWritesAndABatchBuildExcludeEachOther)
     EXPECT_NO_THROW(mbs::buildMultiBandDepthOverviewPyramid(batch));
     ::close(fd);
   }
+  {
+    // The single-band batch builder swaps overviews/ wholesale as well, so it
+    // takes the same exclusive lock: it refuses beside a per-parent writer.
+    // Regression: it called the shared pyramid body with no lock at all.
+    ScratchDir single_dir("writer_lock_single");
+    for (const gggs::GridIndex & g : fine) {
+      writeUniformNativeTile(single_dir.path(), g, -8.0, 0.4);
+    }
+    const fs::path single_lock = single_dir.path() / "overviews.lock";
+    const int fd = ::open(single_lock.c_str(), O_RDWR | O_CREAT, 0644);
+    ASSERT_GE(fd, 0);
+    ASSERT_EQ(::flock(fd, LOCK_SH | LOCK_NB), 0);
+    mbs::DepthOverviewOptions single;
+    single.layer_dir = single_dir.path().string();
+    single.min_level = kFineLevel - 1;
+    EXPECT_THROW(mbs::buildDepthOverviewPyramid(single), std::runtime_error);
+    EXPECT_FALSE(fs::exists(single_dir.path() / "overviews"));
+    single.dry_run = true;
+    EXPECT_NO_THROW(mbs::buildDepthOverviewPyramid(single));
+    ::close(fd);
+    single.dry_run = false;
+    EXPECT_TRUE(mbs::buildDepthOverviewPyramid(single).sidecar_replaced);
+  }
   // A crashed batch build's staging directory also stops a per-parent write.
   fs::create_directories(dir.path() / "overviews.tmp");
   EXPECT_THROW(
