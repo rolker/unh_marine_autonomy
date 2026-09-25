@@ -211,7 +211,6 @@ def _fold(state: _State) -> _State:
     n = _blocks(state.n)
     s = _blocks(state.s)
     ss = _blocks(state.ss)
-    mean = _blocks(state.mean)
     contributes = n > 0
 
     sigma_n = _blocks(state.sigma_n)

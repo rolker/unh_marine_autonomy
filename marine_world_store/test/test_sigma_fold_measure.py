@@ -223,9 +223,9 @@ def test_pooled_folded_once_or_twice_over_the_same_children_agrees():
 
 def test_pooled_over_natives_matches_one_pooling_of_the_sigma_carriers():
     """
-    Two fold steps over native cells equal one pooling of every native that
-    carries a sigma -- the law of total variance, with sigma-less natives
-    excluded at both steps.
+    Two fold steps over natives equal one pooling of the sigma carriers.
+
+    The law of total variance, with sigma-less natives excluded at both steps.
     """
     rng = np.random.default_rng(397)
     depth = rng.normal(-12.0, 3.0, size=(4, 4))

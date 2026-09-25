@@ -262,7 +262,7 @@ def test_an_item_with_a_single_datetime_is_written(tmp_path):
 
 def test_a_validator_that_cannot_load_says_validation_is_off(monkeypatch):
     """
-    pystac's bare ImportError (old jsonschema, no referencing) is permanent.
+    A bare ImportError from pystac (old jsonschema, no referencing) is permanent.
 
     It must read differently from an unreachable schema host: it names what the
     validator needs and says nothing this process writes is checked.
