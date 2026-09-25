@@ -846,3 +846,31 @@ Round-3 findings, all 14 confirmed fixed: a derived tile whose content does not 
 Tests: `./core_ws/test.sh marine_bathymetry_store marine_world_store` — 765 tests, 0 errors, 0 failures, 45 skipped.
 
 Host-inline, one line of output plus one assertion, after an approved review; no further review round (owner chose fix-all + short check, 2026-09-23).
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-09-25 11:39 -04:00
+**By**: Claude Code Agent (Claude Opus 5.5)
+
+External cross-model review of PR #399 at `9b0906a` in place of an owner read (Copilot quota exhausted this month): Codex (2026-09-24, 5 findings) and Gemini via agy (2026-09-25, 9 findings). Every finding was checked against the code; all confirmed code is introduced by this PR. Owner decisions 2026-09-25: fix all nine here; σ pooling rule below.
+
+### Actions
+- [ ] (must-fix, Codex 1) `item_schema.py` ~L381 / catalog writer: `collection.json` always has `"links": []`, so a consumer cannot enumerate products without globbing. Emit a relative `rel: item` link per included Item from the Collection, and `rel: collection` (plus `parent`/`root` as the STAC layout requires) on each Item. Test: a written catalog's Collection links resolve to every Item file and nothing else.
+- [ ] (must-fix, Codex 2) `stac_catalog.py` ~L210 `read_item_files()`: every `*.json` except `collection.json` is admitted as an Item, including the native `coverage.json` sidecar, which then breaks catalog regeneration (undated Item) and tile listing. Exclude the known sidecars AND admit a document only when it is a STAC Item (`type == "Feature"` with the Item fields); anything else is skipped or refused with its path named. Test with a `coverage.json` beside real Items.
+- [ ] (must-fix, Codex 3) `overview_items.py` ~L171 `_overview_item`: the overview fingerprint keeps only child source ids, revision ids and builder versions, so a change to a child's `trajectory_id`, `geometry_revision_id`, `decoder_version`, `cache_method` or `consumer_ordering` leaves every ancestor's fingerprint unchanged. Fingerprint the complete child fingerprints together with each child's tile identity and the fold version (σ rule). Test: changing any one of those five child inputs changes the parent's fingerprint.
+- [ ] (must-fix, Codex 4) `source_time.py` ~L291 split fallback: entries with no start are silently skipped and a missing duration becomes 0, publishing a narrower interval instead of refusing an undatable source. Require start AND duration for every non-empty split; otherwise raise `TimeIntervalError` naming the split and carrying `OVERRIDE_HINT`. Test both missing-start and missing-duration.
+- [ ] (must-fix, Codex 5) `marine_world_store/setup.cfg` L22: `snakemake` is unversioned, but `_executing()` relies on Snakemake 7's internal `snakemake()` frame. Pin `snakemake>=7,<8` there and note the constraint where the package.xml / rosdep.yaml comment explains the dependency (apt has 7.32.4 on this host).
+- [ ] (must-fix, Gemini 3) `overview_pyramid.cpp` `buildMultiBandDepthOverviewParent` (~L1404-1546): `refuseCrossSchemaSidecar` runs at ~L1516, after `removeDerivedTile` (~L1445, ~L1490) and 4-band child loads (~L1473), so a legacy 2-band `overviews/` can be mutated or misread before the guard. Call the guard first, before any removal or load. Test: a 2-band overviews dir is refused and left byte-for-byte untouched.
+- [ ] (must-fix, Gemini 4) `overview_pyramid.cpp` `buildDepthOverviewPyramid` (~L1193-1200) calls `buildPyramidCore` without the `LayerWriterLock` that the multi-band batch path (~L1215-1231) and the per-parent writers take. Take `LayerWriterLock(layer_dir, true)` there the same way.
+- [ ] (must-fix, Gemini 9) `sidecarBandCount` / `refuseCrossSchemaSidecar` (~L418-460) probe only the first tile and return nullopt when it is unreadable, silently skipping the guard; and `overview_schema.json` is written only by the batch writer, never by the per-parent (Snakemake) path. Fail closed when the probe tile cannot be read (refuse, naming the file), prefer `overview_schema.json` when present, and have the per-parent writer write/refresh `overview_schema.json` so both paths leave the same record. Tests for the unreadable-tile refusal and the per-parent schema file.
+- [ ] (suggestion, Gemini 6) `privateTemporary` (~L489-496) names temps from pid + counter with no exclusive create, unlike Python's `atomic_io._create_temporary` (random + `O_EXCL`); GDAL `Create` truncates. Add a random component to the name so two writers sharing storage from different PID namespaces cannot collide, matching the Python writer.
+- [ ] (owner decision, Gemini 2) `foldSigma` `kPooled` (~L256-271) counts a child with no σ as zero within-variance while adding its count, which pulls pooled σ down. **Owner decision 2026-09-25: pool only over the children that have σ, weighted by their own counts; children without σ are left out of the σ fold.** All-children-without-σ stays nodata (NaN), as now. Update the formula's doc comment and any design-doc/ADR text that states the pooled formula, and add a test with mixed σ / no-σ children (e.g. a 1000-count no-σ child beside a 1-count σ=1 m child gives σ=1 m, not ~0.03 m).
+
+### Not acted on (verified false)
+- Gemini 1: `buildLevel` dangling pointers — `child_tiles.reserve(group.second.size())` precedes the loop, so no reallocation.
+- Gemini 5: fsync on an O_RDONLY fd — fine on Linux, the only target.
+- Gemini 7: promoted NaN-depth cell gets COUNT=1 — `validCell` gates on depth before any fold, so that COUNT is never read.
+- Gemini 8: Snakemake MissingOutputException on suppressed parents — `--list-parents` never lists a suppressed or childless parent, so the DAG never targets one.
+
+### Next step
+Dispatch `address-findings` for the ten actions above, then re-run `review-code` (pre-push, with Gemini+Codex) before any push.
