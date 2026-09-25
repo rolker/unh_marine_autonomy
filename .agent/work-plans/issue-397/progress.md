@@ -1088,3 +1088,14 @@ Dispatch `address-findings` for the ten actions, then a Codex check scoped to th
 
 ### Next step
 Codex check scoped to this fix pass (`6e264b6..827f778` plus this entry), then the host pushes (owner-approved in the review entry).
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-09-25 14:59 -04:00
+**By**: Claude Code Agent (Claude Opus 5.5)
+
+Codex check scoped to the round-6 fix pass (`6e264b6..e1b9120`). Two findings, both confirmed against the code; both are small and change no design. Not fixed: the session wrapped up here (owner, 2026-09-25). Resume with `/run-issue uma 399` → address-findings.
+
+### Actions
+- [ ] (must-fix, Codex) `snakemake/Snakefile` ~L330-342 / `overview_items.overview_builder_version()` ~L168: the builder executable's sha256 triggers `build_parent` reruns but never reaches the tile record or the Item fingerprint, so a changed builder can publish new pixels under an unchanged fingerprint. Carry the builder digest into `builder_version` (per-tile record and Item); test that a changed digest changes the fingerprint as well as the schedule.
+- [ ] (must-fix, Codex) `depth_subset.py` ~L197-210: `source_identity.file_source_id(tile)` hashes the SOURCE after `_copy_identical(tile, target)` published the copy; a source replaced in between gives an Item that fingerprints bytes the published tile does not contain. Derive the content id (and raster metadata) from the verified copy `target` (the source only under `dry_run`); regression test replacing the source after the copy.
