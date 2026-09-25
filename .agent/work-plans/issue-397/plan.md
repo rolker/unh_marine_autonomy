@@ -687,3 +687,13 @@ suggestions. What they change about the notes above:
   count/mean state in the tile and is deferred to the open σ-rule decision. A
   two-level gtest (`PooledReAdmitsSigmaLessDataAboveFirstFold`) pins the current
   behaviour. Writers keep emitting σ as nodata.
+- **The cross-schema probe reads until a tile does.** With no
+  `overview_schema.json` the guard probed only the first tile and refused if it
+  could not read it, which blocked the single-band batch builder's wholesale
+  rebuild of a legacy sidecar with a corrupt first tile (and turned a tile a
+  concurrent prune removed into a refusal). It now skips unreadable tiles, takes
+  the band count from the first readable one, and refuses only when **no** tile
+  reads or readable tiles **disagree** on band count. Tests: the repair case
+  (first tile corrupt, the rest fine — the multi-band writer still refuses, the
+  single-band builder rebuilds it), the mixed case, and the existing
+  none-readable refusal.

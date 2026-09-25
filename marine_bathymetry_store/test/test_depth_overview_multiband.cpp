@@ -670,6 +670,68 @@ TEST(MultiBandPyramid, AnUnreadableProbeTileFailsClosed)
   EXPECT_EQ(readText(garbage), "not a GeoTIFF");
 }
 
+TEST(MultiBandPyramid, ALegacySidecarWithAnUnreadableFirstTileIsStillRepaired)
+{
+  // Regression (round-5 review): the probe read only the FIRST tile and refused
+  // when it could not, which stopped the single-band batch builder from
+  // rebuilding a legacy sidecar (no overview_schema.json) whose first tile was
+  // corrupt — the wholesale rebuild is how such a tile has always been
+  // repaired. The probe now reads until a tile does.
+  ScratchDir dir("probe_repair");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  mbs::DepthOverviewOptions single;
+  single.layer_dir = dir.path().string();
+  single.min_level = kFineLevel - 3;
+  ASSERT_TRUE(mbs::buildDepthOverviewPyramid(single).sidecar_replaced);
+  const fs::path overviews = dir.path() / "overviews";
+  ASSERT_FALSE(fs::exists(overviews / "overview_schema.json"));
+  std::size_t skipped = 0;
+  const std::vector<gggs::GridIndex> tiles =
+    mtrs::gridsInDir(overviews.string(), std::nullopt, skipped);
+  ASSERT_GE(tiles.size(), 2u);
+  const fs::path first = overviews / mtrs::tileFilename(tiles.front());
+  std::ofstream(first, std::ios::trunc) << "not a GeoTIFF";
+
+  // The multi-band writers still see a single-band sidecar and refuse it.
+  mbs::MultiBandOverviewOptions multi;
+  multi.layer_dir = dir.path().string();
+  multi.min_level = kFineLevel - 1;
+  EXPECT_THROW(mbs::buildMultiBandDepthOverviewPyramid(multi), std::runtime_error);
+  EXPECT_EQ(readText(first), "not a GeoTIFF");
+
+  // The single-band batch builder repairs it.
+  ASSERT_NO_THROW(mbs::buildDepthOverviewPyramid(single));
+  // Rebuilt as the single-band tree's 2-band {depth, σ} tile.
+  EXPECT_EQ(mtrs::tileRasterCount(first.string()), 2);
+}
+
+TEST(MultiBandPyramid, ASidecarWhoseReadableTilesDisagreeIsRefused)
+{
+  // No writer produces a sidecar mixing band counts, so with no schema record
+  // to settle it, readable tiles that disagree are refused by name.
+  ScratchDir dir("probe_mixed");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  mbs::DepthOverviewOptions single;
+  single.layer_dir = dir.path().string();
+  single.min_level = kFineLevel - 2;
+  ASSERT_TRUE(mbs::buildDepthOverviewPyramid(single).sidecar_replaced);
+  const fs::path overviews = dir.path() / "overviews";
+  const gggs::GridIndex grand = gggs::parent(gggs::parent(fine.front()));
+  writeUniformMultiBandTile(overviews, grand, -8.0);
+  try {
+    mbs::buildDepthOverviewPyramid(single);
+    ADD_FAILURE() << "a mixed sidecar must be refused";
+  } catch (const std::runtime_error & e) {
+    EXPECT_NE(std::string(e.what()).find("disagree"), std::string::npos) << e.what();
+  }
+}
+
 TEST(MultiBandPyramid, TheSchemaRecordIsPreferredAndAnUnreadableOneRefused)
 {
   // overview_schema.json states the schema; a tile is only probed without it.

@@ -491,13 +491,19 @@ std::optional<nlohmann::json> readOverviewSchema(const fs::path & dir)
 
 // Band count of the sidecar in @p dir, or nullopt when it holds neither a
 // schema record nor any tile. The schema record wins when present; otherwise
-// ONE tile is probed (a sidecar with mixed band counts is not a state either
-// writer can produce, and the cross-schema guard only needs to know which
-// schema is in residence).
+// the tiles are probed.
 //
-// FAILS CLOSED: a probe tile that cannot be read throws, naming it. Returning
-// "unknown" there silently skipped the guard — exactly the state in which a
-// mis-pointed writer could not be told apart from the right one.
+// Probing reads every tile it can: an unreadable tile is skipped (and
+// counted), the first readable one sets the band count, and a later readable
+// one that disagrees is refused as a mixed sidecar. Stopping at the FIRST tile
+// and failing on it blocked the single-band batch builder's wholesale rebuild
+// — the way a legacy sidecar (no schema record) with a corrupt tile has always
+// been repaired — and turned a tile a concurrent prune removed between the
+// scan and the read into a refusal.
+//
+// FAILS CLOSED when no tile reads at all: returning "unknown" there silently
+// skipped the guard — exactly the state in which a mis-pointed writer could not
+// be told apart from the right one.
 std::optional<int> sidecarBandCount(const fs::path & dir)
 {
   if (!fs::is_directory(dir)) {
@@ -512,16 +518,45 @@ std::optional<int> sidecarBandCount(const fs::path & dir)
   if (grids.empty()) {
     return std::nullopt;
   }
-  const fs::path probe = dir / marine_tiled_raster_store::tileFilename(grids.front());
-  try {
-    return marine_tiled_raster_store::tileRasterCount(probe.string());
-  } catch (const std::exception & e) {
+  std::optional<int> bands;
+  fs::path bands_from;
+  std::size_t unreadable = 0;
+  fs::path first_unreadable;
+  std::string first_error;
+  for (const gggs::GridIndex & grid : grids) {
+    const fs::path probe = dir / marine_tiled_raster_store::tileFilename(grid);
+    int count = 0;
+    try {
+      count = marine_tiled_raster_store::tileRasterCount(probe.string());
+    } catch (const std::exception & e) {
+      if (unreadable++ == 0) {
+        first_unreadable = probe;
+        first_error = e.what();
+      }
+      continue;
+    }
+    if (!bands.has_value()) {
+      bands = count;
+      bands_from = probe;
+    } else if (*bands != count) {
+      throw std::runtime_error(
+        "cannot tell which band schema " + dir.string() + " holds: it has no " +
+        kOverviewSchemaFilename + ", and its tiles disagree (" +
+        bands_from.string() + " has " + std::to_string(*bands) + " band(s), " +
+        probe.string() + " has " + std::to_string(count) +
+        "); refusing to write into it — no writer produces a mixed sidecar, "
+        "so check the layer path");
+    }
+  }
+  if (!bands.has_value()) {
     throw std::runtime_error(
       "cannot tell which band schema " + dir.string() + " holds: it has no " +
-      kOverviewSchemaFilename + " and its tile " + probe.string() +
-      " cannot be read (" + e.what() + "); refusing to write into it — "
-      "repair or remove that tile");
+      kOverviewSchemaFilename + " and none of its " +
+      std::to_string(grids.size()) + " tile(s) can be read (first: " +
+      first_unreadable.string() + ": " + first_error +
+      "); refusing to write into it — repair or remove those tiles");
   }
+  return bands;
 }
 
 // Refuse to replace a sidecar written under the OTHER tile schema.
