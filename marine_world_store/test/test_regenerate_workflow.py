@@ -1110,6 +1110,26 @@ def test_the_same_tool_at_another_path_rebuilds_nothing(workflow, tmp_path):
     assert builds == ['11_0_0', '12_0_0']
 
 
+def test_an_updated_builder_rebuilds_every_parent(workflow, tmp_path):
+    """
+    A changed fold implementation reruns the parents it built.
+
+    Regression: nothing in rule build_parent was tied to the builder, so an
+    updated fold never re-ran an existing parent. Its identity is its
+    content, so the same bytes elsewhere rebuild nothing (above) and changed
+    bytes at the same path rebuild everything.
+    """
+    for name in ('13_0_0.tif', '13_2_2.tif'):
+        workflow.native(name)
+    _, first, _ = workflow.run()
+    tool = tmp_path / 'bin' / 'fake_build_depth_overview_parent'
+    tool.write_text(tool.read_text() + '# fold v2\n')
+    _, builds, _ = workflow.run()
+    assert builds == first
+    _, builds, _ = workflow.run()
+    assert builds == []
+
+
 def test_a_tool_on_a_relative_path_entry_survives_workdir(
         workflow, tmp_path):
     """

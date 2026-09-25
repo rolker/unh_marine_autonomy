@@ -136,11 +136,15 @@ rule build_parent:
     output:
         OVERVIEWS / "{level}_{row}_{col}.tif",
         OVERVIEWS / "{level}_{row}_{col}.json",
-    # No `params:`. Snakemake reruns a job whose params changed, so a tool
+    # One param only: the builder's CONTENT identity. Snakemake reruns a job
+    # whose params changed, so an updated fold (a rebuilt executable with
+    # different bytes) reruns every parent it built. Never a PATH: a tool
     # found at another path (another install space, another PATH) or the
-    # store under another mount would rebuild every derived tile. The tool
-    # and layer paths are written into the command instead, which Snakemake
-    # does not compare: what this rule's product depends on is its inputs.
+    # store under another mount would rebuild every derived tile, so the
+    # tool and layer paths are written into the command instead, which
+    # Snakemake does not compare.
+    params:
+        builder=OVERVIEW_TOOL_ID,
     shell:
         # Recorded as built, with the mtime the build gave it (see
         # fingerprint_sidecar): the next pre-step then leaves it newer than
