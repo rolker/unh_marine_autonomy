@@ -261,7 +261,9 @@ def bag_interval(bag_dir: PathLike) -> Tuple[str, str]:
     Two readings, in order: the bag's own ``starting_time`` plus ``duration``,
     and -- when those are absent or the duration is missing -- the union of
     the per-split ``files:`` entries, which is the message time range the same
-    file records split by split.
+    file records split by split. Every non-empty split must carry BOTH its
+    start and its duration: one that does not is refused by name rather than
+    skipped or read as an instant, either of which would narrow the interval.
 
     :raises TimeIntervalError: when neither reading yields an interval. An
         empty bag (no messages) is refused too: a recording that observed
@@ -280,15 +282,24 @@ def bag_interval(bag_dir: PathLike) -> Tuple[str, str]:
         return interval_from_nanoseconds(start_ns, duration_ns)
 
     spans = []
-    for entry in info.get('files') or []:
+    for index, entry in enumerate(info.get('files') or []):
         if _is_empty_split(entry):
             continue
         entry_start = _nanoseconds(entry, 'starting_time')
         entry_duration = _nanoseconds(entry, 'duration')
-        if entry_start is None:
-            continue
-        spans.append(interval_from_nanoseconds(entry_start,
-                                               entry_duration or 0))
+        # A split that recorded messages but not WHEN is not skippable: the
+        # union would publish a narrower interval than the bag observed over,
+        # and a missing duration read as 0 would cut the split to an instant.
+        missing = [name for name, value in (
+            ('starting_time', entry_start), ('duration', entry_duration))
+            if value is None]
+        if missing:
+            raise TimeIntervalError(
+                f'{bag_dir}: files: entry {index} '
+                f'({entry.get("path", "unnamed")!r}) holds messages but '
+                f'records no {" or ".join(missing)}, so the bag\'s interval '
+                f'cannot be derived without narrowing it; {OVERRIDE_HINT}.')
+        spans.append(interval_from_nanoseconds(entry_start, entry_duration))
     if spans:
         return union_intervals(spans, what=str(bag_dir))
     raise TimeIntervalError(

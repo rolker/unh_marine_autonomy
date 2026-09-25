@@ -150,6 +150,41 @@ def test_a_bag_of_only_empty_splits_is_refused(tmp_path):
         source_time.bag_interval(bag)
 
 
+@pytest.mark.parametrize('missing', ['starting_time', 'duration'])
+def test_a_split_missing_its_start_or_duration_is_refused(tmp_path, missing):
+    """
+    A non-empty split that cannot be dated makes the bag undatable.
+
+    Regression: a split with no start was skipped and one with no duration
+    was read as an instant, so the union published a narrower interval than
+    the bag observed over instead of refusing it.
+    """
+    fields = {
+        'starting_time': (f'      starting_time:\n'
+                          f'        nanoseconds_since_epoch: '
+                          f'{START_NS + 2000000000}\n'),
+        'duration': '      duration:\n        nanoseconds: 1000000000\n',
+    }
+    second = ''.join(text for name, text in fields.items() if name != missing)
+    bag = write_metadata(tmp_path / 'bag', (
+        '  message_count: 12\n'
+        '  files:\n'
+        f'    - path: bag_0.mcap\n'
+        f'      starting_time:\n'
+        f'        nanoseconds_since_epoch: {START_NS}\n'
+        f'      duration:\n        nanoseconds: 1000000000\n'
+        f'      message_count: 6\n'
+        f'    - path: bag_1.mcap\n'
+        + second +
+        f'      message_count: 6\n'))
+    with pytest.raises(TimeIntervalError) as caught:
+        source_time.bag_interval(bag)
+    message = str(caught.value)
+    assert 'bag_1.mcap' in message
+    assert missing in message
+    assert source_time.OVERRIDE_HINT in message
+
+
 def test_a_bag_with_no_metadata_is_refused(tmp_path):
     """Undated is a provenance defect, not a gap to fill with a guess."""
     bag = tmp_path / 'bag'
