@@ -187,9 +187,19 @@ def overview_builder_version(sigma_fold: str, child_names: Sequence[str],
         raise OverviewItemError(
             f'{len(child_names)} child name(s) for {len(child_inputs)} '
             'child input document(s)')
-    parts = sorted(
-        f'{name}={fingerprint_module.fingerprint_of(document)}'
-        for name, document in zip(child_names, child_inputs))
+    parts = []
+    for name, document in zip(child_names, child_inputs):
+        # Normalised through fingerprint(), not hashed as stored: a hand-edited
+        # child (unsorted or duplicate ids, an unknown key) must hash the same
+        # as -- or be refused like -- the document the writer would produce.
+        try:
+            child_fingerprint = fingerprint_module.fingerprint(**document)
+        except (fingerprint_module.FingerprintError, TypeError) as exc:
+            raise OverviewItemError(
+                f'child {name}: its stored inputs cannot be fingerprinted: '
+                f'{exc}') from exc
+        parts.append(f'{name}={child_fingerprint}')
+    parts.sort()
     return (f'{OVERVIEW_BUILDER} sigma_fold={sigma_fold} over '
             f'[{"; ".join(parts)}]')
 
@@ -197,7 +207,15 @@ def overview_builder_version(sigma_fold: str, child_names: Sequence[str],
 def _overview_item(tile: Path, key, record, children, *, quantity, state,
                    origin) -> Dict[str, Any]:
     level, row, col = key
-    inputs = [c['properties'][CONTRACT_FIELDS['inputs']] for c in children]
+    inputs = []
+    for child in children:
+        document = (child.get('properties') or {}).get(
+            CONTRACT_FIELDS['inputs'])
+        if not isinstance(document, Mapping):
+            raise OverviewItemError(
+                f'child Item {child.get("id")!r} carries no '
+                f'{CONTRACT_FIELDS["inputs"]} document to fold from')
+        inputs.append(document)
     source_ids = sorted({s for doc in inputs
                          for s in doc.get('source_ids', [])})
     revision_ids = sorted({r for doc in inputs

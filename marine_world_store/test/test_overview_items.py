@@ -210,6 +210,43 @@ def test_the_same_child_under_another_name_is_another_fold(tmp_path):
     assert first != second
 
 
+def test_a_childs_inputs_are_normalised_before_they_are_hashed():
+    """
+    A hand-edited child (unsorted or duplicate ids) hashes as the writer's.
+
+    Regression: the stored document was hashed as it stood, so reordering a
+    child's ids changed every ancestor's fingerprint with no input changed.
+    """
+    written = [{'source_ids': ['bag-a', 'bag-b'], 'builder_version': 'x/1'}]
+    edited = [{'builder_version': 'x/1',
+               'source_ids': ['bag-b', 'bag-a', 'bag-b']}]
+    assert (overview_items.overview_builder_version(
+        'undecided', ['13_2_2.tif'], written) ==
+        overview_items.overview_builder_version(
+            'undecided', ['13_2_2.tif'], edited))
+
+
+def test_a_child_whose_inputs_cannot_be_fingerprinted_is_named():
+    """An unknown key is refused by child name, not as a bare exception."""
+    with pytest.raises(overview_items.OverviewItemError, match='13_2_2.tif'):
+        overview_items.overview_builder_version(
+            'undecided', ['13_2_2.tif'],
+            [{'source_ids': ['bag-a'], 'not_an_input': 'x'}])
+
+
+def test_a_child_item_with_no_inputs_is_collected_not_raised(tmp_path):
+    """A child Item with no inputs document joins the named problem list."""
+    directory = tmp_path / 'depths' / 'reviewed' / 'surveyed'
+    child = native(directory, '13_2_2.tif', '2026-06-22T13:00:00Z',
+                   '2026-06-22T14:00:00Z', ['bag-a'])
+    del child['properties'][CONTRACT_FIELDS['inputs']]
+    overview(directory, '12_1_1.tif', ['13_2_2.tif'])
+    with pytest.raises(overview_items.OverviewItemError,
+                       match='12_1_1.tif: child Item'):
+        overview_items.build_overview_items(
+            directory, **CELL, existing_items=[child])
+
+
 @pytest.mark.parametrize('children,match', [
     (None, 'no per-tile record naming its children'),
     (['13_9_9.tif'], 'no Item'),

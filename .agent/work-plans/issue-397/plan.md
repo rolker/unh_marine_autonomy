@@ -700,3 +700,8 @@ suggestions. What they change about the notes above:
 - **Source Items carry no `collection` field.** STAC 1.0 requires a
   `rel: collection` link whenever `collection` is set, and `sources/` has no
   Collection to link to; the field and a link get added together if one is.
+- **Child inputs are normalised before an overview hashes them**
+  (`fingerprint(**document)`, not `fingerprint_of`), so a hand-edited child
+  hashes like the writer's document or is refused; a child whose inputs cannot
+  be fingerprinted, or that carries none, is an `OverviewItemError` naming it
+  and joins the batch's problem list instead of aborting with a bare exception.
