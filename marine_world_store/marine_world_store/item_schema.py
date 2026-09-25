@@ -592,7 +592,9 @@ def build_source_item(
         'type': 'Feature',
         'stac_version': STAC_VERSION,
         'id': source_id,
-        'collection': 'sources',
+        # No ``collection`` field: STAC 1.0 requires a ``rel: collection`` link
+        # whenever it is set, and ``sources/`` has no Collection document to
+        # link to. Add both together if one is ever written.
         'geometry': None,
         'properties': properties,
         'links': [],

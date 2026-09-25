@@ -697,3 +697,6 @@ suggestions. What they change about the notes above:
   (first tile corrupt, the rest fine — the multi-band writer still refuses, the
   single-band builder rebuilds it), the mixed case, and the existing
   none-readable refusal.
+- **Source Items carry no `collection` field.** STAC 1.0 requires a
+  `rel: collection` link whenever `collection` is set, and `sources/` has no
+  Collection to link to; the field and a link get added together if one is.

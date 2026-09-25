@@ -311,6 +311,19 @@ def test_source_item_keeps_identity_and_lookup_metadata_apart():
     assert item['properties']['mws:platform'] == 'bizzyboat'
 
 
+def test_a_source_item_names_no_collection_it_cannot_link():
+    """
+    STAC 1.0: ``collection`` set requires a ``rel: collection`` link.
+
+    ``sources/`` has no Collection document, so a source Item carries neither
+    rather than a dangling name.
+    """
+    item = a_source_item(
+        source_id='abc123', kind='bag', name='2026-06-22T13-22-29+00-00')
+    assert 'collection' not in item
+    assert not any(link.get('rel') == 'collection' for link in item['links'])
+
+
 def test_engineering_material_is_labelled_as_such():
     """Design section 2: indexed beside the sources, never an input."""
     item = a_source_item(
