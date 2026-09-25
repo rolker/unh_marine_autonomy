@@ -11,6 +11,10 @@
 python3-pystac:  # upstream PR owed: ros/rosdistro (open at unh_marine_autonomy#397 merge time)
   ubuntu: [python3-pystac]
   debian: [python3-pystac]
+# snakemake must be 7.x (marine_world_store's Snakefile reads Snakemake 7's
+# snakemake() frame); rosdep cannot express a version, so the bound lives in
+# marine_world_store's package.xml (version_gte/version_lt) and setup.cfg.
+# Ubuntu 24.04 ships 7.32.4.
 snakemake:       # upstream PR owed: ros/rosdistro (open at unh_marine_autonomy#397 merge time)
   ubuntu: [snakemake]
   debian: [snakemake]

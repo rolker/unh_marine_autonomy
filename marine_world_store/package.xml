@@ -31,8 +31,11 @@
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-pystac</exec_depend>
   <!-- The regenerate driver: marine_world_store/snakemake/ holds the rules,
-       snakemake itself runs them (design section 9). -->
-  <exec_depend>snakemake</exec_depend>
+       snakemake itself runs them (design section 9). Snakemake 7 ONLY: the
+       Snakefile's _executing() reads Snakemake 7's internal snakemake()
+       frame, which Snakemake 8 replaced (Ubuntu 24.04 ships 7.32.4). rosdep
+       does not enforce these bounds; setup.cfg pins the same range. -->
+  <exec_depend version_gte="7" version_lt="8">snakemake</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

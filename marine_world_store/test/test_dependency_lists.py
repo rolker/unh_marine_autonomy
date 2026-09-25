@@ -126,3 +126,25 @@ def test_console_scripts_are_declared(package_dir: Path):
         'CLI modules and console_scripts entry points disagree.\n'
         f'  modules with no entry point: {sorted(modules - targets)}\n'
         f'  entry points with no module: {sorted(targets - modules)}')
+
+
+def test_snakemake_is_pinned_to_7_in_both_lists(package_dir: Path):
+    """
+    The Snakefile reads Snakemake 7's internal ``snakemake()`` frame.
+
+    ``_executing()`` refuses the run on any other Snakemake, so an unpinned
+    dependency let an install resolve 8 and fail at the first regenerate.
+    Both lists carry the bound, and they must agree.
+    """
+    parser = configparser.ConfigParser()
+    parser.read(package_dir / 'setup.cfg')
+    raw = parser.get('options', 'install_requires', fallback='')
+    specs = [line.strip() for line in raw.splitlines()
+             if line.strip().lower().startswith('snakemake')]
+    assert specs == ['snakemake>=7,<8']
+    root = ET.parse(package_dir / 'package.xml').getroot()
+    depends = [e for e in root.findall('exec_depend')
+               if e.text.strip() == 'snakemake']
+    assert len(depends) == 1
+    assert depends[0].get('version_gte') == '7'
+    assert depends[0].get('version_lt') == '8'
