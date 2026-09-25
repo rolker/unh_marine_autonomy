@@ -115,7 +115,8 @@ Two commit groups, as decided by the operator (2026-09-22), landing in one PR st
    Group B's **first deliverable is the evidence** for that decision, in the style of spine
    decision 2's `fold_measure` (prototype log §"Spine decision 2 EVIDENCE"): a measurement
    over the Massabesic subset reporting, per level, how the candidate rules differ (pooled
-   variance = within-child σ² plus spread of child means, count-weighted; max child σ; mean
+   variance = within-child σ² plus spread of child means, count-weighted — over the children
+   that carry a σ only, per the 2026-09-25 owner decision; max child σ; mean
    child σ; and the design's literal "mean and max" as two numbers), with how often each
    rule's σ covers the true spread of the native cells under the parent. The orchestrator
    pauses at that point and hands the numbers to the operator; the design thinking happens
@@ -618,3 +619,52 @@ where a round-2 mechanism was replaced, it says so.
 - **Tool lookup**: the documented order now matches the code (override, then
   PATH, then the ament prefixes); a tool found on a relative PATH entry is
   made absolute before `workdir:`.
+
+## Implementation notes — external cross-model review fix pass (2026-09-25)
+
+The Integrated Review of PR #399 at `9b0906a` (Codex + Gemini, in place of an
+owner read) produced nine fixes and one owner decision; all ten landed in this
+PR. What they change about the notes above:
+
+- **The Collection links its Items** (`rel: item`, relative, one per Item file
+  it was built from, plus `rel: root`), and every tile Item links
+  `collection`/`parent`/`root` to the `collection.json` beside it — the
+  "no globbing" promise is now kept by the document, not by a directory
+  listing. Source Items in `sources/` are unchanged (that directory has no
+  Collection yet).
+- **A catalog directory admits only STAC Items.** `collection.json` and the C++
+  writers' `coverage.json` are known non-Items and skipped; any other `.json`
+  that is not an Item is refused by path rather than enumerated as a product.
+- **An overview's fingerprint covers its children's complete fingerprints.**
+  Its `builder_version` names the fold, its σ rule, and each child as
+  `<tile>=<fingerprint of the child's full inputs document>` (sorted), so a
+  change to any §9 input of any descendant reaches every ancestor. Carried in
+  `builder_version` because §9's input set is closed; `source_ids` /
+  `revision_ids` stay the union, for search.
+- **A bag split with messages but no start or no duration is refused** by
+  name (with the override hint) instead of skipped or read as an instant.
+- **`snakemake` is pinned to 7.x** (`>=7,<8` in `setup.cfg`,
+  `version_gte`/`version_lt` on the `package.xml` depend, a comment in
+  `rosdep.yaml`, which cannot carry a version), because `_executing()` reads
+  Snakemake 7's `snakemake()` frame.
+- **Cross-schema guard, hardened.** It now runs FIRST in the per-parent writer
+  (before the native-wins and no-children removals and before any child
+  load) and in prune/remove-level, which had none; it reads
+  `overview_schema.json` when present and **fails closed** — a record or probe
+  tile it cannot read is refused by name, never treated as "no schema". The
+  per-parent writer writes `overview_schema.json` before its first tile (the
+  same record the batch builder leaves) and refuses a sidecar recorded under
+  a different σ rule. The 2-band guard still exists to refuse a legacy
+  directory; no compatibility path was added.
+- **The single-band batch builder takes the exclusive layer writer lock** too
+  (`<layer>/overviews.lock`), like the multi-band one.
+- **C++ private temporaries carry 64 random bits** beside pid + counter, matching
+  the Python `atomic_io` writer, since pids are not unique across pid
+  namespaces sharing storage.
+- **σ pooling (owner decision 2026-09-25):** `pooled` pools only over the
+  children that carry a σ, weighted by their own counts, about their own
+  count-weighted mean; σ-less children are left out of the σ fold and a parent
+  with none is nodata. Both the writer's `kPooled` and the measurement's
+  `pooled` follow it; design §7 and its change log (j) record it, and note the
+  §7 evidence table predates it (re-run owed). The σ rule itself stays open —
+  the writers still emit σ as nodata with `sigma_fold: undecided`.
