@@ -1779,8 +1779,23 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
 
   result.geometric_error_m = detail::saturatedGeometricError(
     level, static_cast<int>(child_level), child_errors);
+  // The tile is published; its record must follow or the tile must go. A
+  // tile whose record write failed has no provable error and no lineage (the
+  // world store refuses it; a fold above it would substitute a GSD), and the
+  // record beside it may still be the PREVIOUS build's, describing other
+  // bytes. Removed with its record and .fp, it is simply missing, and the
+  // DAG rebuilds a missing product.
+  try {
+    writeTileMeta(final_path, result.geometric_error_m, rule, child_names);
+  } catch (...) {
+    try {
+      removeDerivedTile(overviews, parent);
+    } catch (...) {
+      // Best effort: the record failure is the error to report.
+    }
+    throw;
+  }
   result.written = true;
-  writeTileMeta(final_path, result.geometric_error_m, rule, child_names);
   return result;
 }
 

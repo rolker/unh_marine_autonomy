@@ -1028,6 +1028,34 @@ TEST(PerParentOverview, ErrorNestsOverABatchBuiltChild)
   EXPECT_GE(gp_run.geometric_error_m, 1000000.0);
 }
 
+TEST(PerParentOverview, ATileWhoseRecordCannotBeWrittenIsNotLeftPublished)
+{
+  // Regression: the tile was renamed into place before its record was
+  // written, so a record failure left a published raster with no provable
+  // error and no lineage (or a previous build's record beside new bytes).
+  ScratchDir dir("parent_record_fails");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  const fs::path tile = dir.path() / "overviews" / mtrs::tileFilename(parent);
+  fs::path record = tile;
+  record.replace_extension(".json");
+  // A directory where the record goes: renaming the record over it fails.
+  fs::create_directories(record / "blocker");
+  EXPECT_THROW(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column()),
+    std::exception);
+  EXPECT_FALSE(fs::exists(tile)) <<
+    "a tile whose record could not be written must not stay published";
+  for (const auto & e : fs::directory_iterator(dir.path() / "overviews")) {
+    EXPECT_EQ(e.path().filename().string().find(".tmp"), std::string::npos) <<
+      e.path();
+  }
+}
+
 TEST(PerParentOverview, NativeTileAtTheParentSuppressesTheWrite)
 {
   // Native-wins, same rule as the batch builder: compiled data is never
