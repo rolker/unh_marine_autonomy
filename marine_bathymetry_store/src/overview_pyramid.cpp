@@ -411,14 +411,70 @@ TiledRasterTile<double> promoteNativeTile(
   return out;
 }
 
-// Band count of the tiles already in @p dir, or nullopt when the directory
-// holds no readable tile. Probes ONE tile: a sidecar with mixed band counts is
-// not a state either writer can produce, and the cross-schema guard only needs
-// to know which schema is in residence.
+// The multi-band sidecar's schema record, written beside its tiles by BOTH
+// multi-band writers (the batch builder into its staging directory, the
+// per-parent writer into overviews/ before its first tile).
+constexpr const char * kOverviewSchemaFilename = "overview_schema.json";
+constexpr const char * kOverviewSchemaName = "depth-overview-multiband/1";
+
+// Read @p dir's schema record. nullopt when there is none; a record that is
+// present but unreadable, or is not this schema's, throws naming the file —
+// a guard that treated it as absent would fall back to probing a tile and
+// could let the wrong writer in on a record it could not read.
+std::optional<nlohmann::json> readOverviewSchema(const fs::path & dir)
+{
+  const fs::path path = dir / kOverviewSchemaFilename;
+  std::error_code ec;
+  const bool present = fs::exists(path, ec);
+  if (ec) {
+    throw std::runtime_error(
+      "cannot check for " + path.string() + ": " + ec.message() +
+      "; refusing to write overview tiles beside it");
+  }
+  if (!present) {
+    return std::nullopt;
+  }
+  std::ifstream in(path);
+  nlohmann::json doc;
+  try {
+    if (!in) {
+      throw std::runtime_error("cannot open it");
+    }
+    doc = nlohmann::json::parse(in);
+  } catch (const std::exception & e) {
+    throw std::runtime_error(
+      "cannot read the overview schema record " + path.string() + " (" +
+      e.what() + "); refusing to write overview tiles beside it — repair or "
+      "remove it (the writer that owns the directory rewrites it)");
+  }
+  const auto bands = doc.is_object() ? doc.find("bands") : doc.end();
+  if (!doc.is_object() || !doc.contains("schema") ||
+    doc["schema"] != kOverviewSchemaName || bands == doc.end() ||
+    !bands->is_array() || bands->empty())
+  {
+    throw std::runtime_error(
+      path.string() + " is not a " + std::string(kOverviewSchemaName) +
+      " record; refusing to write overview tiles beside it");
+  }
+  return doc;
+}
+
+// Band count of the sidecar in @p dir, or nullopt when it holds neither a
+// schema record nor any tile. The schema record wins when present; otherwise
+// ONE tile is probed (a sidecar with mixed band counts is not a state either
+// writer can produce, and the cross-schema guard only needs to know which
+// schema is in residence).
+//
+// FAILS CLOSED: a probe tile that cannot be read throws, naming it. Returning
+// "unknown" there silently skipped the guard — exactly the state in which a
+// mis-pointed writer could not be told apart from the right one.
 std::optional<int> sidecarBandCount(const fs::path & dir)
 {
   if (!fs::is_directory(dir)) {
     return std::nullopt;
+  }
+  if (const std::optional<nlohmann::json> schema = readOverviewSchema(dir)) {
+    return static_cast<int>((*schema)["bands"].size());
   }
   std::size_t skipped = 0;
   const std::vector<gggs::GridIndex> grids =
@@ -426,13 +482,15 @@ std::optional<int> sidecarBandCount(const fs::path & dir)
   if (grids.empty()) {
     return std::nullopt;
   }
+  const fs::path probe = dir / marine_tiled_raster_store::tileFilename(grids.front());
   try {
-    return marine_tiled_raster_store::tileRasterCount(
-      (dir / marine_tiled_raster_store::tileFilename(grids.front())).string());
-  } catch (const std::exception &) {
-    // An unreadable tile is not evidence of a schema either way; the build's
-    // own I/O will fail loudly on it if it matters.
-    return std::nullopt;
+    return marine_tiled_raster_store::tileRasterCount(probe.string());
+  } catch (const std::exception & e) {
+    throw std::runtime_error(
+      "cannot tell which band schema " + dir.string() + " holds: it has no " +
+      kOverviewSchemaFilename + " and its tile " + probe.string() +
+      " cannot be read (" + e.what() + "); refusing to write into it — "
+      "repair or remove that tile");
   }
 }
 
@@ -637,11 +695,44 @@ bool removeDerivedTile(const fs::path & overviews, const gggs::GridIndex & grid)
 void writeOverviewSchema(const fs::path & dir, SigmaFold rule)
 {
   nlohmann::json doc{
-    {"schema", "depth-overview-multiband/1"},
+    {"schema", kOverviewSchemaName},
     {"bands", nlohmann::json::array({"min", "mean", "count", "sigma"})},
     {"sigma_fold", sigmaFoldName(rule)},
     {"sigma_band_written", rule != SigmaFold::kUndecided}};
-  publishText(dir / "overview_schema.json", doc.dump(2) + "\n");
+  publishText(dir / kOverviewSchemaFilename, doc.dump(2) + "\n");
+}
+
+// The per-parent writer's half of the schema record: refuse a sidecar whose
+// record names a DIFFERENT σ rule (its tiles would be mixed-rule, and the
+// record would then describe only some of them — change the rule by rebuilding
+// the layer's overviews), and otherwise make sure the record exists, so both
+// multi-band writers leave the same record and the cross-schema guard reads it
+// rather than probing a tile. Concurrent per-parent writers publish identical
+// bytes through a private temporary and a rename, so the race is harmless.
+void refuseOtherSigmaRule(const fs::path & overviews, SigmaFold rule)
+{
+  const std::optional<nlohmann::json> schema = readOverviewSchema(overviews);
+  if (!schema.has_value()) {
+    return;
+  }
+  const auto recorded = schema->find("sigma_fold");
+  const std::string name =
+    (recorded != schema->end() && recorded->is_string()) ?
+    recorded->get<std::string>() : std::string("(none)");
+  if (name != sigmaFoldName(rule)) {
+    throw std::runtime_error(
+      "refusing to write into " + overviews.string() + ": its " +
+      kOverviewSchemaFilename + " records sigma_fold " + name +
+      " and this writer folds under " + sigmaFoldName(rule) +
+      "; one sidecar holds one rule — rebuild the layer's overviews to change it");
+  }
+}
+
+void ensureOverviewSchema(const fs::path & overviews, SigmaFold rule)
+{
+  if (!readOverviewSchema(overviews).has_value()) {
+    writeOverviewSchema(overviews, rule);
+  }
 }
 
 // One derived tile's own record: its geometric error and the schema it was
@@ -1434,6 +1525,7 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
   // assumption. A single-band sidecar reached here is a mis-pointed path, and
   // it must leave this call exactly as it arrived.
   refuseCrossSchemaSidecar(overviews, detail::kMultiBandCount, "multi-band");
+  refuseOtherSigmaRule(overviews, rule);
   // gridFromTileName round-trips its answer through tileFilename and compares
   // it with this string, so the label must be the FILENAME, extension included
   // — a bare "<level>_<row>_<col>" never matches and every index reads as
@@ -1528,6 +1620,10 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
     throw std::runtime_error(
       "cannot create " + overviews.string() + ": " + ec.message());
   }
+  // The schema record first, so no tile this writer publishes ever sits in a
+  // directory that does not say which band is which.
+  ensureOverviewSchema(overviews, rule);
+
   // Tile-level atomicity: write beside the destination, then rename over it.
   // rename(2) within one directory is atomic, so a reader sees the previous
   // tile or the new one and never a half-written raster. No overviews.tmp/

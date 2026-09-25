@@ -361,10 +361,12 @@ ros2 run marine_bathymetry_store build_depth_overview_parent --prune \
 - **The σ band is RESERVED and written as nodata.** §7's fold rule is **open**
   (Roland, 2026-09-22): rev 2's "mean and max of the children" named two numbers
   without saying how they combine, so it was never a decision. Every tile
-  records `sigma_fold: undecided` by name — in `overview_schema.json` for the
-  batch sidecar and in a per-tile `<level>_<row>_<col>.json` for the per-parent
-  writer — so the later decision produces a different record, a different
-  fingerprint, and no migration. The candidate rules (`pooled`, `max_child`,
+  records `sigma_fold: undecided` by name — in `overview_schema.json`, which
+  BOTH writers leave (the per-parent writer before its first tile), and in a
+  per-tile `<level>_<row>_<col>.json` for the per-parent writer — so the later
+  decision produces a different record, a different fingerprint, and no
+  migration. A per-parent write into a sidecar recorded under another rule is
+  refused: one sidecar holds one rule. The candidate rules (`pooled`, `max_child`,
   `mean_child`) are implemented but no CLI can select one; the evidence for
   choosing comes from `mws_measure_sigma_fold` in `marine_world_store`.
 - **Per-parent, and why.** `build_depth_overviews` is one batch call, so

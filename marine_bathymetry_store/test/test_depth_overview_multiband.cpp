@@ -138,6 +138,13 @@ void writeUniformMultiBandTile(
     std::vector<std::optional<double>>(kMB, std::optional<double>(kNaN)));
 }
 
+std::string readText(const fs::path & path)
+{
+  std::ifstream in(path);
+  return std::string(
+    (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
 std::vector<gggs::GridIndex> fineSiblings()
 {
   const gggs::GridIndex fine = gggs::Level(kFineLevel).gridIndex(kLat, kLon);
@@ -557,6 +564,90 @@ TEST(MultiBandPyramid, PerParentWritersRefuseASingleBandSidecarBeforeTouchingIt)
   EXPECT_EQ(snapshotTree(overviews), before);
 }
 
+TEST(MultiBandPyramid, AnUnreadableProbeTileFailsClosed)
+{
+  // Regression: an unreadable probe tile returned "no schema known", which
+  // skipped the cross-schema guard entirely.
+  ScratchDir dir("probe_unreadable");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  const fs::path overviews = dir.path() / "overviews";
+  fs::create_directories(overviews);
+  const fs::path garbage = overviews / mtrs::tileFilename(parent);
+  std::ofstream(garbage) << "not a GeoTIFF";
+
+  const auto expect_named_refusal = [&](const auto & call) {
+      try {
+        call();
+        ADD_FAILURE() << "an unreadable probe tile must be refused";
+      } catch (const std::runtime_error & e) {
+        EXPECT_NE(std::string(e.what()).find(garbage.string()), std::string::npos) <<
+          e.what();
+      }
+    };
+  expect_named_refusal(
+    [&] {
+      mbs::buildMultiBandDepthOverviewParent(
+        dir.path().string(), parent.level(), parent.row(), parent.column());
+    });
+  mbs::MultiBandOverviewOptions multi;
+  multi.layer_dir = dir.path().string();
+  multi.min_level = kFineLevel - 1;
+  expect_named_refusal([&] {mbs::buildMultiBandDepthOverviewPyramid(multi);});
+  mbs::DepthOverviewOptions single;
+  single.layer_dir = dir.path().string();
+  single.min_level = kFineLevel - 1;
+  expect_named_refusal([&] {mbs::buildDepthOverviewPyramid(single);});
+  EXPECT_EQ(readText(garbage), "not a GeoTIFF");
+}
+
+TEST(MultiBandPyramid, TheSchemaRecordIsPreferredAndAnUnreadableOneRefused)
+{
+  // overview_schema.json states the schema; a tile is only probed without it.
+  // A record that is present but unreadable is refused, never read as absent.
+  ScratchDir dir("schema_record");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  mbs::MultiBandOverviewOptions multi;
+  multi.layer_dir = dir.path().string();
+  multi.min_level = kFineLevel - 1;
+  ASSERT_TRUE(mbs::buildMultiBandDepthOverviewPyramid(multi).sidecar_replaced);
+  const fs::path overviews = dir.path() / "overviews";
+  const fs::path schema = overviews / "overview_schema.json";
+  ASSERT_TRUE(fs::exists(schema));
+
+  // With the record in place, even an unreadable tile is not probed.
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  std::ofstream(overviews / "12_0_0.tif") << "not a GeoTIFF";
+  EXPECT_TRUE(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column())
+    .written);
+  fs::remove(overviews / "12_0_0.tif");
+
+  // A record the single-band writer reads as 4-band refuses it, tiles or not.
+  mbs::DepthOverviewOptions single;
+  single.layer_dir = dir.path().string();
+  single.min_level = kFineLevel - 1;
+  EXPECT_THROW(mbs::buildDepthOverviewPyramid(single), std::runtime_error);
+
+  std::ofstream(schema) << "{ not json";
+  try {
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column());
+    ADD_FAILURE() << "an unreadable schema record must be refused";
+  } catch (const std::runtime_error & e) {
+    EXPECT_NE(std::string(e.what()).find(schema.string()), std::string::npos) <<
+      e.what();
+  }
+  EXPECT_EQ(readText(schema), "{ not json");
+}
+
 // --- the per-parent work unit -----------------------------------------------
 
 TEST(PerParentOverview, MatchesTheBatchBuilderForTheSameParent)
@@ -628,6 +719,31 @@ TEST(PerParentOverview, WritesItsOwnGeometricErrorSidecar)
     (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
   EXPECT_NE(text.find("geometric_error_m"), std::string::npos) << text;
   EXPECT_NE(text.find("\"sigma_fold\": \"undecided\""), std::string::npos) << text;
+
+  // And the per-parent path leaves the SAME schema record the batch builder
+  // does, so the cross-schema guard reads a record rather than probing a tile.
+  const std::string schema = readText(
+    dir.path() / "overviews" / "overview_schema.json");
+  EXPECT_NE(schema.find("depth-overview-multiband/1"), std::string::npos) << schema;
+  EXPECT_NE(schema.find("\"sigma_fold\": \"undecided\""), std::string::npos) <<
+    schema;
+  ScratchDir batch_dir("parent_meta_batch");
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(batch_dir.path(), g, -8.0, 0.4);
+  }
+  mbs::MultiBandOverviewOptions batch;
+  batch.layer_dir = batch_dir.path().string();
+  batch.min_level = kFineLevel - 1;
+  ASSERT_TRUE(mbs::buildMultiBandDepthOverviewPyramid(batch).sidecar_replaced);
+  EXPECT_EQ(
+    schema, readText(batch_dir.path() / "overviews" / "overview_schema.json"));
+
+  // A sidecar recorded under another sigma rule is refused, not mixed.
+  EXPECT_THROW(
+    mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column(),
+      mbs::SigmaFold::kMaxChild),
+    std::runtime_error);
 
   // No staging dir and no run lock: a second invocation over the same parent
   // must simply redo the tile.
@@ -804,13 +920,6 @@ TEST(PerParentOverview, ListsADerivedTileAsAContributorToTheNextLevelUp)
 }
 
 // --- stale derived tiles, the DAG's inputs ----------------------------------
-
-std::string readText(const fs::path & path)
-{
-  std::ifstream in(path);
-  return std::string(
-    (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-}
 
 fs::path recordOf(const fs::path & tile)
 {

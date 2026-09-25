@@ -129,6 +129,14 @@ def build(layer, level, row, col):
     value = sum(_band1_value(layer / child) for child in children)
     overviews = layer / 'overviews'
     overviews.mkdir(exist_ok=True)
+    # The same schema record the real per-parent writer leaves before its
+    # first tile.
+    schema = overviews / 'overview_schema.json'
+    if not schema.exists():
+        schema.write_text(json.dumps({
+            'schema': 'depth-overview-multiband/1',
+            'bands': ['min', 'mean', 'count', 'sigma'],
+            'sigma_fold': 'undecided', 'sigma_band_written': False}))
     final = overviews / _name(level, row, col)
     tmp = overviews / f'.{final.name}.{os.getpid()}.tmp.tif'
     # Over Snakemake's 100 kB checksum limit, like a real tile: below it,

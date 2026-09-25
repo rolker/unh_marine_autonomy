@@ -292,7 +292,10 @@ struct MultiBandOverviewOptions
 /// DIFFERENT band count, the build is refused rather than silently replacing a
 /// single-band pyramid with a multi-band one (and vice versa in the single-band
 /// writer). Consumers read the sidecar by band index; swapping the schema under
-/// them is the one mistake neither writer can detect after the fact.
+/// them is the one mistake neither writer can detect after the fact. The band
+/// count is read from `overview_schema.json` when there is one, else from one
+/// tile; a record or probe tile that cannot be read is REFUSED, named, rather
+/// than treated as "no schema in residence".
 ///
 /// @throws Everything `buildDepthOverviewPyramid` throws, plus
 ///   `std::runtime_error` on the cross-schema guard.
@@ -366,6 +369,13 @@ struct MultiBandOverviewParent
 /// the manifest race-free under a parallel DAG: nothing rewrites a shared
 /// `coverage.json` mid-run, and the assembly step reads the per-tile records
 /// once the DAG is done (`mws_assemble_coverage` in `marine_world_store`).
+/// Before its first tile it also writes `overviews/overview_schema.json` when
+/// absent — the same record the batch builder leaves — and it refuses a
+/// sidecar whose record names a different σ rule.
+///
+/// **Guards run first**: the cross-schema guard (as in the batch builder) and
+/// the σ-rule check run before any tile is removed or any child loaded, so a
+/// mis-pointed call leaves `overviews/` exactly as it found it.
 ///
 /// @param layer_dir The rev-3 quantity layer holding the native tiles.
 /// @param level Parent level; @p row, @p col its GGGS index at that level.
