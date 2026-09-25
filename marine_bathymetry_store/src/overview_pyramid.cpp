@@ -82,11 +82,14 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
 #include <optional>
+#include <random>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -540,17 +543,27 @@ void fsyncPath(const fs::path & path, bool directory)
   }
 }
 
-// A temporary beside @p path that no other writer uses: pid plus a
-// per-process counter. A fixed `<name>.tmp` is shared by every writer of
-// `<name>`, so two concurrent runs could publish each other's half-written
-// file; the counter covers two writes of one name from one process.
+// A temporary beside @p path that no other writer uses: pid, a per-process
+// counter, and 64 random bits. A fixed `<name>.tmp` is shared by every writer
+// of `<name>`, so two concurrent runs could publish each other's half-written
+// file; the counter covers two writes of one name from one process. The pid
+// alone is NOT unique across writers sharing storage — two containers (or two
+// hosts on one network filesystem) each have their own pid namespace, and
+// GDAL's Create truncates whatever it finds — so a random component makes a
+// collision as unlikely as Python's atomic_io temporaries make it.
 fs::path privateTemporary(const fs::path & path, const std::string & suffix)
 {
   static std::atomic<unsigned long> counter{0};   // NOLINT(runtime/int)
+  static thread_local std::mt19937_64 random_bits{[] {
+      std::random_device device;
+      return (static_cast<std::uint64_t>(device()) << 32) ^ device();
+    }()};
+  std::ostringstream token;
+  token << std::hex << std::setw(16) << std::setfill('0') << random_bits();
   return path.parent_path() /
          ("." + path.filename().string() + "." +
          std::to_string(static_cast<std::int64_t>(::getpid())) + "." +
-         std::to_string(counter.fetch_add(1)) + suffix);
+         std::to_string(counter.fetch_add(1)) + "." + token.str() + suffix);
 }
 
 // Publish @p path whole and durably: write a private temporary, sync it,
