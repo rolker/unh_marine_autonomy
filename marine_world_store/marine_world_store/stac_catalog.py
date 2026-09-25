@@ -52,7 +52,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple, Union
+from typing import (Any, Dict, Iterable, List, Mapping, Optional, Sequence,
+                    Tuple, Union)
 import warnings
 
 from marine_world_store import atomic_io, item_schema, layout
@@ -190,13 +191,52 @@ def write_collection(
     return path, _write_if_changed(path, collection)
 
 
+#: JSON files a catalog directory legitimately holds that are NOT Items: the
+#: Collection itself, and the coverage manifest the C++ writers leave in a
+#: layer directory (``marine_tiled_raster_store``'s ``coverage.json``).
+NON_ITEM_FILENAMES = frozenset({
+    layout.COLLECTION_FILENAME,
+    layout.COVERAGE_MANIFEST_FILENAME,
+})
+
+#: Top-level fields every STAC Item carries (STAC 1.0.0 Item spec, "Item
+#: fields": ``bbox`` is required only beside a non-null geometry).
+ITEM_REQUIRED_FIELDS = (
+    'type', 'stac_version', 'id', 'geometry', 'links', 'assets',
+    'properties')
+
+
+def item_shape_problem(document: Any) -> Optional[str]:
+    """
+    Say why ``document`` is not a STAC Item, or ``None`` when it is one.
+
+    A structural check, not the full schema validation :func:`validate_item`
+    does: it is what a READER applies to every ``.json`` it finds, so that a
+    sidecar or a stray document is never enumerated as a product.
+    """
+    if not isinstance(document, Mapping):
+        return f'a JSON {type(document).__name__}, not an object'
+    if document.get('type') != 'Feature':
+        return f'"type" is {document.get("type")!r}, not "Feature"'
+    missing = [name for name in ITEM_REQUIRED_FIELDS if name not in document]
+    if missing:
+        return f'missing Item field(s) {missing}'
+    if not isinstance(document.get('id'), str) or not document['id']:
+        return '"id" is not a non-empty string'
+    if not isinstance(document.get('properties'), Mapping):
+        return '"properties" is not an object'
+    return None
+
+
 def read_items(directory: PathLike) -> List[Dict[str, Any]]:
     """
     Every Item document in ``directory``, ordered by filename.
 
-    ``collection.json`` is not an Item and is skipped; a file that is not JSON
-    at all raises, because an unreadable Item is a product the catalog would
-    silently stop enumerating (Part 2 line 1).
+    ``collection.json`` and ``coverage.json`` are not Items and are skipped;
+    a file that is not JSON at all, or is JSON but not a STAC Item, raises,
+    because an unreadable Item is a product the catalog would silently stop
+    enumerating (Part 2 line 1), and a non-Item admitted as one breaks every
+    consumer of the list.
     """
     return [item for _, item in read_item_files(directory)]
 
@@ -209,18 +249,33 @@ def read_item_files(directory: PathLike) -> List[Tuple[Path, Dict[str, Any]]]:
     the document's ``id``, which is data: an id holding ``../`` would name a
     file outside the layer, and one that disagrees with its filename would
     name the wrong file.
+
+    Only STAC Items are admitted. The known non-Item files
+    (:data:`NON_ITEM_FILENAMES`) are skipped; any other ``.json`` that is not
+    an Item is refused by path, never skipped: nothing else is written into a
+    catalog directory, so one that appears is either a damaged Item or a file
+    in the wrong place, and both need a person.
+
+    :raises CatalogError: naming the file.
     """
     directory = Path(directory)
     if not directory.is_dir():
         return []
     items = []
     for path in sorted(directory.glob('*.json')):
-        if path.name == layout.COLLECTION_FILENAME:
+        if path.name in NON_ITEM_FILENAMES:
             continue
         try:
-            items.append((path, json.loads(path.read_text())))
+            document = json.loads(path.read_text())
         except ValueError as exc:
             raise CatalogError(f'{path}: not valid JSON: {exc}') from exc
+        problem = item_shape_problem(document)
+        if problem is not None:
+            raise CatalogError(
+                f'{path}: not a STAC Item ({problem}). Only Items, '
+                f'{sorted(NON_ITEM_FILENAMES)} belong in a catalog '
+                'directory; move or remove it, then regenerate')
+        items.append((path, document))
     return items
 
 

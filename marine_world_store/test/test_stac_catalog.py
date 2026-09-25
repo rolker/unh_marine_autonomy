@@ -113,6 +113,43 @@ def test_an_unreadable_item_is_loud(tmp_path):
         stac_catalog.read_items(tmp_path)
 
 
+def test_the_coverage_manifest_is_not_an_item(tmp_path):
+    """
+    ``coverage.json`` sits in every layer directory and is skipped.
+
+    Regression: every ``*.json`` but the Collection was admitted as an Item,
+    so the C++ writers' coverage manifest broke catalog regeneration (as an
+    undated Item) and the tile listing.
+    """
+    item = a_tile_item()
+    stac_catalog.write_items(tmp_path, [item])
+    (tmp_path / layout.COVERAGE_MANIFEST_FILENAME).write_text(json.dumps({
+        'schema': 'coverage-manifest/1', 'tiles': []}))
+    assert [i['id'] for i in stac_catalog.read_items(tmp_path)] == \
+        [item['id']]
+    _, _, items = stac_catalog.regenerate_collection(
+        tmp_path, quantity=Quantity.DEPTHS, state=State.REVIEWED,
+        origin=Origin.SURVEYED, description='test')
+    assert [i['id'] for i in items] == [item['id']]
+
+
+@pytest.mark.parametrize('document', [
+    {'schema': 'something-else/1'},
+    {'type': 'Collection', 'id': 'x'},
+    {'type': 'Feature', 'id': 'x', 'properties': {}},
+    ['not', 'an', 'object'],
+])
+def test_a_json_that_is_not_an_item_is_refused_by_path(tmp_path, document):
+    """Anything else is a damaged Item or a stray file -- named, not read."""
+    stac_catalog.write_items(tmp_path, [a_tile_item()])
+    stray = tmp_path / 'stray.json'
+    stray.write_text(json.dumps(document))
+    with pytest.raises(stac_catalog.CatalogError) as caught:
+        stac_catalog.read_items(tmp_path)
+    assert str(stray) in str(caught.value)
+    assert 'not a STAC Item' in str(caught.value)
+
+
 def test_regenerating_an_unchanged_collection_writes_nothing(tmp_path):
     """The whole point of the fingerprint-driven regenerate."""
     stac_catalog.write_items(tmp_path, [a_tile_item()])
