@@ -904,13 +904,23 @@ struct SourceTile
 // native data always wins on disk. Each written parent is added to
 // @p derived with its saturated geometric error (uma-ADR-0013 D1/D2), read back
 // from @p derived for children that were themselves derived.
+//
+// Under the multi-band schema (@p sigma_rule set) each written parent also
+// gets the same per-tile record the per-parent writer leaves
+// (`<level>_<row>_<col>.json`: geometric error, band schema, σ rule, children).
+// Without it a later per-parent fold over batch-built children read no child
+// error and substituted the child level's GSD — understating a parent's error
+// below its children's, against uma-ADR-0013 D2's nesting — and the world
+// store's Items had no lineage to build from. The single-band tree keeps no
+// per-tile records (no per-parent writer ever folds it).
 LevelCounts buildLevel(
   const std::vector<SourceTile> & children, const fs::path & out_dir,
   uint8_t child_level,
   const marine_tiled_raster_store::CoverageManifest & native,
   marine_tiled_raster_store::CoverageManifest & derived,
   std::size_t bands,
-  const marine_tiled_raster_store::CellFoldPolicy<double> & fold)
+  const marine_tiled_raster_store::CellFoldPolicy<double> & fold,
+  const std::optional<SigmaFold> & sigma_rule)
 {
   LevelCounts counts;
   std::map<gggs::GridIndex, std::vector<SourceTile>> by_parent;
@@ -956,9 +966,14 @@ LevelCounts buildLevel(
     std::vector<const TiledRasterTile<double> *> child_ptrs;
     std::vector<std::optional<double>> child_errors;
     child_errors.reserve(group.second.size());
+    std::vector<std::string> child_names;
+    child_names.reserve(group.second.size());
     for (const SourceTile & child : group.second) {
-      const fs::path path =
-        *child.dir / marine_tiled_raster_store::tileFilename(child.grid);
+      const std::string name = marine_tiled_raster_store::tileFilename(child.grid);
+      const fs::path path = *child.dir / name;
+      // Relative to the layer AFTER the swap, as the per-parent writer spells
+      // them: staging becomes overviews/.
+      child_names.push_back(child.native ? name : "overviews/" + name);
       // A native child is always the 2-band {depth, σ} tile the compile wrote.
       // Under the multi-band schema it is PROMOTED to {depth, depth, 1, σ} here,
       // so buildParentTile sees one band count and one fold policy across the
@@ -980,14 +995,16 @@ LevelCounts buildLevel(
       group.first, child_ptrs,
       std::vector<double>(bands, nan),
       validCell, fold);
+    const fs::path parent_path =
+      out_dir / marine_tiled_raster_store::tileFilename(group.first);
     marine_tiled_raster_store::saveTile<double>(
-      parent_tile,
-      (out_dir / marine_tiled_raster_store::tileFilename(group.first)).string(),
-      nodata);
-    derived.add(
-      group.first,
-      detail::saturatedGeometricError(
-        group.first.level(), child_level, child_errors));
+      parent_tile, parent_path.string(), nodata);
+    const double parent_error = detail::saturatedGeometricError(
+      group.first.level(), child_level, child_errors);
+    derived.add(group.first, parent_error);
+    if (sigma_rule.has_value()) {
+      writeTileMeta(parent_path, parent_error, *sigma_rule, child_names);
+    }
     ++counts.out;
   }
   return counts;
@@ -1243,7 +1260,8 @@ DepthOverviewBuildResult buildPyramidCore(
 
       const LevelCounts counts =
         buildLevel(
-        children, staging, child_level, native, derived, bands, fold);
+        children, staging, child_level, native, derived, bands, fold,
+        sigma_rule);
       const std::size_t native_here = native.countAt(static_cast<uint8_t>(level));
       if (progress != nullptr) {
         // child_level is uint8_t: without the cast it streams as a character.

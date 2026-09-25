@@ -984,6 +984,50 @@ TEST(PerParentOverview, ErrorNestsOverADerivedChild)
   EXPECT_GE(gp_run.geometric_error_m, child_run.geometric_error_m);
 }
 
+TEST(PerParentOverview, ErrorNestsOverABatchBuiltChild)
+{
+  // Regression: the batch builder wrote no per-tile record, so a per-parent
+  // fold over batch-built children read no child error and substituted the
+  // child level's GSD — understating the parent's error below its child's
+  // whenever the child's recorded error was larger (uma-ADR-0013 D2).
+  ScratchDir dir("parent_over_batch");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  mbs::MultiBandOverviewOptions opts;
+  opts.layer_dir = dir.path().string();
+  opts.min_level = kFineLevel - 1;
+  ASSERT_TRUE(mbs::buildMultiBandDepthOverviewPyramid(opts).sidecar_replaced);
+
+  // The batch builder leaves the per-parent writer's record beside the tile.
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  fs::path record = dir.path() / "overviews" / mtrs::tileFilename(parent);
+  record.replace_extension(".json");
+  ASSERT_TRUE(fs::exists(record));
+  const std::string text = readText(record);
+  EXPECT_NE(text.find("depth-overview-tile/1"), std::string::npos) << text;
+  EXPECT_NE(text.find("geometric_error_m"), std::string::npos) << text;
+  EXPECT_NE(text.find("\"sigma_fold\": \"undecided\""), std::string::npos) << text;
+  EXPECT_NE(text.find(mtrs::tileFilename(fine.front())), std::string::npos) <<
+    "the children are its lineage: " << text;
+
+  // And a per-parent fold one level up reads it. A recorded child error far
+  // above any GSD must come back out as the grandparent's floor.
+  {
+    std::ofstream out(record, std::ios::trunc);
+    out << "{\"schema\": \"depth-overview-tile/1\", "
+      "\"geometric_error_m\": 1000000.0}\n";
+  }
+  const gggs::GridIndex grandparent = gggs::parent(parent);
+  const mbs::MultiBandParentResult gp_run =
+    mbs::buildMultiBandDepthOverviewParent(
+    dir.path().string(), grandparent.level(), grandparent.row(),
+    grandparent.column());
+  ASSERT_TRUE(gp_run.written);
+  EXPECT_GE(gp_run.geometric_error_m, 1000000.0);
+}
+
 TEST(PerParentOverview, NativeTileAtTheParentSuppressesTheWrite)
 {
   // Native-wins, same rule as the batch builder: compiled data is never
