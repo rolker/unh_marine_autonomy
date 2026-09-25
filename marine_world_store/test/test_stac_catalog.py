@@ -258,3 +258,33 @@ def test_an_item_with_a_single_datetime_is_written(tmp_path):
     item['properties']['datetime'] = '2026-06-22T13:22:29Z'
     path, written = stac_catalog.write_item(tmp_path, item)
     assert written and path.is_file()
+
+
+def test_a_validator_that_cannot_load_says_validation_is_off(monkeypatch):
+    """
+    pystac's bare ImportError (old jsonschema, no referencing) is permanent.
+
+    It must read differently from an unreachable schema host: it names what the
+    validator needs and says nothing this process writes is checked.
+    """
+    def cannot_load(self, *args, **kwargs):
+        raise ImportError('Cannot instantiate, requires jsonschema package')
+
+    monkeypatch.setattr(pystac.Item, 'validate', cannot_load)
+    with pytest.warns(stac_catalog.ValidatorMissing) as caught:
+        stac_catalog.validate_item(a_tile_item())
+    message = str(caught[0].message)
+    assert 'VALIDATION IS OFF' in message
+    assert stac_catalog.VALIDATOR_REQUIREMENT in message
+
+
+def test_an_unreachable_schema_host_is_only_unavailable(monkeypatch):
+    """A transient fetch failure stays the quieter, non-Missing warning."""
+    def offline(self, *args, **kwargs):
+        raise OSError('schema host unreachable')
+
+    monkeypatch.setattr(pystac.Item, 'validate', offline)
+    with pytest.warns(stac_catalog.ValidatorUnavailable) as caught:
+        stac_catalog.validate_item(a_tile_item())
+    assert not any(isinstance(w.message, stac_catalog.ValidatorMissing)
+                   for w in caught)

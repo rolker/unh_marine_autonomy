@@ -258,6 +258,17 @@ workspace's dependency policy note (`ros2_agent_workspace#654`). Until
 `rosdep install` has run for this repo, the tests that need `pystac` skip with
 that reason; nothing here pip-installs anything.
 
+**STAC validation needs a newer `jsonschema` than apt Noble ships.** pystac
+1.9's validator requires `jsonschema >= 4.18` together with `referencing`;
+Ubuntu Noble's `python3-jsonschema` is 4.10.3 with no `referencing`, so on an
+apt-only Noble host the validator cannot load and **no Item or Collection is
+schema-checked**. `stac_catalog` reports that as its own warning,
+`ValidatorMissing` ("STAC VALIDATION IS OFF on this host", naming the
+requirement), distinct from `ValidatorUnavailable` (a schema host that could not
+be reached this time). Neither refuses the write. Supplying the validator is a
+host-packaging decision under the workspace dependency policy, not something
+this package installs.
+
 ## Build and test
 
 ```bash

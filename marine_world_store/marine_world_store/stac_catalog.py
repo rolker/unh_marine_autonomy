@@ -71,6 +71,22 @@ class ValidatorUnavailable(UserWarning):
     """The STAC validator could not run, so nothing was checked."""
 
 
+class ValidatorMissing(ValidatorUnavailable):
+    """
+    The STAC validator cannot run on this host AT ALL -- validation is off.
+
+    Distinct from a schema host that is unreachable for now: this is permanent
+    until the host's packages change. pystac 1.9's validator needs
+    ``jsonschema >= 4.18`` together with ``referencing``; Ubuntu Noble's apt
+    ``python3-jsonschema`` is 4.10 with no ``referencing``, so on an apt-only
+    Noble host no Item or Collection is ever schema-checked.
+    """
+
+
+#: What pystac's validator needs, named in the ValidatorMissing message.
+VALIDATOR_REQUIREMENT = 'jsonschema >= 4.18 and referencing'
+
+
 def _validate(document: Mapping[str, Any], stac_type) -> None:
     """
     Validate one document, distinguishing *invalid* from *unchecked*.
@@ -79,10 +95,16 @@ def _validate(document: Mapping[str, Any], stac_type) -> None:
 
     * the document is not a STAC object at all, or fails the schema -- an
       error, because a malformed Item must not enter the store;
-    * the validator itself cannot run (no ``jsonschema``, or the remote schema
-      is unreachable -- a boat is offline by default) -- a warning, and the
-      write proceeds. A validator that could not run reports no verdict; the
-      alternative is refusing to record data because a schema host is down.
+    * the validator cannot run on this host at all (pystac cannot load its
+      ``jsonschema`` backend) -- :class:`ValidatorMissing`, a warning that says
+      validation is OFF and names what it needs, because it is permanent and
+      silent otherwise;
+    * the validator runs but cannot fetch the remote schema (a boat is offline
+      by default) -- :class:`ValidatorUnavailable`, and the write proceeds.
+
+    Neither of the last two refuses the write: a validator that could not run
+    reports no verdict, and the alternative is refusing to record data because
+    a schema host is down or a host package is old.
     """
     try:
         obj = stac_type.from_dict(dict(document))
@@ -99,6 +121,17 @@ def _validate(document: Mapping[str, Any], stac_type) -> None:
             raise CatalogError(
                 f'invalid {stac_type.__name__} {document.get("id")!r}: {exc}'
             ) from exc
+        if isinstance(exc, ImportError):
+            # pystac raises a bare ImportError when its jsonschema validator
+            # cannot be instantiated -- the host's packages, not the network.
+            warnings.warn(
+                f'STAC VALIDATION IS OFF on this host: pystac cannot run its '
+                f'validator ({exc}); it needs {VALIDATOR_REQUIREMENT} (apt '
+                f'Noble ships jsonschema 4.10 without referencing). '
+                f'{document.get("id")!r} and every other Item this process '
+                f'writes are NOT schema-checked.',
+                ValidatorMissing, stacklevel=3)
+            return
         warnings.warn(
             f'STAC validation skipped for {document.get("id")!r}: {exc}',
             ValidatorUnavailable, stacklevel=3)
