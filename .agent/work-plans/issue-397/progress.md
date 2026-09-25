@@ -1041,16 +1041,16 @@ Dispatch `review-code` (pre-push) for a scoped re-check of `b05f304` against rou
 Round 6: external cross-model review of branch `feature/issue-397` at `b4084d0` (Gemini 13:04, Codex 13:50 after its usage limit reset), in place of an owner read. Each claim was checked against the code; everything confirmed is introduced by this PR. Owner decision 2026-09-25: fix all ten below in one pass, then a quick check of that pass only (no full round 7), then push.
 
 ### Actions
-- [ ] (must-fix, Codex 1) `snakemake/Snakefile` ~L366 runs `mws_refresh_fingerprints` before any C++ guard; `fingerprint_sidecar.refresh_tile` (derived=True, ~L215-250) deletes every overview tile without a `.fp`, which is every tile of a legacy `overviews/`; the C++ `refuseCrossSchemaSidecar` then sees an empty dir and passes. Refuse a non-rev-3 `overviews/` in the refresh step itself (or run the schema check before it) so a legacy dir is refused untouched, never emptied. Test: a legacy 2-band `overviews/` survives the regenerate entry point byte-for-byte and the run is refused.
-- [ ] (must-fix, Codex 3) `depth_subset.py` ~L198-202: the adapter's `fingerprint_inputs` omit the raster it adapts, so re-cleaned/recompiled pixels keep the same fingerprint. Add the source tile's content identity (its complete producing fingerprint, or a content digest) to the inputs. Test: changed tile bytes with unchanged sources give a different fingerprint.
-- [ ] (must-fix, Codex 4) `revisions.py` ~L161-163 sets `collection: revisions` with `links: []`; STAC 1.0 requires a `rel: collection` link when `collection` is set, and no revisions Collection exists; `write_revision` never validates. Drop the `collection` field until a Collection exists (as was done for source Items in `8e8bf43`). Test: a written revision validates.
-- [ ] (must-fix, Codex 5) `cli/mws_import_source.py` ~L92/L120-121 stores a relative source path verbatim as `href` inside `<root>/sources/`, where consumers resolve it against the wrong directory; the subset CLI's `resolve_sources` has the same defect. Resolve to an absolute path (or compute the href relative to the Item's own location) in both. Test with a relative invocation path.
-- [ ] (Codex 2) `snakemake/rules/overviews.smk` `rule build_parent` (~L132-149) has no input or param tied to the builder's identity, so an updated fold implementation never re-runs existing parents. Add a `params:` value carrying the builder's version/content identity so a changed builder re-triggers the rule, independent of its install path.
-- [ ] (Gemini 2) the batch builder (`buildLevel`, ~L895-982) writes no per-tile `.json`, so a later per-parent fold over batch-built children gets no child geometric error and substitutes the child GSD, understating error (uma-ADR-0013 D2 monotonicity). Only reachable by mixing the two builders on one layer, which nothing forbids. Have the batch builder write the same per-tile record the per-parent writer does.
-- [ ] (Gemini 4) `buildMultiBandDepthOverviewParent` (~L1737-1753) renames the `.tif` into place before writing its `.json`; a metadata failure leaves an unprovable raster. Write the record first, or remove the published `.tif` when the record write fails.
-- [ ] (Gemini 6) `contributorMean` (~L210-215) checks only `isnan`, so a ±inf MEAN reaches the weighted accumulation; `foldSigma` never guards `s >= 0`. Use `std::isfinite` and treat a negative σ as invalid.
-- [ ] (Gemini 7) `fsyncPath` (~L600-617) opens without `O_CLOEXEC`; add it, as `LayerWriterLock` does.
-- [ ] (Gemini 8) `.github/workflows/ros-base-docker.yml` ~L32-35 copies `*.list` under `set -euo pipefail` with no nullglob guard; use `shopt -s nullglob` plus an explicit empty check.
+- [x] (must-fix, Codex 1) `snakemake/Snakefile` ~L366 runs `mws_refresh_fingerprints` before any C++ guard; `fingerprint_sidecar.refresh_tile` (derived=True, ~L215-250) deletes every overview tile without a `.fp`, which is every tile of a legacy `overviews/`; the C++ `refuseCrossSchemaSidecar` then sees an empty dir and passes. Refuse a non-rev-3 `overviews/` in the refresh step itself (or run the schema check before it) so a legacy dir is refused untouched, never emptied. Test: a legacy 2-band `overviews/` survives the regenerate entry point byte-for-byte and the run is refused.
+- [x] (must-fix, Codex 3) `depth_subset.py` ~L198-202: the adapter's `fingerprint_inputs` omit the raster it adapts, so re-cleaned/recompiled pixels keep the same fingerprint. Add the source tile's content identity (its complete producing fingerprint, or a content digest) to the inputs. Test: changed tile bytes with unchanged sources give a different fingerprint.
+- [x] (must-fix, Codex 4) `revisions.py` ~L161-163 sets `collection: revisions` with `links: []`; STAC 1.0 requires a `rel: collection` link when `collection` is set, and no revisions Collection exists; `write_revision` never validates. Drop the `collection` field until a Collection exists (as was done for source Items in `8e8bf43`). Test: a written revision validates.
+- [x] (must-fix, Codex 5) `cli/mws_import_source.py` ~L92/L120-121 stores a relative source path verbatim as `href` inside `<root>/sources/`, where consumers resolve it against the wrong directory; the subset CLI's `resolve_sources` has the same defect. Resolve to an absolute path (or compute the href relative to the Item's own location) in both. Test with a relative invocation path.
+- [x] (Codex 2) `snakemake/rules/overviews.smk` `rule build_parent` (~L132-149) has no input or param tied to the builder's identity, so an updated fold implementation never re-runs existing parents. Add a `params:` value carrying the builder's version/content identity so a changed builder re-triggers the rule, independent of its install path.
+- [x] (Gemini 2) the batch builder (`buildLevel`, ~L895-982) writes no per-tile `.json`, so a later per-parent fold over batch-built children gets no child geometric error and substitutes the child GSD, understating error (uma-ADR-0013 D2 monotonicity). Only reachable by mixing the two builders on one layer, which nothing forbids. Have the batch builder write the same per-tile record the per-parent writer does.
+- [x] (Gemini 4) `buildMultiBandDepthOverviewParent` (~L1737-1753) renames the `.tif` into place before writing its `.json`; a metadata failure leaves an unprovable raster. Write the record first, or remove the published `.tif` when the record write fails.
+- [x] (Gemini 6) `contributorMean` (~L210-215) checks only `isnan`, so a ±inf MEAN reaches the weighted accumulation; `foldSigma` never guards `s >= 0`. Use `std::isfinite` and treat a negative σ as invalid.
+- [x] (Gemini 7) `fsyncPath` (~L600-617) opens without `O_CLOEXEC`; add it, as `LayerWriterLock` does.
+- [x] (Gemini 8) `.github/workflows/ros-base-docker.yml` ~L32-35 copies `*.list` under `set -euo pipefail` with no nullglob guard; use `shopt -s nullglob` plus an explicit empty check.
 
 ### Not acted on
 - Gemini 1: `buildLevel` dangling pointers — refuted a third time; `child_tiles.reserve` is at L943 (Gemini's quote omitted it).
@@ -1059,3 +1059,32 @@ Round 6: external cross-model review of branch `feature/issue-397` at `b4084d0` 
 
 ### Next step
 Dispatch `address-findings` for the ten actions, then a Codex check scoped to that fix pass, then the host pushes (owner-approved).
+
+## Implementation
+**Status**: complete
+**When**: 2026-09-25 14:54 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-397 at `827f778`
+**Addressed**: Integrated Review 2026-09-25 14:35 -04:00 (round 6, at `6e264b6`)
+**Commits**: `2c68ca0`, `c7e2d84`, `9f33c0b`, `02113a9`, `2a37ec9`, `e3d6cb0`, `952957c`, `1d49903`, `646b3dc`, `de95764`, `827f778` (plan)
+
+### Actions
+- [x] (Codex 1) a legacy `overviews/` is refused before the fingerprint pre-step touches the layer — `refuse_non_rev3_overviews` runs first in `refresh_layer` and in `refresh_directory(derived=True)`; tiles with no rev-3 `overview_schema.json` (or an unreadable/foreign one) raise, nothing read or written. Unit test (three record variants, snapshot byte+mtime equal) and an e2e snakemake test (legacy 2-band `overviews/` survives, run refused, no builder call) — `marine_world_store/fingerprint_sidecar.py` (`2c68ca0`)
+- [x] (Codex 3) the adapted tile's content id (§3 single-file source id, git-annex file key) joins `source_ids`; test: changed tile bytes over unchanged bags change exactly that tile's fingerprint — `marine_world_store/depth_subset.py` (`c7e2d84`). Rode `source_ids` rather than a new key because §9's input set is closed.
+- [x] (Codex 4) revision Items carry no `collection` field; test asserts no field and no dangling link and runs `stac_catalog.validate_item` (validation is OFF on this host — jsonschema 4.10 — so the schema check itself only runs where the validator does) — `marine_world_store/revisions.py` (`9f33c0b`)
+- [x] (Codex 5) source hrefs are `os.path.abspath` in `mws_import_source` and `resolve_sources`; tests with a relative path from a chdir'd cwd — `cli/mws_import_source.py`, `cli/mws_link_depth_subset.py` (`02113a9`)
+- [x] (Codex 2) `rule build_parent` has one param, the builder executable's sha256 (`OVERVIEW_TOOL_ID`); test: changed tool bytes rebuild every parent, then nothing; the existing same-bytes-other-path test still rebuilds nothing — `snakemake/Snakefile`, `snakemake/rules/overviews.smk` (`2a37ec9`)
+- [x] (Gemini 2) the multi-band batch builder writes the `depth-overview-tile/1` record per parent into staging; gtest `ErrorNestsOverABatchBuiltChild` (record present with children; a per-parent grandparent reads its error) — `marine_bathymetry_store/src/overview_pyramid.cpp` `buildLevel` (`e3d6cb0`)
+- [x] (Gemini 4) a per-parent tile whose record write fails is removed with its record and `.fp` before the error propagates; gtest `ATileWhoseRecordCannotBeWrittenIsNotLeftPublished` — `overview_pyramid.cpp` `buildMultiBandDepthOverviewParent` (`952957c`)
+- [x] (Gemini 6) `contributorMean` uses `std::isfinite`; new `hasSigma` (finite and >= 0) gates every σ use in `foldSigma`; gtests for ±inf MEAN and negative/±inf σ under all three rules — `overview_pyramid.cpp` (`1d49903`). Writers still emit σ as nodata.
+- [x] (Gemini 7) `fsyncPath` opens with `O_CLOEXEC` — `overview_pyramid.cpp` (`646b3dc`)
+- [x] (Gemini 8) CI rosdep step: `shell: bash`, `shopt -s nullglob`, array of lists, explicit empty-check error — `.github/workflows/ros-base-docker.yml` (`de95764`)
+
+### Checks
+- `./core_ws/test.sh marine_bathymetry_store marine_world_store`: marine_bathymetry_store 432 tests, 0 errors, 0 failures, 45 skipped; marine_world_store 380 tests, 0 errors, 0 failures, 0 skipped (812 total). The 45 skips are the same count as the last pass.
+- Python lint with ROS sourced (`test_flake8.py`, `test_pep257.py`, `test_copyright.py`): 3 passed. (Off a sourced ROS environment they skip, which is how the last pass's lint failures got past plain pytest.)
+- `plan.md` gained "Implementation notes — round-6 review fix pass", including the amendment to "no rule carries paths as `params:`".
+
+### Next step
+Codex check scoped to this fix pass (`6e264b6..827f778` plus this entry), then the host pushes (owner-approved in the review entry).
