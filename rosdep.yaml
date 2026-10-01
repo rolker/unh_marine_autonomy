@@ -1,0 +1,20 @@
+# Repo-local rosdep keys for dependencies Ubuntu ships but ros/rosdistro does
+# not name yet (workspace dependency policy, ros2_agent_workspace#654 case 2).
+# Each key is a temporary stand-in: when the upstream entry lands, the
+# workspace's `make validate` flags the local one for deletion.
+#
+# Shape rule: plain per-OS lists of system package names only. Nested mappings
+# (pip/npm/gem/source rules, or codename-keyed forms) are rejected by
+# .agent/scripts/rosdep_yaml_validate.sh, because these files feed a
+# root-level `rosdep install -y` on the dev host, the ci_local container and
+# the agent image.
+python3-pystac:  # upstream PR owed: ros/rosdistro (open at unh_marine_autonomy#397 merge time)
+  ubuntu: [python3-pystac]
+  debian: [python3-pystac]
+# snakemake must be 7.x (marine_world_store's Snakefile reads Snakemake 7's
+# snakemake() frame); rosdep cannot express a version, so the bound lives in
+# marine_world_store's package.xml (version_gte/version_lt) and setup.cfg.
+# Ubuntu 24.04 ships 7.32.4.
+snakemake:       # upstream PR owed: ros/rosdistro (open at unh_marine_autonomy#397 merge time)
+  ubuntu: [snakemake]
+  debian: [snakemake]

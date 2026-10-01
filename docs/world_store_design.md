@@ -124,7 +124,12 @@ The collection has **one** horizontal and vertical frame: **ITRF2020 at referenc
 (derived from recorded RTCM where possible, declared for products); every ingest transforms
 into the store frame and names the transformation in provenance (`mru_transform` for live
 data, importers for products); the declaration is written in STAC with a specific EPSG code
-(never bare 4326), in coverage manifests, the TMS `crs` and the registry. Consequences
+(never bare 4326), in coverage manifests, the TMS `crs` and the registry. The code is
+**EPSG:9989**, ITRF2020's *geographic 3D* CRS (latitude, longitude, ellipsoidal height) —
+verified against PROJ 9 locally on 2026-09-22; 9988 is the geocentric form and 9990 the 2D
+one, and neither carries the height axis the store stores. Note the "reference epoch 2020.0"
+above is the **coordinate** epoch the collection is held at; ITRF2020's own frame epoch is
+2015.0, as PROJ reports it. Both are written. Consequences
 accepted: US products and CORS are NAD83(2011), so PROJ's time-dependent transformation is
 needed in one direction regardless; a fixed epoch implies plate-motion correction (≈ 12 cm in
 New Hampshire for 2026 observations); NATRF2022 ≈ ITRF2020@2020.0 is a bet until NOAA
@@ -202,14 +207,81 @@ revisions concept are the later upstream contribution.
   **contributor + RAT** (BlueTopo's pattern, NBS's granularity) and a measured-vs-interpolated
   flag are adopted; per-cell source and time stay out (R8).
 - **Overview levels — *decided* (spine 2, 2026-09-21)**: a folded level stores **MIN, MEAN,
-  COUNT and σ** (mean and max of the children) per parent cell — BAG VR's `RESAMPLED_GRID`
+  COUNT and σ** per parent cell — BAG VR's `RESAMPLED_GRID`
   precedent — never one folded value. Views choose the band: the navigation-surface view
-  reads MIN, others read MEAN, COUNT is the parent's lineage. Measured on Massabesic: a mean
+  reads MIN, others read MEAN, COUNT is the parent's lineage. **MIN and MEAN are in the
+  DEPTH sense**: the tiles hold ellipsoidal height (positive up), so the MIN band stores
+  the *maximum* number — the shoalest cell (uma#397 Group B). The four bands are a
+  **folded** level's schema; the native level stays the 2-band `{value, σ}` pair above,
+  so a pyramid is heterogeneous by design and a native cell is promoted to
+  `{depth, depth, 1, σ}` when it is folded. Measured on Massabesic: a mean
   fold hides the shoalest depth by more than its own σ in 56 % of 7.2 m cells (three fold
   steps), so this is evidence, not principle. Safety never *decides* from a folded level; a
   folded MIN may serve as a conservative screen; decisions resolve at native level (R19).
   NBS's rule against averaging applies to the *compile* — our native level — not to derived
   summaries whose lineage is COUNT.
+  **The σ band's fold rule is OPEN** (Roland, 2026-09-22: "this seems like something that
+  should be thought about much more"). Rev 2's "mean and max of the children" named two
+  numbers without saying how they combine into one stored value, so it was never a decision.
+  Candidates: pooled variance (within-child σ² plus the spread of the child means,
+  count-weighted, over the children that carry a σ — σ² = Σ_S n_i (σ_i² + (μ_i − μ_S)²) /
+  Σ_S n_i with μ_S the count-weighted mean of those children; a child with no σ is left out
+  of the σ fold, and a parent with none is nodata — Roland, 2026-09-25); max child σ; mean
+  child σ; and the literal "mean and max" as two bands.
+  **Pooled is exact at the first fold only, in the writer** (placeholder; Roland,
+  2026-09-25: "I want to think more deeply about uncertainty at some point, so do what's a
+  good placeholder until that happens"). Excluding σ-less data at every level needs each
+  tile to carry its σ-carrying natives' own count and mean; the 4-band tile carries only
+  COUNT and MEAN over *all* its natives, so one level up the writer's `kPooled` weights by
+  those and re-admits the σ-less data the first fold left out (children (1, 0 m, σ 1 m),
+  (1000, 0 m, no σ), (1, 5 m, σ 0.1 m) pool to 2.60 m in one fold and 1.01 m through two).
+  Carrying that state is a schema change (new bands) and is deferred to this open σ-rule
+  decision; a test pins the current two-level behaviour. The measurement's `pooled` carries
+  the σ-carrier count and mean forward and is exact at every step, so the evidence below is
+  not affected by the writer's limit. Writers emit σ as nodata regardless.
+  The rule is decided from a measurement over the store's native depth tiles — how often each
+  candidate's σ covers the true spread of the native cells under the parent — in the style of
+  spine decision 2's own `fold_measure` evidence. Until then the 4-band schema is reserved and
+  **no σ band is written**: the band is nodata and the tile and Item record
+  `sigma_fold: undecided`, so the later decision is a new fingerprint, never a migration.
+  (uma#397 Group B.)
+
+  **Evidence** (`mws_measure_sigma_fold`, 2026-09-22, 140 processed tiles — Massabesic and
+  Shoals **blended**, 3 fold steps). *Measured before the 2026-09-25 pooled refinement*: the
+  `pooled` columns counted a σ-less child as zero within-variance while adding its count. The
+  two definitions differ only in parent cells where some children carry a σ and others do
+  not; a re-run over the same tiles is owed before the numbers are read as final. *Truth* is the population standard deviation of the
+  native depth cells under a parent cell; a rule *covers* a cell when its σ is at least that
+  spread. Rev 2's literal "mean and max of the children" is the `mean_child` and `max_child`
+  columns read together — two numbers, which is exactly why it was never a decision.
+
+  | step | level | parent cells | with a spread | mean true spread (m) | mean σ pooled (m) | mean σ max_child (m) | mean σ mean_child (m) | covers pooled | covers max_child | covers mean_child | σ/spread pooled | σ/spread max_child | σ/spread mean_child |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | 1 | 9 | 3459403 | 3426861 | 0.08042 | 0.4655 | 0.5435 | 0.4274 | 0.9999 | 0.9977 | 0.996 | 13.59 | 15.54 | 13.24 |
+  | 2 | 8 | 886810 | 880768 | 0.1702 | 0.5543 | 0.7837 | 0.4542 | 0.9998 | 0.9961 | 0.985 | 5.933 | 8.115 | 5.481 |
+  | 3 | 7 | 230283 | 229195 | 0.3089 | 0.696 | 1.176 | 0.4961 | 0.9998 | 0.9815 | 0.8466 | 3.447 | 5.754 | 2.908 |
+
+  Reading, one line per candidate:
+  - **pooled** — covers essentially every parent at every step (99.98 %+), at 3.4–13.6× the
+    true spread: it never under-claims, and it over-claims least of the three by the third
+    step.
+  - **max_child** — also covers almost everywhere (98.2 % by step 3) but is the loosest
+    number at every step (5.8–15.5×): it inflates fastest as the fold climbs.
+  - **mean_child** — the only candidate whose coverage *degrades* with depth of fold
+    (99.6 % → 84.7 %): by three steps it under-claims the spread in one parent cell in six,
+    which is the failure mode that matters for a σ a consumer trusts.
+
+  All three ratios are far above 1 at step 1 because the per-cell σ the native tiles carry
+  (the ingest's own uncertainty — median 0.15 m on the Massabesic tiles measured for spine
+  decision 2, Appendix B) is much larger than the *spread between*
+  neighbouring cells on a smooth lake bed — so the σ of a folded cell is dominated by its
+  children's uncertainty, not by their disagreement. That is a property of the data, not of
+  any rule, and it is one of the things the decision has to weigh.
+
+  **The rule is OPEN** (Roland, 2026-09-22); writers emit σ as nodata with
+  `sigma_fold: undecided`, and the decision is a new fingerprint, never a migration. The run
+  blended Massabesic and Shoals tiles — a deliberately mixed population, and one reason these
+  numbers describe the candidates rather than settle between them.
 - **Record and views**: STAC Items + Collection are the record (coverage manifest and
   fingerprint container included); a GTI index is *derived* from them for readers (GDAL ≥ 3.9,
   the 26.04 / lyrical platform); never sync a derived GTI, regenerate it. STACTA/STACIT were
@@ -297,8 +369,38 @@ consumer's.
 2. **Per-Item fields.** `state`, `origin`, the store frame (specific EPSG + epoch), inputs
    with their ids, fingerprint, uncertainty basis, time range, resolution and levels, a
    licence (machine-readable; CC0 where public), and for features the record version chain.
+   They are written with an `mws:` prefix (`mws:state`, `mws:origin`, …) because STAC
+   requires fields outside common metadata to be namespaced; the prefix is a spelling, not a
+   second vocabulary. Every *built* product is in the store frame (§4) — but a product that
+   is a byte-identical re-expression of an existing tile has not been transformed, so its
+   Item declares the georeferencing it actually carries plus the owed transformation. An
+   Item naming the store frame over unreframed pixels would be a false claim in the record,
+   which is worse than an honest gap.
+   *Time range*: every Item carries the **observation interval of the material it is made
+   of**, and that interval is **derived from the sources** — a bag's `metadata.yaml` records
+   the recording's start and duration; a product takes the **union** of its sources'
+   intervals (a tile built from three bags was observed over all three). STAC gives an Item
+   two legal shapes, a single `datetime` or a null one with both ends of a range, and none
+   for "unknown", so an Item with no derivable interval is a **provenance defect**, not a
+   thin record: it could not be found by the time search line 1 promises. The writer raises
+   a named error and **writes nothing** — a producer that cannot date a product does not
+   publish it. `metadata.yaml` is outside the source id (§3) precisely so it can be read
+   for this: the identity is the sensor data, the time is lookup metadata about it. An
+   interval stated by an operator is allowed for material that has one but does not record
+   it (a cast file, a prior grid); a file's modification time is never used, because when a
+   file was copied is not when its data was observed. (uma#397.)
 3. **Per-cell fields** in a field store: value, σ, contributor (RAT), measured-vs-
-   interpolated. Overview levels carry MIN, MEAN, COUNT and σ.
+   interpolated. Overview levels carry MIN, MEAN, COUNT and σ. An Item lists only the
+   per-cell fields its container actually holds — a field named but absent is a promise the
+   store cannot keep.
+   *Per-tile geometric error*: every tile Item, native or folded, also carries
+   `geometric_error_m` — the error introduced if the tile is rendered and its children are
+   not — and a parent's is never smaller than its children's. This is a **producer**
+   obligation (uma-ADR-0013 D1/D2), recorded in the `marine_tiled_raster_store` coverage
+   manifest the writers already keep (D3) and copied into the Item; one selection core
+   (D7, uma#395) can then select a rev-3 overview tile with no special case. Absent means
+   *absent*, never zero: a consumer falls back to level-as-resolution, and zero would claim
+   a perfect tile.
 4. **Kinds** on a navigable boundary's segments; `origin_kind`/`status` on a contact; QC
    flags on a sound-speed sample.
 5. **No ordering.** The store never says which of two products to prefer. A documented
@@ -354,10 +456,70 @@ producer versions in bags; the Sound Speed Manager study, then cast-file decisio
 Shoals tidal water-level series and navigable boundary; the segmentation-derived shore;
 the Wyllie 2017 quality-score paper; the contacts redesign issue; a decision on annexing
 salmon's logs in place; the reference-frame EPSG codes verified in PROJ before they are
-written; ADR cuts for the decided sections, and the amendments to ADR-0002, -0004, -0006,
+written (the **store frame's** code is now verified — EPSG:9989, §4, 2026-09-22; the
+product and source frames a given import declares are still verified case by case); ADR cuts for the decided sections, and the amendments to ADR-0002, -0004, -0006,
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-09-25 — **decided by the operator** (Roland, 2026-09-25, uma#397 external review):
+  (j) §7's `pooled` candidate pools **only over the children that carry a σ**, weighted by
+  their own counts; a child with no σ is left out of the σ fold (its count and its mean
+  alike), and a parent none of whose children carries a σ stays nodata. The earlier
+  arithmetic counted a σ-less child as zero within-variance while adding its count, which
+  pulls the pooled σ toward zero — a 1000-count σ-less child beside a 1-count σ = 1 m child
+  gave ≈ 0.03 m, a confidence nothing measured. The writer's `kPooled` and the measurement's
+  `pooled` both follow it; the §7 evidence table predates it. The rule itself **stays open**.
+  (k) Placeholder for the multi-level case (Roland, 2026-09-25: "I want to think more deeply
+  about uncertainty at some point, so do what's a good placeholder until that happens"): the
+  measurement carries the σ-carriers' count and mean through every fold step; the writer's
+  `kPooled` does not (no new bands, no schema change) and is documented as exact at the
+  first fold only — see §7.
+
+- 2026-09-22 (fix pass) — **decided by the operator** (Roland, 2026-09-22), from the
+  `datetime` defect implementing rev 3 exposed: (h) Part 2 line 2 — the promised *time
+  range* is the **observation interval, derived from the sources**, and an Item with no
+  derivable interval is a provenance defect the writer refuses rather than a null the
+  record absorbs. Rev 3 promised a time range without saying where it comes from or what
+  a producer does without one; the implementation wrote `"datetime": null` with nothing
+  beside it, which is not a STAC Item at all. Consequences: `mws_import_source` reads the
+  interval out of the bag, product Items take the union of their sources', and
+  `mws_link_depth_subset` requires its bag directories — for their time as well as their
+  identity — and refuses a tile it cannot date. (i) §7 — the σ-fold candidate measurement
+  is recorded as evidence with a reading per rule, and the rule **stays open**: the
+  writers emit σ as nodata with `sigma_fold: undecided`, so the decision when it comes is
+  a new fingerprint rather than a migration.
+
+- 2026-09-22 (Group B) — **proposed, from implementing §7's overview fold**
+  (uma#397 Group B; two things §7 leaves a reader to infer, and an
+  implementation that inferred either one differently would be wrong in a way
+  nothing downstream could detect): (f) §7's band names **MIN** and **MEAN** are
+  in the DEPTH sense, while the tiles hold **ellipsoidal height** (positive up),
+  so the MIN band stores the *maximum* number — the shoalest cell. A view that
+  read "MIN" as the minimum stored value would invert the navigation band, which
+  is the one band §7 says safety may use as a conservative screen. (g) The
+  4-band schema applies to **folded levels only**: the native level stays the
+  2-band `{value, σ}` pair §7's first bullet describes, so a pyramid is
+  heterogeneous by design and a reader switches band schema at the
+  native/derived boundary. The implementation states it on disk
+  (`overviews/overview_schema.json`) rather than leaving it to be inferred, and
+  promotes a native cell to `{depth, depth, 1, σ}` on read so one fold serves
+  every level. Neither is a change of decision; both are what spine 2 already
+  implies, written down.
+
+- 2026-09-22 — **proposed, from implementing rev 3** (uma#397 Group A; process-derived
+  corrections, recorded here rather than worked around in code): (a) Part 2 line 3 gains the per-tile
+  geometric error — every tile Item carries a nested per-tile `geometric_error_m`, a producer obligation under
+  uma-ADR-0013 D1/D2 read from the `marine_tiled_raster_store` coverage manifest (D3), which
+  rev 3 did not mention at all; (b) §7's σ fold rule is marked **open** with its candidates
+  listed and no σ band written until it is decided from the Group B measurement — rev 2's
+  "mean and max of the children" named two numbers without saying how they combine, so it was
+  never a decision; (c) Part 2 line 2 — Item fields are spelled with an `mws:` prefix, because
+  STAC namespaces fields outside common metadata; (d) §4 — the store EPSG code is
+  9989 (ITRF2020 geographic 3D), verified in PROJ, and the 2020.0 in §4 is the *coordinate*
+  epoch, distinct from ITRF2020's own 2015.0 frame epoch; (e) Part 2 line 2 — a product that is a
+  byte-identical re-expression of an existing tile declares the frame it actually holds
+  and names the owed transformation, rather than claiming the store frame.
 
 - 2026-09-21 — **rev 3**: written after spine decisions 0–5 and the prototype (components
   1–11, sound-speed, sidescan, contacts, shoreline). Purpose opens with Roland's 2026-09-21

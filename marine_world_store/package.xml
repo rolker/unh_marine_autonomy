@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>marine_world_store</name>
+  <version>0.0.0</version>
+  <description>
+    World store (rev 3) library and CLIs: store-root resolution, the
+    quantity/state/origin directory layout, content-based source identity,
+    product fingerprints, STAC Items/Collections and append-only revision
+    records. Deliberately a plain Python package -- nothing here imports rclpy
+    or ament, so the same code runs under `pip install .` off a ROS host; this
+    package.xml is a shim so rosdep resolves its dependencies and colcon
+    installs it into the ROS install space (rolker/unh_marine_autonomy#397,
+    design in docs/world_store_design.md).
+  </description>
+  <maintainer email="roland.arsenault@unh.edu">Roland Arsenault</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <!-- Runtime libraries. Every key here is also named in setup.cfg's
+       install_requires (test/test_dependency_lists.py fails on drift), so the
+       two ways of installing this package agree on what it needs.
+       python3-pystac and snakemake resolve through the repo-root rosdep.yaml
+       local keys until ros/rosdistro carries them. -->
+  <exec_depend>python3-yaml</exec_depend>
+  <!-- Tile footprints for the Items come from the raster's own
+       georeferencing, read with GDAL, rather than from a second Python
+       implementation of the GGGS grid maths. -->
+  <exec_depend>python3-gdal</exec_depend>
+  <!-- The sigma-fold measurement (uma#397) reduces whole tile rasters
+       band-by-band; numpy is what makes that a few array operations rather
+       than a per-cell Python loop over a million cells. -->
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-pystac</exec_depend>
+  <!-- The regenerate driver: marine_world_store/snakemake/ holds the rules,
+       snakemake itself runs them (design section 9). Snakemake 7 ONLY: the
+       Snakefile's _executing() reads Snakemake 7's internal snakemake()
+       frame, which Snakemake 8 replaced (Ubuntu 24.04 ships 7.32.4). rosdep
+       does not enforce these bounds; setup.cfg pins the same range. -->
+  <exec_depend version_gte="7" version_lt="8">snakemake</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
