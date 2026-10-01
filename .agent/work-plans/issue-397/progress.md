@@ -1099,3 +1099,23 @@ Codex check scoped to the round-6 fix pass (`6e264b6..e1b9120`). Two findings, b
 ### Actions
 - [ ] (must-fix, Codex) `snakemake/Snakefile` ~L330-342 / `overview_items.overview_builder_version()` ~L168: the builder executable's sha256 triggers `build_parent` reruns but never reaches the tile record or the Item fingerprint, so a changed builder can publish new pixels under an unchanged fingerprint. Carry the builder digest into `builder_version` (per-tile record and Item); test that a changed digest changes the fingerprint as well as the schedule.
 - [ ] (must-fix, Codex) `depth_subset.py` ~L197-210: `source_identity.file_source_id(tile)` hashes the SOURCE after `_copy_identical(tile, target)` published the copy; a source replaced in between gives an Item that fingerprints bytes the published tile does not contain. Derive the content id (and raster metadata) from the verified copy `target` (the source only under `dry_run`); regression test replacing the source after the copy.
+
+## Implementation
+**Status**: complete
+**When**: 2026-10-01 09:22 -04:00
+**By**: Claude Code Agent (Claude Opus 5.5)
+
+**Branch**: feature/issue-397 at `c21f6fd`
+**Addressed**: Integrated Review 2026-09-25 14:59 -04:00 (Codex check of the round-6 fix pass)
+**Commits**: `87c0aef`, `c21f6fd`
+
+### Actions
+- [x] (Codex, builder digest) rule `build_parent` passes the builder's sha256 as `--builder-id`; `build_depth_overview_parent` writes it into the tile record as `builder_id` (left out when not given, never an empty string); `overview_records` reads it only in the writer's form; `overview_builder_version` quotes `builder=<id>` (`builder=unrecorded` otherwise). Tests: gtest `RecordsTheBuilderIdItWasGiven` (library), gtest `PassesTheBuilderIdToTheRecord` (runs the CLI: malformed ids exit 2, `--list-parents` refuses the flag), parametrised record-reader test, `test_the_build_of_the_fold_is_part_of_the_parents_inputs`, and `test_an_updated_builder_rebuilds_every_parent` now asserts every overview Item fingerprint changes with the builder and stays put on the no-op rerun — `marine_bathymetry_store/src/{overview_pyramid,build_depth_overview_parent}.cpp`, `marine_world_store/snakemake/rules/overviews.smk`, `marine_world_store/marine_world_store/{overview_records,overview_items}.py` (`87c0aef`). The digest is written into the command with `_shell_literal`, not as `{params.builder}`, to keep the `test_every_shell_path_is_quoted` rule.
+- [x] (Codex, content id from the copy) `adapt_depth_tiles` reads the content id, footprint and cell size from the verified published copy; from the source only under `dry_run`. Test `test_the_item_describes_the_published_copy_not_the_source` replaces the source right after its copy — `marine_world_store/marine_world_store/depth_subset.py` (`c21f6fd`).
+
+### Checks
+- `./core_ws/test.sh marine_bathymetry_store marine_world_store`: marine_bathymetry_store 270 gtest cases, 0 failures (both new tests ran); marine_world_store 388 tests with 1 failure (`test_every_shell_path_is_quoted`, from the first form of the rule), fixed, then the affected modules plus flake8 and pep257 rerun with ROS sourced: 131 passed.
+- Pre-commit hooks passed on both commits.
+
+### Next step
+Push (owner-approved 2026-10-01). Then the owner's read of PR #399.
