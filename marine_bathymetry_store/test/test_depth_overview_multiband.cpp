@@ -33,6 +33,7 @@
 
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <gtest/gtest.h>
@@ -40,6 +41,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -893,6 +895,71 @@ TEST(PerParentOverview, MatchesTheBatchBuilderForTheSameParent)
       }
     }
   }
+}
+
+TEST(PerParentOverview, RecordsTheBuilderIdItWasGiven)
+{
+  // The world store carries `builder_id` into the tile's fingerprint, so a
+  // rebuilt fold publishes its pixels under a new fingerprint. Without an id
+  // the key is absent, never an empty string a reader could mistake for one.
+  ScratchDir dir("parent_builder_id");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  fs::path meta = dir.path() / "overviews" / mtrs::tileFilename(parent);
+  meta.replace_extension(".json");
+
+  ASSERT_TRUE(mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column(),
+      mbs::SigmaFold::kUndecided, "abc123").written);
+  EXPECT_NE(readText(meta).find("\"builder_id\": \"abc123\""), std::string::npos)
+    << readText(meta);
+
+  ASSERT_TRUE(mbs::buildMultiBandDepthOverviewParent(
+      dir.path().string(), parent.level(), parent.row(), parent.column()).written);
+  EXPECT_EQ(readText(meta).find("builder_id"), std::string::npos) << readText(meta);
+}
+
+// Run the built CLI; its exit status, or -1 if it did not exit normally.
+static int runParentCli(const std::string & args)
+{
+  const int status = std::system(
+    (std::string("'") + BUILD_DEPTH_OVERVIEW_PARENT_BINARY + "' " + args +
+    " 2>/dev/null").c_str());
+  return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+TEST(PerParentOverviewCli, PassesTheBuilderIdToTheRecord)
+{
+  // The CLI is what the Snakemake rule runs; the library test above does not
+  // reach its argument parsing.
+  ScratchDir dir("parent_cli_builder_id");
+  const std::vector<gggs::GridIndex> fine = fineSiblings();
+  for (const gggs::GridIndex & g : fine) {
+    writeUniformNativeTile(dir.path(), g, -8.0, 0.4);
+  }
+  const gggs::GridIndex parent = gggs::parent(fine.front());
+  const std::string index = std::to_string(parent.level()) + " " +
+    std::to_string(parent.row()) + " " + std::to_string(parent.column());
+  const std::string layer = "'" + dir.path().string() + "' ";
+  fs::path meta = dir.path() / "overviews" / mtrs::tileFilename(parent);
+  meta.replace_extension(".json");
+
+  ASSERT_EQ(runParentCli("--builder-id f00d " + layer + index), 0);
+  EXPECT_NE(readText(meta).find("\"builder_id\": \"f00d\""), std::string::npos)
+    << readText(meta);
+
+  // A malformed id is a usage error, and nothing is rebuilt under it.
+  EXPECT_EQ(runParentCli("--builder-id '' " + layer + index), 2);
+  EXPECT_EQ(runParentCli("--builder-id 'a b' " + layer + index), 2);
+  EXPECT_NE(readText(meta).find("\"builder_id\": \"f00d\""), std::string::npos);
+  // And it is not taken by the modes that write no tile.
+  EXPECT_EQ(
+    runParentCli(
+      "--builder-id f00d --list-parents " + layer +
+      std::to_string(parent.level())), 2);
 }
 
 TEST(PerParentOverview, WritesItsOwnGeometricErrorSidecar)

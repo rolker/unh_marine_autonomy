@@ -382,13 +382,17 @@ struct MultiBandOverviewParent
 /// @param layer_dir The rev-3 quantity layer holding the native tiles.
 /// @param level Parent level; @p row, @p col its GGGS index at that level.
 /// @param rule The σ rule; @c kUndecided (the default) writes the band as nodata.
+/// @param builder_id Names the build of the fold doing the writing, recorded
+///   as the tile record's `builder_id` so a changed fold reaches the tile's
+///   fingerprint in the world store. The Snakemake workflow passes the
+///   executable's sha256. Empty (the default) leaves the key out.
 /// @throws std::invalid_argument if @p level / @p row / @p col do not name a
 ///   grid that exists at that level.
 /// @throws std::runtime_error if @p layer_dir is not a directory, if a child is
 ///   present both natively and as a derived tile, or on any tile I/O failure.
 MultiBandParentResult buildMultiBandDepthOverviewParent(
   const std::string & layer_dir, int level, uint32_t row, uint32_t col,
-  SigmaFold rule = SigmaFold::kUndecided);
+  SigmaFold rule = SigmaFold::kUndecided, const std::string & builder_id = "");
 
 /// @brief The parent tiles at @p parent_level that a per-parent run should build.
 ///

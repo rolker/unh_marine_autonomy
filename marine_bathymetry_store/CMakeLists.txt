@@ -199,8 +199,12 @@ if(BUILD_TESTING)
     test/test_depth_overview_multiband.cpp TIMEOUT 300)
   target_link_libraries(test_depth_overview_multiband ${PROJECT_NAME})
   target_include_directories(test_depth_overview_multiband PRIVATE test)
+  # The per-parent CLI's --builder-id parsing is tested by running the built
+  # binary, so its path is injected and it is built first.
   target_compile_definitions(test_depth_overview_multiband PRIVATE
-    DEPTH_OVERVIEW_GOLDEN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/test/data/depth_overview_single_level_golden.txt")
+    DEPTH_OVERVIEW_GOLDEN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/test/data/depth_overview_single_level_golden.txt"
+    BUILD_DEPTH_OVERVIEW_PARENT_BINARY="$<TARGET_FILE:build_depth_overview_parent>")
+  add_dependencies(test_depth_overview_multiband build_depth_overview_parent)
 
   # The GeoTIFF importer test writes fixture rasters with GDAL directly, so it
   # links GDAL (PRIVATE in the library target).

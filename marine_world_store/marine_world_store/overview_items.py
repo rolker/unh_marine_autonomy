@@ -58,7 +58,7 @@ Nothing about an overview is invented here; each field comes from its lineage:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Sequence, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from marine_world_store import fingerprint as fingerprint_module
 from marine_world_store import footprint, item_schema, layout
@@ -166,11 +166,14 @@ def build_overview_items(
 
 
 def overview_builder_version(sigma_fold: str, child_names: Sequence[str],
-                             child_inputs: Sequence[Mapping[str, Any]]) -> str:
+                             child_inputs: Sequence[Mapping[str, Any]],
+                             builder_id: Optional[str] = None) -> str:
     """
     Name the fold that built an overview tile, and exactly what it folded.
 
-    The fold version (:data:`OVERVIEW_BUILDER` and the sigma rule), then each
+    The fold version (:data:`OVERVIEW_BUILDER`, the build that ran it -- the
+    tile record's ``builder_id``, or ``unrecorded`` -- and the sigma rule),
+    then each
     child as ``<tile>=<fingerprint>``, sorted by tile. The fingerprint is
     recomputed from the child's COMPLETE inputs document rather than read from
     the child's Item, so every input section 9 names -- not only the sources,
@@ -200,8 +203,10 @@ def overview_builder_version(sigma_fold: str, child_names: Sequence[str],
                 f'{exc}') from exc
         parts.append(f'{name}={child_fingerprint}')
     parts.sort()
-    return (f'{OVERVIEW_BUILDER} sigma_fold={sigma_fold} over '
-            f'[{"; ".join(parts)}]')
+    # The build: a rebuilt fold reruns its parents in the workflow, and its
+    # new pixels must not then be published under the old fingerprint.
+    return (f'{OVERVIEW_BUILDER} builder={builder_id or "unrecorded"} '
+            f'sigma_fold={sigma_fold} over [{"; ".join(parts)}]')
 
 
 def _overview_item(tile: Path, key, record, children, *, quantity, state,
@@ -223,7 +228,7 @@ def _overview_item(tile: Path, key, record, children, *, quantity, state,
     sigma_fold = record.sigma_fold or 'unrecorded'
     fingerprint_inputs: Dict[str, Any] = {
         'builder_version': overview_builder_version(
-            sigma_fold, record.children, inputs),
+            sigma_fold, record.children, inputs, record.builder_id),
     }
     if source_ids:
         fingerprint_inputs['source_ids'] = source_ids

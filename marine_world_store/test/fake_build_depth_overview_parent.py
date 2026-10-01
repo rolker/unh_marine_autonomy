@@ -119,7 +119,7 @@ def remove_level(layer, level):
         print(tile.name[:-4])
 
 
-def build(layer, level, row, col):
+def build(layer, level, row, col, builder_id=None):
     children = _children(layer, level, row, col)
     if (layer / _name(level, row, col)).exists() or not children:
         return
@@ -147,15 +147,23 @@ def build(layer, level, row, col):
     dataset.GetRasterBand(1).Fill(value)
     dataset = None
     tmp.replace(final)
-    final.with_suffix('.json').write_text(json.dumps({
+    record = {
         'schema': 'depth-overview-tile/1', 'geometric_error_m': 2.0 ** level,
         'bands': ['min', 'mean', 'count', 'sigma'],
         'sigma_fold': 'undecided', 'sigma_band_written': False,
-        'children_used': len(children), 'children': children}))
+        'children_used': len(children), 'children': children}
+    if builder_id is not None:
+        record['builder_id'] = builder_id
+    final.with_suffix('.json').write_text(json.dumps(record))
     _log(f'build {final.name[:-4]}')
 
 
 def main(argv):
+    builder_id = None
+    if argv[0] == '--builder-id':
+        builder_id, argv = argv[1], argv[2:]
+        if len(argv) != 4:
+            return 2
     if argv[0] == '--list-parents':
         list_parents(Path(argv[1]), int(argv[2]))
     elif argv[0] == '--prune':
@@ -163,7 +171,8 @@ def main(argv):
     elif argv[0] == '--remove-level':
         remove_level(Path(argv[1]), int(argv[2]))
     else:
-        build(Path(argv[0]), *(int(a) for a in argv[1:4]))
+        build(Path(argv[0]), *(int(a) for a in argv[1:4]),
+              builder_id=builder_id)
     return 0
 
 

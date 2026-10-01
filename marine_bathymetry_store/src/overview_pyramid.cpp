@@ -858,9 +858,16 @@ void ensureOverviewSchema(const fs::path & overviews, SigmaFold rule)
 // `overviews/<name>` derived), which is the lineage marine_world_store needs
 // to build the tile's STAC Item — its observation interval and its inputs are
 // the union of its children's.
+//
+// `builder_id` names the build of the fold that wrote the tile (the per-parent
+// CLI's --builder-id; the Snakemake workflow passes the executable's sha256).
+// The world store carries it into the tile's fingerprint, so a changed fold
+// publishes its new pixels under a new fingerprint. Omitted when empty (the
+// batch builder, which no rev-3 CLI reaches): the reader then records the
+// builder as unrecorded rather than guessing one.
 void writeTileMeta(
   const fs::path & tile_path, double geometric_error_m, SigmaFold rule,
-  const std::vector<std::string> & children)
+  const std::vector<std::string> & children, const std::string & builder_id = "")
 {
   nlohmann::json doc{
     {"schema", "depth-overview-tile/1"},
@@ -870,6 +877,9 @@ void writeTileMeta(
     {"sigma_band_written", rule != SigmaFold::kUndecided},
     {"children_used", children.size()},
     {"children", children}};
+  if (!builder_id.empty()) {
+    doc["builder_id"] = builder_id;
+  }
   publishText(tileRecordPath(tile_path), doc.dump(2) + "\n");
 }
 
@@ -1640,7 +1650,7 @@ std::vector<gggs::GridIndex> removeMultiBandOverviewLevel(
 
 MultiBandParentResult buildMultiBandDepthOverviewParent(
   const std::string & layer_dir_s, int level, uint32_t row, uint32_t col,
-  SigmaFold rule)
+  SigmaFold rule, const std::string & builder_id)
 {
   const fs::path layer_dir(layer_dir_s);
   if (!fs::is_directory(layer_dir)) {
@@ -1790,7 +1800,8 @@ MultiBandParentResult buildMultiBandDepthOverviewParent(
   // bytes. Removed with its record and .fp, it is simply missing, and the
   // DAG rebuilds a missing product.
   try {
-    writeTileMeta(final_path, result.geometric_error_m, rule, child_names);
+    writeTileMeta(
+      final_path, result.geometric_error_m, rule, child_names, builder_id);
   } catch (...) {
     try {
       removeDerivedTile(overviews, parent);

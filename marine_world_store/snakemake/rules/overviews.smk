@@ -149,7 +149,11 @@ rule build_parent:
         # Recorded as built, with the mtime the build gave it (see
         # fingerprint_sidecar): the next pre-step then leaves it newer than
         # the children it absorbed, even if it came out byte for byte the same.
-        _shell_literal(OVERVIEW_TOOL) + " " + _shell_literal(LAYER_DIR) + " "
+        # The same identity goes into the tile's record (--builder-id), from
+        # where it reaches the tile's fingerprint: a rerun alone would publish
+        # the new fold's pixels under the old fingerprint.
+        _shell_literal(OVERVIEW_TOOL) + " --builder-id " +
+        _shell_literal(OVERVIEW_TOOL_ID) + " " + _shell_literal(LAYER_DIR) + " "
         "{wildcards.level} {wildcards.row} {wildcards.col} && " +
         _shell_literal(REFRESH_TOOL) + " --record {output[0]:q}"
 

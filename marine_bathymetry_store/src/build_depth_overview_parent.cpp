@@ -49,7 +49,8 @@ namespace
 void usage()
 {
   std::cerr <<
-    "usage: build_depth_overview_parent <layer_dir> <level> <row> <col>\n"
+    "usage: build_depth_overview_parent [--builder-id <id>] <layer_dir> <level>\n"
+    "                                   <row> <col>\n"
     "  Folds ONE parent tile at <level>_<row>_<col> from its up-to-four children\n"
     "  and writes it to <layer_dir>/overviews/ as a 4-band MIN/MEAN/COUNT/sigma\n"
     "  tile (the rev-3 world store schema; docs/world_store_design.md section 7).\n"
@@ -66,6 +67,10 @@ void usage()
     "  it so the later decision is a new fingerprint, not a migration.\n"
     "  Writes are per-tile atomic (write-beside then rename), so many of these\n"
     "  may run concurrently over one layer.\n"
+    "  --builder-id names this build of the fold (the Snakemake workflow passes\n"
+    "  the executable's sha256). It is recorded as the tile record's\n"
+    "  `builder_id`, so a changed fold changes the tile's fingerprint in the\n"
+    "  world store. Without it the record names no builder.\n"
     "  Exit: 0 written, 0 also when suppressed by native or no child exists\n"
     "        (both reported on stderr), 2 usage, 1 failure.\n"
     "\n"
@@ -112,6 +117,23 @@ bool parseU32(const char * text, uint32_t & out)
   } catch (const std::exception &) {
     return false;
   }
+}
+
+// A builder id is recorded verbatim in JSON and quoted into a fingerprint, so
+// it must be non-empty and free of whitespace and control characters: a
+// stray newline or space would make two spellings of one build.
+bool validBuilderId(const std::string & id)
+{
+  if (id.empty()) {
+    return false;
+  }
+  for (const char c : id) {
+    const auto u = static_cast<unsigned char>(c);
+    if (u <= 0x20 || u == 0x7f) {
+      return false;
+    }
+  }
+  return true;
 }
 
 std::string gridName(const gggs::GridIndex & grid)
@@ -179,13 +201,25 @@ int main(int argc, char ** argv)
       return 1;
     }
   }
-  if (argc != 5) {
+  // The build form only: the listing and removal modes write no tile, so a
+  // builder id there means a mistaken command line, and reaches this check.
+  std::string builder_id;
+  int first = 1;
+  if (argc == 7 && std::string(argv[1]) == "--builder-id") {
+    builder_id = argv[2];
+    if (!validBuilderId(builder_id)) {
+      std::cerr << "error: --builder-id must be non-empty, with no whitespace "
+        "or control characters\n";
+      return 2;
+    }
+    first = 3;
+  } else if (argc != 5) {
     usage();
     return 2;
   }
   uint32_t level = 0, row = 0, col = 0;
-  if (!parseU32(argv[2], level) || !parseU32(argv[3], row) ||
-    !parseU32(argv[4], col))
+  if (!parseU32(argv[first + 1], level) || !parseU32(argv[first + 2], row) ||
+    !parseU32(argv[first + 3], col))
   {
     usage();
     return 2;
@@ -194,7 +228,8 @@ int main(int argc, char ** argv)
   try {
     const mbs::MultiBandParentResult result =
       mbs::buildMultiBandDepthOverviewParent(
-      argv[1], static_cast<int>(level), row, col);
+      argv[first], static_cast<int>(level), row, col,
+      mbs::SigmaFold::kUndecided, builder_id);
     const char * removed = result.removed_stale ?
       "; the stale derived tile there was removed" : "";
     if (result.suppressed_by_native) {

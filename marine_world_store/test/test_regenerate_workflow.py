@@ -40,6 +40,7 @@ dependency, resolved through the repo-root ``rosdep.yaml`` local key; the e2e
 tests skip only where it is not installed).
 """
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -412,6 +413,26 @@ def _record(directory: Path, name: str, error, sigma_fold='undecided'):
     }))
 
 
+@pytest.mark.parametrize('stored, read', [
+    ('0123abcd', '0123abcd'),
+    (None, None),            # key absent
+    ('', None),
+    ('two words', None),
+    ('line\nbreak', None),
+    (42, None),
+])
+def test_a_records_builder_id_is_read_only_in_the_writers_form(
+        tmp_path, stored, read):
+    _record(tmp_path, '12_5_7', 4.0)
+    record = tmp_path / '12_5_7.json'
+    if stored is not None:
+        document = json.loads(record.read_text())
+        document['builder_id'] = stored
+        record.write_text(json.dumps(document))
+    records = overview_records.read_tile_records(tmp_path)
+    assert records[(12, 5, 7)].builder_id == read
+
+
 def test_records_assemble_into_the_manifest_the_cxx_reader_expects(tmp_path):
     _record(tmp_path, '12_5_7', 4.0)
     _record(tmp_path, '12_5_8', 4.0)
@@ -733,6 +754,18 @@ def workflow(tmp_path, monkeypatch):
             prunes = sorted(lines[i + 1] for i, w in enumerate(lines)
                             if w in ('prune', 'remove'))
             return output, builds, prunes
+
+        def overview_fingerprints(self):
+            """``{<level>_<row>_<col>: fingerprint}`` of every overview Item."""
+            from marine_world_store import overview_items, stac_catalog
+            from marine_world_store.item_schema import CONTRACT_FIELDS
+            found = {}
+            for item in stac_catalog.read_items(layer):
+                if overview_items.is_overview_item(item):
+                    tile = item['assets']['data']['href'].rsplit('/', 1)[-1]
+                    found[tile[:-4]] = \
+                        item['properties'][CONTRACT_FIELDS['fingerprint']]
+            return found
 
         def published(self):
             """Every published product file: (path, bytes, mtime)."""
@@ -1123,11 +1156,23 @@ def test_an_updated_builder_rebuilds_every_parent(workflow, tmp_path):
         workflow.native(name)
     _, first, _ = workflow.run()
     tool = tmp_path / 'bin' / 'fake_build_depth_overview_parent'
+    before = workflow.overview_fingerprints()
+    assert set(before) == set(first)
+    record = json.loads(
+        (workflow.layer / 'overviews' / '11_0_0.json').read_text())
+    assert record['builder_id'] == \
+        hashlib.sha256(tool.read_bytes()).hexdigest()
     tool.write_text(tool.read_text() + '# fold v2\n')
     _, builds, _ = workflow.run()
     assert builds == first
+    # And the rebuilt tiles are published as the new fold's products: a rerun
+    # alone left every overview Item's fingerprint as it was.
+    after = workflow.overview_fingerprints()
+    assert set(after) == set(before)
+    assert all(after[tile] != before[tile] for tile in before)
     _, builds, _ = workflow.run()
     assert builds == []
+    assert workflow.overview_fingerprints() == after
 
 
 def test_a_tool_on_a_relative_path_entry_survives_workdir(

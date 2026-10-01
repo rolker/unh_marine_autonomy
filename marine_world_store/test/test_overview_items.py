@@ -210,6 +210,24 @@ def test_the_same_child_under_another_name_is_another_fold(tmp_path):
     assert first != second
 
 
+def test_the_build_of_the_fold_is_part_of_the_parents_inputs():
+    """
+    Another build of the fold over the same children is another product.
+
+    Regression: a changed builder reran every parent in the workflow but its
+    digest never reached the fingerprint, so new pixels were published under
+    an unchanged one.
+    """
+    names = ['13_2_2.tif']
+    documents = [{'source_ids': ['bag-a'], 'builder_version': 'x/1'}]
+    versions = [overview_items.overview_builder_version(
+        'undecided', names, documents, builder_id)
+        for builder_id in ('aaaa', 'bbbb', None)]
+    assert len(set(versions)) == 3
+    assert 'builder=aaaa ' in versions[0]
+    assert 'builder=unrecorded ' in versions[2]
+
+
 def test_a_childs_inputs_are_normalised_before_they_are_hashed():
     """
     A hand-edited child (unsorted or duplicate ids) hashes as the writer's.

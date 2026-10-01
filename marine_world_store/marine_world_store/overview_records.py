@@ -80,6 +80,11 @@ class TileRecord:
     #: native, ``overviews/<name>`` derived); ``None`` for a record that does
     #: not name them. The lineage an overview tile's Item is built from.
     children: Optional[List[str]] = None
+    #: The build of the fold that wrote the tile (the per-parent writer's
+    #: ``--builder-id``; the workflow passes the executable's sha256), or
+    #: ``None`` for a record that names none. Part of the overview Item's
+    #: fingerprint, so a changed fold is a changed product.
+    builder_id: Optional[str] = None
 
 
 def read_tile_records(overviews_dir: PathLike) -> Dict[TileKey, TileRecord]:
@@ -127,12 +132,20 @@ def read_tile_records(overviews_dir: PathLike) -> Dict[TileKey, TileRecord]:
         if not (isinstance(children, list) and
                 all(isinstance(c, str) and c for c in children)):
             children = None
+        # Kept only in the form the writer emits (non-empty, no whitespace or
+        # control characters); anything else names no builder, and the Item
+        # then says so rather than quoting a value no build could have left.
+        builder_id = document.get('builder_id')
+        if not (isinstance(builder_id, str) and builder_id and
+                all(ord(c) > 0x20 and ord(c) != 0x7f for c in builder_id)):
+            builder_id = None
         records[key] = TileRecord(
             key=key,
             geometric_error_m=error,
             sigma_fold=document.get('sigma_fold'),
             sigma_band_written=bool(document.get('sigma_band_written', False)),
             children=children,
+            builder_id=builder_id,
         )
     return records
 
