@@ -248,6 +248,35 @@ def test_changed_tile_bytes_over_the_same_sources_are_a_new_fingerprint(
     assert changed == ['depths-reviewed-surveyed-12_3_4']
 
 
+def test_the_item_describes_the_published_copy_not_the_source(
+        source_layer, tmp_path, monkeypatch):
+    """
+    A source replaced after its copy cannot leak into the Item.
+
+    Regression: the tile's content id was hashed from the SOURCE after the
+    copy was published, so a source rewritten in between gave an Item that
+    fingerprinted bytes the published tile does not hold.
+    """
+    real_copy = depth_subset._copy_identical
+
+    def copy_then_replace_the_source(source, target):
+        written = real_copy(source, target)
+        if source.name == '12_3_4.tif':
+            make_tile(source_layer, row=3, col=4, value=-9.0)
+        return written
+    monkeypatch.setattr(depth_subset, '_copy_identical',
+                        copy_then_replace_the_source)
+    report = adapt(source_layer, tmp_path / 'rev3')
+    published = report.destination / '12_3_4.tif'
+    assert depth_subset.file_sha256(published) != \
+        depth_subset.file_sha256(source_layer / '12_3_4.tif')
+    item = {i['id']: i for i in report.items}['depths-reviewed-surveyed-12_3_4']
+    inputs = item['properties'][CONTRACT_FIELDS['inputs']]
+    assert source_identity.file_source_id(published) in inputs['source_ids']
+    assert source_identity.file_source_id(source_layer / '12_3_4.tif') \
+        not in inputs['source_ids']
+
+
 def test_unnamed_sources_are_refused(source_layer, tmp_path):
     """A product with no recorded inputs has no fingerprint worth writing."""
     with pytest.raises(AdapterError):

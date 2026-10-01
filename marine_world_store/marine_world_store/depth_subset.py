@@ -193,11 +193,18 @@ def adapt_depth_tiles(
         level, row, col = key
         report.tiles_seen += 1
         target = destination / tile.name
+        # What the Item describes is the PUBLISHED copy, verified identical to
+        # the source when it was made: read after the copy, the source may
+        # already be another file, and an Item read from it would fingerprint
+        # bytes the published tile does not hold. A dry run publishes nothing,
+        # so it describes the source.
+        described = tile
         if not dry_run:
             if _copy_identical(tile, target):
                 report.tiles_copied += 1
             else:
                 report.tiles_unchanged += 1
+            described = target
         geometric_error = manifest.geometric_error(key)
         if geometric_error is None:
             report.missing_geometric_error += 1
@@ -207,12 +214,13 @@ def adapt_depth_tiles(
         # content id is the single-file source id of design section 3 (the
         # git-annex file key), so it rides source_ids beside the bags.
         fingerprint_inputs: Dict[str, Any] = {
-            'source_ids': [*source_ids, source_identity.file_source_id(tile)],
+            'source_ids': [*source_ids,
+                           source_identity.file_source_id(described)],
             'builder_version': builder_version,
         }
         if revision_ids:
             fingerprint_inputs['revision_ids'] = list(revision_ids)
-        geometry, bbox = footprint.tile_footprint(tile)
+        geometry, bbox = footprint.tile_footprint(described)
         item = item_schema.build_tile_item(
             quantity=Quantity.DEPTHS,
             state=state,
@@ -221,7 +229,7 @@ def adapt_depth_tiles(
             asset_href=f'./{tile.name}',
             fingerprint_inputs=fingerprint_inputs,
             uncertainty_basis=uncertainty_basis,
-            resolution_m=footprint.cell_size_m(tile),
+            resolution_m=footprint.cell_size_m(described),
             levels=[level],
             cell_fields=item_schema.depth_cell_fields(),
             geometry=geometry,
