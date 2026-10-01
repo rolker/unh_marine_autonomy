@@ -28,6 +28,64 @@ revisions-as-records, the consumer contract — change rarely and by a new spine
 container formats — are provisional by default; the store stays usable through their change
 because a changed process is a new fingerprint, never a migration.
 
+## Direction as of 2026-10-01 — read this before the rest
+
+Rev 3 below is still the model. On 2026-10-01 the whole effort was reviewed (Roland, with
+an agent), and what changed is the order of work and how much bookkeeping surrounds it.
+Until this draft is revised, this section applies where it disagrees with the text below.
+
+**What the store is for** (Roland, 2026-10-01):
+
+- "a structured, predictable way to apply corrections to field gathered data without
+  rewriting the bag files";
+- "carefully designed pyramids to support LOD in tools", built consistently for all the data;
+- tools that use the data "without rewriting that functionality for each tool";
+- "working with related but different data types together efficiently", vector as well as
+  raster, with "a design that is flexible enough that we can course correct".
+
+**What stays.** The six spine decisions: source identity (§3), the reference frame (§4),
+the state and origin axes (§5), what an observation may bake (§6), the overview bands (§7)
+and features (§8).
+
+**What changes.**
+
+- Fewer parts. One store library for every gridded type, where a type is a band description
+  and a fold rule. One reader that every tool uses, for tiles and for pings read from the
+  bags. The pipeline (bags plus corrections in, tiles out) is kept separate from the store.
+  One index across tiles, features and raw pings. Per-ping data stays in the bags and is
+  reached through the index.
+- The first thing to build is the explorer loop, for depths with sound speed: select a
+  small box, get its pings, run the real estimator with its parameters, view the result,
+  save the parameters as a record, and let a batch run apply them over the site with the
+  same code. What gets tuned is the algorithm's parameters, never the data.
+- Rebuild by site.
+
+**What waits**, with what stands in for it meanwhile:
+
+| Waits | Stand-in |
+|---|---|
+| A STAC Item per tile (§9, contract line 1) | one index |
+| A fingerprint per tile (§9) | one build record per site |
+| The Snakemake regenerate | a rebuild script |
+| Stored observations and trajectories (§2, §6) | bags read by reference |
+| Replica rules and git-annex (§9) | none; host sync can wait |
+
+**On hold as a result.** The rev 3 implementation (#397, its pull request is parked as a
+draft), and the issues written against it: CAMP as a world-store consumer (rolker/camp#238),
+the costmap as a consumer (#398), the survey explorer as a consumer
+(rolker/marine_perception_tools#60), the simulator replay (rolker/unh_marine_simulation#85),
+the deployment document (rolker/unh_echoboats_project11#491) and retiring the platform
+rebuild script (rolker/unh_echoboats_project11#490). The backscatter overview builder (#390)
+and the stale depth pyramids (#389) should wait for the shared library discussion, so that
+they are not built once per data type.
+
+**Not known yet.** The shape of the shared library, which is the next discussion. And
+whether a site rebuild can reach 30 to 60 minutes on the operator machine and the boat. On
+the dev machine, measured 2026-10-01, one depth import process handles about 106,000 pings
+a minute from the NAS, four independent processes ran 3.0 times faster than one, and about
+80% of the time is CUBE insertion. No parallel importer exists yet. If a site rebuild cannot
+get there, tracking each tile has a job again.
+
 ## Purpose
 
 *"We are designing a store that can serve as a marine robotics testing ground for some of
@@ -358,6 +416,12 @@ written; ADR cuts for the decided sections, and the amendments to ADR-0002, -000
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-10-01 — **direction section added** above Purpose, after a review of the whole effort
+  (Roland, with an agent). Rev 3 stays the model; the section records the changed order of
+  work (one store library, one reader, the explorer loop first, rebuild by site), what waits
+  (per-tile Items and fingerprints, the Snakemake regenerate, stored observations and
+  trajectories, replicas), and which issues are on hold. The body below is not yet revised.
 
 - 2026-09-21 — **rev 3**: written after spine decisions 0–5 and the prototype (components
   1–11, sound-speed, sidescan, contacts, shoreline). Purpose opens with Roland's 2026-09-21
