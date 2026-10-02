@@ -1,5 +1,75 @@
 # The World Store — Design Draft
 
+This is the design for data stores for marine robots, with a focus on mapping robots.
+
+Seafloor mapping from the surface is the case it starts with. Midwater targets from
+water-column data, and underwater vehicles, are not designed in, but the design should not
+preclude them. For example, nothing should assume that navigation comes from RTK GPS.
+
+## Goals
+
+1. **Support live robot decision making.** The store gives a robot up-to-date navigation
+   data, and supports on-board quality assessment and automated coverage planning. This is
+   the primary goal.
+   - Stores live on more than one machine, some linked by bandwidth-limited connections.
+2. **Never rewrite the raw files.**
+   - Corrections are kept apart from the raw data and applied when products are built.
+3. **Keep up with the robot's turn-around time.** After a deployment, the combined data can
+   be explored quickly enough to plan the next one, which may be the next day or a few hours
+   later.
+4. **Process the data automatically**, enough to assess its quality and show gaps.
+5. **See the different types of data together, in context.** A feature found in one product
+   (sidescan, bathymetry, backscatter) can be compared with the data from the others.
+6. **Keep all the data together.** Nothing is carved out by geographic area; the data is
+   explored the way a globe is. Sub-areas can be defined for processing without the data
+   living apart.
+7. **While collecting, tell new data from old.** Data from the current day or deployment
+   shows distinctly from earlier days' data, and both show distinctly from older reference
+   data.
+8. **Serve as the common store for processing**, for existing techniques and for new ones
+   that take advantage of multiple passes and multiple types of data.
+9. **Export to common hydrographic formats**, such as GSF and XTF, so that traditional
+   hydrographic processing stays possible when the ROS bag files are the only recording.
+
+**Not goals:**
+
+- Replacing the traditional hydrographic processing chain.
+- Data cleaning as a workflow. Marks made by automatic filters are part of the design, and a
+  mark made by a person can be recorded.
+
+## What follows from the goals
+
+- **Uncertainty.** Safe navigation and coverage planning both need to know how good a value
+  is, so values carry their uncertainty.
+- **Vector data.** Robot decisions use objects as well as grids: contacts, shorelines,
+  boundaries. Midwater targets fit here too.
+- **Moving data between machines** is described generically. In 2026 full bag files were
+  trickled over a satellite link while the boat was deployed and copied over faster wifi at
+  the dock; that technology will change.
+- **Export has three forms**: the data as recorded; as recorded with filters applied but no
+  further corrections; and with corrections applied.
+- **Why export matters.** In 2026 the ROS side recorded on every deployment and the survey
+  software did not, and the survey software has no driver for the Garmin sidescan. Export
+  works around a missing driver or nobody being available to run the survey side.
+
+## Open questions
+
+- **How much weight manual cleaning gets.** Nobody wants to clean by hand, but target
+  searching and marine archaeology may need it to make the data usable.
+- **The store's role on the boat.** Today CUBE builds the live tiles from live data and reads
+  no bag files, and the costmap's bathymetry layer reads depth tiles through the store
+  library. How much more of the store belongs on the boat is undecided.
+- **Tiles built live on the boat and tiles rebuilt ashore from the bag files.** How the two
+  relate has not been worked out, and it is more than a question of one replacing the other.
+
+## About this document
+
+This document is the live plan while the world store is built, and is meant to become the
+documentation others read to understand it. The goals above were written on 2026-10-02.
+**Everything below this section is older** (the direction note of 2026-10-01 and rev 3 of
+2026-09-21) and has not yet been revised against the goals; where it disagrees with them,
+the goals apply.
+
 **Status**: Evolving — **rev 3** (2026-09-21), written after the six spine decisions were
 taken and after the prototype exercised every category on season data. A design draft, not
 a decision record: it captures the model as currently understood and is the document agents
@@ -27,92 +97,6 @@ revisions-as-records, the consumer contract — change rarely and by a new spine
 **Process-derived** decisions — readers, schemas, QC rules, statistics, cache methods,
 container formats — are provisional by default; the store stays usable through their change
 because a changed process is a new fingerprint, never a migration.
-
-## Goals as of 2026-10-02 — what the design is anchored to
-
-Roland listed these on 2026-10-02, because the redesign had become hard to navigate without
-something to anchor its parts to. Each part of the design should be able to name the goal
-it serves; a part that cannot is a candidate to wait or to go. Where this section disagrees
-with the direction section or with rev 3 below, this section applies. Quoted text is
-Roland's. The items under "falls out" marked *(placed here by the agent)* were goals in his
-first list that an agent grouped under another goal; he has not confirmed that grouping.
-
-**Scope.** This is aimed at marine mapping robots. "Seafloor mapping from the surface is the
-case we start with, but midwater targets (as vector data probably) from watercolumn data or
-underwater vehicles should not be precluded from using this. They don't need to be designed
-in, we just need to keep some of the ideas flexible enough, such as not assuming nav is from
-RTK GPS."
-
-**Goals.**
-
-1. **Built for marine robotics: support live robot decision making.** "To make this stand
-   out and be justified, the primary goal is to make this for marine robotics." Decision
-   making "includes safe navigation, opening the door for vector data, and automated coverage
-   planning, both justifying the need for uncertainties". The store is "a source of updated
-   navigation data", and serves "on-board automated quality assessment and coverage
-   planning". The coverage planning meant is "modernizing and improving on the ideas behind
-   manda_coverage".
-   - Falls out: uncertainties, and vector data.
-   - Falls out: "supporting stores on multiple machines, some linked with bandwidth limited
-     connections". How data moves between them stays generic in the goal: this season full
-     bag files were trickled over Starlink while the boat was deployed and copied over
-     faster wifi at the dock, and "such technology can change".
-2. **Raw files are never rewritten.**
-   - Falls out: corrections, kept apart from the raw files and applied when products are
-     built.
-   - Falls out: cleaning marks. They are "still relevant for automatic filters and should
-     still support indicating user or manual cleaning".
-3. **Robot turn-around time.** "To support an operational tempo, a goal is to be able to
-   explore the combined data quickly after the deployment in order to plan an upcoming
-   deployment that may be next day, or after a few hours of recharging batteries."
-   - Falls out *(placed here by the agent)*: "automatically process the data enough for
-     assessing its quality and showing gaps".
-   - Falls out *(placed here by the agent)*: "see and explore the various types of data
-     together in context with each other". This summer the types were sidescan, bathymetry
-     and backscatter, and "the need was to compare a feature identified in one product with
-     the data from the other products".
-   - Falls out *(placed here by the agent)*: no carving out of geographic areas, "keeping all
-     the data together so it can be explored like we explore the globe with google maps or
-     earth. It's ok to define sub areas for processing and such, but that doesn't mean the
-     data needs to live apart."
-   - Falls out *(placed here by the agent)*: while collecting, "see new data coming in that
-     day or deployment shown distinctively from previous days' collected data. Previous
-     days' coverage should also show up distinctively from older reference data."
-4. **A common data store for processing**, "for implementing existing and implementing new
-   processing techniques that can take advantage of the multiple data passes and/or types".
-5. **Support traditional hydrographic processing by export to common formats** such as GSF
-   and XTF. This season "data was always collected on the ros side when deployed, but not
-   always with qinsy", and QINSy does not support the Garmin sidescan, so ROS bag files were
-   sometimes the only recording. Export "works around issues such as lack of drivers or lack
-   of personnel to operate the survey side". Three forms: as recorded; "as recorded, with
-   filters applied, but without further corrections"; and with corrections applied.
-
-**Non-goals.**
-
-- "Replacing the traditional hydrographic processing chain is not a goal."
-- Data cleaning: "I don't think data cleaning is a goal, but it might be something we
-  support."
-
-**Open.**
-
-- *How much weight manual cleaning gets.* "I don't want to have to do manual cleaning, but it
-  might be required to make the data usable for purposes such as target searching or marine
-  archeology." An agent's suggestion, not decided: every mark records what made it (a named
-  filter and its version, or a person), and the tool for making marks by hand is what the
-  non-goal leaves out.
-- *The store's role on the boat.* "How much the stores play a role in the live, on boat
-  scenario is still up for debate." Today CUBE reads live data to produce the live tiles and
-  reads no bag files, and the costmap's bathymetry layer reads depth tiles through the store
-  library.
-- *Tiles built live on the boat versus tiles rebuilt ashore from the bag files.* Not yet
-  discussed. Roland: the question "is more complex than" whether one replaces the other.
-- *The earlier purpose statements.* The Purpose section below (2026-09-21 and 2026-09-16) and
-  the direction section's "what the store is for" (2026-10-01) were written before this
-  list and have not been checked against it.
-
-**Not done yet.** The level between these goals and the design's parts: what the system must
-be able to do, each item naming the goal it serves. The sections below do not yet name
-their goals.
 
 ## Direction as of 2026-10-01 — read this before the rest
 
@@ -606,10 +590,11 @@ product and source frames a given import declares are still verified case by cas
 
 ## Change log
 
-- 2026-10-02 — **goals section added** above the direction section: scope, five goals with
-  what falls out of each, non-goals and open points, in Roland's words from that day's
-  discussion. It takes precedence over the direction section and rev 3 where they disagree.
-  Nothing below it is revised yet.
+- 2026-10-02 — **goals added at the top** (Roland): an opening line saying what this is, the
+  goals and non-goals, what follows from them, and the open questions. The document is to be
+  the live plan and to become the documentation, so the goals are written as statements;
+  the discussion they came from is not reproduced. The status text moved under "About this
+  document". Nothing below it is revised yet.
 
 - 2026-10-02 — **corrections from the parked rev 3 implementation brought onto this
   branch.** The entries dated 2026-09-22 and 2026-09-25 below, and the text they describe in
