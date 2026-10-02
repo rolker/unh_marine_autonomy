@@ -1,6 +1,6 @@
 # The World Store — Appendix B: prototype log (adoption decisions and spine decisions, 2026-09-18 → 09-21)
 
-Verbatim copy of the working log kept beside the prototype (`~/data/world_proto/DECISIONS.md`) at rev 3. It is the evidence behind the design's *decided* sections: each component was built against real season data before it was kept. Scripts are numbered as in `~/data/world_proto/scripts/`. Process-derived details in here (readers, schemas, thresholds) are provisional by the governing principle recorded on 2026-09-21.
+Verbatim copy of the working log kept beside the prototype (`~/data/world_proto/DECISIONS.md`) at rev 3. It is the evidence behind the design's *decided* sections: each component was built against real season data before it was kept. Scripts are numbered as in `~/data/world_proto/scripts/`; a copy of them is in [`world_store_prototype_scripts/`](world_store_prototype_scripts/). Process-derived details in here (readers, schemas, thresholds) are provisional by the governing principle recorded on 2026-09-21.
 
 # World-store prototype — adoption decisions (uma#391)
 
