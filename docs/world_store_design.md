@@ -13,37 +13,47 @@ focus is marine robots; that does not mean it cannot be used in other domains.
    up-to-date navigation data, and supports on-board quality assessment and automated
    coverage planning. This is the primary goal.
    - Favor robotics standards. The robots run ROS 2, so raw data is recorded in ROS bag
-     files and conventions follow the ROS REPs (REP 103 for units and axes, REP 105 for
-     coordinate frames).
+     files and conventions follow the ROS REPs: REP 103 for units and axes, REP 105 for
+     coordinate frames, and the proposed REP 156 for marine coordinate frames.
    - Stores live on more than one machine, some linked by bandwidth-limited connections.
-2. **Never rewrite the raw files.**
-   - Corrections are kept apart from the raw data and applied when products are built.
-3. **Keep up with the robot's turn-around time.** After a deployment, the combined data can
-   be explored quickly enough to plan the next one, which may be the next day or a few hours
-   later.
-4. **Process the data automatically**, enough to assess its quality and show gaps.
-5. **Explore all the data together.**
+2. **Show the operator useful data, live and between deployments.** This serves an operator
+   planning the coverage, and equally an operator monitoring a boat that plans its own.
+   - Live: the operator can monitor coverage. Data from the current day or deployment shows
+     distinctly from earlier days' data, and both show distinctly from older reference data.
+   - Between deployments: the combined data can be explored within the robot's turn-around
+     time, quickly enough to plan the next deployment, which may be the next day or a few
+     hours later.
+   - The data is processed automatically, enough to assess its quality and show gaps. This
+     is what justifies processing in the store: it supports quality assessment or better
+     exploration of the data.
+3. **Explore and work with all the data together.**
    - Different types in context: a feature found in one product (sidescan, bathymetry,
      backscatter) can be compared with the data from the others.
    - Different places in one world: nothing is carved out by geographic area, and the data
      is explored the way a globe is. Sub-areas can be defined for processing without the
      data living apart.
-6. **Let the operator monitor coverage live.**
-   - Data from the current day or deployment shows distinctly from earlier days' data, and
-     both show distinctly from older reference data.
-7. **Serve as the common store for processing**, for existing techniques and for new ones
-   that take advantage of multiple passes and multiple types of data.
-8. **Export to common hydrographic formats**, such as GSF and XTF, so that traditional
-   hydrographic processing stays possible when the robot's own recording is the only one.
+   - One common store for processing techniques, existing and new, that take advantage of
+     multiple passes and multiple types of data.
+4. **Keep the data intact, and usable beyond the store.**
+   - The raw files are never rewritten. Corrections are kept apart from the raw data and
+     applied when products are built.
+   - The data can be exported to common hydrographic formats, such as GSF and XTF, so that
+     traditional hydrographic processing stays possible when the robot's own recording is
+     the only one.
 
 **Not goals:**
 
-- Replacing the traditional hydrographic processing chain.
+- Replacing the traditional hydrographic processing chain. Processing in the store serves
+  robot decisions, quality assessment and exploration; producing hydrographic deliverables
+  stays with the traditional chain, which export feeds.
 - Data cleaning as a workflow. Marks made by automatic filters are part of the design, and a
   mark made by a person can be recorded.
 
 ## What follows from the goals
 
+- **REP 156** defines coordinate frame conventions for marine robots. It is a proposal
+  ([ros-infrastructure/rep#398](https://github.com/ros-infrastructure/rep/pull/398)), open
+  since March 2024 and not accepted as of 2026-10-02.
 - **Uncertainty.** Safe navigation and coverage planning both need to know how good a value
   is, so values carry their uncertainty.
 - **Vector data.** Robot decisions use objects as well as grids: contacts, shorelines,
