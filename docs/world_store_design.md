@@ -4,13 +4,17 @@ This is the design for data stores for marine robots, with a focus on mapping ro
 
 Seafloor mapping from the surface is the case it starts with. Midwater targets from
 water-column data, and underwater vehicles, are not designed in, but the design should not
-preclude them. For example, nothing should assume that navigation comes from RTK GPS.
+preclude them. For example, nothing should assume that navigation comes from RTK GPS. The
+focus is marine robots; that does not mean it cannot be used in other domains.
 
 ## Goals
 
-1. **Support live robot decision making.** The store gives a robot up-to-date navigation
-   data, and supports on-board quality assessment and automated coverage planning. This is
-   the primary goal.
+1. **Support live decision making on ROS 2 marine robots.** The store gives a robot
+   up-to-date navigation data, and supports on-board quality assessment and automated
+   coverage planning. This is the primary goal.
+   - Favor robotics standards. The robots run ROS 2, so raw data is recorded in ROS bag
+     files and conventions follow the ROS REPs (REP 103 for units and axes, REP 105 for
+     coordinate frames).
    - Stores live on more than one machine, some linked by bandwidth-limited connections.
 2. **Never rewrite the raw files.**
    - Corrections are kept apart from the raw data and applied when products are built.
@@ -18,18 +22,19 @@ preclude them. For example, nothing should assume that navigation comes from RTK
    be explored quickly enough to plan the next one, which may be the next day or a few hours
    later.
 4. **Process the data automatically**, enough to assess its quality and show gaps.
-5. **See the different types of data together, in context.** A feature found in one product
-   (sidescan, bathymetry, backscatter) can be compared with the data from the others.
-6. **Keep all the data together.** Nothing is carved out by geographic area; the data is
-   explored the way a globe is. Sub-areas can be defined for processing without the data
-   living apart.
-7. **While collecting, tell new data from old.** Data from the current day or deployment
-   shows distinctly from earlier days' data, and both show distinctly from older reference
-   data.
-8. **Serve as the common store for processing**, for existing techniques and for new ones
+5. **Explore all the data together.**
+   - Different types in context: a feature found in one product (sidescan, bathymetry,
+     backscatter) can be compared with the data from the others.
+   - Different places in one world: nothing is carved out by geographic area, and the data
+     is explored the way a globe is. Sub-areas can be defined for processing without the
+     data living apart.
+6. **Let the operator monitor coverage live.**
+   - Data from the current day or deployment shows distinctly from earlier days' data, and
+     both show distinctly from older reference data.
+7. **Serve as the common store for processing**, for existing techniques and for new ones
    that take advantage of multiple passes and multiple types of data.
-9. **Export to common hydrographic formats**, such as GSF and XTF, so that traditional
-   hydrographic processing stays possible when the ROS bag files are the only recording.
+8. **Export to common hydrographic formats**, such as GSF and XTF, so that traditional
+   hydrographic processing stays possible when the robot's own recording is the only one.
 
 **Not goals:**
 
