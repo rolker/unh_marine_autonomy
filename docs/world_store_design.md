@@ -67,15 +67,54 @@ focus is marine robots; that does not mean it cannot be used in other domains.
   software did not, and the survey software has no driver for the Garmin sidescan. Export
   works around a missing driver or nobody being available to run the survey side.
 
+## Live tiles and rebuilt tiles
+
+*Serves goals 1 and 2.*
+
+A place surveyed today can be held as three kinds of tile:
+
+| Tile | Held on | Values | Pings | Built from |
+|---|---|---|---|---|
+| **Live tile** | the boat | full range | some may be missing | the live data stream, as the boat surveys |
+| **Live view tile** | the operator machine | reduced for display | some may be missing | live tiles, sent over the link for monitoring |
+| **Rebuilt tile** | any machine that holds the full recording | full range | all | the bag files |
+
+The live builder can drop pings, so a live tile can show a gap that is not in the data.
+That is acceptable for watching. Live tiles are replaced by rebuilt tiles when practical.
+
+- **Every tile says what it was built from**: the live stream, where pings may be missing,
+  or the full recording. A robot planning its own coverage has to work from either, because
+  data rates and available processing vary, so it must be able to tell which one it is
+  reading. The operator's display uses the same label to show live coverage distinctly.
+- **On the boat, live tiles are part of the store.** They hold full values and more than one
+  tool uses them, so they are kept in the store's format, read through the same reader as
+  any other tile, and labelled as live. They persist, so the live builder can reload them
+  after a restart. The store can replace or remove them once rebuilt tiles exist.
+- **On the operator machine, live view tiles are not part of the store.** Their values are
+  reduced for display and nothing is built from them. They are a display cache: it persists
+  across a restart of the viewer, it can be shared by the tools on that machine that show
+  live coverage, and its tiles are thrown away once real tiles replace them.
+- **Where a surface is built is a deployment choice.** When the link between machines is
+  expensive, the boat and the operator station each build from the recording they hold.
+  When it is not, one machine builds and the others copy the result. The same build runs in
+  either place.
+- **A build records what went into it**: which recordings, which corrections, which version
+  of the code. That is what lets a copy stand in for a rebuild, and lets two machines tell
+  whether they hold the same surface or which one is more complete.
+
+**Today**: the live CUBE node reads live data, not bag files; it saves its tiles to a draft
+directory at an interval and reloads them when it starts. The costmap's bathymetry layer
+reads the depth store's layers from disk, the draft layer included, but does not yet re-read
+them as the boat surveys. Live view tiles reach the operator as `SonarVisualizationTile`
+messages.
+
 ## Open questions
 
 - **How much weight manual cleaning gets.** Nobody wants to clean by hand, but target
   searching and marine archaeology may need it to make the data usable.
-- **The store's role on the boat.** Today CUBE builds the live tiles from live data and reads
-  no bag files, and the costmap's bathymetry layer reads depth tiles through the store
-  library. How much more of the store belongs on the boat is undecided.
-- **Tiles built live on the boat and tiles rebuilt ashore from the bag files.** How the two
-  relate has not been worked out, and it is more than a question of one replacing the other.
+- **How big a unit a build record covers**: a tile, a bag, a survey day or a site.
+- **How a machine knows the full data for a live tile has arrived**, so that the live tile
+  can be replaced.
 
 ## About this document
 
@@ -604,6 +643,11 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-10-02 — **"Live tiles and rebuilt tiles" added** (Roland), the first detail section
+  written against the goals. It replaces two open questions (the store's role on the boat;
+  live tiles versus tiles rebuilt ashore) and adds two (the unit a build record covers; how
+  a machine knows the full data for a live tile has arrived).
 
 - 2026-10-02 — **goals added at the top** (Roland): an opening line saying what this is, the
   goals and non-goals, what follows from them, and the open questions. The document is to be
