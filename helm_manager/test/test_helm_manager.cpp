@@ -804,3 +804,157 @@ TEST_F(HelmManagerHeartbeatTest, HeartbeatWithEmptyModeBeforeAnySwitch)
   EXPECT_EQ(last_heartbeat_.values[0].value, "")
     << "Piloting mode should be empty before any mode switch";
 }
+
+// ---------------------------------------------------------------------------
+// initial_piloting_mode parameter
+// ---------------------------------------------------------------------------
+
+/// Builds the node under test with a given initial_piloting_mode override (or
+/// none), so the parameter is picked up exactly as a launch file would supply it.
+class HelmManagerInitialModeTest : public HelmManagerHeartbeatTest
+{
+protected:
+  void makeNodeWithInitialMode(const std::string & mode)
+  {
+    node_.reset();
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({rclcpp::Parameter("initial_piloting_mode", mode)});
+    node_ = std::make_shared<helm_manager::HelmManager>("test_helm_manager", options);
+  }
+
+  /// Ask the node for a heartbeat and return the piloting_mode value it reports.
+  std::string reportedPilotingMode()
+  {
+    heartbeat_received_ = false;
+    marine_interfaces::msg::Heartbeat status;
+    status.header.stamp = node_->now();
+    helm_status_pub_->publish(status);
+    spinUntil([this] {return heartbeat_received_;});
+    EXPECT_TRUE(heartbeat_received_) << "Heartbeat should be republished";
+    if (!heartbeat_received_ || last_heartbeat_.values.empty()) {
+      return "<no heartbeat>";
+    }
+    EXPECT_EQ(last_heartbeat_.values[0].key, "piloting_mode");
+    return last_heartbeat_.values[0].value;
+  }
+
+  marine_interfaces::msg::Helm last_helm_output_;
+  bool helm_output_received_ = false;
+};
+
+TEST_F(HelmManagerInitialModeTest, UnsetKeepsNoModeAfterActivation)
+{
+  // Parameter left at its default: behaviour must be identical to before the
+  // parameter existed -- activation succeeds and no mode is selected.
+  configureAndActivate();
+  EXPECT_EQ(node_->get_parameter("initial_piloting_mode").as_string(), "");
+
+  spinBoth(100ms);
+  EXPECT_FALSE(manual_active_received_ && manual_active_);
+  EXPECT_FALSE(standby_active_received_ && standby_active_);
+  EXPECT_FALSE(autonomous_active_received_ && autonomous_active_);
+  EXPECT_EQ(reportedPilotingMode(), "");
+}
+
+TEST_F(HelmManagerInitialModeTest, ParameterIsDeclaredWithDescription)
+{
+  node_->configure();
+  auto descriptor = node_->describe_parameter("initial_piloting_mode");
+  EXPECT_EQ(descriptor.type, rcl_interfaces::msg::ParameterType::PARAMETER_STRING);
+  EXPECT_FALSE(descriptor.description.empty());
+}
+
+TEST_F(HelmManagerInitialModeTest, ValidModeAppliedOnActivation)
+{
+  makeNodeWithInitialMode("manual");
+  configureAndActivate();
+
+  // The per-mode active flags are transient-local, so the helper node sees the
+  // value even though activation happened before it spun.
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_;}));
+  EXPECT_TRUE(manual_active_) << "Manual should be active from the parameter";
+  if (standby_active_received_) {
+    EXPECT_FALSE(standby_active_);
+  }
+  if (autonomous_active_received_) {
+    EXPECT_FALSE(autonomous_active_);
+  }
+  EXPECT_EQ(reportedPilotingMode(), "manual");
+}
+
+TEST_F(HelmManagerInitialModeTest, ValidModeForwardsCommandsWithoutTopicMessage)
+{
+  makeNodeWithInitialMode("manual");
+
+  auto helm_output_sub = helper_node_->create_subscription<marine_interfaces::msg::Helm>(
+    "/out/helm", 1,
+    [this](const marine_interfaces::msg::Helm::SharedPtr msg) {
+      last_helm_output_ = *msg;
+      helm_output_received_ = true;
+    });
+  auto manual_helm_pub = helper_node_->create_publisher<marine_interfaces::msg::Helm>(
+    "/piloting_mode/manual/helm", 10);
+
+  configureAndActivate();
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+
+  marine_interfaces::msg::Helm cmd;
+  cmd.throttle = 0.4;
+  cmd.rudder = -0.2;
+  manual_helm_pub->publish(cmd);
+  EXPECT_TRUE(spinUntil([this] {return helm_output_received_;}))
+    << "Manual command should reach out/helm with no piloting_mode message sent";
+  EXPECT_FLOAT_EQ(last_helm_output_.throttle, 0.4f);
+}
+
+TEST_F(HelmManagerInitialModeTest, TopicMessageOverridesInitialMode)
+{
+  makeNodeWithInitialMode("manual");
+  configureAndActivate();
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+
+  resetActiveFlags();
+  publishMode("autonomous");
+  ASSERT_TRUE(spinUntil([this] {return autonomous_active_received_ && autonomous_active_;}));
+  EXPECT_EQ(reportedPilotingMode(), "autonomous");
+
+  // Re-activation must not re-apply the initial mode over the operator's choice.
+  ASSERT_EQ(
+    node_->deactivate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+  EXPECT_EQ(reportedPilotingMode(), "autonomous");
+}
+
+TEST_F(HelmManagerInitialModeTest, UnknownModeFailsActivation)
+{
+  makeNodeWithInitialMode("not_a_mode");
+
+  auto state = node_->configure();
+  ASSERT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+
+  // rclcpp_lifecycle swallows exceptions from transition callbacks, so assert
+  // on the transition result and the resulting state instead.
+  state = node_->activate();
+  EXPECT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
+    << "A mode naming nothing configured must not activate the node";
+  EXPECT_EQ(
+    node_->get_current_state().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+
+  // And nothing was selected as a side effect.
+  spinBoth(100ms);
+  EXPECT_FALSE(manual_active_received_ && manual_active_);
+  EXPECT_FALSE(standby_active_received_ && standby_active_);
+  EXPECT_FALSE(autonomous_active_received_ && autonomous_active_);
+}
+
+TEST_F(HelmManagerInitialModeTest, ModeNamesAreCaseSensitive)
+{
+  // "Manual" is not "manual": the topic path compares exactly, so the
+  // parameter must not quietly accept a near miss.
+  makeNodeWithInitialMode("Manual");
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  EXPECT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+}
