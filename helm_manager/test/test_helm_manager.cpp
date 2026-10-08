@@ -871,14 +871,14 @@ TEST_F(HelmManagerInitialModeTest, ValidModeAppliedOnActivation)
 
   // The per-mode active flags are transient-local, so the helper node sees the
   // value even though activation happened before it spun.
-  ASSERT_TRUE(spinUntil([this] {return manual_active_received_;}));
+  ASSERT_TRUE(spinUntil(
+      [this] {
+        return manual_active_received_ && standby_active_received_ &&
+               autonomous_active_received_;
+      })) << "Every mode should report its active flag";
   EXPECT_TRUE(manual_active_) << "Manual should be active from the parameter";
-  if (standby_active_received_) {
-    EXPECT_FALSE(standby_active_);
-  }
-  if (autonomous_active_received_) {
-    EXPECT_FALSE(autonomous_active_);
-  }
+  EXPECT_FALSE(standby_active_);
+  EXPECT_FALSE(autonomous_active_);
   EXPECT_EQ(reportedPilotingMode(), "manual");
 }
 
@@ -924,6 +924,31 @@ TEST_F(HelmManagerInitialModeTest, TopicMessageOverridesInitialMode)
   ASSERT_EQ(
     node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
   EXPECT_EQ(reportedPilotingMode(), "autonomous");
+}
+
+TEST_F(HelmManagerInitialModeTest, TopicMessageBeforeActivationWinsOverInitialMode)
+{
+  makeNodeWithInitialMode("manual");
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+
+  // The subscription exists from configure on, so an operator can pick a mode
+  // before the node is activated; activation must not replace it.
+  publishMode("autonomous");
+  spinBoth(100ms);
+
+  ASSERT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+  EXPECT_EQ(reportedPilotingMode(), "autonomous");
+}
+
+TEST_F(HelmManagerInitialModeTest, ParameterIsReadOnly)
+{
+  makeNodeWithInitialMode("manual");
+  node_->configure();
+  auto result = node_->set_parameter(rclcpp::Parameter("initial_piloting_mode", "standby"));
+  EXPECT_FALSE(result.successful);
+  EXPECT_EQ(node_->get_parameter("initial_piloting_mode").as_string(), "manual");
 }
 
 TEST_F(HelmManagerInitialModeTest, UnknownModeFailsActivation)

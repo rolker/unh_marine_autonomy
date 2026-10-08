@@ -61,10 +61,15 @@ CallbackReturn HelmManager::on_configure(const rclcpp_lifecycle::State & state)
   // no mode until one arrives on the piloting_mode topic. The value is
   // validated against the modes added above when the node is activated.
   rcl_interfaces::msg::ParameterDescriptor initial_mode_descriptor;
+  // Read-only: the value is consumed once at activation, so a runtime change
+  // could only be silently ignored or fail a later activation. Launch/YAML
+  // overrides still apply at declaration.
+  initial_mode_descriptor.read_only = true;
   initial_mode_descriptor.description =
     "Piloting mode applied once on activation, as if it had arrived on the "
     "piloting_mode topic. Must name a configured mode (standby, manual, "
-    "autonomous) or activation fails. Empty (default) starts with no mode.";
+    "autonomous) or activation fails. Empty (default) starts with no mode. "
+    "Read-only; set it in the launch file or parameter YAML.";
   declare_parameter<std::string>("initial_piloting_mode", "", initial_mode_descriptor);
   initial_piloting_mode_applied_ = false;
 
@@ -128,12 +133,14 @@ CallbackReturn HelmManager::on_activate(const rclcpp_lifecycle::State & state)
   }
 
   // Applied after the base activation so the lifecycle publishers behind the
-  // per-mode "active" topics are live and actually deliver the change.
+  // per-mode "active" topics are live and actually deliver the change. A mode
+  // already chosen on the piloting_mode topic (even before activation) wins:
+  // the callback marks the initial mode as consumed.
   if(!initial_mode.empty() && !initial_piloting_mode_applied_) {
     RCLCPP_INFO(get_logger(), "Applying initial_piloting_mode '%s'", initial_mode.c_str());
     setPilotingMode(initial_mode);
-    initial_piloting_mode_applied_ = true;
   }
+  initial_piloting_mode_applied_ = true;
   return result;
 }
 
@@ -309,6 +316,8 @@ void HelmManager::addPilotingMode(const std::string & mode, bool enable_output)
 
 void HelmManager::pilotingModeCallback(const std_msgs::msg::String & msg)
 {
+  // An explicit mode from the topic always outranks initial_piloting_mode.
+  initial_piloting_mode_applied_ = true;
   setPilotingMode(msg.data);
 }
 

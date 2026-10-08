@@ -89,8 +89,9 @@ private:
     rclcpp::Subscription < std_msgs::msg::String > ::SharedPtr piloting_mode_subscription_;
     std::string piloting_mode_;
 
-    // initial_piloting_mode is applied at most once per configure cycle, so a
-    // deactivate/activate cycle never overrides a mode chosen via the topic.
+    // initial_piloting_mode is consumed by the first activation or by the first
+    // piloting_mode topic message, whichever comes first, so neither a
+    // deactivate/activate cycle nor an earlier topic message is overridden.
     bool initial_piloting_mode_applied_ = false;
 
     rclcpp::Publisher < marine_interfaces::msg::Heartbeat > ::SharedPtr heartbeat_publisher_;
