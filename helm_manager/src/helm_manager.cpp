@@ -193,6 +193,15 @@ void HelmManager::updateParameters(const std::vector<rclcpp::Parameter> & parame
 {
   bool curvature_touched = false;
   for(const auto & param: parameters) {
+    if(param.get_name() == "initial_piloting_mode") {
+      // Normally unreachable (declared read-only), but a parameter declared
+      // earlier by NodeOptions::automatically_declare_parameters_from_overrides
+      // keeps the default writable descriptor, which declareOnce cannot change.
+      RCLCPP_WARN(get_logger(),
+        "initial_piloting_mode changed at runtime to '%s'; it is only read at the first "
+        "activation after configure, so this has no effect on a running node",
+        param.as_string().c_str());
+    }
     if(param.get_name() == "max_speed") {
       max_speed_ = param.as_double();
     }

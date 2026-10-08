@@ -954,6 +954,7 @@ TEST_F(HelmManagerInitialModeTest, TopicMessageBeforeActivationWinsOverInitialMo
 
   // The subscription exists from configure on, so an operator can pick a mode
   // before the node is activated; activation must not replace it.
+  ASSERT_TRUE(spinUntil([this] {return mode_pub_->get_subscription_count() > 0;}));
   publishMode("autonomous");
   spinBoth(100ms);
 
@@ -976,11 +977,14 @@ TEST_F(HelmManagerInitialModeTest, ReconfigureStartsWithNoModeThenReappliesIniti
   ASSERT_EQ(
     node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
 
-  // Cleanup forgot the operator's earlier choice: configure is a fresh start.
+  // Cleanup forgot the operator's earlier choice: configure is a fresh start,
+  // so nothing is selected until activation re-applies the initial mode.
+  EXPECT_EQ(reportedPilotingMode(), "");
   resetActiveFlags();
   ASSERT_EQ(
     node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
   ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+  EXPECT_FALSE(autonomous_active_);
   EXPECT_EQ(reportedPilotingMode(), "manual");
 }
 
@@ -1008,6 +1012,7 @@ TEST_F(HelmManagerInitialModeTest, TopicMessageWhileInactiveSurvivesActivation)
   // value must be correct both before and after activation.
   ASSERT_EQ(
     node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_TRUE(spinUntil([this] {return mode_pub_->get_subscription_count() > 0;}));
   publishMode("manual");
   ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}))
     << "The mode's active flag should be published even while inactive";
@@ -1019,6 +1024,63 @@ TEST_F(HelmManagerInitialModeTest, TopicMessageWhileInactiveSurvivesActivation)
   EXPECT_FALSE(standby_active_ && standby_active_received_);
   EXPECT_FALSE(autonomous_active_ && autonomous_active_received_);
   EXPECT_EQ(reportedPilotingMode(), "manual");
+}
+
+TEST_F(HelmManagerInitialModeTest, AutomaticallyDeclaredOverrideStillApplies)
+{
+  // With automatically_declare_parameters_from_overrides the base class has
+  // already declared the parameter (writable descriptor) before on_configure;
+  // the guarded declaration must tolerate that and the value must still apply.
+  node_.reset();
+  rclcpp::NodeOptions options;
+  options.automatically_declare_parameters_from_overrides(true);
+  options.parameter_overrides({rclcpp::Parameter("initial_piloting_mode", "manual")});
+  node_ = std::make_shared<helm_manager::HelmManager>("test_helm_manager", options);
+
+  configureAndActivate();
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+  EXPECT_EQ(reportedPilotingMode(), "manual");
+}
+
+TEST_F(HelmManagerInitialModeTest, ReconfigureRefreshesSpeedLimitsSetWhileUnconfigured)
+{
+  node_.reset();
+  rclcpp::NodeOptions options;
+  options.parameter_overrides({rclcpp::Parameter("output_type", "twist")});
+  node_ = std::make_shared<helm_manager::HelmManager>("test_helm_manager", options);
+
+  geometry_msgs::msg::TwistStamped last_twist;
+  bool twist_received = false;
+  auto twist_sub = helper_node_->create_subscription<geometry_msgs::msg::TwistStamped>(
+    "/out/cmd_vel", 1,
+    [&](const geometry_msgs::msg::TwistStamped::SharedPtr msg) {
+      last_twist = *msg;
+      twist_received = true;
+    });
+  auto helm_pub = helper_node_->create_publisher<marine_interfaces::msg::Helm>(
+    "/piloting_mode/manual/helm", 10);
+
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->cleanup().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED);
+  ASSERT_TRUE(node_->set_parameter(rclcpp::Parameter("max_speed", 2.0)).successful);
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+
+  ASSERT_TRUE(spinUntil([&] {return mode_pub_->get_subscription_count() > 0;}));
+  publishMode("manual");
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+  ASSERT_TRUE(spinUntil([&] {return helm_pub->get_subscription_count() > 0;}));
+
+  marine_interfaces::msg::Helm cmd;
+  cmd.throttle = 0.5;
+  helm_pub->publish(cmd);
+  ASSERT_TRUE(spinUntil([&] {return twist_received;}));
+  EXPECT_DOUBLE_EQ(last_twist.twist.linear.x, 1.0)
+    << "throttle 0.5 * max_speed 2.0 set while unconfigured";
 }
 
 TEST_F(HelmManagerInitialModeTest, ParameterIsReadOnly)
