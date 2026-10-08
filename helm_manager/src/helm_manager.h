@@ -70,6 +70,14 @@ public:
 private:
     void addPilotingMode(const std::string & mode, bool enable_output = true);
 
+    /// declare_parameter that tolerates an already-declared name (declarations
+    /// survive cleanup, so on_configure runs again on a reconfigure).
+    template < typename T >
+    void declareOnce(
+      const std::string & name, const T & default_value,
+      const rcl_interfaces::msg::ParameterDescriptor & descriptor =
+      rcl_interfaces::msg::ParameterDescriptor());
+
     bool canPublish(const std::string & mode);
 
     void pilotingModeCallback(const std_msgs::msg::String & msg);

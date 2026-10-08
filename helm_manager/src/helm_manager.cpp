@@ -55,7 +55,7 @@ CallbackReturn HelmManager::on_configure(const rclcpp_lifecycle::State & state)
     add_post_set_parameters_callback(std::bind(&HelmManager::updateParameters, this,
       std::placeholders::_1));
 
-  declare_parameter<std::string>("output_type", "helm");
+  declareOnce<std::string>("output_type", "helm");
 
   // Optional startup mode. Empty (the default) keeps the real-boat behaviour:
   // no mode until one arrives on the piloting_mode topic. The value is
@@ -70,24 +70,24 @@ CallbackReturn HelmManager::on_configure(const rclcpp_lifecycle::State & state)
     "piloting_mode topic. Must name a configured mode (standby, manual, "
     "autonomous) or activation fails. Empty (default) starts with no mode. "
     "Read-only; set it in the launch file or parameter YAML.";
-  declare_parameter<std::string>("initial_piloting_mode", "", initial_mode_descriptor);
+  declareOnce<std::string>("initial_piloting_mode", "", initial_mode_descriptor);
   initial_piloting_mode_applied_ = false;
 
   heartbeat_publisher_ = create_publisher<marine_interfaces::msg::Heartbeat>("heartbeat", 1);
   piloting_mode_subscription_ = create_subscription<std_msgs::msg::String>("piloting_mode", 1,
       std::bind(&HelmManager::pilotingModeCallback, this, std::placeholders::_1));
-  declare_parameter<double>("max_speed", 1.0);
-  declare_parameter<double>("max_yaw_speed", 1.0);
+  declareOnce<double>("max_speed", 1.0);
+  declareOnce<double>("max_yaw_speed", 1.0);
   max_speed_ = get_parameter("max_speed").as_double();
   max_yaw_speed_ = get_parameter("max_yaw_speed").as_double();
 
   // Curvature-preserving speed regulation (ADR-0012, #292): per-platform
   // capability envelope; default off so existing platforms are unaffected.
-  declare_parameter<bool>("capability_curve_enabled", false);
-  declare_parameter<std::vector<double>>(
+  declareOnce<bool>("capability_curve_enabled", false);
+  declareOnce<std::vector<double>>(
     "capability_curve_v_omega_max", std::vector<double>());
-  declare_parameter<double>("capability_curve_margin", 0.8);
-  declare_parameter<double>("capability_curve_pivot_speed", 0.05);
+  declareOnce<double>("capability_curve_margin", 0.8);
+  declareOnce<double>("capability_curve_pivot_speed", 0.05);
   loadCurvatureConfig();
 
   helm_status_subscription_ = create_subscription<marine_interfaces::msg::Heartbeat>("status/helm",
@@ -151,6 +151,8 @@ CallbackReturn HelmManager::on_deactivate(const rclcpp_lifecycle::State & state)
 
 CallbackReturn HelmManager::on_cleanup(const rclcpp_lifecycle::State & state)
 {
+  // A fresh configure cycle starts with no mode, as after construction.
+  piloting_mode_.clear();
   piloting_modes_.clear();
   update_parameters_callback_.reset();
   heartbeat_publisher_.reset();
@@ -172,6 +174,17 @@ CallbackReturn HelmManager::on_shutdown(const rclcpp_lifecycle::State & state)
   helm_publisher_.reset();
   twist_publisher_.reset();
   return rclcpp_lifecycle::LifecycleNode::on_shutdown(state);
+}
+
+template<typename T>
+void HelmManager::declareOnce(
+  const std::string & name, const T & default_value,
+  const rcl_interfaces::msg::ParameterDescriptor & descriptor)
+{
+  // Parameters outlive cleanup, so a second configure must not re-declare.
+  if(!has_parameter(name)) {
+    declare_parameter<T>(name, default_value, descriptor);
+  }
 }
 
 void HelmManager::updateParameters(const std::vector<rclcpp::Parameter> & parameters)

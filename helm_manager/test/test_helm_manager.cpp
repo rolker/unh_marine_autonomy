@@ -173,6 +173,26 @@ TEST_F(HelmManagerTestFixture, FullLifecycleRoundTrip)
     lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED);
 }
 
+TEST_F(HelmManagerTestFixture, ReconfigureAfterCleanupSucceeds)
+{
+  // Parameters survive cleanup, so the second configure must not try to
+  // re-declare them (that used to throw and end in the error state).
+  auto state = node_->configure();
+  ASSERT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+
+  state = node_->cleanup();
+  ASSERT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED);
+
+  state = node_->configure();
+  ASSERT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+
+  state = node_->activate();
+  EXPECT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+
+  EXPECT_EQ(node_->get_parameter("output_type").as_string(), "helm");
+  EXPECT_DOUBLE_EQ(node_->get_parameter("max_speed").as_double(), 1.0);
+}
+
 // ---------------------------------------------------------------------------
 // Parameter Tests
 // ---------------------------------------------------------------------------
@@ -940,6 +960,45 @@ TEST_F(HelmManagerInitialModeTest, TopicMessageBeforeActivationWinsOverInitialMo
   ASSERT_EQ(
     node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
   EXPECT_EQ(reportedPilotingMode(), "autonomous");
+}
+
+TEST_F(HelmManagerInitialModeTest, ReconfigureStartsWithNoModeThenReappliesInitialMode)
+{
+  makeNodeWithInitialMode("manual");
+  configureAndActivate();
+  publishMode("autonomous");
+  ASSERT_TRUE(spinUntil([this] {return autonomous_active_received_ && autonomous_active_;}));
+
+  ASSERT_EQ(
+    node_->deactivate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->cleanup().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED);
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+
+  // Cleanup forgot the operator's earlier choice: configure is a fresh start.
+  resetActiveFlags();
+  ASSERT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+  EXPECT_EQ(reportedPilotingMode(), "manual");
+}
+
+TEST_F(HelmManagerInitialModeTest, ReconfigureWithoutInitialModeHasNoMode)
+{
+  configureAndActivate();
+  publishMode("manual");
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+
+  ASSERT_EQ(
+    node_->deactivate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->cleanup().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED);
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+  EXPECT_EQ(reportedPilotingMode(), "");
 }
 
 TEST_F(HelmManagerInitialModeTest, ParameterIsReadOnly)
