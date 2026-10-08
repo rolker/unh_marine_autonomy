@@ -27,6 +27,7 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -55,6 +56,17 @@ CallbackReturn HelmManager::on_configure(const rclcpp_lifecycle::State & state)
       std::placeholders::_1));
 
   declare_parameter<std::string>("output_type", "helm");
+
+  // Optional startup mode. Empty (the default) keeps the real-boat behaviour:
+  // no mode until one arrives on the piloting_mode topic. The value is
+  // validated against the modes added above when the node is activated.
+  rcl_interfaces::msg::ParameterDescriptor initial_mode_descriptor;
+  initial_mode_descriptor.description =
+    "Piloting mode applied once on activation, as if it had arrived on the "
+    "piloting_mode topic. Must name a configured mode (standby, manual, "
+    "autonomous) or activation fails. Empty (default) starts with no mode.";
+  declare_parameter<std::string>("initial_piloting_mode", "", initial_mode_descriptor);
+  initial_piloting_mode_applied_ = false;
 
   heartbeat_publisher_ = create_publisher<marine_interfaces::msg::Heartbeat>("heartbeat", 1);
   piloting_mode_subscription_ = create_subscription<std_msgs::msg::String>("piloting_mode", 1,
@@ -93,7 +105,36 @@ CallbackReturn HelmManager::on_configure(const rclcpp_lifecycle::State & state)
 
 CallbackReturn HelmManager::on_activate(const rclcpp_lifecycle::State & state)
 {
-  return rclcpp_lifecycle::LifecycleNode::on_activate(state);
+  const std::string initial_mode = get_parameter("initial_piloting_mode").as_string();
+
+  // Validate before activating anything: a typo in a launch file must stop
+  // activation (the node stays inactive) rather than silently leave the boat
+  // with no mode.
+  if(!initial_mode.empty() && !hasPilotingMode(initial_mode)) {
+    std::string known;
+    for(const auto & m: piloting_modes_) {
+      known += (known.empty() ? "" : ", ") + m->name();
+    }
+    RCLCPP_ERROR(get_logger(),
+      "initial_piloting_mode '%s' names no configured piloting mode (configured: %s); "
+      "refusing to activate",
+      initial_mode.c_str(), known.c_str());
+    return CallbackReturn::FAILURE;
+  }
+
+  auto result = rclcpp_lifecycle::LifecycleNode::on_activate(state);
+  if(result != CallbackReturn::SUCCESS) {
+    return result;
+  }
+
+  // Applied after the base activation so the lifecycle publishers behind the
+  // per-mode "active" topics are live and actually deliver the change.
+  if(!initial_mode.empty() && !initial_piloting_mode_applied_) {
+    RCLCPP_INFO(get_logger(), "Applying initial_piloting_mode '%s'", initial_mode.c_str());
+    setPilotingMode(initial_mode);
+    initial_piloting_mode_applied_ = true;
+  }
+  return result;
 }
 
 CallbackReturn HelmManager::on_deactivate(const rclcpp_lifecycle::State & state)
@@ -268,10 +309,21 @@ void HelmManager::addPilotingMode(const std::string & mode, bool enable_output)
 
 void HelmManager::pilotingModeCallback(const std_msgs::msg::String & msg)
 {
-  piloting_mode_ = msg.data;
+  setPilotingMode(msg.data);
+}
+
+void HelmManager::setPilotingMode(const std::string & mode)
+{
+  piloting_mode_ = mode;
   for(auto & m: piloting_modes_) {
     m->activeMode(piloting_mode_);
   }
+}
+
+bool HelmManager::hasPilotingMode(const std::string & mode) const
+{
+  return std::any_of(piloting_modes_.begin(), piloting_modes_.end(),
+           [&mode](const std::shared_ptr<PilotingMode> & m) {return m->name() == mode;});
 }
 
 

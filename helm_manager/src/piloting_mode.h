@@ -45,6 +45,9 @@ public:
 
     void activeMode(std::string const & mode);
 
+    /// The mode name this instance was configured with (e.g. "manual").
+    const std::string & name() const {return piloting_mode_;}
+
 private:
     template < typename T > void callback(const T & msg)
     {

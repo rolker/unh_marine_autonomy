@@ -74,12 +74,24 @@ private:
 
     void pilotingModeCallback(const std_msgs::msg::String & msg);
 
+    /// Make `mode` the current piloting mode: the single code path shared by
+    /// the piloting_mode topic callback and the initial_piloting_mode
+    /// parameter, so both report through the heartbeat identically.
+    void setPilotingMode(const std::string & mode);
+
+    /// True when `mode` names one of the modes added in on_configure.
+    bool hasPilotingMode(const std::string & mode) const;
+
     void helmStatusCallback(const marine_interfaces::msg::Heartbeat & msg);
 
     void updateParameters(const std::vector < rclcpp::Parameter > &parameters);
 
     rclcpp::Subscription < std_msgs::msg::String > ::SharedPtr piloting_mode_subscription_;
     std::string piloting_mode_;
+
+    // initial_piloting_mode is applied at most once per configure cycle, so a
+    // deactivate/activate cycle never overrides a mode chosen via the topic.
+    bool initial_piloting_mode_applied_ = false;
 
     rclcpp::Publisher < marine_interfaces::msg::Heartbeat > ::SharedPtr heartbeat_publisher_;
     rclcpp::Subscription < marine_interfaces::msg::Heartbeat >
