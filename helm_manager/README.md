@@ -37,6 +37,7 @@ The node is implemented as a **ROS 2 Lifecycle Node**, allowing for controlled t
 - `output_type` (`string`, default: `"helm"`): One of `"helm"`, `"twist"`, or `"dual"`. Determines which output topic is used.
 - `max_speed` (`double`, default: `1.0`): Used for scaling when converting between `Helm` throttle and `Twist` linear velocity.
 - `max_yaw_speed` (`double`, default: `1.0`): Used for scaling when converting between `Helm` rudder and `Twist` angular velocity.
+- `initial_piloting_mode` (`string`, default: `""`): Piloting mode applied once when the node is activated, exactly as if the name had arrived on the `piloting_mode` topic (every mode's `piloting_mode/<mode>/active` flag is updated and `heartbeat` reports it). Must be `standby`, `manual` or `autonomous` (case-sensitive); any other non-empty value makes the activate transition fail with an error log and leaves the node inactive. Empty (default) leaves the node with no mode until a message arrives on `piloting_mode`, which is the right setting for a real boat. A later `piloting_mode` message overrides it, and deactivating then re-activating does not re-apply it. Read at activation, so it must be set before then (launch/YAML override).
 
 ## Curvature-Preserving Speed Regulation
 
