@@ -132,10 +132,12 @@ CallbackReturn HelmManager::on_activate(const rclcpp_lifecycle::State & state)
     return result;
   }
 
-  // Applied after the base activation so the lifecycle publishers behind the
-  // per-mode "active" topics are live and actually deliver the change. A mode
-  // already chosen on the piloting_mode topic (even before activation) wins:
-  // the callback marks the initial mode as consumed.
+  // A mode already chosen on the piloting_mode topic (even before activation)
+  // wins: the callback marks the initial mode as consumed. Both sources go
+  // through setPilotingMode(), so the "active" flags and the heartbeat agree.
+  // (The per-mode "active" publishers are stored as plain rclcpp::Publisher,
+  // so they publish regardless of lifecycle state; a topic message received
+  // while inactive is therefore already reflected and needs no replay here.)
   if(!initial_mode.empty() && !initial_piloting_mode_applied_) {
     RCLCPP_INFO(get_logger(), "Applying initial_piloting_mode '%s'", initial_mode.c_str());
     setPilotingMode(initial_mode);

@@ -1001,6 +1001,26 @@ TEST_F(HelmManagerInitialModeTest, ReconfigureWithoutInitialModeHasNoMode)
   EXPECT_EQ(reportedPilotingMode(), "");
 }
 
+TEST_F(HelmManagerInitialModeTest, TopicMessageWhileInactiveSurvivesActivation)
+{
+  // No initial_piloting_mode here: the mode comes only from the topic, sent
+  // while the node is configured but not yet active. Its flags and heartbeat
+  // value must be correct both before and after activation.
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  publishMode("manual");
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}))
+    << "The mode's active flag should be published even while inactive";
+
+  ASSERT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+  spinBoth(100ms);
+  EXPECT_TRUE(manual_active_);
+  EXPECT_FALSE(standby_active_ && standby_active_received_);
+  EXPECT_FALSE(autonomous_active_ && autonomous_active_received_);
+  EXPECT_EQ(reportedPilotingMode(), "manual");
+}
+
 TEST_F(HelmManagerInitialModeTest, ParameterIsReadOnly)
 {
   makeNodeWithInitialMode("manual");
