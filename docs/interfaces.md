@@ -260,6 +260,58 @@ correction state. Published today by `kongsberg_em_bridge` (`marine_tools`) on
 - `uint8 tvg_model`, `float32 tvg_absorption_db_per_km`, `float32 source_level_db`, `uint8 angular_normalization`, `uint8 angular_response_tl`, `float32 angular_response_absorption_db_per_m`: applied-correction state incl. the curve's TL provenance (tier-1 vs tier-2, #268)
 - `float32[] angular_response_angle_deg`/`_db_rel_nadir`, `float32[] beam_pattern_*`: empirical correction curves as data
 
+### Survey coverage assessment (prototype, #403)
+
+How much of a target area has been surveyed, and how much of that meets a
+stated standard. This family is a **prototype** under
+[#403](https://github.com/rolker/unh_marine_autonomy/issues/403) (coverage
+planner design) and will be revised there; it is promoted (an ADR, or a move to
+a survey-products package taking `GeoPolygon` along) once a second consumer
+needs it. First consumer: the Ocean Discovery Day scorer
+([unh_marine_simulation#87](https://github.com/rolker/unh_marine_simulation/issues/87));
+the assessing node is
+[cube_bathymetry#164](https://github.com/rolker/cube_bathymetry/issues/164).
+Introduced by [#406](https://github.com/rolker/unh_marine_autonomy/issues/406).
+Left out until a consumer needs them: horizontal uncertainty, feature
+detection, required bathymetric coverage (100 % / 200 %), polygon holes and
+exclusion zones, and the `CoverageHoliday` message.
+
+Conventions, shared by every field below:
+- Uncertainty and the standard's `a` are 95 % confidence, in metres (the CUBE grid's `uncertainty` layer is 1.96 sigma). Depth is depth below the instantaneous water surface.
+- Areas are square metres of the assessment raster, not cell counts, and not geodetic area. No fraction fields; consumers divide.
+- All source grids share one frame, `CoverageAssessment.header.frame_id`. The polygon is projected into that frame and `cell_size` is metres in it.
+- The union test takes depth from the source whose uncertainty is smallest in that cell. The assessing node must implement this rule, so that producer and consumers read one statement.
+- Defaults fail closed: a default `SurveyStandard` (`a` = `b` = 0) gives `allowed(depth)` = 0, so nothing meets it; a covered cell with no uncertainty value does not meet the standard.
+
+#### `marine_interfaces/SurveyStandard`
+- `string name`: free text for people (e.g. "S-44 Order 1a")
+- `float64 a`: metres; depth-independent part of `allowed(depth) = sqrt(a^2 + (b * depth)^2)`
+- `float64 b`: dimensionless; depth-proportional part
+
+#### `marine_interfaces/SurveyArea`
+- `string id`: tells areas apart; a repeat with the same `id` replaces the earlier definition
+- `builtin_interfaces/Time stamp`: when the definition was made; on the same `id` the newer wins. Any ordering beyond `stamp` is the transport's job; no QoS contract is claimed
+- `GeoPolygon polygon`: geographic (no frame); first and last points joined
+- `SurveyStandard standard`: what the area is to be surveyed to
+- `int16 priority`: lower is more urgent; 0 if unused (matches `TaskInformation.priority`)
+
+#### `marine_interfaces/CoverageAssessment`
+- `std_msgs/Header header`: `stamp` = assessment time; `frame_id` = the shared grid frame
+- `SurveyArea area`: the area and standard this was judged against; the target polygon is `area.polygon.points`
+- `float64 cell_size`: metres, in the `header.frame_id` frame
+- `float64 area_total`: the rasterised polygon (m^2)
+- `float64 area_covered`: cells where any source has a depth (m^2)
+- `float64 area_meeting_standard`: covered cells whose smallest uncertainty across sources is at most `allowed(depth)` (m^2)
+- `CoverageContribution[] sources`: one per grid, same order in every message
+- Invariant: `area_meeting_standard <= area_covered <= area_total`; cells outside the polygon are counted in none of them
+
+#### `marine_interfaces/CoverageContribution`
+- `string source`: platform name if known, else the grid topic; consumers key on the string exactly as given, stable for the life of a run
+- `float64 area_covered`: cells this source has a depth for (m^2)
+- `float64 area_meeting_standard`: of those, cells whose own uncertainty meets the standard (m^2); judged on this source's own grid, independent of the others
+- `float64 area_unique`: cells no other source covers, credit without double counting (m^2)
+- Invariant: `area_unique <= area_covered`; says nothing about whether those cells meet the standard. Sums across sources can exceed the assessment totals because sources overlap
+
 ## Related Documentation
 - [Sonar Data Ecosystem](sonar_ecosystem.md) - Big-picture map of sonar data flow + umbrella/ADR tracker
 - [Data Flows](data_flows.md) - System-level data flow diagrams
