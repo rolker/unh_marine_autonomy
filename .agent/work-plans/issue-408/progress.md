@@ -30,4 +30,16 @@ issue: 408
 **Round**: 1 | **Ship**: recommended — no must-fix; build and test clean (155 tests, 0 failures; test_nav 6 passed)
 
 ### Findings
-- [ ] (suggestion) `nav_msgs` is imported by nav.py (pre-existing) and the new test but not declared in package.xml; add `<depend>nav_msgs</depend>` — `marine_autonomy/package.xml:12`
+- [x] (suggestion) `nav_msgs` is imported by nav.py (pre-existing) and the new test but not declared in package.xml; add `<depend>nav_msgs</depend>` — `marine_autonomy/package.xml:12`
+
+## Implementation
+
+**Status**: complete
+**When**: 2026-10-09
+**By**: Claude Sonnet
+
+Addressed the one suggestion from the pre-push review: `marine_autonomy/package.xml` now declares `<depend>nav_msgs</depend>` (commit `cdd1155`), next to the other message-package depends; it was not already present as a build/exec depend. `nav.py` and `test_nav.py` both import `nav_msgs.msg.Odometry`.
+
+- `./core_ws/build.sh marine_autonomy` finishes cleanly after the change.
+- Ticked the suggestion's box in the Local Review (Pre-Push) entry.
+- Nothing pushed.
