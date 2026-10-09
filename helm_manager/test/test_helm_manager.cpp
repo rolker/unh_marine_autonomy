@@ -1049,6 +1049,22 @@ TEST_F(HelmManagerInitialModeTest, ReconfigureRefreshesSpeedLimitsSetWhileUnconf
   options.parameter_overrides({rclcpp::Parameter("output_type", "twist")});
   node_ = std::make_shared<helm_manager::HelmManager>("test_helm_manager", options);
 
+  // The pre-declared writable parameter must have been made read-only: a
+  // runtime write is rejected and the value survives, also across a reconfigure.
+  EXPECT_TRUE(node_->describe_parameter("initial_piloting_mode").read_only);
+  auto result = node_->set_parameter(rclcpp::Parameter("initial_piloting_mode", "standby"));
+  EXPECT_FALSE(result.successful);
+  EXPECT_EQ(node_->get_parameter("initial_piloting_mode").as_string(), "manual");
+
+  ASSERT_EQ(
+    node_->deactivate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->cleanup().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED);
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  EXPECT_TRUE(node_->describe_parameter("initial_piloting_mode").read_only);
+  EXPECT_EQ(node_->get_parameter("initial_piloting_mode").as_string(), "manual");
+
   geometry_msgs::msg::TwistStamped last_twist;
   bool twist_received = false;
   auto twist_sub = helper_node_->create_subscription<geometry_msgs::msg::TwistStamped>(

@@ -78,6 +78,13 @@ private:
       const rcl_interfaces::msg::ParameterDescriptor & descriptor =
       rcl_interfaces::msg::ParameterDescriptor());
 
+    /// Declare a string parameter read-only. Unlike declareOnce, this also
+    /// converts one the base class already declared writable (automatic
+    /// declaration from overrides), preserving its value.
+    void declareReadOnlyString(
+      const std::string & name, const std::string & default_value,
+      const rcl_interfaces::msg::ParameterDescriptor & descriptor);
+
     bool canPublish(const std::string & mode);
 
     void pilotingModeCallback(const std_msgs::msg::String & msg);

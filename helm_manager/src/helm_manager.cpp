@@ -70,7 +70,7 @@ CallbackReturn HelmManager::on_configure(const rclcpp_lifecycle::State & state)
     "piloting_mode topic. Must name a configured mode (standby, manual, "
     "autonomous) or activation fails. Empty (default) starts with no mode. "
     "Read-only; set it in the launch file or parameter YAML.";
-  declareOnce<std::string>("initial_piloting_mode", "", initial_mode_descriptor);
+  declareReadOnlyString("initial_piloting_mode", "", initial_mode_descriptor);
   initial_piloting_mode_applied_ = false;
 
   heartbeat_publisher_ = create_publisher<marine_interfaces::msg::Heartbeat>("heartbeat", 1);
@@ -189,19 +189,27 @@ void HelmManager::declareOnce(
   }
 }
 
+void HelmManager::declareReadOnlyString(
+  const std::string & name, const std::string & default_value,
+  const rcl_interfaces::msg::ParameterDescriptor & descriptor)
+{
+  if(has_parameter(name) && !describe_parameter(name).read_only) {
+    // Declared earlier with the default writable descriptor, which declareOnce
+    // cannot change: NodeOptions::automatically_declare_parameters_from_overrides
+    // does this for every override before on_configure runs. Undeclare it and
+    // declare it again read-only, keeping the value it was given.
+    const std::string value = get_parameter(name).as_string();
+    undeclare_parameter(name);
+    declare_parameter<std::string>(name, value, descriptor);
+    return;
+  }
+  declareOnce<std::string>(name, default_value, descriptor);
+}
+
 void HelmManager::updateParameters(const std::vector<rclcpp::Parameter> & parameters)
 {
   bool curvature_touched = false;
   for(const auto & param: parameters) {
-    if(param.get_name() == "initial_piloting_mode") {
-      // Normally unreachable (declared read-only), but a parameter declared
-      // earlier by NodeOptions::automatically_declare_parameters_from_overrides
-      // keeps the default writable descriptor, which declareOnce cannot change.
-      RCLCPP_WARN(get_logger(),
-        "initial_piloting_mode changed at runtime to '%s'; it is only read at the first "
-        "activation after configure, so this has no effect on a running node",
-        param.as_string().c_str());
-    }
     if(param.get_name() == "max_speed") {
       max_speed_ = param.as_double();
     }
