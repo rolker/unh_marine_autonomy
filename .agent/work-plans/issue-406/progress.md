@@ -83,3 +83,29 @@ Checked: all 14 review-issue actions are addressed or deliberately declined with
 ### Left for PR time
 - PR description: docs went to `docs/interfaces.md` because marine_interfaces has no README (the issue's Work list says README).
 - Step 10: comment on / update #403 outline (owner go-ahead needed).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-10-09 13:22 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-406 at `45f5324`
+**Mode**: pre-push
+**Depth**: Standard (reason: new shared interface definitions + docs; cross-package message surface)
+**Must-fix**: 2 | **Suggestions**: 8
+**Round**: 1 | **Ship**: continue — two must-fix items, both small wording fixes but one is a safety-claim error, so one more read after the fix; no specialist found a build or CMake problem
+
+Specialists: static/convention (build, `ros2 interface show` vs docs, CMake order, count, style), governance, plan drift, Claude Adversarial Lens A + Lens B, Cross-Model (gemini + codex, both EXIT=0). Local model (5f) off. Build `marine_interfaces` and `lint_auto` tests passed (5 tests, 0 failures); `ros2 interface show` field names/types match docs/interfaces.md; 50 msgs / 50 `MSG_FILES` entries; no plan drift (README substitution already noted in the plan).
+
+### Findings
+- [ ] (must-fix) The fail-closed claim "a = b = 0 gives allowed(depth) = 0, so nothing meets it" is false under "uncertainty is at most allowed(depth)": a cell with uncertainty exactly 0 (plausible in the sim grids that are the first consumer) satisfies 0 <= 0. State the rule as "a default or NaN standard is checked first and nothing meets it", and say a, b are finite and >= 0 (Inf is fail-open). Make the .msg comment and docs say the same (docs also drop the NaN clause). Cross-confirmed: Lens A, Gemini — `marine_interfaces/msg/SurveyStandard.msg:18-21`, `docs/interfaces.md:284`
+- [ ] (must-fix) Per-source areas are "judged on that source's own grid" but assessment areas are "square metres of the assessment raster" at one `cell_size`; nothing says source grids are resampled to the assessment raster, nor that per-source areas are clipped to the polygon (the "outside the polygon counted in none" invariant is stated only for the totals). Without it `area_unique`, "sums exceed totals" and `sum(area_unique) <= area_covered` are undefined. Say all contribution areas are measured on the same raster and clipped to the polygon. Cross-confirmed: Lens A, Gemini — `marine_interfaces/msg/CoverageContribution.msg:1-8`, `marine_interfaces/msg/CoverageAssessment.msg:5-8`, `docs/interfaces.md:311`
+- [ ] (suggestion) Union-test selection rule is silent on ties for smallest uncertainty (different depths can flip pass/fail) and on candidates: only sources with both a depth and an uncertainty value in that cell should compete, NaN excluded. Add a tie rule (e.g. shallowest depth is NOT fail-closed; deepest allowed(depth) is the larger, so pick the smallest depth) and the candidate rule. Cross-confirmed: Codex, Gemini, Lens A — `marine_interfaces/msg/CoverageAssessment.msg:9-13`, `docs/interfaces.md:282`
+- [ ] (suggestion) `source` is a consumer key but "platform name if known, else the grid topic" collides if one platform supplies two grids; state that source strings are unique within one message (or one grid per platform) — `marine_interfaces/msg/CoverageContribution.msg:13`
+- [ ] (suggestion) docs/interfaces.md line 199 says `TaskInformation` has `int32 priority`; the real type is `int16` (marine_nav_interfaces), which the new "matches TaskInformation.priority" line now exposes. Fix line 199 in this PR and qualify the new reference as `marine_nav_interfaces/TaskInformation.priority`. Cross-confirmed: Lens A, Lens B — `docs/interfaces.md:199`, `docs/interfaces.md:296`, `marine_interfaces/msg/SurveyArea.msg:14`
+- [ ] (suggestion) Add the per-source invariant `area_meeting_standard <= area_covered` and the cross-level bounds (`max(source.area_covered) <= assessment.area_covered`, `sum(area_unique) <= assessment.area_covered`); note a single source's `area_meeting_standard` can exceed the union's because the union takes depth from the min-uncertainty source. Cross-confirmed: Lens A, Gemini — `marine_interfaces/msg/CoverageContribution.msg:6-7`, `docs/interfaces.md:313`
+- [ ] (suggestion) "ratios ... are exact" is overstated: the polygon-to-cell rule is unspecified, and `area_total` can be 0 (polygon smaller than a cell); tell consumers to guard the divide, or drop "exact" — `marine_interfaces/msg/CoverageAssessment.msg:5-8`
+- [ ] (suggestion) "first and last points joined" does not say whether a duplicate closing point is required or allowed; say consumers accept either — `marine_interfaces/msg/SurveyArea.msg:12`
+- [ ] (suggestion) Comment accuracy: "All values in metres at 95 % confidence" is wrong for dimensionless `b` (docs already say it of `a` only); "newer stamp wins" has no rule for equal stamps (say last received wins, or ignore the duplicate); header.frame_id should be stated as a projected metric frame — `marine_interfaces/msg/SurveyStandard.msg:9`, `marine_interfaces/msg/SurveyArea.msg:6-9`, `marine_interfaces/msg/CoverageAssessment.msg:14-15`
+- [ ] (suggestion) Put `# m^2` on the area field lines (the field comments say "cells", which invites integer cell counts) — `marine_interfaces/msg/CoverageContribution.msg:13-15`, `marine_interfaces/msg/CoverageAssessment.msg:23-25`
