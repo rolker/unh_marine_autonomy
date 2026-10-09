@@ -31,9 +31,9 @@ package, taking `GeoPolygon` along) after a second consumer.
    claimed). `priority` stays `int16`.
 4. **`CoverageAssessment` comment**: state the invariants
    `area_meeting_standard <= area_covered <= area_total`, and that cells outside
-   the polygon are not counted in any of the three. Field is `SurveyArea polygon`
-   as owner-settled (the embedded field keeps the name `area`, which the issue
-   defines; `assessment.area.polygon.points` is the read path).
+   the polygon are not counted in any of the three. The embedded `SurveyArea`
+   field keeps the name `area` (as the issue defines it); the read path is
+   `assessment.area.polygon.points`, which is why the inner field is `polygon`.
 5. **`CoverageContribution` comment**: state `area_unique <= area_covered`;
    `area_unique` concerns covered cells only and says nothing about whether they
    meet the standard. Pin `source`: consumers key on the string exactly as given;
