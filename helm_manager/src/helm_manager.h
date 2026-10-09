@@ -70,9 +70,32 @@ public:
 private:
     void addPilotingMode(const std::string & mode, bool enable_output = true);
 
+    /// declare_parameter that tolerates an already-declared name (declarations
+    /// survive cleanup, so on_configure runs again on a reconfigure).
+    template < typename T >
+    void declareOnce(
+      const std::string & name, const T & default_value,
+      const rcl_interfaces::msg::ParameterDescriptor & descriptor =
+      rcl_interfaces::msg::ParameterDescriptor());
+
+    /// Declare a string parameter read-only. Unlike declareOnce, this also
+    /// converts one the base class already declared writable (automatic
+    /// declaration from overrides), preserving its value.
+    void declareReadOnlyString(
+      const std::string & name, const std::string & default_value,
+      const rcl_interfaces::msg::ParameterDescriptor & descriptor);
+
     bool canPublish(const std::string & mode);
 
     void pilotingModeCallback(const std_msgs::msg::String & msg);
+
+    /// Make `mode` the current piloting mode: the single code path shared by
+    /// the piloting_mode topic callback and the initial_piloting_mode
+    /// parameter, so both report through the heartbeat identically.
+    void setPilotingMode(const std::string & mode);
+
+    /// True when `mode` names one of the modes added in on_configure.
+    bool hasPilotingMode(const std::string & mode) const;
 
     void helmStatusCallback(const marine_interfaces::msg::Heartbeat & msg);
 
@@ -80,6 +103,11 @@ private:
 
     rclcpp::Subscription < std_msgs::msg::String > ::SharedPtr piloting_mode_subscription_;
     std::string piloting_mode_;
+
+    // initial_piloting_mode is consumed by the first activation or by the first
+    // piloting_mode topic message, whichever comes first, so neither a
+    // deactivate/activate cycle nor an earlier topic message is overridden.
+    bool initial_piloting_mode_applied_ = false;
 
     rclcpp::Publisher < marine_interfaces::msg::Heartbeat > ::SharedPtr heartbeat_publisher_;
     rclcpp::Subscription < marine_interfaces::msg::Heartbeat >

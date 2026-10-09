@@ -167,6 +167,7 @@ The helm manager supports three output modes (parameter: `output_type`):
 | `output_type` | string | `"helm"` | Output format: "helm", "twist", or "dual" |
 | `max_speed` | double | `1.0` | Maximum speed for twist conversion (m/s) |
 | `max_yaw_speed` | double | `1.0` | Maximum yaw rate for twist conversion (rad/s) |
+| `initial_piloting_mode` | string | `""` | Mode applied once on activation as if received on `piloting_mode`; empty = no mode until a message arrives; an unknown name fails activation |
 
 ### Mode Enable/Disable
 

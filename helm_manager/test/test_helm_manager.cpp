@@ -173,6 +173,26 @@ TEST_F(HelmManagerTestFixture, FullLifecycleRoundTrip)
     lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED);
 }
 
+TEST_F(HelmManagerTestFixture, ReconfigureAfterCleanupSucceeds)
+{
+  // Parameters survive cleanup, so the second configure must not try to
+  // re-declare them (that used to throw and end in the error state).
+  auto state = node_->configure();
+  ASSERT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+
+  state = node_->cleanup();
+  ASSERT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED);
+
+  state = node_->configure();
+  ASSERT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+
+  state = node_->activate();
+  EXPECT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+
+  EXPECT_EQ(node_->get_parameter("output_type").as_string(), "helm");
+  EXPECT_DOUBLE_EQ(node_->get_parameter("max_speed").as_double(), 1.0);
+}
+
 // ---------------------------------------------------------------------------
 // Parameter Tests
 // ---------------------------------------------------------------------------
@@ -803,4 +823,328 @@ TEST_F(HelmManagerHeartbeatTest, HeartbeatWithEmptyModeBeforeAnySwitch)
   EXPECT_EQ(last_heartbeat_.values[0].key, "piloting_mode");
   EXPECT_EQ(last_heartbeat_.values[0].value, "")
     << "Piloting mode should be empty before any mode switch";
+}
+
+// ---------------------------------------------------------------------------
+// initial_piloting_mode parameter
+// ---------------------------------------------------------------------------
+
+/// Builds the node under test with a given initial_piloting_mode override (or
+/// none), so the parameter is picked up exactly as a launch file would supply it.
+class HelmManagerInitialModeTest : public HelmManagerHeartbeatTest
+{
+protected:
+  void makeNodeWithInitialMode(const std::string & mode)
+  {
+    node_.reset();
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({rclcpp::Parameter("initial_piloting_mode", mode)});
+    node_ = std::make_shared<helm_manager::HelmManager>("test_helm_manager", options);
+  }
+
+  /// Ask the node for a heartbeat and return the piloting_mode value it reports.
+  std::string reportedPilotingMode()
+  {
+    heartbeat_received_ = false;
+    marine_interfaces::msg::Heartbeat status;
+    status.header.stamp = node_->now();
+    helm_status_pub_->publish(status);
+    spinUntil([this] {return heartbeat_received_;});
+    EXPECT_TRUE(heartbeat_received_) << "Heartbeat should be republished";
+    if (!heartbeat_received_ || last_heartbeat_.values.empty()) {
+      return "<no heartbeat>";
+    }
+    EXPECT_EQ(last_heartbeat_.values[0].key, "piloting_mode");
+    return last_heartbeat_.values[0].value;
+  }
+
+  marine_interfaces::msg::Helm last_helm_output_;
+  bool helm_output_received_ = false;
+};
+
+TEST_F(HelmManagerInitialModeTest, UnsetKeepsNoModeAfterActivation)
+{
+  // Parameter left at its default: behaviour must be identical to before the
+  // parameter existed -- activation succeeds and no mode is selected.
+  configureAndActivate();
+  EXPECT_EQ(node_->get_parameter("initial_piloting_mode").as_string(), "");
+
+  spinBoth(100ms);
+  EXPECT_FALSE(manual_active_received_ && manual_active_);
+  EXPECT_FALSE(standby_active_received_ && standby_active_);
+  EXPECT_FALSE(autonomous_active_received_ && autonomous_active_);
+  EXPECT_EQ(reportedPilotingMode(), "");
+}
+
+TEST_F(HelmManagerInitialModeTest, ParameterIsDeclaredWithDescription)
+{
+  node_->configure();
+  auto descriptor = node_->describe_parameter("initial_piloting_mode");
+  EXPECT_EQ(descriptor.type, rcl_interfaces::msg::ParameterType::PARAMETER_STRING);
+  EXPECT_FALSE(descriptor.description.empty());
+}
+
+TEST_F(HelmManagerInitialModeTest, ValidModeAppliedOnActivation)
+{
+  makeNodeWithInitialMode("manual");
+  configureAndActivate();
+
+  // The per-mode active flags are transient-local, so the helper node sees the
+  // value even though activation happened before it spun.
+  ASSERT_TRUE(spinUntil(
+      [this] {
+        return manual_active_received_ && standby_active_received_ &&
+               autonomous_active_received_;
+      })) << "Every mode should report its active flag";
+  EXPECT_TRUE(manual_active_) << "Manual should be active from the parameter";
+  EXPECT_FALSE(standby_active_);
+  EXPECT_FALSE(autonomous_active_);
+  EXPECT_EQ(reportedPilotingMode(), "manual");
+}
+
+TEST_F(HelmManagerInitialModeTest, ValidModeForwardsCommandsWithoutTopicMessage)
+{
+  makeNodeWithInitialMode("manual");
+
+  auto helm_output_sub = helper_node_->create_subscription<marine_interfaces::msg::Helm>(
+    "/out/helm", 1,
+    [this](const marine_interfaces::msg::Helm::SharedPtr msg) {
+      last_helm_output_ = *msg;
+      helm_output_received_ = true;
+    });
+  auto manual_helm_pub = helper_node_->create_publisher<marine_interfaces::msg::Helm>(
+    "/piloting_mode/manual/helm", 10);
+
+  configureAndActivate();
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+
+  marine_interfaces::msg::Helm cmd;
+  cmd.throttle = 0.4;
+  cmd.rudder = -0.2;
+  manual_helm_pub->publish(cmd);
+  EXPECT_TRUE(spinUntil([this] {return helm_output_received_;}))
+    << "Manual command should reach out/helm with no piloting_mode message sent";
+  EXPECT_FLOAT_EQ(last_helm_output_.throttle, 0.4f);
+}
+
+TEST_F(HelmManagerInitialModeTest, TopicMessageOverridesInitialMode)
+{
+  makeNodeWithInitialMode("manual");
+  configureAndActivate();
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+
+  resetActiveFlags();
+  publishMode("autonomous");
+  ASSERT_TRUE(spinUntil([this] {return autonomous_active_received_ && autonomous_active_;}));
+  EXPECT_EQ(reportedPilotingMode(), "autonomous");
+
+  // Re-activation must not re-apply the initial mode over the operator's choice.
+  ASSERT_EQ(
+    node_->deactivate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+  EXPECT_EQ(reportedPilotingMode(), "autonomous");
+}
+
+TEST_F(HelmManagerInitialModeTest, TopicMessageBeforeActivationWinsOverInitialMode)
+{
+  makeNodeWithInitialMode("manual");
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+
+  // The subscription exists from configure on, so an operator can pick a mode
+  // before the node is activated; activation must not replace it.
+  ASSERT_TRUE(spinUntil([this] {return mode_pub_->get_subscription_count() > 0;}));
+  publishMode("autonomous");
+  // Active-flag publishers are plain publishers, so the flag is published
+  // while inactive; waiting on it proves the topic message was handled before
+  // activation, which is what this test is about.
+  ASSERT_TRUE(spinUntil([this] {return autonomous_active_received_ && autonomous_active_;}))
+    << "The topic message must be processed before the node is activated";
+
+  ASSERT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+  EXPECT_EQ(reportedPilotingMode(), "autonomous");
+}
+
+TEST_F(HelmManagerInitialModeTest, ReconfigureStartsWithNoModeThenReappliesInitialMode)
+{
+  makeNodeWithInitialMode("manual");
+  configureAndActivate();
+  publishMode("autonomous");
+  ASSERT_TRUE(spinUntil([this] {return autonomous_active_received_ && autonomous_active_;}));
+
+  ASSERT_EQ(
+    node_->deactivate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->cleanup().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED);
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+
+  // Cleanup forgot the operator's earlier choice: configure is a fresh start,
+  // so nothing is selected until activation re-applies the initial mode.
+  EXPECT_EQ(reportedPilotingMode(), "");
+  resetActiveFlags();
+  ASSERT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+  // resetActiveFlags() clears receipt markers, not values, and the flags travel
+  // on separate topics: wait for this activation's autonomous flag before
+  // checking it, so a stale true from the earlier selection cannot leak in.
+  ASSERT_TRUE(spinUntil([this] {return autonomous_active_received_;}));
+  EXPECT_FALSE(autonomous_active_);
+  EXPECT_EQ(reportedPilotingMode(), "manual");
+}
+
+TEST_F(HelmManagerInitialModeTest, ReconfigureWithoutInitialModeHasNoMode)
+{
+  configureAndActivate();
+  publishMode("manual");
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+
+  ASSERT_EQ(
+    node_->deactivate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->cleanup().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED);
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+  EXPECT_EQ(reportedPilotingMode(), "");
+}
+
+TEST_F(HelmManagerInitialModeTest, TopicMessageWhileInactiveSurvivesActivation)
+{
+  // No initial_piloting_mode here: the mode comes only from the topic, sent
+  // while the node is configured but not yet active. Its flags and heartbeat
+  // value must be correct both before and after activation.
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_TRUE(spinUntil([this] {return mode_pub_->get_subscription_count() > 0;}));
+  publishMode("manual");
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}))
+    << "The mode's active flag should be published even while inactive";
+
+  ASSERT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+  spinBoth(100ms);
+  EXPECT_TRUE(manual_active_);
+  EXPECT_FALSE(standby_active_ && standby_active_received_);
+  EXPECT_FALSE(autonomous_active_ && autonomous_active_received_);
+  EXPECT_EQ(reportedPilotingMode(), "manual");
+}
+
+TEST_F(HelmManagerInitialModeTest, AutomaticallyDeclaredOverrideStillApplies)
+{
+  // With automatically_declare_parameters_from_overrides the base class has
+  // already declared the parameter (writable descriptor) before on_configure;
+  // the guarded declaration must tolerate that and the value must still apply.
+  node_.reset();
+  rclcpp::NodeOptions options;
+  options.automatically_declare_parameters_from_overrides(true);
+  options.parameter_overrides({rclcpp::Parameter("initial_piloting_mode", "manual")});
+  node_ = std::make_shared<helm_manager::HelmManager>("test_helm_manager", options);
+
+  configureAndActivate();
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+  EXPECT_EQ(reportedPilotingMode(), "manual");
+
+  // The pre-declared writable parameter must have been made read-only: a
+  // runtime write is rejected and the value survives, also across a reconfigure.
+  EXPECT_TRUE(node_->describe_parameter("initial_piloting_mode").read_only);
+  auto result = node_->set_parameter(rclcpp::Parameter("initial_piloting_mode", "standby"));
+  EXPECT_FALSE(result.successful);
+  EXPECT_EQ(node_->get_parameter("initial_piloting_mode").as_string(), "manual");
+
+  ASSERT_EQ(
+    node_->deactivate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->cleanup().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED);
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  EXPECT_TRUE(node_->describe_parameter("initial_piloting_mode").read_only);
+  EXPECT_EQ(node_->get_parameter("initial_piloting_mode").as_string(), "manual");
+}
+
+TEST_F(HelmManagerInitialModeTest, ReconfigureRefreshesSpeedLimitsSetWhileUnconfigured)
+{
+  node_.reset();
+  rclcpp::NodeOptions options;
+  options.parameter_overrides({rclcpp::Parameter("output_type", "twist")});
+  node_ = std::make_shared<helm_manager::HelmManager>("test_helm_manager", options);
+
+  geometry_msgs::msg::TwistStamped last_twist;
+  bool twist_received = false;
+  auto twist_sub = helper_node_->create_subscription<geometry_msgs::msg::TwistStamped>(
+    "/out/cmd_vel", 1,
+    [&](const geometry_msgs::msg::TwistStamped::SharedPtr msg) {
+      last_twist = *msg;
+      twist_received = true;
+    });
+  auto helm_pub = helper_node_->create_publisher<marine_interfaces::msg::Helm>(
+    "/piloting_mode/manual/helm", 10);
+
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->cleanup().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED);
+  ASSERT_TRUE(node_->set_parameter(rclcpp::Parameter("max_speed", 2.0)).successful);
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  ASSERT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+
+  ASSERT_TRUE(spinUntil([&] {return mode_pub_->get_subscription_count() > 0;}));
+  publishMode("manual");
+  ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+  ASSERT_TRUE(spinUntil([&] {return helm_pub->get_subscription_count() > 0;}));
+
+  marine_interfaces::msg::Helm cmd;
+  cmd.throttle = 0.5;
+  helm_pub->publish(cmd);
+  ASSERT_TRUE(spinUntil([&] {return twist_received;}));
+  EXPECT_DOUBLE_EQ(last_twist.twist.linear.x, 1.0)
+    << "throttle 0.5 * max_speed 2.0 set while unconfigured";
+}
+
+TEST_F(HelmManagerInitialModeTest, ParameterIsReadOnly)
+{
+  makeNodeWithInitialMode("manual");
+  node_->configure();
+  auto result = node_->set_parameter(rclcpp::Parameter("initial_piloting_mode", "standby"));
+  EXPECT_FALSE(result.successful);
+  EXPECT_EQ(node_->get_parameter("initial_piloting_mode").as_string(), "manual");
+}
+
+TEST_F(HelmManagerInitialModeTest, UnknownModeFailsActivation)
+{
+  makeNodeWithInitialMode("not_a_mode");
+
+  auto state = node_->configure();
+  ASSERT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+
+  // rclcpp_lifecycle swallows exceptions from transition callbacks, so assert
+  // on the transition result and the resulting state instead.
+  state = node_->activate();
+  EXPECT_EQ(state.id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
+    << "A mode naming nothing configured must not activate the node";
+  EXPECT_EQ(
+    node_->get_current_state().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+
+  // And nothing was selected as a side effect.
+  spinBoth(100ms);
+  EXPECT_FALSE(manual_active_received_ && manual_active_);
+  EXPECT_FALSE(standby_active_received_ && standby_active_);
+  EXPECT_FALSE(autonomous_active_received_ && autonomous_active_);
+}
+
+TEST_F(HelmManagerInitialModeTest, ModeNamesAreCaseSensitive)
+{
+  // "Manual" is not "manual": the topic path compares exactly, so the
+  // parameter must not quietly accept a near miss.
+  makeNodeWithInitialMode("Manual");
+  ASSERT_EQ(
+    node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
+  EXPECT_EQ(
+    node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
 }
