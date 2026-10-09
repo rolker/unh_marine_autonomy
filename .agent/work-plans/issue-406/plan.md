@@ -91,7 +91,7 @@ package, taking `GeoPolygon` along) after a second consumer.
 | Principle | Consideration |
 |---|---|
 | Modularity and Decoupling | Only `geographic_msgs`, `std_msgs`, `builtin_interfaces` and our own `GeoPolygon`; the docs say the family moves with `GeoPolygon` (or the new package depends on `marine_interfaces`), not "geographic_msgs only". |
-| Safety First (fail closed) | A default or non-finite standard is checked first and nothing meets it; a covered cell without uncertainty does not meet the standard. Both stated in comments. |
+| Safety First (fail closed) | A default or non-finite standard is checked first and nothing meets it; a covered cell where no source has both a depth and an uncertainty does not meet the standard. Both stated in comments. |
 | Standards Compliance | Plain rosidl .msg, snake_case fields, units in comments; `int16 priority` matches `TaskInformation.priority` as settled by the owner. |
 | Iterative, Validated Evolution | Marked prototype; deferred fields listed in docs; promotion after a second consumer. |
 | Documentation accuracy | Docs written from the committed files and checked against `ros2 interface show`. |
@@ -133,9 +133,11 @@ package, taking `GeoPolygon` along) after a second consumer.
   too) are transformed into it by the assessor before resampling. (Host
   decision 2026-10-09; it replaces the earlier "one frame every source grid
   shares" wording.)
-  (b) **depth in the union test**: the depth of the source whose uncertainty is
-  smallest in that cell; the assessing node (cube_bathymetry#164) must
-  implement the same rule.
+  (b) **depth in the union test**: only sources with both a depth and a
+  non-NaN uncertainty in that cell compete; the depth comes from the one with
+  the smallest uncertainty, ties going to the shallower depth (fail-closed,
+  added after the pre-push review); the assessing node (cube_bathymetry#164)
+  must implement the same rule.
 - #403 link: edit its outline in place (it is an idea collection edited in
   place) or only comment? Needs owner go-ahead before touching the issue.
 

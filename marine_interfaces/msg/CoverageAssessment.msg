@@ -8,11 +8,13 @@
 # area fields are exact. Fractions are left to the consumer to compute.
 # The per-source areas in sources are measured on this same raster, after
 # resampling each source grid to it and clipping to the polygon.
-# A cell is covered when any source has a depth for it. It meets the
-# standard when the smallest uncertainty across sources is at most
-# standard.allowed(depth), with depth taken from the source that has that
-# smallest uncertainty. A covered cell with no uncertainty value does not
-# meet the standard.
+# A cell is covered when any source has a depth for it. To test the
+# standard, only sources with both a depth and a non-NaN uncertainty in that
+# cell compete. The one with the smallest uncertainty supplies the depth, and
+# the cell meets the standard when that uncertainty is at most
+# standard.allowed(depth). Ties for the smallest uncertainty go to the
+# shallower depth, the fail-closed choice, since allowed(depth) grows with
+# depth. A covered cell where no source competes does not meet the standard.
 # header.frame_id is the frame of the assessment raster, a projected metric
 # frame (metres). The polygon is projected into it and cell_size is metres
 # in it. Source grids may be published in other frames (each boat has its

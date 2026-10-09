@@ -281,8 +281,8 @@ Conventions, shared by every field below:
 - Areas are square metres of the assessment raster, not cell counts, and not geodetic area. No fraction fields; consumers divide.
 - Every area in a message, the totals and each source's, is measured on the same assessment raster: each source grid is resampled to it (after being transformed into its frame) and clipped to the polygon, so cells outside the polygon are counted in none of them.
 - `CoverageAssessment.header.frame_id` is the frame of the assessment raster, a projected metric frame (metres). The polygon is projected into it and `cell_size` is metres in it. Source grids may be published in other frames (each boat has its own map frame with its own origin); the assessor transforms them into this frame before resampling.
-- The union test takes depth from the source whose uncertainty is smallest in that cell. The assessing node must implement this rule, so that producer and consumers read one statement.
-- Defaults fail closed: a default `SurveyStandard` (`a` = `b` = 0), or one with `a` or `b` NaN, negative or infinite, means "not set" and is checked first: nothing meets it, whatever the cell's uncertainty (a cell with uncertainty exactly 0 would otherwise pass `0 <= 0`). `a` and `b` are finite and >= 0 in a standard that is set. A covered cell with no uncertainty value does not meet the standard.
+- The union test: only sources with both a depth and a non-NaN uncertainty in that cell compete. The one with the smallest uncertainty supplies the depth; on a tie, the shallower depth wins (the fail-closed choice, since `allowed(depth)` grows with depth). The assessing node must implement this rule, so that producer and consumers read one statement.
+- Defaults fail closed: a default `SurveyStandard` (`a` = `b` = 0), or one with `a` or `b` NaN, negative or infinite, means "not set" and is checked first: nothing meets it, whatever the cell's uncertainty (a cell with uncertainty exactly 0 would otherwise pass `0 <= 0`). `a` and `b` are finite and >= 0 in a standard that is set. A covered cell where no source competes (none has both a depth and a non-NaN uncertainty) does not meet the standard.
 
 #### `marine_interfaces/SurveyStandard`
 - `string name`: free text for people (e.g. "S-44 Order 1a")
@@ -302,7 +302,7 @@ Conventions, shared by every field below:
 - `float64 cell_size`: metres, in the `header.frame_id` frame
 - `float64 area_total`: the rasterised polygon (m^2)
 - `float64 area_covered`: cells where any source has a depth (m^2)
-- `float64 area_meeting_standard`: covered cells whose smallest uncertainty across sources is at most `allowed(depth)` (m^2)
+- `float64 area_meeting_standard`: covered cells whose smallest uncertainty across competing sources is at most `allowed(depth)`, depth from that source (m^2)
 - `CoverageContribution[] sources`: one per grid, same order in every message
 - Invariant: `area_meeting_standard <= area_covered <= area_total`; cells outside the polygon are counted in none of them
 
