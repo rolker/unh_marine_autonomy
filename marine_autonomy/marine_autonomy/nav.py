@@ -251,7 +251,7 @@ class EarthTransforms(object):
 
     def pointToGeoPoint(self, point):
         try:
-            map_to_earth = self.tfBuffer.lookup_transform("earth", point.header.frame_id, rclpy.time.Time())
+            map_to_earth = self.tf_buffer.lookup_transform("earth", point.header.frame_id, rclpy.time.Time())
         except Exception as e:
             self.node.get_logger().error("Cannot lookup transform from <earth> to {}".format(point.header.frame_id))
             self.node.get_logger().error(str(e))

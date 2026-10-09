@@ -34,10 +34,12 @@ must not raise: a handler that logs the exception object itself used to turn
 the lookup failure into a TypeError in the caller (#408).
 """
 
+import math
+
 import pytest
 import rclpy
 import rclpy.node
-from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import PointStamped, TransformStamped
 from nav_msgs.msg import Odometry
 from tf2_ros.buffer import Buffer
 
@@ -109,6 +111,28 @@ def test_point_to_geo_point_without_tf_returns_none(node):
     point.header.frame_id = 'map'
     assert nav.pointToGeoPoint(point) is None
     _assert_logged_strings(node, 'Cannot lookup transform from <earth> to map')
+
+
+def test_point_to_geo_point_with_tf_returns_geo_point(node):
+    """The lookup must go through the buffer given to the constructor."""
+    buffer = Buffer()
+    transform = TransformStamped()
+    transform.header.frame_id = 'earth'
+    transform.child_frame_id = 'map'
+    # Frame origin on the equator / prime meridian at zero altitude (ECEF).
+    transform.transform.translation.x = 6378137.0
+    transform.transform.rotation.w = 1.0
+    buffer.set_transform_static(transform, 'test')
+    nav = EarthTransforms(node, buffer, map_frame='map')
+    point = PointStamped()
+    point.header.frame_id = 'map'
+    geo = nav.pointToGeoPoint(point)
+    assert geo is not None
+    assert geo.header.frame_id == 'wgs84'
+    assert math.isclose(geo.position.latitude, 0.0, abs_tol=1e-6)
+    assert math.isclose(geo.position.longitude, 0.0, abs_tol=1e-6)
+    assert math.isclose(geo.position.altitude, 0.0, abs_tol=1e-3)
+    assert not _errors(node)
 
 
 def test_position_lat_lon_without_tf_returns_none(node):
