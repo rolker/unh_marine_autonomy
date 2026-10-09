@@ -155,6 +155,16 @@ says "marine_interfaces README"; marine_interfaces has no README, so the
 documentation is in `docs/interfaces.md` (mention in the PR description). Step 10
 (#403 link) remains for PR time and needs the owner's go-ahead.
 
+Pre-push review round 1 (ten findings) tightened the comment and docs wording
+without changing any field: fail-closed standard checked first (not via
+`allowed(depth) = 0`), all areas on the assessment raster clipped to the
+polygon, union-test candidates and tie rule (shallower depth), unique `source`
+strings, per-source and cross-level invariants, no "exact" ratios, polygon
+closing-point rule, equal-stamp rule, m^2 labels, and the `TaskInformation`
+priority type (`int16`) in docs/interfaces.md. A host decision also changed the
+frame wording: `header.frame_id` is the assessment raster's projected metric
+frame, not a frame every source shares.
+
 ## Estimated Scope
 
 Single PR, about 4 new files of 15-30 comment lines each, plus three small edits.
