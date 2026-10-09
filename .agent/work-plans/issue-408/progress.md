@@ -16,3 +16,18 @@ issue: 408
 - Build/test: `./core_ws/build.sh marine_interfaces marine_autonomy` (marine_interfaces must be built first in a fresh worktree) then `./core_ws/test.sh marine_autonomy`: 155 tests, 0 errors, 0 failures, 16 skipped (the skips are cppcheck, not touched). `test_nav`: 6 passed; `test_gggs`: 98 passed.
 - Self-review: one read of the diff for correctness; flake8 plugin noise (import grouping, docstrings) is from plugins the package excludes (`ament_cmake_flake8` is in `AMENT_LINT_AUTO_EXCLUDE`); nothing to fix.
 - Not done: the `mbes_sim` ping-callback guard and respawn-without-reconfigure belong to `unh_marine_simulation` (sim#88 PR two). Nothing pushed.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-10-09 16:02 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+**Verdict**: approved
+
+**Branch**: feature/issue-408 at `ed8b099`
+**Mode**: pre-push
+**Depth**: Light (reason: ~160 added lines but one small source file, 4 changed lines; one proportionate adversarial read, cross-model and local skipped per request)
+**Must-fix**: 0 | **Suggestions**: 1
+**Round**: 1 | **Ship**: recommended — no must-fix; build and test clean (155 tests, 0 failures; test_nav 6 passed)
+
+### Findings
+- [ ] (suggestion) `nav_msgs` is imported by nav.py (pre-existing) and the new test but not declared in package.xml; add `<depend>nav_msgs</depend>` — `marine_autonomy/package.xml:12`
