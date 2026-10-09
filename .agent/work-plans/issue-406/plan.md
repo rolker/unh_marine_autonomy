@@ -167,6 +167,15 @@ priority type (`int16`) in docs/interfaces.md. A host decision also changed the
 frame wording: `header.frame_id` is the assessment raster's projected metric
 frame, not a frame every source shares.
 
+Pre-push review round 2 (five findings) again changed wording only: the union
+test and each source's own `area_meeting_standard` require a finite depth and a
+finite uncertainty >= 0 (fail-closed against nodata sentinels), "the standard
+is checked first", depth is positive down (an elevation-signed grid is
+converted by the assessor; shallower means the smaller depth), each frame
+needs a georeference or that source's assessment fails, and the resampling
+rule from a source grid to the assessment raster is the assessor's and affects
+`area_covered` and `area_unique`.
+
 ## Estimated Scope
 
 Single PR, about 4 new files of 15-30 comment lines each, plus three small edits.

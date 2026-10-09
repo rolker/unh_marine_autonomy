@@ -21,7 +21,8 @@
 # the cell meets the standard when that uncertainty is at most
 # standard.allowed(depth). Ties for the smallest uncertainty go to the
 # shallower depth (the smaller depth, depth being positive down), the
-# fail-closed choice, since allowed(depth) grows with depth. A covered cell where no source competes does not meet the standard.
+# fail-closed choice, since allowed(depth) grows with depth. A covered cell
+# where no source competes does not meet the standard.
 # header.frame_id is the frame of the assessment raster, a projected metric
 # frame (metres). The polygon is projected into it and cell_size is metres
 # in it. Source grids may be published in other frames (each boat has its
