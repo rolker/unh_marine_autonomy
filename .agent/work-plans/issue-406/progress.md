@@ -59,3 +59,27 @@ Checked: all 14 review-issue actions are addressed or deliberately declined with
 - [ ] (suggestion) Step 7 lists invariants and the 95 % / depth convention for docs/interfaces.md but not the two rules just settled (shared frame with cell_size in metres; union-test depth from the smallest-uncertainty source). Add them to the docs list so cube_bathymetry#164 and the scorer read one statement — `plan.md:45-50`
 - [ ] (suggestion) Step 9 runs `pre-commit run --files`, but the project repo tracks no `.pre-commit-config.yaml` (only `.github/` workflows). Say "if a config exists" or name the hook set that does apply; `ros2 interface show` also needs the built install sourced (`source setup.bash` in the worktree) — `plan.md:54-58`
 - [ ] (suggestion) The issue's Work list still says "marine_interfaces README"; the plan correctly targets `docs/interfaces.md` (no README exists). Note the substitution in the PR description so the checklist is not read as unmet — `plan.md:45`
+
+## Implementation
+**Status**: complete
+**When**: 2026-10-09
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Branch**: feature/issue-406 (not pushed)
+
+### Done
+- Four messages added in `marine_interfaces/msg/` (SurveyStandard, SurveyArea, CoverageContribution, CoverageAssessment) with the issue body's comment text plus the approved plan additions; registered in `MSG_FILES` (CMake).
+- `docs/interfaces.md`: new "Survey coverage assessment (prototype, #403)" section, including the shared-frame and union-test-depth rules.
+- `.agents/README.md`: count 46 -> 50 in both places.
+- Plan synced in place; frame and union-depth questions marked settled.
+
+### Verification
+- `./core_ws/build.sh marine_interfaces`: finished, no errors.
+- `./core_ws/test.sh marine_interfaces`: 5 tests, 0 errors, 0 failures, 0 skipped.
+- `ros2 interface show` (setup.bash sourced) for all four: field names and types match docs/interfaces.md.
+- `ls marine_interfaces/msg | wc -l` = 50.
+- Hooks: project repo tracks no `.pre-commit-config.yaml`; ran the workspace config's generic hooks on the changed files (trailing whitespace, end-of-file, large files, merge conflict, mixed line ending, shebangs, no-commit-to-branch: all passed). The workspace-specific local hooks (check-source-artifacts, check-commit-identity, check-branch-updates, verify-issue-branch) resolve scripts relative to the repo root and do not apply to this repo; shellcheck/black/flake8/pylint/yamllint had no files.
+
+### Left for PR time
+- PR description: docs went to `docs/interfaces.md` because marine_interfaces has no README (the issue's Work list says README).
+- Step 10: comment on / update #403 outline (owner go-ahead needed).
