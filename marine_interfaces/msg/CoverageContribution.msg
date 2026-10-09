@@ -6,10 +6,9 @@
 # are counted in none of these areas. Coverage and meeting the standard are
 # judged from this source alone, independent of the others. As in the union
 # test, a cell meets the standard for a source only if that source has a
-# finite depth and a finite uncertainty >= 0 there; anything else does not
-# meet it. Sums across
-# sources can exceed the totals, because sources overlap; area_unique is the
-# part that cannot.
+# finite depth >= 0 and a finite uncertainty >= 0 there; anything else does
+# not meet it. Sums across sources can exceed the totals, because sources
+# overlap; area_unique is the part that cannot.
 #
 # Invariants: area_meeting_standard <= area_covered and
 # area_unique <= area_covered. area_unique concerns covered cells only and
