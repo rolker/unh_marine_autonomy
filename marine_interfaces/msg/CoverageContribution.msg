@@ -22,6 +22,6 @@
 # two distinct strings, e.g. its grid topics), and the sources list in
 # CoverageAssessment has the same order in every message.
 string  source                  # platform name if known, else the grid topic
-float64 area_covered            # cells this source has a depth for
-float64 area_meeting_standard   # of those, cells whose own uncertainty meets the standard
-float64 area_unique             # cells no other source covers: credit without double counting
+float64 area_covered            # m^2: this source has a depth here
+float64 area_meeting_standard   # m^2: of those, its own uncertainty meets the standard
+float64 area_unique             # m^2: no other source covers it; credit without double counting

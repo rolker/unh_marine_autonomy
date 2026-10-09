@@ -31,7 +31,7 @@
 std_msgs/Header        header      # stamp: assessment time. frame_id: the assessment raster's frame
 SurveyArea             area        # the area and standard this was judged against
 float64                cell_size   # metres
-float64                area_total
-float64                area_covered
-float64                area_meeting_standard
+float64                area_total              # m^2: the rasterised polygon
+float64                area_covered            # m^2: any source has a depth
+float64                area_meeting_standard   # m^2: covered and meets the standard
 CoverageContribution[] sources     # one per grid, same order every message
