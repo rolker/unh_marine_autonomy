@@ -34,6 +34,8 @@ package, taking `GeoPolygon` along) after a second consumer.
    the polygon are not counted in any of the three. The embedded `SurveyArea`
    field keeps the name `area` (as the issue defines it); the read path is
    `assessment.area.polygon.points`, which is why the inner field is `polygon`.
+   The issue's comment text (including the settled frame and union-test depth
+   wording) is kept as is; the additions are appended as separate sentences.
 5. **`CoverageContribution` comment**: state `area_unique <= area_covered`;
    `area_unique` concerns covered cells only and says nothing about whether they
    meet the standard. Pin `source`: consumers key on the string exactly as given;
@@ -46,7 +48,10 @@ package, taking `GeoPolygon` along) after a second consumer.
    (prototype, #403)" after "Per-sensor acoustic metadata (ADR-0009)" and before
    "Related Documentation", one bullet per field in the file's existing style,
    marked as a prototype to be revised under #403, plus the invariants, the
-   95 % / depth-below-instantaneous-surface convention, and the promotion path.
+   95 % / depth-below-instantaneous-surface convention, the two settled rules
+   (all grids share the `header.frame_id` frame with `cell_size` in metres in
+   it; the union-test depth comes from the source with the smallest uncertainty
+   in that cell), and the promotion path.
    Every bullet checked against the committed `.msg` files, not the issue.
 8. **`.agents/README.md`**: 46 -> 50 in the inventory row and the layout-tree
    comment (lines 16 and 53); add the coverage family to the inventory
@@ -54,8 +59,12 @@ package, taking `GeoPolygon` along) after a second consumer.
 9. **Verify**: build `marine_interfaces` from the layer worktree
    (`./core_ws/build.sh marine_interfaces`), run `ros2 interface show` for all
    four and compare field names and types with the docs, run `./core_ws/test.sh
-   marine_interfaces` (lint_auto) clean, and `pre-commit run --files` on the
-   changed files. Count `ls marine_interfaces/msg | wc -l` = 50.
+   marine_interfaces` (lint_auto) clean, and the pre-commit hooks that apply.
+   The project repo tracks no `.pre-commit-config.yaml`, so the workspace-level
+   `/home/roland/project11/.pre-commit-config.yaml` generic hooks (whitespace,
+   end-of-file, yaml, merge-conflict, mixed-line-ending) are run on the changed
+   files; the source needs `source setup.bash` in the worktree before
+   `ros2 interface show`. Count `ls marine_interfaces/msg | wc -l` = 50.
 10. **Link from #403** at PR time: add a comment on #403 pointing to the PR and
     update its Message-family outline in place: required coverage is not in
     `SurveyStandard` (left out of #406), and the assessment embeds the whole
@@ -112,15 +121,27 @@ package, taking `GeoPolygon` along) after a second consumer.
 
 ## Open Questions
 
-- Review items the issue body does not yet settle, so the comment wording below
-  is a proposal for the owner to accept or change (not reopening settled
-  decisions): (a) **raster frame**: proposed wording "header.frame_id is the
-  frame all source grids share; the polygon was projected into it and cell_size
-  is metres in it"; (b) **depth in the union test**: proposed "the depth of the
-  source whose uncertainty is smallest in that cell"; the assessing node
-  (cube_bathymetry#164) must implement the same rule.
+- **Settled** (the issue body now carries both verbatim in the
+  `CoverageAssessment` comment, and the plan review confirmed the match):
+  (a) **raster frame**: `header.frame_id` is the frame all source grids share;
+  the polygon is projected into it and `cell_size` is metres in it;
+  (b) **depth in the union test**: the depth of the source whose uncertainty is
+  smallest in that cell; the assessing node (cube_bathymetry#164) must
+  implement the same rule.
 - #403 link: edit its outline in place (it is an idea collection edited in
   place) or only comment? Needs owner go-ahead before touching the issue.
+
+## Implementation Notes
+
+Implemented as planned, in three commits on `feature/issue-406`: the four
+`.msg` files with the CMake block; `docs/interfaces.md`; the `.agents/README.md`
+count (46 -> 50, both places; the inventory description was left unchanged since
+the coverage family does not fit in one clause). The `.msg` files keep the issue
+body's comment text and append the plan's additions (fail-closed defaults,
+transport-ordering sentence, invariants, `source` pinning). The issue's Work list
+says "marine_interfaces README"; marine_interfaces has no README, so the
+documentation is in `docs/interfaces.md` (mention in the PR description). Step 10
+(#403 link) remains for PR time and needs the owner's go-ahead.
 
 ## Estimated Scope
 
