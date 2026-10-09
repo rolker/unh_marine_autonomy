@@ -956,7 +956,11 @@ TEST_F(HelmManagerInitialModeTest, TopicMessageBeforeActivationWinsOverInitialMo
   // before the node is activated; activation must not replace it.
   ASSERT_TRUE(spinUntil([this] {return mode_pub_->get_subscription_count() > 0;}));
   publishMode("autonomous");
-  spinBoth(100ms);
+  // Active-flag publishers are plain publishers, so the flag is published
+  // while inactive; waiting on it proves the topic message was handled before
+  // activation, which is what this test is about.
+  ASSERT_TRUE(spinUntil([this] {return autonomous_active_received_ && autonomous_active_;}))
+    << "The topic message must be processed before the node is activated";
 
   ASSERT_EQ(
     node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
@@ -984,6 +988,10 @@ TEST_F(HelmManagerInitialModeTest, ReconfigureStartsWithNoModeThenReappliesIniti
   ASSERT_EQ(
     node_->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
   ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
+  // resetActiveFlags() clears receipt markers, not values, and the flags travel
+  // on separate topics: wait for this activation's autonomous flag before
+  // checking it, so a stale true from the earlier selection cannot leak in.
+  ASSERT_TRUE(spinUntil([this] {return autonomous_active_received_;}));
   EXPECT_FALSE(autonomous_active_);
   EXPECT_EQ(reportedPilotingMode(), "manual");
 }
@@ -1040,14 +1048,6 @@ TEST_F(HelmManagerInitialModeTest, AutomaticallyDeclaredOverrideStillApplies)
   configureAndActivate();
   ASSERT_TRUE(spinUntil([this] {return manual_active_received_ && manual_active_;}));
   EXPECT_EQ(reportedPilotingMode(), "manual");
-}
-
-TEST_F(HelmManagerInitialModeTest, ReconfigureRefreshesSpeedLimitsSetWhileUnconfigured)
-{
-  node_.reset();
-  rclcpp::NodeOptions options;
-  options.parameter_overrides({rclcpp::Parameter("output_type", "twist")});
-  node_ = std::make_shared<helm_manager::HelmManager>("test_helm_manager", options);
 
   // The pre-declared writable parameter must have been made read-only: a
   // runtime write is rejected and the value survives, also across a reconfigure.
@@ -1064,6 +1064,14 @@ TEST_F(HelmManagerInitialModeTest, ReconfigureRefreshesSpeedLimitsSetWhileUnconf
     node_->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
   EXPECT_TRUE(node_->describe_parameter("initial_piloting_mode").read_only);
   EXPECT_EQ(node_->get_parameter("initial_piloting_mode").as_string(), "manual");
+}
+
+TEST_F(HelmManagerInitialModeTest, ReconfigureRefreshesSpeedLimitsSetWhileUnconfigured)
+{
+  node_.reset();
+  rclcpp::NodeOptions options;
+  options.parameter_overrides({rclcpp::Parameter("output_type", "twist")});
+  node_ = std::make_shared<helm_manager::HelmManager>("test_helm_manager", options);
 
   geometry_msgs::msg::TwistStamped last_twist;
   bool twist_received = false;
