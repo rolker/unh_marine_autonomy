@@ -28,3 +28,17 @@ issue: 406
 - [ ] Verification step is missing from Work: colcon build marine_interfaces, ros2 interface show for all four, ament_lint (lint_auto) clean.
 - [ ] State the ADR position: ADR-0008 and ADR-0009 each got an ADR for a new message family; this one is deliberately a prototype under #403, so document it as a prototype in docs/interfaces.md and promote to an ADR (or move to the survey-products package) once it survives a second consumer.
 - [ ] When linking from #403, update its message-family outline: it lists required coverage inside SurveyStandard and embeds SurveyStandard (not SurveyArea) in the assessment; #406 leaves required coverage out and embeds the whole SurveyArea.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-10-09 13:06 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-406/plan.md` at `7c9a63c`
+**Branch**: feature/issue-406 at `7c9a63c`
+**Phases**: single
+
+### Open questions
+- [ ] Raster frame wording for CoverageAssessment (proposed: header.frame_id is the frame all source grids share, polygon projected into it, cell_size in metres there)
+- [ ] Which depth the union test uses (proposed: depth of the source with the smallest uncertainty in that cell; cube_bathymetry#164 must match)
+- [ ] #403 link: edit its message-family outline in place, or comment only (needs owner go-ahead)
