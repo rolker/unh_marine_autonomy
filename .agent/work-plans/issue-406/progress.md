@@ -226,3 +226,12 @@ Build and checks: `./core_ws/build.sh marine_interfaces` and `./core_ws/test.sh 
 - [x] plan.md step 10 marked done, its Open Question closed, the "remains for PR time" sentence replaced; the plan's depth wording and a round-3 note synced - `.agent/work-plans/issue-406/plan.md`
 - [x] State in this entry that step 10 is done instead of rewriting progress.md history - this entry
 - [x] Issue and PR text sync (#406 body, cube_bathymetry#164, PR description) - done by the host, no repo change
+
+## Implementation
+
+**By**: Claude Sonnet
+**Scope**: Copilot round 2 on PR #407, one finding (`CoverageAssessment.msg:20`)
+
+- Finding: "covered" was defined as "has a depth" with no validity rule, while the standard test already requires a finite depth >= 0 and a finite uncertainty >= 0.
+- Fix (commit bf050be): a cell is covered by a source when that source has a finite depth >= 0 for it; uncertainty is not required for coverage, only for meeting the standard. A cell is covered when any source covers it. Applied in `CoverageAssessment.msg` (covered/union paragraph and `area_covered` field comment), `CoverageContribution.msg` (header comment; `area_covered` and `area_unique` inherit the rule) and `docs/interfaces.md` (both `area_covered` entries and `area_unique`). All other rules unchanged. `plan.md` does not restate the covered rule, so it is unchanged.
+- Verification: `./core_ws/build.sh marine_interfaces` and `./core_ws/test.sh marine_interfaces` pass (5 tests, 0 errors, 0 failures); `ros2 interface show` for both messages shows the new comments and the docs match.
