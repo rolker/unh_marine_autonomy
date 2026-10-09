@@ -6,11 +6,11 @@
 #
 #     allowed(depth) = sqrt(a^2 + (b * depth)^2)
 #
-# All values in metres at 95 % confidence. depth is depth below the
-# instantaneous water surface, as S-44 defines it. A cell meets the
-# standard when its uncertainty (also 95 %, which is what the CUBE grid's
-# uncertainty layer carries at its default 1.96 sigma scale) is at most
-# allowed(depth) for its own depth.
+# a is in metres at 95 % confidence; b is dimensionless. depth is depth
+# below the instantaneous water surface, in metres, as S-44 defines it. A
+# cell meets the standard when its uncertainty (also 95 %, which is what the
+# CUBE grid's uncertainty layer carries at its default 1.96 sigma scale) is
+# at most allowed(depth) for its own depth.
 #
 # Shared by the survey request, the planner, the assessment, and any
 # display, so there is exactly one definition of "good enough" in flight.
