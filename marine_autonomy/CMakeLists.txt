@@ -71,8 +71,11 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
   ament_add_gtest(test_gggs test/test_gggs.cpp)
   target_link_libraries(test_gggs ${PROJECT_NAME})
+
+  ament_add_pytest_test(test_nav test/test_nav.py)
 endif()
 
 ament_package()

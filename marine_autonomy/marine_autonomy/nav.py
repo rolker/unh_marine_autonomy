@@ -213,7 +213,7 @@ class EarthTransforms(object):
             return self.tf_buffer.lookup_transform("earth", map_frame, timestamp)
         except Exception as e:
             self.node.get_logger().error("Cannot lookup transform from <earth> to {}".format(map_frame))
-            self.node.get_logger().error(e)
+            self.node.get_logger().error(str(e))
 
     def poseListToGeoPoseList(self, poses, map_frame = None):
         map_to_earth = self.mapToEarthTransform(map_frame)
@@ -251,10 +251,10 @@ class EarthTransforms(object):
 
     def pointToGeoPoint(self, point):
         try:
-            map_to_earth = self.tfBuffer.lookup_transform("earth", point.header.frame_id, rclpy.time.Time())
+            map_to_earth = self.tf_buffer.lookup_transform("earth", point.header.frame_id, rclpy.time.Time())
         except Exception as e:
             self.node.get_logger().error("Cannot lookup transform from <earth> to {}".format(point.header.frame_id))
-            self.node.get_logger().error(e)
+            self.node.get_logger().error(str(e))
             return None
         ecef = do_transform_point(point, map_to_earth)
         latlon = marine_autonomy.wgs84.fromECEFtoLatLong(ecef.point.x, ecef.point.y, ecef.point.z)
@@ -312,7 +312,7 @@ class RobotNavigation(EarthTransforms):
             odom_to_earth = self.tf_buffer.lookup_transform("earth", self.odometry.header.frame_id, rclpy.time.Time())
         except Exception as e:
             self.node.get_logger().error("Cannot lookup transform from <earth> to odometry frame_id")
-            self.node.get_logger().error(e)
+            self.node.get_logger().error(str(e))
             return None
         # Function from tf2_geoemetry_msgs
         ecef = do_transform_pose_stamped(self.odometry.pose, odom_to_earth).pose.position
