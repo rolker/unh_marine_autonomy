@@ -307,7 +307,7 @@ Conventions, shared by every field below:
 - Invariant: `area_meeting_standard <= area_covered <= area_total`; cells outside the polygon are counted in none of them
 
 #### `marine_interfaces/CoverageContribution`
-- `string source`: platform name if known, else the grid topic; consumers key on the string exactly as given, stable for the life of a run
+- `string source`: platform name if known, else the grid topic; consumers key on the string exactly as given; stable for the life of a run and unique within one message (a platform supplying two grids gets two distinct strings, e.g. its grid topics)
 - `float64 area_covered`: cells this source has a depth for (m^2)
 - `float64 area_meeting_standard`: of those, cells whose own uncertainty meets the standard (m^2); judged from this source alone, independent of the others, on the assessment raster clipped to the polygon
 - `float64 area_unique`: cells no other source covers, credit without double counting (m^2)

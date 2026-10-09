@@ -41,7 +41,7 @@ package, taking `GeoPolygon` along) after a second consumer.
 5. **`CoverageContribution` comment**: state `area_unique <= area_covered`;
    `area_unique` concerns covered cells only and says nothing about whether they
    meet the standard. Pin `source`: consumers key on the string exactly as given;
-   it is stable for the life of a run and the list order is the same every message.
+   it is stable for the life of a run, unique within one message, and the list order is the same every message.
 6. **CMake**: add a comment-headed block to `MSG_FILES` in
    `marine_interfaces/CMakeLists.txt` after the ADR-0008 block, in dependency
    order (`SurveyStandard`, `SurveyArea`, `CoverageContribution`,

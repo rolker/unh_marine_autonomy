@@ -12,8 +12,9 @@
 # only and says nothing about whether they meet the standard.
 #
 # Consumers key on source exactly as given. It is stable for the life of a
-# run, and the sources list in CoverageAssessment has the same order in
-# every message.
+# run, unique within one message (a platform that supplies two grids gets
+# two distinct strings, e.g. its grid topics), and the sources list in
+# CoverageAssessment has the same order in every message.
 string  source                  # platform name if known, else the grid topic
 float64 area_covered            # cells this source has a depth for
 float64 area_meeting_standard   # of those, cells whose own uncertainty meets the standard
