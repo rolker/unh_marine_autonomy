@@ -15,7 +15,7 @@
 # Shared by the survey request, the planner, the assessment, and any
 # display, so there is exactly one definition of "good enough" in flight.
 #
-# Defaults fail closed: a is checked first, before any cell is compared. A
+# Defaults fail closed: the standard is checked first, before any cell is compared. A
 # default-constructed standard (a = b = 0), or one with a or b NaN, negative
 # or infinite, means "not set", and nothing meets it, whatever the cell's
 # uncertainty (a cell with uncertainty exactly 0 would otherwise pass
