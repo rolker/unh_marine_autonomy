@@ -70,11 +70,11 @@ package, taking `GeoPolygon` along) after a second consumer.
    end-of-file, yaml, merge-conflict, mixed-line-ending) are run on the changed
    files; the source needs `source setup.bash` in the worktree before
    `ros2 interface show`. Count `ls marine_interfaces/msg | wc -l` = 50.
-10. **Link from #403** at PR time: add a comment on #403 pointing to the PR and
-    update its Message-family outline in place: required coverage is not in
-    `SurveyStandard` (left out of #406), and the assessment embeds the whole
-    `SurveyArea`, not only `SurveyStandard`. The owner decides whether to edit the
-    body or comment (see Open Questions).
+10. **Link from #403** (done): its Message-family outline was edited in place:
+    required coverage is not in `SurveyStandard` (left out of
+    #406), the assessment embeds the whole `SurveyArea`, not only
+    `SurveyStandard`, and the outline ends "Prototyped in #406". No separate
+    comment was needed.
 
 ## Files to Change
 
@@ -135,15 +135,14 @@ package, taking `GeoPolygon` along) after a second consumer.
   too) are transformed into it by the assessor before resampling. (Host
   decision 2026-10-09; it replaces the earlier "one frame every source grid
   shares" wording.)
-  (b) **depth in the union test**: only sources with both a finite depth and
-  a finite uncertainty >= 0 in that cell compete (a NaN, infinite or negative
+  (b) **depth in the union test**: only sources with both a finite depth >= 0
+  and a finite uncertainty >= 0 in that cell compete (a NaN, infinite or negative
   value does not, and the same holds for a source's own
   `area_meeting_standard`); the depth comes from the one with
   the smallest uncertainty, ties going to the shallower depth (fail-closed,
   added after the pre-push review); the assessing node (cube_bathymetry#164)
   must implement the same rule.
-- #403 link: edit its outline in place (it is an idea collection edited in
-  place) or only comment? Needs owner go-ahead before touching the issue.
+- (Closed) #403 link: its outline was edited in place; see step 10.
 
 ## Implementation Notes
 
@@ -155,7 +154,7 @@ body's comment text and append the plan's additions (fail-closed defaults,
 transport-ordering sentence, invariants, `source` pinning). The issue's Work list
 says "marine_interfaces README"; marine_interfaces has no README, so the
 documentation is in `docs/interfaces.md` (mention in the PR description). Step 10
-(#403 link) remains for PR time and needs the owner's go-ahead.
+(#403 link) is done: the #403 outline was edited in place.
 
 Pre-push review round 1 (ten findings) tightened the comment and docs wording
 without changing any field: fail-closed standard checked first (not via
@@ -172,9 +171,19 @@ test and each source's own `area_meeting_standard` require a finite depth and a
 finite uncertainty >= 0 (fail-closed against nodata sentinels), "the standard
 is checked first", depth is positive down (an elevation-signed grid is
 converted by the assessor; shallower means the smaller depth), each frame
-needs a georeference or that source's assessment fails, and the resampling
+needs a georeference (round 3 below makes a missing one fail the whole assessment), and the resampling
 rule from a source grid to the assessment raster is the assessor's and affects
 `area_covered` and `area_unique`.
+
+Review round 3 (Copilot, triaged in the Integrated Review) again changed wording
+only: a competing depth must be finite and >= 0 (a cell above the water surface
+has no survey depth), in the union test and in each source's own
+`area_meeting_standard`; and a source frame without a georeference makes the
+whole assessment for that area unpublishable (no `CoverageAssessment` and no
+`coverage_grid` until resolved), because the message cannot represent a failed
+source and `sources` is one entry per grid in stable order. The per-source
+raster rule stays (round 1); the #406 and cube_bathymetry#164 issue texts and the
+PR description were synced by the host.
 
 ## Estimated Scope
 
