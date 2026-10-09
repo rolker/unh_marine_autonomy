@@ -11,13 +11,16 @@
 # standard.allowed(depth), with depth taken from the source that has that
 # smallest uncertainty. A covered cell with no uncertainty value does not
 # meet the standard.
-# header.frame_id is the one frame every source grid shares; the polygon
-# is projected into it and cell_size is metres in it.
+# header.frame_id is the frame of the assessment raster, a projected metric
+# frame (metres). The polygon is projected into it and cell_size is metres
+# in it. Source grids may be published in other frames (each boat has its
+# own map frame, with its own origin); the assessor transforms them into
+# this frame before resampling.
 #
 # Invariant: area_meeting_standard <= area_covered <= area_total. Cells
 # outside the polygon are not counted in any of the three.
 # The target polygon is area.polygon.points.
-std_msgs/Header        header      # stamp: assessment time. frame_id: the shared grid frame
+std_msgs/Header        header      # stamp: assessment time. frame_id: the assessment raster's frame
 SurveyArea             area        # the area and standard this was judged against
 float64                cell_size   # metres
 float64                area_total

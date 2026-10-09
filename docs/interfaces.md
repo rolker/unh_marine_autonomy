@@ -279,7 +279,7 @@ exclusion zones, and the `CoverageHoliday` message.
 Conventions, shared by every field below:
 - Uncertainty and the standard's `a` are 95 % confidence, in metres (the CUBE grid's `uncertainty` layer is 1.96 sigma). Depth is depth below the instantaneous water surface.
 - Areas are square metres of the assessment raster, not cell counts, and not geodetic area. No fraction fields; consumers divide.
-- All source grids share one frame, `CoverageAssessment.header.frame_id`. The polygon is projected into that frame and `cell_size` is metres in it.
+- `CoverageAssessment.header.frame_id` is the frame of the assessment raster, a projected metric frame (metres). The polygon is projected into it and `cell_size` is metres in it. Source grids may be published in other frames (each boat has its own map frame with its own origin); the assessor transforms them into this frame before resampling.
 - The union test takes depth from the source whose uncertainty is smallest in that cell. The assessing node must implement this rule, so that producer and consumers read one statement.
 - Defaults fail closed: a default `SurveyStandard` (`a` = `b` = 0), or one with `a` or `b` NaN, negative or infinite, means "not set" and is checked first: nothing meets it, whatever the cell's uncertainty (a cell with uncertainty exactly 0 would otherwise pass `0 <= 0`). `a` and `b` are finite and >= 0 in a standard that is set. A covered cell with no uncertainty value does not meet the standard.
 
@@ -296,7 +296,7 @@ Conventions, shared by every field below:
 - `int16 priority`: lower is more urgent; 0 if unused (matches `TaskInformation.priority`)
 
 #### `marine_interfaces/CoverageAssessment`
-- `std_msgs/Header header`: `stamp` = assessment time; `frame_id` = the shared grid frame
+- `std_msgs/Header header`: `stamp` = assessment time; `frame_id` = the assessment raster's frame (projected, metres)
 - `SurveyArea area`: the area and standard this was judged against; the target polygon is `area.polygon.points`
 - `float64 cell_size`: metres, in the `header.frame_id` frame
 - `float64 area_total`: the rasterised polygon (m^2)

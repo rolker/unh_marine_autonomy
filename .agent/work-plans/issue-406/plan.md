@@ -35,8 +35,9 @@ package, taking `GeoPolygon` along) after a second consumer.
    the polygon are not counted in any of the three. The embedded `SurveyArea`
    field keeps the name `area` (as the issue defines it); the read path is
    `assessment.area.polygon.points`, which is why the inner field is `polygon`.
-   The issue's comment text (including the settled frame and union-test depth
-   wording) is kept as is; the additions are appended as separate sentences.
+   The issue's comment text is kept as the base; the additions are appended as
+   separate sentences. Two settled rules were later reworded after review (see
+   Open Questions): the frame wording (host decision) and the union-test tie rule.
 5. **`CoverageContribution` comment**: state `area_unique <= area_covered`;
    `area_unique` concerns covered cells only and says nothing about whether they
    meet the standard. Pin `source`: consumers key on the string exactly as given;
@@ -50,9 +51,10 @@ package, taking `GeoPolygon` along) after a second consumer.
    "Related Documentation", one bullet per field in the file's existing style,
    marked as a prototype to be revised under #403, plus the invariants, the
    95 % / depth-below-instantaneous-surface convention, the two settled rules
-   (all grids share the `header.frame_id` frame with `cell_size` in metres in
-   it; the union-test depth comes from the source with the smallest uncertainty
-   in that cell), and the promotion path.
+   (`header.frame_id` is the assessment raster's projected metric frame, with
+   `cell_size` in metres in it; source grids in other frames are transformed
+   into it before resampling; the union-test depth comes from the source with
+   the smallest uncertainty in that cell), and the promotion path.
    Every bullet checked against the committed `.msg` files, not the issue.
 8. **`.agents/README.md`**: 46 -> 50 in the inventory row and the layout-tree
    comment (lines 16 and 53); add the coverage family to the inventory
@@ -122,10 +124,15 @@ package, taking `GeoPolygon` along) after a second consumer.
 
 ## Open Questions
 
-- **Settled** (the issue body now carries both verbatim in the
-  `CoverageAssessment` comment, and the plan review confirmed the match):
-  (a) **raster frame**: `header.frame_id` is the frame all source grids share;
-  the polygon is projected into it and `cell_size` is metres in it;
+- **Settled** (both are stated in the `CoverageAssessment` comment and in
+  docs/interfaces.md, which say the same thing):
+  (a) **raster frame**: `header.frame_id` is the frame of the assessment raster,
+  a projected metric frame; the polygon is projected into it and `cell_size`
+  is metres in it. Source grids published in other frames (each simulated boat
+  has its own `<ns>/map` frame with a different origin, and a real fleet will
+  too) are transformed into it by the assessor before resampling. (Host
+  decision 2026-10-09; it replaces the earlier "one frame every source grid
+  shares" wording.)
   (b) **depth in the union test**: the depth of the source whose uncertainty is
   smallest in that cell; the assessing node (cube_bathymetry#164) must
   implement the same rule.
