@@ -183,3 +183,26 @@ Specialists: static/convention (build, `ros2 interface show` vs docs, CMake, cou
 - `./core_ws/test.sh marine_interfaces`: 5 tests, 0 errors, 0 failures, 0 skipped.
 - `ros2 interface show` for the four messages: field names and types match docs/interfaces.md.
 - The project repo tracks no `.pre-commit-config.yaml`; no hooks rewrote other files.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-10-09 14:27 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**PR**: #407 at `19fcd9c`
+**Sources**: 4 (Copilot R1 @ `19fcd9c` (5 inline comments), Local Review (Pre-Push) @ `45f5324`, Local Review (Pre-Push) @ `0689849`, CI rollup)
+**Cross-source confirmations**: 0 (no Copilot finding was raised by a local round at the same head; two Copilot findings touch lines the local rounds changed, noted below)
+**CI**: all-pass (build: success, copilot-pull-request-reviewer: success)
+
+Copilot verdict: "Changes recommended" - per-source raster semantics conflict with the stated requirements, and depth and source-failure handling remain underspecified. Review is against the current head, so none of it is stale.
+
+### Findings
+- [ ] (medium, Copilot; related to round-2 depth-sign finding, which fixed only the sign convention) Candidate rule accepts finite negative depths: `allowed(depth)` squares depth, so a depth above the water surface gets the same allowance as its magnitude, and "smaller depth wins a tie" is no longer fail-closed for negative values. Require a finite depth >= 0 to compete (a cell above the water surface has no survey depth), in the union test and in each source's own `area_meeting_standard`, and in the docs and PR description wording - `marine_interfaces/msg/CoverageAssessment.msg:17-25`, `marine_interfaces/msg/CoverageContribution.msg:8-10`, `docs/interfaces.md:284`, `docs/interfaces.md:285`, `docs/interfaces.md:312`
+- [ ] (medium, Copilot; round 2 asked for "publishes nothing if a frame has none" and commit 2e23b23 wrote "an assessment failure for that source" instead) A missing georeference is called a failure "for that source", but `sources` is promised one entry per grid in stable order and neither message can carry a failed/invalid source, so omitting it breaks that contract and zeros read as "uncovered". Make it a whole-assessment failure (the assessor publishes no assessment for that area while any source frame has no georeference); no field change - `marine_interfaces/msg/CoverageAssessment.msg:31-33`, `docs/interfaces.md:283`
+- [ ] (low, Copilot; plan sync) Step 10 (#403 link) is still described as future work, but #403's outline now omits required coverage from `SurveyStandard`, embeds the whole `SurveyArea`, and ends "Prototyped in #406". Mark step 10 done (outline edited in place) and close the matching Open Question and the "remains for PR time" sentence in Implementation Notes - `.agent/work-plans/issue-406/plan.md:73-77`, `.agent/work-plans/issue-406/plan.md:145-146`, `.agent/work-plans/issue-406/plan.md:157-158`
+- [ ] (low, Copilot; do not rewrite history) progress.md line 85 "Step 10: comment on / update #403 outline (owner go-ahead needed)" was true when written; the append-only timeline should not be edited. Instead state in the next `## Implementation` entry that step 10 is done (#403 outline updated, no PR-link comment needed) - `.agent/work-plans/issue-406/progress.md:85`
+- [ ] (owner action, not a code fix; Copilot, raised in the inverse direction by Local Review round 1) The committed rule (every per-source area measured on the assessment raster after resampling, judged from that source alone) is the round-1 must-fix and is consistent between the .msg files and docs, but the #406 body Decisions bullet and rolker/cube_bathymetry#164 still say "judged on each source's own grid", and the PR description does not state the raster rule. Ask the owner to reword those two issue texts to "judged from that source alone, measured on the assessment raster" and add one sentence to the PR description; no repo change - `marine_interfaces/msg/CoverageContribution.msg:3-12`
+
+### False positives
+- (Copilot) `CoverageContribution.msg:6` "changes the settled contract" and should be reverted to the source's own grid - not a false positive on the text, but the revert is rejected: Local Review round 1 (cross-confirmed by Lens A and Gemini, fixed in 94b4698) established that without a common raster `area_unique`, "sums exceed totals" and `sum(area_unique) <= area_covered` are undefined. Only the issue-text sync is carried forward (last finding above).
+- (Known false positive) `priority` is int32 - not raised by Copilot at this head; `marine_nav_interfaces/TaskInformation.priority` is int16 and the docs already say so (eb2c9ba).
