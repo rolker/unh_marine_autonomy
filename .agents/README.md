@@ -46,6 +46,7 @@ unh_marine_autonomy/
 │   ├── launch/                 # robot_core_launch.py, operator_core_launch.py
 │   ├── marine_autonomy/        # Python: geodesic, nav, wgs84 utilities
 │   ├── src/                    # C++: utils
+│   ├── test/                   # GTest (gggs) + pytest (nav.py TF-failure paths)
 │   └── docs/                   # system_architecture.md
 ├── marine_autonomy_integration_tests/
 │   └── test/                   # Launch-based integration tests
