@@ -42,3 +42,20 @@ issue: 406
 - [ ] Raster frame wording for CoverageAssessment (proposed: header.frame_id is the frame all source grids share, polygon projected into it, cell_size in metres there)
 - [ ] Which depth the union test uses (proposed: depth of the source with the smallest uncertainty in that cell; cube_bathymetry#164 must match)
 - [ ] #403 link: edit its message-family outline in place, or comment only (needs owner go-ahead)
+
+## Plan Review
+**Status**: complete
+**When**: 2026-10-09 13:08 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-406/plan.md` at `a593f45`
+**PR**: PR-less
+**Verdict**: approve-with-suggestions
+
+Checked: all 14 review-issue actions are addressed or deliberately declined with a reason (name clash and stamp settled by the owner; int16 kept). The plan's `int16 priority` claim holds: `TaskInformation.priority` in layers/main is int16, so the review-issue int32 suggestion was wrong. Plan wording for the frame (header.frame_id shared by all grids, polygon projected into it, cell_size metres there) and the union-test depth (source with the smallest uncertainty in that cell) matches the current issue body exactly. Verified against the repo: 46 .msg files today (50 after), the 46 count sits at `.agents/README.md` lines 16 and 53, the CMake ADR-0008 block is the last in `MSG_FILES`, `package.xml`/`DEPENDENCIES` already cover builtin_interfaces/geographic_msgs/std_msgs, and `docs/interfaces.md` has "Related Documentation" right after the ADR-0009 section.
+
+### Findings
+- [ ] (suggestion) Open Questions (a) and (b) still present the frame and union-depth wording as owner proposals; the issue body now settles both and carries them verbatim in the `CoverageAssessment` comment. Mark them settled, and say in step 4 that the issue's comment text is kept as is — `plan.md:113-121`
+- [ ] (suggestion) Step 7 lists invariants and the 95 % / depth convention for docs/interfaces.md but not the two rules just settled (shared frame with cell_size in metres; union-test depth from the smallest-uncertainty source). Add them to the docs list so cube_bathymetry#164 and the scorer read one statement — `plan.md:45-50`
+- [ ] (suggestion) Step 9 runs `pre-commit run --files`, but the project repo tracks no `.pre-commit-config.yaml` (only `.github/` workflows). Say "if a config exists" or name the hook set that does apply; `ros2 interface show` also needs the built install sourced (`source setup.bash` in the worktree) — `plan.md:54-58`
+- [ ] (suggestion) The issue's Work list still says "marine_interfaces README"; the plan correctly targets `docs/interfaces.md` (no README exists). Note the substitution in the PR description so the checklist is not read as unmet — `plan.md:45`
