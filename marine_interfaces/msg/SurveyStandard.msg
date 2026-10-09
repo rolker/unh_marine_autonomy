@@ -7,7 +7,9 @@
 #     allowed(depth) = sqrt(a^2 + (b * depth)^2)
 #
 # a is in metres at 95 % confidence; b is dimensionless. depth is depth
-# below the instantaneous water surface, in metres, as S-44 defines it. A
+# below the instantaneous water surface, in metres, as S-44 defines it, so
+# positive down. A grid that stores elevation (the CUBE grid holds ellipsoid
+# height, positive up) is converted by the assessor. A
 # cell meets the standard when its uncertainty (also 95 %, which is what the
 # CUBE grid's uncertainty layer carries at its default 1.96 sigma scale) is
 # at most allowed(depth) for its own depth.
