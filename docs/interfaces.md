@@ -196,7 +196,7 @@ This document describes all ROS communication interfaces (topics, services, acti
 - `string id`: Unique task identifier
 - `string type`: Task type (goto, survey, hover, etc.)
 - `geometry_msgs/PoseStamped[] poses`: Task waypoints
-- `int32 priority`: Task priority for ordering
+- `int16 priority`: Task priority for ordering
 - `string status`: Current status (pending, active, complete, failed)
 - `bool done`: Completion flag
 - `marine_nav_interfaces/Behavior[] behaviors`: Associated behaviors
@@ -294,7 +294,7 @@ Conventions, shared by every field below:
 - `builtin_interfaces/Time stamp`: when the definition was made; on the same `id` the newer wins. Any ordering beyond `stamp` is the transport's job; no QoS contract is claimed
 - `GeoPolygon polygon`: geographic (no frame); first and last points joined
 - `SurveyStandard standard`: what the area is to be surveyed to
-- `int16 priority`: lower is more urgent; 0 if unused (matches `TaskInformation.priority`)
+- `int16 priority`: lower is more urgent; 0 if unused (matches `marine_nav_interfaces/TaskInformation.priority`)
 
 #### `marine_interfaces/CoverageAssessment`
 - `std_msgs/Header header`: `stamp` = assessment time; `frame_id` = the assessment raster's frame (projected, metres)
