@@ -4,8 +4,12 @@
 # standard, judged over the union of one or more bathymetry grids.
 # Areas are in square metres of the assessment raster: the area was
 # rasterised at cell_size (the CUBE cell size), so area_total is the
-# rasterised polygon, not its geodetic area, and ratios between the three
-# area fields are exact. Fractions are left to the consumer to compute.
+# rasterised polygon, not its geodetic area. Ratios between the area fields
+# compare like with like on one raster, but are not exact against the
+# polygon: which cells count as inside it is the assessing node's
+# rasterisation rule, not fixed here. area_total can be 0 (a polygon smaller
+# than a cell), so consumers guard the divide. Fractions are left to the
+# consumer to compute.
 # The per-source areas in sources are measured on this same raster, after
 # resampling each source grid to it and clipping to the polygon.
 # A cell is covered when any source has a depth for it. To test the
