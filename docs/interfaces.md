@@ -301,16 +301,16 @@ Conventions, shared by every field below:
 - `SurveyArea area`: the area and standard this was judged against; the target polygon is `area.polygon.points`
 - `float64 cell_size`: metres, in the `header.frame_id` frame
 - `float64 area_total`: the rasterised polygon (m^2)
-- `float64 area_covered`: area where any source has a depth (m^2)
+- `float64 area_covered`: area where any source covers the cell (m^2). A cell is covered by a source when that source has a finite depth >= 0 for it (a cell above the water surface has no survey depth); uncertainty is not required for coverage, only for meeting the standard
 - `float64 area_meeting_standard`: covered area whose smallest uncertainty across competing sources is at most `allowed(depth)`, depth from that source (m^2)
 - `CoverageContribution[] sources`: one per grid, same order in every message
 - Invariant: `area_meeting_standard <= area_covered <= area_total`; cells outside the polygon are counted in none of them
 
 #### `marine_interfaces/CoverageContribution`
 - `string source`: platform name if known, else the grid topic; consumers key on the string exactly as given; stable for the life of a run and unique within one message (a platform supplying two grids gets two distinct strings, e.g. its grid topics)
-- `float64 area_covered`: area where this source has a depth (m^2)
+- `float64 area_covered`: area where this source covers the cell (m^2); covered means the source has a finite depth >= 0 there, uncertainty not required, same as in `CoverageAssessment`
 - `float64 area_meeting_standard`: of those, area where its own uncertainty meets the standard (m^2); judged from this source alone, independent of the others, on the assessment raster clipped to the polygon; as in the union test, a cell meets the standard only if the source has a finite depth >= 0 and a finite uncertainty >= 0 there
-- `float64 area_unique`: area no other source covers, credit without double counting (m^2)
+- `float64 area_unique`: area no other source covers (by the same rule), credit without double counting (m^2)
 - Invariants: `area_meeting_standard <= area_covered` and `area_unique <= area_covered`; `area_unique` says nothing about whether those cells meet the standard. Against the assessment: each source's `area_covered` is at most the assessment's `area_covered`, and the sum of `area_unique` over all sources is at most it too. Sums across sources can exceed the assessment totals because sources overlap. A single source's `area_meeting_standard` can exceed the assessment's, because the union test takes depth from the source with the smallest uncertainty, which need not be this one
 
 ## Related Documentation

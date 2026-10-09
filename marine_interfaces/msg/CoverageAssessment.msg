@@ -14,10 +14,12 @@
 # consumer to compute.
 # The per-source areas in sources are measured on this same raster, after
 # resampling each source grid to it and clipping to the polygon.
-# A cell is covered when any source has a depth for it. To test the
-# standard, only sources with both a finite depth >= 0 (a cell above the
-# water surface has no survey depth) and a finite uncertainty >= 0 in that
-# cell compete (NaN, infinite, negative or nodata-sentinel values do not).
+# A cell is covered by a source when that source has a finite depth >= 0 for
+# it (a cell above the water surface has no survey depth); uncertainty is not
+# required for coverage, only for meeting the standard. A cell is covered
+# when any source covers it. To test the standard, only sources with both a
+# finite depth >= 0 and a finite uncertainty >= 0 in that cell compete (NaN,
+# infinite, negative or nodata-sentinel values do not).
 # The one with the smallest uncertainty supplies the depth, and the cell
 # meets the standard when that uncertainty is at most
 # standard.allowed(depth). Ties for the smallest uncertainty go to the
@@ -44,6 +46,6 @@ std_msgs/Header        header      # stamp: assessment time. frame_id: the asses
 SurveyArea             area        # the area and standard this was judged against
 float64                cell_size   # metres
 float64                area_total              # m^2: the rasterised polygon
-float64                area_covered            # m^2: any source has a depth
+float64                area_covered            # m^2: any source covers it (finite depth >= 0)
 float64                area_meeting_standard   # m^2: covered and meets the standard
 CoverageContribution[] sources     # one per grid, same order every message
