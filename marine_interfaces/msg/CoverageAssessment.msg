@@ -6,6 +6,8 @@
 # rasterised at cell_size (the CUBE cell size), so area_total is the
 # rasterised polygon, not its geodetic area, and ratios between the three
 # area fields are exact. Fractions are left to the consumer to compute.
+# The per-source areas in sources are measured on this same raster, after
+# resampling each source grid to it and clipping to the polygon.
 # A cell is covered when any source has a depth for it. It meets the
 # standard when the smallest uncertainty across sources is at most
 # standard.allowed(depth), with depth taken from the source that has that

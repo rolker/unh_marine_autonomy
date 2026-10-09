@@ -1,8 +1,12 @@
 # Prototype under #403 (coverage planner design); expect revision.
 #
-# One source's share of a CoverageAssessment, judged on that source's own
-# grid, independent of the others. Sums across sources can exceed the
-# totals, because sources overlap; area_unique is the part that cannot.
+# One source's share of a CoverageAssessment. Every area here is measured on
+# the assessment raster, the same one as the totals: the source's grid is
+# resampled to it and clipped to the polygon, so cells outside the polygon
+# are counted in none of these areas. Coverage and meeting the standard are
+# judged from this source alone, independent of the others. Sums across
+# sources can exceed the totals, because sources overlap; area_unique is the
+# part that cannot.
 #
 # Invariant: area_unique <= area_covered. area_unique concerns covered cells
 # only and says nothing about whether they meet the standard.
