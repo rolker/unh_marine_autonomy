@@ -8,8 +8,14 @@
 # sources can exceed the totals, because sources overlap; area_unique is the
 # part that cannot.
 #
-# Invariant: area_unique <= area_covered. area_unique concerns covered cells
-# only and says nothing about whether they meet the standard.
+# Invariants: area_meeting_standard <= area_covered and
+# area_unique <= area_covered. area_unique concerns covered cells only and
+# says nothing about whether they meet the standard.
+# Against the assessment: every source's area_covered is at most the
+# assessment's area_covered, and the sum of area_unique over all sources is
+# at most it too. A single source's area_meeting_standard can exceed the
+# assessment's, because the union test takes depth from the source with the
+# smallest uncertainty, which need not be this one.
 #
 # Consumers key on source exactly as given. It is stable for the life of a
 # run, unique within one message (a platform that supplies two grids gets

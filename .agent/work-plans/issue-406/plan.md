@@ -38,7 +38,9 @@ package, taking `GeoPolygon` along) after a second consumer.
    The issue's comment text is kept as the base; the additions are appended as
    separate sentences. Two settled rules were later reworded after review (see
    Open Questions): the frame wording (host decision) and the union-test tie rule.
-5. **`CoverageContribution` comment**: state `area_unique <= area_covered`;
+5. **`CoverageContribution` comment**: state `area_unique <= area_covered` and
+   `area_meeting_standard <= area_covered`, plus the bounds against the
+   assessment totals;
    `area_unique` concerns covered cells only and says nothing about whether they
    meet the standard. Pin `source`: consumers key on the string exactly as given;
    it is stable for the life of a run, unique within one message, and the list order is the same every message.

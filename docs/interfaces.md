@@ -311,7 +311,7 @@ Conventions, shared by every field below:
 - `float64 area_covered`: cells this source has a depth for (m^2)
 - `float64 area_meeting_standard`: of those, cells whose own uncertainty meets the standard (m^2); judged from this source alone, independent of the others, on the assessment raster clipped to the polygon
 - `float64 area_unique`: cells no other source covers, credit without double counting (m^2)
-- Invariant: `area_unique <= area_covered`; says nothing about whether those cells meet the standard. Sums across sources can exceed the assessment totals because sources overlap
+- Invariants: `area_meeting_standard <= area_covered` and `area_unique <= area_covered`; `area_unique` says nothing about whether those cells meet the standard. Against the assessment: each source's `area_covered` is at most the assessment's `area_covered`, and the sum of `area_unique` over all sources is at most it too. Sums across sources can exceed the assessment totals because sources overlap. A single source's `area_meeting_standard` can exceed the assessment's, because the union test takes depth from the source with the smallest uncertainty, which need not be this one
 
 ## Related Documentation
 - [Sonar Data Ecosystem](sonar_ecosystem.md) - Big-picture map of sonar data flow + umbrella/ADR tracker
