@@ -24,7 +24,10 @@
 # frame (metres). The polygon is projected into it and cell_size is metres
 # in it. Source grids may be published in other frames (each boat has its
 # own map frame, with its own origin); the assessor transforms them into
-# this frame before resampling.
+# this frame before resampling. Projecting the polygon and transforming the
+# source frames into the raster frame needs a georeference for each frame (a
+# projected frame, or a map frame with a known origin); a frame without one
+# is an assessment failure for that source.
 #
 # Invariant: area_meeting_standard <= area_covered <= area_total. Cells
 # outside the polygon are not counted in any of the three.
