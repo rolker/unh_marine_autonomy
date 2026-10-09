@@ -292,7 +292,7 @@ Conventions, shared by every field below:
 #### `marine_interfaces/SurveyArea`
 - `string id`: tells areas apart; a repeat with the same `id` replaces the earlier definition
 - `builtin_interfaces/Time stamp`: when the definition was made; on the same `id` the newer wins. Any ordering beyond `stamp` is the transport's job; no QoS contract is claimed
-- `GeoPolygon polygon`: geographic (no frame); first and last points joined
+- `GeoPolygon polygon`: geographic (no frame); the ring is closed implicitly (last point joins the first), and consumers accept a repeated first point at the end as well
 - `SurveyStandard standard`: what the area is to be surveyed to
 - `int16 priority`: lower is more urgent; 0 if unused (matches `marine_nav_interfaces/TaskInformation.priority`)
 

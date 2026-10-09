@@ -9,6 +9,6 @@
 # contract is claimed here.
 string                  id
 builtin_interfaces/Time stamp
-GeoPolygon              polygon    # first and last points joined
+GeoPolygon              polygon    # ring closed implicitly; a repeated first point at the end is accepted too
 SurveyStandard          standard
 int16                   priority   # lower is more urgent; 0 if unused
