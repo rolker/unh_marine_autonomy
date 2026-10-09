@@ -139,3 +139,24 @@ Specialists: static/convention (build, `ros2 interface show` vs docs, CMake orde
 - `ros2 interface show` for the four messages: field names and types match docs/interfaces.md.
 - Project repo tracks no `.pre-commit-config.yaml`; ran the workspace config's hooks on the changed files: no whitespace or end-of-file changes to them (the workspace-only hooks that need `.agent/hooks/` do not run from the project repo).
 - `plan.md` kept in sync (frame and union-test wording, `CoverageContribution` invariants, implementation notes).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-10-09 14:20 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-406 at `0689849`
+**Mode**: pre-push
+**Depth**: Standard (reason: new shared interface definitions + docs; cross-package message surface)
+**Must-fix**: 1 | **Suggestions**: 4
+**Round**: 2 | **Ship**: recommended — one must-fix (down from two), a precise two-place wording fix with an obvious correction; apply it and ship, no third full round needed
+
+Specialists: static/convention (build, `ros2 interface show` vs docs, CMake, count), governance, plan drift, adversarial on the frame/union-test semantics (inline, single reader), Cross-Model (gemini + codex, both EXIT=0; scratch files deleted). Local model off. `./core_ws/build.sh marine_interfaces` finished, `./core_ws/test.sh marine_interfaces`: 5 tests, 0 failures; `ros2 interface show` for all four matches docs/interfaces.md field-for-field; 50 msgs. All ten round-1 fixes verified present and identical in the .msg comments and docs/interfaces.md. `int16 priority` re-verified against `marine_nav_interfaces/TaskInformation.msg:20` (Gemini's contrary must-fix is a false positive). Frame change reads consistently in CoverageAssessment.msg, docs/interfaces.md:283, and plan.md.
+
+### Findings
+- [ ] (must-fix) The union test excludes only NaN uncertainty, so a negative or -Inf uncertainty (e.g. a -9999 nodata sentinel, or any bad value) competes, wins "smallest uncertainty", and vacuously passes `uncertainty <= allowed(depth)` — fail-open, the same hole round 1 closed for the standard. Require candidates to have a finite depth and a finite uncertainty >= 0 (not just non-NaN), in the .msg, the docs bullet, and the "no source competes" sentence; say the same applies to a source's own `area_meeting_standard`. Cross-confirmed: Codex, Gemini — `marine_interfaces/msg/CoverageAssessment.msg:15-21`, `docs/interfaces.md:284`, `docs/interfaces.md:285`, `marine_interfaces/msg/CoverageContribution.msg:25-26`
+- [ ] (suggestion) "a is checked first, before any cell is compared" reads as if only `a` is validated; docs/plan say the standard is checked first. Reword to "the standard is checked first" — `marine_interfaces/msg/SurveyStandard.msg:18`
+- [ ] (suggestion) Depth sign is implicit: say depth is positive down (a grid that stores elevation / negative Z must be negated), otherwise "shallower wins" on ties inverts for elevation-signed grids (sim grids are ENU-style) — `marine_interfaces/msg/SurveyStandard.msg:9-10`, `marine_interfaces/msg/CoverageAssessment.msg:19-21`
+- [ ] (suggestion) Projecting a geographic polygon into `header.frame_id`, and transforming a boat's own map frame into it, needs a georeference for each frame (a UTM/projected frame or a map frame with a known origin); neither the .msg nor the docs say where that comes from or that a frame without one is an assessment failure. One sentence that the assessor owns the lat/lon to frame mapping and publishes nothing if a frame has none — `marine_interfaces/msg/CoverageAssessment.msg:22-26`, `docs/interfaces.md:283`
+- [ ] (suggestion) The resampling rule (source grid to assessment raster, coarser to finer) is, like the polygon rasterisation rule, left to the assessing node but affects `area_covered` and `area_unique`; say so in the same sentence that already leaves rasterisation to the node — `marine_interfaces/msg/CoverageAssessment.msg:7-12`, `docs/interfaces.md:281`
