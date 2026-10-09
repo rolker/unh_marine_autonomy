@@ -7,7 +7,9 @@
 # rasterised polygon, not its geodetic area. Ratios between the area fields
 # compare like with like on one raster, but are not exact against the
 # polygon: which cells count as inside it is the assessing node's
-# rasterisation rule, not fixed here. area_total can be 0 (a polygon smaller
+# rasterisation rule, not fixed here. The resampling rule from a source grid
+# to the assessment raster is the assessor's too, and affects area_covered
+# and area_unique. area_total can be 0 (a polygon smaller
 # than a cell), so consumers guard the divide. Fractions are left to the
 # consumer to compute.
 # The per-source areas in sources are measured on this same raster, after
