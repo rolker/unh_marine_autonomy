@@ -4,7 +4,10 @@
 # the assessment raster, the same one as the totals: the source's grid is
 # resampled to it and clipped to the polygon, so cells outside the polygon
 # are counted in none of these areas. Coverage and meeting the standard are
-# judged from this source alone, independent of the others. Sums across
+# judged from this source alone, independent of the others. As in the union
+# test, a cell meets the standard for a source only if that source has a
+# finite depth and a finite uncertainty >= 0 there; anything else does not
+# meet it. Sums across
 # sources can exceed the totals, because sources overlap; area_unique is the
 # part that cannot.
 #

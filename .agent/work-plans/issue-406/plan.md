@@ -135,8 +135,10 @@ package, taking `GeoPolygon` along) after a second consumer.
   too) are transformed into it by the assessor before resampling. (Host
   decision 2026-10-09; it replaces the earlier "one frame every source grid
   shares" wording.)
-  (b) **depth in the union test**: only sources with both a depth and a
-  non-NaN uncertainty in that cell compete; the depth comes from the one with
+  (b) **depth in the union test**: only sources with both a finite depth and
+  a finite uncertainty >= 0 in that cell compete (a NaN, infinite or negative
+  value does not, and the same holds for a source's own
+  `area_meeting_standard`); the depth comes from the one with
   the smallest uncertainty, ties going to the shallower depth (fail-closed,
   added after the pre-push review); the assessing node (cube_bathymetry#164)
   must implement the same rule.

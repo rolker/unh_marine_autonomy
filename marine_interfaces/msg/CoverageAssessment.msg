@@ -13,8 +13,9 @@
 # The per-source areas in sources are measured on this same raster, after
 # resampling each source grid to it and clipping to the polygon.
 # A cell is covered when any source has a depth for it. To test the
-# standard, only sources with both a depth and a non-NaN uncertainty in that
-# cell compete. The one with the smallest uncertainty supplies the depth, and
+# standard, only sources with both a finite depth and a finite uncertainty
+# >= 0 in that cell compete (NaN, infinite, negative or nodata-sentinel
+# values do not). The one with the smallest uncertainty supplies the depth, and
 # the cell meets the standard when that uncertainty is at most
 # standard.allowed(depth). Ties for the smallest uncertainty go to the
 # shallower depth, the fail-closed choice, since allowed(depth) grows with
