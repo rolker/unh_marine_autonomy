@@ -30,8 +30,12 @@
 # own map frame, with its own origin); the assessor transforms them into
 # this frame before resampling. Projecting the polygon and transforming the
 # source frames into the raster frame needs a georeference for each frame (a
-# projected frame, or a map frame with a known origin); a frame without one
-# is an assessment failure for that source.
+# projected frame, or a map frame with a known origin). If any source frame
+# has none, the whole assessment for that area fails: the assessor publishes
+# no CoverageAssessment (and no coverage_grid) for that area until it is
+# resolved. This message cannot represent a failed source, and sources has
+# one entry per grid in stable order, so a source is never omitted or left
+# as zeros (which would read as uncovered).
 #
 # Invariant: area_meeting_standard <= area_covered <= area_total. Cells
 # outside the polygon are not counted in any of the three.
