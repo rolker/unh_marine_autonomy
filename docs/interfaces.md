@@ -281,7 +281,7 @@ Conventions, shared by every field below:
 - Areas are square metres of the assessment raster, not cell counts, and not geodetic area. No fraction fields; consumers divide.
 - All source grids share one frame, `CoverageAssessment.header.frame_id`. The polygon is projected into that frame and `cell_size` is metres in it.
 - The union test takes depth from the source whose uncertainty is smallest in that cell. The assessing node must implement this rule, so that producer and consumers read one statement.
-- Defaults fail closed: a default `SurveyStandard` (`a` = `b` = 0) gives `allowed(depth)` = 0, so nothing meets it; a covered cell with no uncertainty value does not meet the standard.
+- Defaults fail closed: a default `SurveyStandard` (`a` = `b` = 0), or one with `a` or `b` NaN, negative or infinite, means "not set" and is checked first: nothing meets it, whatever the cell's uncertainty (a cell with uncertainty exactly 0 would otherwise pass `0 <= 0`). `a` and `b` are finite and >= 0 in a standard that is set. A covered cell with no uncertainty value does not meet the standard.
 
 #### `marine_interfaces/SurveyStandard`
 - `string name`: free text for people (e.g. "S-44 Order 1a")

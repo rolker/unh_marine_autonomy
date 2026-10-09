@@ -24,8 +24,9 @@ package, taking `GeoPolygon` along) after a second consumer.
    from the issue body, with the comment changes below. Header comment of each
    says "prototype under #403".
 2. **`SurveyStandard` comment**: add that a default-constructed standard
-   (a = b = 0) gives allowed(depth) = 0, so nothing meets it, which is the safe
-   direction; consumers treat default or NaN as "not set / nothing meets it".
+   (a = b = 0), or one with a or b NaN, negative or infinite, means "not set"
+   and is checked first, so nothing meets it (uncertainty exactly 0 would
+   otherwise pass 0 <= 0); a and b are finite and >= 0 when set.
 3. **`SurveyArea` comment**: keep the stamp/newer-wins rule; add one sentence
    that ordering beyond `stamp` is the transport's job (no QoS contract is
    claimed). `priority` stays `int16`.
@@ -88,7 +89,7 @@ package, taking `GeoPolygon` along) after a second consumer.
 | Principle | Consideration |
 |---|---|
 | Modularity and Decoupling | Only `geographic_msgs`, `std_msgs`, `builtin_interfaces` and our own `GeoPolygon`; the docs say the family moves with `GeoPolygon` (or the new package depends on `marine_interfaces`), not "geographic_msgs only". |
-| Safety First (fail closed) | Default standard means nothing meets it; a covered cell without uncertainty does not meet the standard. Both stated in comments. |
+| Safety First (fail closed) | A default or non-finite standard is checked first and nothing meets it; a covered cell without uncertainty does not meet the standard. Both stated in comments. |
 | Standards Compliance | Plain rosidl .msg, snake_case fields, units in comments; `int16 priority` matches `TaskInformation.priority` as settled by the owner. |
 | Iterative, Validated Evolution | Marked prototype; deferred fields listed in docs; promotion after a second consumer. |
 | Documentation accuracy | Docs written from the committed files and checked against `ros2 interface show`. |
