@@ -135,6 +135,49 @@ def test_point_to_geo_point_with_tf_returns_geo_point(node):
     assert not _errors(node)
 
 
+def _earth_to_frame(frame_id, sec, x, y):
+    transform = TransformStamped()
+    transform.header.frame_id = 'earth'
+    transform.header.stamp.sec = sec
+    transform.child_frame_id = frame_id
+    transform.transform.translation.x = x
+    transform.transform.translation.y = y
+    transform.transform.rotation.w = 1.0
+    return transform
+
+
+@pytest.fixture
+def moving_frame_buffer():
+    """A 'boat' frame on the equator at longitude 0 at t=10, 90 E at t=20."""
+    buffer = Buffer()
+    buffer.set_transform(_earth_to_frame('boat', 10, 6378137.0, 0.0), 'test')
+    buffer.set_transform(_earth_to_frame('boat', 20, 0.0, 6378137.0), 'test')
+    return buffer
+
+
+def test_point_to_geo_point_uses_the_point_stamp(node, moving_frame_buffer):
+    """A point from a moving frame is placed where that frame was at its stamp."""
+    nav = EarthTransforms(node, moving_frame_buffer, map_frame='map')
+    point = PointStamped()
+    point.header.frame_id = 'boat'
+    point.header.stamp.sec = 10
+    geo = nav.pointToGeoPoint(point)
+    assert geo is not None
+    assert math.isclose(geo.position.longitude, 0.0, abs_tol=1e-6)
+    assert geo.header.stamp.sec == 10
+    assert not _errors(node)
+
+
+def test_point_to_geo_point_zero_stamp_uses_latest(node, moving_frame_buffer):
+    nav = EarthTransforms(node, moving_frame_buffer, map_frame='map')
+    point = PointStamped()
+    point.header.frame_id = 'boat'
+    geo = nav.pointToGeoPoint(point)
+    assert geo is not None
+    assert math.isclose(geo.position.longitude, 90.0, abs_tol=1e-6)
+    assert not _errors(node)
+
+
 def test_position_lat_lon_without_tf_returns_none(node):
     nav = RobotNavigation(node, Buffer())
     odom = Odometry()
