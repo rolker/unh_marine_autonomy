@@ -43,3 +43,15 @@ Addressed the one suggestion from the pre-push review: `marine_autonomy/package.
 - `./core_ws/build.sh marine_autonomy` finishes cleanly after the change.
 - Ticked the suggestion's box in the Local Review (Pre-Push) entry.
 - Nothing pushed.
+
+## Implementation
+
+**Status**: complete
+**When**: 2026-10-12 08:39 -04:00
+**By**: Claude Code Agent (Claude Opus 5.5)
+
+Addressed the Copilot review of PR #409 (pointToGeoPoint ignored the point's stamp). Commit `95d3102`: the lookup now uses `rclpy.time.Time.from_msg(point.header.stamp)`, matching `pointListToGeoPointList`; a zero stamp still means the latest transform. Fixed in this PR rather than as a follow-up (owner's decision): the function has no callers and never succeeded before this PR.
+
+- Two new tests in `test_nav.py` with a frame that moves between t=10 and t=20: a point stamped t=10 is placed at t=10's pose, and a zero stamp uses the latest.
+- Revert check: with the old lookup restored and the package rebuilt, `test_point_to_geo_point_uses_the_point_stamp` fails (longitude 90 instead of 0).
+- Build/test, superseding the counts in the entries above: `./core_ws/build.sh marine_autonomy` then `./core_ws/test.sh marine_autonomy`: 157 tests, 0 errors, 0 failures, 16 skipped (cppcheck). `test_nav`: 8 passed.
