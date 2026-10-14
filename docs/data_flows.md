@@ -22,15 +22,15 @@ This document illustrates the data flows through the UNH Marine Autonomy system,
 │  │ command_bridge_  │         (timestamp deduplication)             │
 │  │     sender       │◄────────────────────┐                         │
 │  └────────┬─────────┘                     │                         │
-│           │ project11/command             │                         │
+│           │ marine/command                │                         │
 │           ▼                                │                         │
-│  ┌──────────────────┐  project11/response │                         │
+│  ┌──────────────────┐  marine/response    │                         │
 │  │ command_bridge_  ├────────────────────►│                         │
 │  │    receiver      │                                                │
 │  └────────┬─────────┘                                                │
 │           │                                                          │
-│           ├─► project11/mission_plan                                │
-│           ├─► project11/mission_manager/command                     │
+│           ├─► marine/mission_plan                                   │
+│           ├─► marine/mission_manager/command                        │
 │           └─► piloting_mode                                         │
 └─────────────────────────────────────────────────────────────────────┘
          │              │                  │
@@ -56,15 +56,15 @@ This document illustrates the data flows through the UNH Marine Autonomy system,
 │ command_bridge_     │
 │     sender          │
 └──────┬──────────────┘
-       │ 2. project11/command (timestamped)
+       │ 2. marine/command (timestamped)
        ▼
 ┌─────────────────────┐
 │ command_bridge_     │
 │    receiver         │
 └──────┬──────────────┘
-       │ 3. project11/response (ack) ────┐
+       │ 3. marine/response (ack) ────┐
        │                                  │
-       ├─► 4a. project11/mission_plan    │
+       ├─► 4a. marine/mission_plan    │
        │                                  │
        ▼                                  │
 ┌─────────────────────┐                  │
@@ -96,7 +96,7 @@ This document illustrates the data flows through the UNH Marine Autonomy system,
 └─────────────────────┘                  │
                                           │
        ┌──────────────────────────────────┘
-       │ 10. project11/status/mission_manager (heartbeat)
+       │ 10. marine/status/mission_manager (heartbeat)
        ▼
 ┌─────────────────────┐
 │ command_bridge_     │
@@ -176,7 +176,7 @@ This document illustrates the data flows through the UNH Marine Autonomy system,
 ┌─────────────────────┐
 │ command_bridge      │
 └──────┬──────────────┘
-       │ 2. project11/mission_manager/command
+       │ 2. marine/mission_manager/command
        ▼
 ┌─────────────────────────────────────┐
 │  mission_manager (CampInterface)    │
@@ -233,8 +233,8 @@ This document illustrates the data flows through the UNH Marine Autonomy system,
 - **Purpose**: Handle lossy network links (WiFi, radio)
 - **Mechanism**: 
   - Sender adds timestamp to message
-  - Publishes on `project11/command`
-  - Receiver publishes ack on `project11/response`
+  - Publishes on `marine/command`
+  - Receiver publishes ack on `marine/response`
   - Sender retries if no ack received
   - Receiver deduplicates using timestamp
 

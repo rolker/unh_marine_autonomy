@@ -6,33 +6,33 @@ This document describes all ROS communication interfaces (topics, services, acti
 
 ### Command Bridge (CAMP ↔ System Communication)
 
-#### `project11/command`
+#### `marine/command`
 - **Type**: `std_msgs/String`
 - **Publisher**: `command_bridge_sender`
 - **Subscriber**: `command_bridge_receiver`
 - **Purpose**: Reliable command transport with timestamp tagging for deduplication
 - **Format**: JSON string with timestamp metadata
 
-#### `project11/response`
+#### `marine/response`
 - **Type**: `std_msgs/String`
 - **Publisher**: `command_bridge_receiver`
 - **Subscriber**: `command_bridge_sender`
 - **Purpose**: Acknowledgment for sent commands (send-until-acked protocol)
 
-#### `project11/mission_plan`
+#### `marine/mission_plan`
 - **Type**: `std_msgs/String`
 - **Publisher**: `command_bridge_receiver`
 - **Subscriber**: `mission_manager`
 - **Purpose**: Mission plan upload from CAMP to mission manager
 - **Format**: JSON mission definition
 
-#### `project11/send_command`
+#### `marine/send_command`
 - **Type**: `std_msgs/String`
 - **Publisher**: External (CAMP)
 - **Subscriber**: `command_bridge_sender`
 - **Purpose**: Input queue for commands to be reliably transmitted
 
-#### `project11/mission_manager/command`
+#### `marine/mission_manager/command`
 - **Type**: `std_msgs/String`
 - **Publisher**: `command_bridge_receiver`
 - **Subscriber**: `mission_manager` (CampInterface node)
@@ -47,8 +47,8 @@ This document describes all ROS communication interfaces (topics, services, acti
 
 ### Mission Manager
 
-#### `project11/status/mission_manager`
-- **Type**: `project11_msgs/Heartbeat`
+#### `marine/status/mission_manager`
+- **Type**: `marine_interfaces/Heartbeat`
 - **Publisher**: `mission_manager` (CampInterface node)
 - **Subscriber**: CAMP/monitoring systems
 - **Purpose**: Status feedback with current task information and timestamps
