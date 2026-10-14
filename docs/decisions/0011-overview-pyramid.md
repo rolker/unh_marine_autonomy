@@ -2,6 +2,8 @@
 
 ## Status
 
+**Under revision (2026-09-16, [#391](https://github.com/rolker/unh_marine_autonomy/issues/391)):** the world-store structure this ADR assumes (categories, layer names, what is a source and what is a store) is being re-examined in the living design draft [`docs/world_store_design.md`](../world_store_design.md). Read that first for the current model; this ADR remains the record of what was decided when, and will be amended or superseded by cuts from the draft as sections settle.
+
 Accepted (2026-07-24). Tracked by
 [rolker/unh_marine_autonomy#188](https://github.com/rolker/unh_marine_autonomy/issues/188).
 
