@@ -1671,8 +1671,9 @@ std::atomic<int> g_hup_seen{0};
 std::atomic<std::uint64_t> g_hup_replaced{0};
 std::atomic<int> g_hup_sidecar_present{-1};
 char g_hup_sidecar[4096];
-extern "C" void onTestHup(int)
+extern "C" void onTestHup(int sig)
 {
+  (void)sig;
   g_hup_replaced.store(mtrs::exportOutputsReplaced());
   g_hup_sidecar_present.store(::access(g_hup_sidecar, F_OK) == 0 ? 1 : 0);
   g_hup_seen.store(1);
