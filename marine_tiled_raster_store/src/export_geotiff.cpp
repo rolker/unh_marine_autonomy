@@ -803,7 +803,9 @@ ExportResult exportGeoTiff(
             "layer's overviews (build_depth_overviews / build_sidescan_overviews) "
             "or choose an available level");
   }
-  for (std::string & w : excludedLevelWarnings(level, native_in_box, native_all, selection, tiles)) {
+  std::vector<std::string> level_warnings =
+    excludedLevelWarnings(level, native_in_box, native_all, selection, tiles);
+  for (std::string & w : level_warnings) {
     result.warnings.push_back(std::move(w));
   }
 
