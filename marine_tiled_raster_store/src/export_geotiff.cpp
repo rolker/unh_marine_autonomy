@@ -260,6 +260,45 @@ bool isWithin(const fs::path & p, const fs::path & dir)
   return true;
 }
 
+/// The directories an export must never write into, all from resolvedPath().
+///
+/// A layer's store is found by CONTENT, not by position: the nearest directory
+/// at or above the layer that holds a `registry.json`, looked up from both the
+/// path as given (made absolute, lexically normalized) and its symlink-resolved
+/// form. The layer's parent along both paths is always added too, so a layer
+/// with no registry anywhere above it still protects its siblings, and a
+/// symlinked layer protects the directory holding the LINK (which may be
+/// another store) as well as the one holding its target.
+std::vector<fs::path> storeRoots(const std::string & layer_dir, const fs::path & resolved_layer)
+{
+  std::vector<fs::path> roots;
+  const auto add = [&roots](const fs::path & dir) {
+      if (dir.empty()) {
+        return;
+      }
+      const fs::path r = resolvedPath(dir);
+      if (std::find(roots.begin(), roots.end(), r) == roots.end()) {
+        roots.push_back(r);
+      }
+    };
+  const fs::path lexical =
+    withoutTrailingSeparator(fs::absolute(fs::path(layer_dir)).lexically_normal());
+  for (const fs::path & start : {lexical, resolved_layer}) {
+    add(start.parent_path());
+    for (fs::path dir = start; ; dir = dir.parent_path()) {
+      std::error_code ec;
+      if (fs::exists(dir / "registry.json", ec)) {
+        add(dir);
+        break;
+      }
+      if (dir == dir.parent_path()) {
+        break;
+      }
+    }
+  }
+  return roots;
+}
+
 void validateOptions(const ExportOptions & options)
 {
   if (!options.max_pixels.has_value()) {
@@ -654,25 +693,40 @@ ExportResult exportGeoTiff(
   const fs::path out_path(output_path);
   const fs::path layer = resolvedPath(fs::path(layer_dir));
   const fs::path sidecar = layer / "overviews";
+  // An overviews/ sidecar is not a layer: read as one, its derived tiles would
+  // be labelled native with the native error, and the store guard below would
+  // be anchored one level too low.
+  {
+    const fs::path given =
+      withoutTrailingSeparator(fs::absolute(fs::path(layer_dir)).lexically_normal());
+    if (given.filename() == "overviews" || layer.filename() == "overviews") {
+      throw ExportRefused(
+              "<layer_dir> " + layer_dir + " is an overviews/ sidecar, not a layer: pass the "
+              "layer directory (" + given.parent_path().string() + "); its overviews/ sidecar "
+              "is read automatically");
+    }
+  }
   // The store is data of record and the tool is read-only on it. Refuse an
-  // output anywhere under the directory holding the layer and its registry.json:
-  // that covers the layer, its overviews/ sidecar, any subdirectory, sibling
-  // layers and the registry itself. Paths are compared after resolving
-  // symlinks, so a link to the layer is no way around it. Checked twice: the
+  // output anywhere under a store directory (storeRoots(): the nearest
+  // directory holding registry.json above the layer, and the layer's parent,
+  // along both the given and the resolved path). That covers the layer, its
+  // overviews/ sidecar, any subdirectory, sibling layers and the registry
+  // itself. Paths are compared after resolving symlinks. Checked twice: the
   // output as given (following it if it is itself a symlink), and its resolved
   // directory, where the temporary file is created. Runs before any file exists.
   {
-    const fs::path store_root = layer.parent_path();
     const fs::path out_abs = fs::absolute(out_path);
-    for (const fs::path & candidate :
-      {resolvedPath(out_abs), resolvedPath(out_abs.parent_path()) / out_abs.filename()})
-    {
-      if (isWithin(candidate, store_root)) {
-        throw ExportRefused(
-                "refusing to write the export inside the store: " + candidate.string() +
-                " is under " + store_root.string() + ", the directory holding layer " +
-                layer.filename().string() + " and its registry.json; choose an output "
-                "outside the store");
+    for (const fs::path & store_root : storeRoots(layer_dir, layer)) {
+      for (const fs::path & candidate :
+        {resolvedPath(out_abs), resolvedPath(out_abs.parent_path()) / out_abs.filename()})
+      {
+        if (isWithin(candidate, store_root)) {
+          throw ExportRefused(
+                  "refusing to write the export inside the store: " + candidate.string() +
+                  " is under " + store_root.string() + ", a store directory of layer " +
+                  layer.filename().string() + " (it holds the layer or its registry.json); "
+                  "choose an output outside the store");
+        }
       }
     }
   }

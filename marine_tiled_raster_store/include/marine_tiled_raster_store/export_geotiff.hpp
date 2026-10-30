@@ -189,8 +189,13 @@ std::string registryPathForLayer(const std::string & layer_dir);
 /// @throws std::invalid_argument for invalid options (unset `max_pixels`, box
 ///   out of range or with min >= max, level > 20).
 /// @throws ExportRefused when the request cannot be exported as asked,
-///   including an @p output_path anywhere under the store directory that holds
-///   the layer and its `registry.json` (compared after resolving symlinks).
+///   including a @p layer_dir that is an `overviews/` sidecar (pass the layer;
+///   its sidecar is read automatically) and an @p output_path anywhere under a
+///   store directory of the layer: the nearest directory at or above it that
+///   holds a `registry.json`, and the layer's parent, each found along both the
+///   path as given and its symlink-resolved form (so a symlinked layer guards
+///   the store holding the link and the one holding its target). Paths are
+///   compared after resolving symlinks.
 /// @throws std::runtime_error on an unreadable tile or any GDAL / filesystem
 ///   failure. In every throwing case no output and no temporary file of this
 ///   run is left, and an existing @p output_path is untouched.

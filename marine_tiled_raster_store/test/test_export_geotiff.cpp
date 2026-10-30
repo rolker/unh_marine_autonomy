@@ -979,6 +979,114 @@ TEST(ExportRefusals, OutputAnywhereInTheStoreIsRefused)
   EXPECT_TRUE(fs::exists(beside));
 }
 
+// The store is found by its registry.json, not by position: with the layer
+// nested one directory deeper than usual, the registry beside its group
+// directory is still inside the guarded store.
+TEST(ExportRefusals, StoreRootIsTheNearestDirectoryHoldingTheRegistry)
+{
+  Store s("nested_store");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  const fs::path nested = s.layer().parent_path() / "group" / "processed";
+  writeConst(nested, gridAt(10, kRow10, kCol10), 1.0);
+  const std::string registry_bytes = readFile(s.registry());
+  const mtrs::ExportOptions o = opts(insideTile(10, kRow10, kCol10));
+  for (const fs::path & output : {s.registry(), s.layer().parent_path() / "x.tif",
+      s.layer() / "x.tif"})
+  {
+    SCOPED_TRACE(output.string());
+    try {
+      mtrs::exportGeoTiff(nested.string(), output.string(), o);
+      ADD_FAILURE() << "expected a refusal";
+    } catch (const mtrs::ExportRefused & e) {
+      EXPECT_NE(std::string(e.what()).find("inside the store"), std::string::npos) << e.what();
+    }
+  }
+  EXPECT_EQ(readFile(s.registry()), registry_bytes) << "registry.json was modified";
+  EXPECT_FALSE(fs::exists(s.layer() / "x.tif"));
+  mtrs::exportGeoTiff(nested.string(), s.out().string(), o);
+  EXPECT_TRUE(fs::exists(s.out()));
+}
+
+// An overviews/ sidecar given as the layer is refused outright, whatever the
+// output: read as a layer, its derived tiles would be labelled native and the
+// store guard would be anchored one level too low (the reviewer's reproduction
+// turned registry.json into a TIFF this way).
+TEST(ExportRefusals, OverviewsSidecarGivenAsTheLayerIsRefused)
+{
+  Store s("overviews_as_layer");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  writeConst(s.sidecar(), gridAt(9, kRow10 / 2, kCol10 / 2), 2.0);
+  const std::string registry_bytes = readFile(s.registry());
+  const fs::path sidecar_link = s.root() / "sidecar_link";
+  fs::create_directory_symlink(s.sidecar(), sidecar_link);
+  const mtrs::ExportOptions o = opts(insideTile(9, kRow10 / 2, kCol10 / 2), 9);
+  const std::string slashed = s.sidecar().string() + "/";
+  for (const std::string & layer : {s.sidecar().string(), slashed, sidecar_link.string()}) {
+    for (const fs::path & output : {s.registry(), s.out()}) {
+      SCOPED_TRACE(layer + " -> " + output.string());
+      try {
+        mtrs::exportGeoTiff(layer, output.string(), o);
+        ADD_FAILURE() << "expected a refusal";
+      } catch (const mtrs::ExportRefused & e) {
+        EXPECT_NE(
+          std::string(e.what()).find("its overviews/ sidecar is read automatically"),
+          std::string::npos) << e.what();
+      }
+    }
+  }
+  EXPECT_EQ(readFile(s.registry()), registry_bytes) << "registry.json was modified";
+  expectNothingWritten(s);
+}
+
+// A symlinked layer whose LINK lives in another store's directory: both the
+// store holding the link and the store holding the target are guarded.
+TEST(ExportRefusals, SymlinkedLayerGuardsBothTheLinksStoreAndTheTargetsStore)
+{
+  Store s("link_in_other_store");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  const fs::path other = s.root() / "other";
+  fs::create_directories(other);
+  std::ofstream(other / "registry.json") << R"({"datum": "lat"})";
+  const fs::path link = other / "linked";
+  fs::create_directory_symlink(s.layer(), link);
+  const mtrs::ExportOptions o = opts(insideTile(10, kRow10, kCol10));
+  for (const fs::path & output : {other / "x.tif", other / "registry.json",
+      s.layer().parent_path() / "x.tif", s.registry()})
+  {
+    SCOPED_TRACE(output.string());
+    try {
+      mtrs::exportGeoTiff(link.string(), output.string(), o);
+      ADD_FAILURE() << "expected a refusal";
+    } catch (const mtrs::ExportRefused & e) {
+      EXPECT_NE(std::string(e.what()).find("inside the store"), std::string::npos) << e.what();
+    }
+  }
+  EXPECT_FALSE(fs::exists(other / "x.tif"));
+  EXPECT_FALSE(fs::exists(s.layer().parent_path() / "x.tif"));
+  EXPECT_EQ(readFile(other / "registry.json"), R"({"datum": "lat"})");
+  mtrs::exportGeoTiff(link.string(), s.out().string(), o);
+  EXPECT_TRUE(fs::exists(s.out()));
+}
+
+// A plain layer with no registry.json anywhere above it still exports: its
+// parent is guarded, and an output beside that parent is fine.
+TEST(ExportRefusals, LayerWithNoRegistryAnywhereStillExports)
+{
+  Store s("no_registry_anywhere");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  const mtrs::ExportOptions o = opts(insideTile(10, kRow10, kCol10));
+  EXPECT_THROW(
+    mtrs::exportGeoTiff(
+      s.layer().string(), (s.layer().parent_path() / "x.tif").string(), o),
+    mtrs::ExportRefused);
+  const fs::path beside = s.root() / "beside.tif";
+  const mtrs::ExportResult res = mtrs::exportGeoTiff(s.layer().string(), beside.string(), o);
+  EXPECT_EQ(res.source_level, 10);
+  EXPECT_EQ(readRaster(beside).at(0, 0, 0), 1.0f);
+}
+
 TEST(ExportRefusals, InvalidOptions)
 {
   Store s("invalid_options");

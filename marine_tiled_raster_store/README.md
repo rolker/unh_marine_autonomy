@@ -132,7 +132,9 @@ tile carries it, finest native level judged in
 the box, no-upsample and missing-sidecar-level refusals, sidecar geometric
 error), every pixel of a clipped 2x2 tile neighbourhood against its GGGS cell,
 NaN holes and the NoData count, each refusal leaving no output and no temporary
-file, output replacement, an existing output left byte-identical by a failure
+file, the store guard (the store found by its `registry.json`, a symlinked
+layer guarding both stores, an `overviews/` sidecar refused as the layer),
+output replacement, an existing output left byte-identical by a failure
 after the dataset was created, foreign temporary-file lookalikes left untouched,
 concurrent exports to one output, the datum policy, the Float32 and
 Float64 value paths, the pixel cap at its boundary and on a 64-bit-overflow box,
@@ -154,7 +156,7 @@ ros2 run marine_tiled_raster_store export_geotiff <layer_dir> \
 
 | Option | Meaning |
 |---|---|
-| `<layer_dir>` | The layer directory, e.g. `~/data/world/depths/processed` or `~/data/world/imagery/backscatter/survey`. No layer name is inspected. |
+| `<layer_dir>` | The layer directory, e.g. `~/data/world/depths/processed` or `~/data/world/imagery/backscatter/survey`. No layer name is inspected, except that a directory named `overviews` is refused: pass the layer, and its `overviews/` sidecar is read automatically. |
 | `--box LATMIN LONMIN LATMAX LONMAX` | **Required**, degrees, in that order. Snapped outward to the level's cell grid. |
 | `-o`, `--output PATH` | Written to a unique, exclusively created `PATH.tmp.XXXXXX` beside `PATH`, closed (close checked), then renamed over `PATH`. A failed run removes only its own temporary file; a crashed run's leftover is never cleaned up automatically, since nothing this run did not create is ever removed. |
 | `--level N` | Level to export (0-20). Default: the finest level holding a native tile **inside the box**. |
@@ -223,9 +225,14 @@ native tiles and the sidecar (build the layer's overviews first; a missing
 (tile I/O is validated only below 72, and GGGS longitude-scale bands cannot share
 one pixel width); width x height over `--max-pixels` (checked in 64-bit before
 anything is allocated) or a dimension over the GeoTIFF limit; a non-float tile;
-mixed band counts; an output anywhere under the store directory that holds the
-layer and its `registry.json` (the layer, its sidecar, any subdirectory, sibling
-layers, the registry itself), compared after resolving symlinks. An unreadable
+mixed band counts; a `<layer_dir>` that is an `overviews/` sidecar; an output
+anywhere under a store directory of the layer (the layer, its sidecar, any
+subdirectory, sibling layers, the registry itself). A store directory is the
+nearest directory at or above the layer that holds a `registry.json`, plus the
+layer's parent, each looked up along both the path as given and its
+symlink-resolved form, so a symlinked layer guards the store holding the link
+as well as the one holding its target, and a layer with no registry anywhere
+above it still guards its siblings. Paths are compared after resolving symlinks. An unreadable
 tile, one whose georeferencing does not match its filename, or one whose pixel
 grid is not the level's (960 x 960 pixels of the level's cell size, no
 rotation; checked in the header probe, since `loadTile` validates only a tile's
