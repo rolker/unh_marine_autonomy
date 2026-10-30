@@ -411,6 +411,9 @@ Probe probeTile(const std::string & path, std::uint8_t level)
   return p;
 }
 
+/// The @p problem readRegistryDatum() reports for a present but empty `datum`.
+constexpr char kEmptyDatumProblem[] = "registry \"datum\" is empty";
+
 /// Source vertical datum from the layer's parent registry. Never throws: a
 /// missing or unparsable registry is reported through @p problem.
 std::optional<std::string> readRegistryDatum(const std::string & path, std::string & problem)
@@ -442,7 +445,7 @@ std::optional<std::string> readRegistryDatum(const std::string & path, std::stri
   }
   const std::string datum = it->get<std::string>();
   if (datum.empty()) {
-    problem = "registry \"datum\" is empty";
+    problem = kEmptyDatumProblem;
     return std::nullopt;
   }
   return datum;
@@ -877,12 +880,22 @@ ExportResult exportGeoTiff(
       result.source_vertical_datum = *datum;
     } else {
       result.source_vertical_datum = "UNKNOWN";
+      // Per marine_bathymetry_store's registry.hpp an empty `datum` ALSO means
+      // "the source was already ellipsoidal", so that value is ambiguous, not
+      // simply missing; the warning says so rather than implying a gap.
+      const std::string ambiguity = problem == kEmptyDatumProblem ?
+        std::string(
+        "  An empty \"datum\" is ambiguous: by the registry contract it also means the\n"
+        "  source was ALREADY ellipsoidal (no conversion), so this may be a recorded\n"
+        "  no-op rather than a missing record. The two cannot be told apart here.\n") :
+        std::string();
       result.warnings.push_back(
         "source datum conversion not recorded for " + layer.string() + "\n"
         "  registry: " + registry + " (" + problem + ")\n"
         "  Stored depths are WGS84 ellipsoidal by the store contract (ADR-0002 D4), so\n"
         "  the output is labelled VERTICAL_DATUM=WGS84_ELLIPSOIDAL, but the datum the\n"
-        "  import converted FROM is not on record: SOURCE_VERTICAL_DATUM=UNKNOWN.\n"
+        "  import converted FROM is not on record: SOURCE_VERTICAL_DATUM=UNKNOWN.\n" +
+        ambiguity +
         "  The registry is shared by sibling layers and may describe another one.");
     }
   } else if (bands == 3) {

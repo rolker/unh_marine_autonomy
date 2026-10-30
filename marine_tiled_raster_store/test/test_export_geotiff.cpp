@@ -1147,6 +1147,10 @@ TEST(ExportDatum, EmptyDatumWarnsAndLabelsEllipsoidal)
     s.layer().string(), s.out().string(), opts(insideTile(10, kRow10, kCol10)));
   EXPECT_TRUE(hasWarning(res, "source datum conversion not recorded"));
   EXPECT_FALSE(hasWarning(res, "datum unknown"));
+  // An empty datum also means "already ellipsoidal": the warning says it is
+  // ambiguous rather than simply missing.
+  EXPECT_TRUE(hasWarning(res, "ambiguous"));
+  EXPECT_TRUE(hasWarning(res, "ALREADY ellipsoidal"));
   EXPECT_EQ(res.vertical_datum, "WGS84_ELLIPSOIDAL");
   ASSERT_TRUE(res.source_vertical_datum.has_value());
   EXPECT_EQ(*res.source_vertical_datum, "UNKNOWN");
@@ -1178,6 +1182,7 @@ TEST(ExportDatum, AbsentOrUnparsableRegistryWarnsNeverRefuses)
     s.layer().string(), s.out().string(), opts(insideTile(10, kRow10, kCol10)));
   EXPECT_TRUE(hasWarning(res, "source datum conversion not recorded"));
   EXPECT_TRUE(hasWarning(res, "registry not found"));
+  EXPECT_FALSE(hasWarning(res, "ambiguous")) << "only an empty datum is ambiguous";
   EXPECT_EQ(res.source_vertical_datum.value_or(""), "UNKNOWN");
   s.writeRegistry("{ this is not json");
   res = mtrs::exportGeoTiff(

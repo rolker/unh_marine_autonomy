@@ -195,7 +195,10 @@ is therefore labelled `VERTICAL_DATUM=WGS84_ELLIPSOIDAL` and carries
 `SOURCE_VERTICAL_DATUM=<registry datum>`. When that is empty, missing or the
 registry is absent or unparsable, the export **continues** with
 `SOURCE_VERTICAL_DATUM=UNKNOWN` and a multi-line WARNING that the source datum
-conversion is not recorded. The registry is read from
+conversion is not recorded. For an empty `datum` the warning adds that the value
+is ambiguous rather than missing: by the registry contract an empty `datum` also
+means the source was already ellipsoidal (no conversion), and the two cannot be
+told apart. The registry is read from
 `<layer_dir>/../registry.json` after resolving symlinks (a trailing slash on
 `<layer_dir>` is ignored, and a symlink to a layer finds its own store's registry).
 That file is shared by sibling layers (`processed`, `chart`, `reference`), so it
