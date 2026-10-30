@@ -140,7 +140,8 @@ output replacement, an existing output left byte-identical by a failure
 after the dataset was created, foreign temporary-file lookalikes left untouched,
 concurrent exports to one output, the datum policy, the Float32 and
 Float64 value paths, the pixel cap at its boundary and on a 64-bit-overflow box,
-and the CLI's exit codes (it runs the built executable).
+and the CLI's exit codes and its SIGINT/SIGTERM cleanup (it runs the built
+executable).
 
 ## Whole-area GeoTIFF export (#370)
 
@@ -160,11 +161,14 @@ ros2 run marine_tiled_raster_store export_geotiff <layer_dir> \
 |---|---|
 | `<layer_dir>` | The layer directory, e.g. `~/data/world/depths/processed` or `~/data/world/imagery/backscatter/survey`. No layer name is inspected, except that a directory named `overviews` is refused: pass the layer, and its `overviews/` sidecar is read automatically. |
 | `--box LATMIN LONMIN LATMAX LONMAX` | **Required**, degrees, in that order. Snapped outward to the level's cell grid. |
-| `-o`, `--output PATH` | Written to a unique, exclusively created `PATH.tmp.XXXXXX` beside `PATH`, closed (close checked), then renamed over `PATH`. After the rename the previous output's GDAL sidecars (`PATH.aux.xml`, `PATH.aux`, `PATH.ovr`, `PATH.msk`) are removed, as GDAL's own overwrite would, so old statistics, overviews or a mask never attach to the new raster; nothing else is touched. A failed run removes only its own temporary file; a crashed run's leftover is never cleaned up automatically, since nothing this run did not create is ever removed. |
+| `-o`, `--output PATH` | Written to a unique, exclusively created `PATH.tmp.XXXXXX` beside `PATH`, closed (close checked), then renamed over `PATH`. After the rename the previous output's GDAL sidecars (`PATH.aux.xml`, `PATH.aux`, `PATH.ovr`, `PATH.msk`) are removed, as GDAL's own overwrite would, so old statistics, overviews or a mask never attach to the new raster; nothing else is touched. A failed run removes only its own temporary file, and so does an interrupted one (SIGINT, SIGTERM or SIGHUP: the CLI removes the file and dies of the signal, the output untouched); a crashed run's leftover is never cleaned up automatically, since nothing this run did not create is ever removed. |
 | `--level N` | Level to export (0-20). Default: the finest level holding a native tile **inside the box**. |
 | `--max-pixels N` | Refuse when width x height (pixels **per band**) exceeds `N`. Default 250,000,000 (1 GB of Float32 per band uncompressed; multiply by the band count for the total). The library has no default. |
 
-Exit status: 0 written, 1 refused or failed (nothing written), 2 usage error.
+Exit status: 0 written, 1 refused or failed (nothing written), 2 usage error;
+an interrupted run dies of the signal, with its temporary file removed. A
+program calling `exportGeoTiff()` directly gets the same from its own signal
+handler by calling `removeInFlightExportTmpFiles()` (async-signal-safe).
 Numbers are parsed strictly: `--level` and `--max-pixels` take decimal digits
 only (no sign, no whitespace), and a `--box` value with leading whitespace or
 trailing text is rejected, all as usage errors.

@@ -25,6 +25,8 @@
 #include "marine_tiled_raster_store/export_geotiff.hpp"
 
 #include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include <gdal_priv.h>
@@ -33,6 +35,7 @@
 #include <ogr_spatialref.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cerrno>
 #include <cmath>
@@ -182,17 +185,96 @@ fs::path createUniqueTmp(const std::string & output_path)
           std::to_string(kAttempts) + " attempts");
 }
 
+/// The temporary files of the exports in flight in this process, readable from
+/// a signal handler (removeInFlightExportTmpFiles()). A fixed table of slots,
+/// so the handler touches only lock-free atomics and plain char arrays.
+/// Slot state: 0 free, 1 being filled or cleared, 2 holds a live path.
+constexpr std::size_t kTmpSlots = 16;
+constexpr std::size_t kTmpPathMax = 4096;
+struct TmpSlot
+{
+  std::atomic<int> state{0};
+  char path[kTmpPathMax];
+};
+TmpSlot g_tmp_slots[kTmpSlots];
+static_assert(std::atomic<int>::is_always_lock_free, "the signal handler needs lock-free atomics");
+
+/// Record @p p as in flight; returns its slot, or -1 when the table is full or
+/// the path too long (that export then simply has no signal-time cleanup).
+int registerInFlightTmp(const fs::path & p)
+{
+  const std::string & s = p.native();
+  if (s.size() >= kTmpPathMax) {
+    return -1;
+  }
+  for (std::size_t i = 0; i < kTmpSlots; ++i) {
+    int expected = 0;
+    if (g_tmp_slots[i].state.compare_exchange_strong(expected, 1)) {
+      std::memcpy(g_tmp_slots[i].path, s.c_str(), s.size() + 1);
+      g_tmp_slots[i].state.store(2, std::memory_order_release);
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+void unregisterInFlightTmp(int slot)
+{
+  if (slot >= 0) {
+    g_tmp_slots[slot].state.store(0, std::memory_order_release);
+  }
+}
+
 /// RAII: removes THIS run's temporary file on every exit path that does not
-/// disarm it. Declared BEFORE the dataset closer so the dataset is closed first.
+/// disarm it, and keeps it registered for removeInFlightExportTmpFiles() until
+/// then. Declared BEFORE the dataset closer so the dataset is closed first.
 struct TmpRemover
 {
   fs::path path;
+  int slot = -1;
   bool armed = true;
+  TmpRemover(fs::path p, int s)
+  : path(std::move(p)), slot(s) {}
+  TmpRemover(const TmpRemover &) = delete;
+  TmpRemover & operator=(const TmpRemover &) = delete;
+  /// After the rename: the path is no longer ours to remove.
+  void disarm()
+  {
+    armed = false;
+    unregisterInFlightTmp(slot);
+    slot = -1;
+  }
   ~TmpRemover()
   {
     if (armed) {
       std::error_code ec;
       fs::remove(path, ec);
+    }
+    // Unregistered only after the removal, so a signal in between still finds it.
+    unregisterInFlightTmp(slot);
+  }
+};
+
+/// Blocks SIGINT, SIGTERM and SIGHUP in the calling thread while alive, so the
+/// temporary file cannot be created and then missed by a signal handler
+/// before it is registered.
+struct TerminationSignalsBlocked
+{
+  sigset_t previous;
+  bool blocked = false;
+  TerminationSignalsBlocked()
+  {
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGINT);
+    sigaddset(&set, SIGTERM);
+    sigaddset(&set, SIGHUP);
+    blocked = pthread_sigmask(SIG_BLOCK, &set, &previous) == 0;
+  }
+  ~TerminationSignalsBlocked()
+  {
+    if (blocked) {
+      pthread_sigmask(SIG_SETMASK, &previous, nullptr);
     }
   }
 };
@@ -701,6 +783,15 @@ void checkCE(CPLErr err, const std::string & what)
 
 }  // namespace
 
+void removeInFlightExportTmpFiles() noexcept
+{
+  for (TmpSlot & slot : g_tmp_slots) {
+    if (slot.state.load(std::memory_order_acquire) == 2) {
+      ::unlink(slot.path);
+    }
+  }
+}
+
 CellWindow snapBoxToLevel(const ExportBox & box, std::uint8_t level)
 {
   if (static_cast<std::size_t>(level) >= gggs::levels.size()) {
@@ -1072,8 +1163,11 @@ ExportResult exportGeoTiff(
   if (driver == nullptr) {
     throw std::runtime_error("GTiff driver unavailable");
   }
+  std::optional<TerminationSignalsBlocked> signals_blocked;
+  signals_blocked.emplace();
   const fs::path tmp_path = createUniqueTmp(output_path);
-  TmpRemover tmp_guard{tmp_path};
+  TmpRemover tmp_guard(tmp_path, registerInFlightTmp(tmp_path));
+  signals_blocked.reset();   // a signal pending meanwhile is delivered here
   DatasetCloser out;
   {
     char ** create = nullptr;
@@ -1285,7 +1379,7 @@ ExportResult exportGeoTiff(
     throw std::runtime_error("failed to flush/close " + tmp_path.string() + gdalReason());
   }
   fs::rename(tmp_path, out_path);   // atomic replace of an existing output
-  tmp_guard.armed = false;
+  tmp_guard.disarm();
   // A replaced output's sidecars (statistics, overviews, mask) would otherwise
   // be attached to the new raster. After the rename, so a failed run leaves
   // the previous output and its sidecars exactly as they were.

@@ -24,11 +24,15 @@
 // marine_tiled_raster_store::exportGeoTiff (export_geotiff.cpp), where the
 // selection, refusals and writing live and are tested.
 
+#include <signal.h>
+#include <unistd.h>
+
 #include <cctype>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <iomanip>
 #include <iostream>
@@ -70,7 +74,9 @@ void usage(std::ostream & os)
     "                  multiply by the band count for the total). Peak memory\n"
     "                  is at most about twice the uncompressed output, usually\n"
     "                  far less (see the package README)\n"
-    "  Exit status: 0 written, 1 refused or failed (nothing written), 2 usage.\n";
+    "  Exit status: 0 written, 1 refused or failed (nothing written), 2 usage.\n"
+    "  Interrupted (SIGINT/SIGTERM/SIGHUP): the temporary file is removed and the\n"
+    "  process dies of the signal; the output is untouched.\n";
 }
 
 /// A finite decimal number with nothing before or after it. strtod skips
@@ -111,6 +117,32 @@ bool parseUnsigned(const std::string & text, std::uint64_t & out)
   }
   out = static_cast<std::uint64_t>(v);
   return true;
+}
+
+/// SIGINT / SIGTERM / SIGHUP: remove the in-flight temporary file, then die of
+/// the same signal (SA_RESETHAND restored the default action on entry, and the
+/// re-raised signal is delivered as soon as the handler returns). Ctrl-C is the
+/// normal way to stop a long export, so it must not leave a partial
+/// `<out>.tmp.XXXXXX` behind. Async-signal-safe calls only.
+extern "C" void onTerminationSignal(int sig)
+{
+  mtrs::removeInFlightExportTmpFiles();
+  static const char kMsg[] = "export_geotiff: interrupted; nothing written\n";
+  const ssize_t ignored = ::write(STDERR_FILENO, kMsg, sizeof(kMsg) - 1);
+  (void)ignored;
+  ::raise(sig);
+}
+
+void installTerminationHandlers()
+{
+  struct sigaction sa;
+  std::memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = onTerminationSignal;
+  sa.sa_flags = SA_RESETHAND;
+  sigemptyset(&sa.sa_mask);
+  for (const int sig : {SIGINT, SIGTERM, SIGHUP}) {
+    ::sigaction(sig, &sa, nullptr);
+  }
 }
 
 int usageError(const std::string & message)
@@ -193,6 +225,7 @@ int main(int argc, char ** argv)
   }
   options.box = b;
 
+  installTerminationHandlers();
   try {
     const mtrs::ExportResult r = mtrs::exportGeoTiff(*layer_dir, *output, options);
     for (const std::string & w : r.warnings) {

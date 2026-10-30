@@ -19,11 +19,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+#include <fcntl.h>
 #include <gtest/gtest.h>
 #include <gdal_priv.h>
+#include <signal.h>
+#include <spawn.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -1807,4 +1812,70 @@ TEST(ExportCli, MaxPixelsOptionIsHonoured)
   EXPECT_EQ(r.status, 1);
   EXPECT_NE(r.err.find("over the cap of 1000"), std::string::npos) << r.err;
   expectNothingWritten(s);
+}
+
+// Ctrl-C (or a SIGTERM) is the normal way to stop a long export: the CLI's
+// handler removes the in-flight temporary file and the process dies of the
+// signal, leaving an existing output untouched.
+TEST(ExportCli, InterruptRemovesTheTemporaryFile)
+{
+  for (const int sig : {SIGINT, SIGTERM}) {
+    SCOPED_TRACE(sig);
+    Store s("cli_interrupt");
+    writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+    std::ofstream(s.out()) << "previous";
+    // A tall box over mostly empty tile positions: about 48 M pixels, so the
+    // write takes long enough to be interrupted while the temporary file exists.
+    const double r0 = static_cast<double>(kRow10) * kEdge;
+    const double c0 = static_cast<double>(kCol10) * kEdge;
+    const mtrs::ExportBox box = cellBox(10, r0 + 10, c0 + 10, r0 + 16010, c0 + 3010);
+    const auto num = [](double v) {
+        std::ostringstream ss;
+        ss.precision(17);
+        ss << v;
+        return ss.str();
+      };
+    std::vector<std::string> args = {EXPORT_GEOTIFF_EXE, s.layer().string(), "--box",
+      num(box.lat_min), num(box.lon_min), num(box.lat_max), num(box.lon_max), "-o",
+      s.out().string()};
+    std::vector<char *> argv;
+    for (std::string & a : args) {
+      argv.push_back(a.data());
+    }
+    argv.push_back(nullptr);
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&fa, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+    pid_t pid = 0;
+    const int spawned = posix_spawn(&pid, EXPORT_GEOTIFF_EXE, &fa, nullptr, argv.data(), environ);
+    posix_spawn_file_actions_destroy(&fa);
+    ASSERT_EQ(spawned, 0);
+    bool seen = false, exited = false;
+    int status = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (!seen && !exited && std::chrono::steady_clock::now() < deadline) {
+      seen = !tmpFiles(s).empty();
+      if (!seen) {
+        exited = waitpid(pid, &status, WNOHANG) == pid;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    }
+    if (!seen) {
+      if (!exited) {
+        kill(pid, SIGKILL);
+        waitpid(pid, &status, 0);
+      }
+      FAIL() << "the export " << (exited ? "finished" : "timed out") <<
+        " before its temporary file was seen";
+    }
+    ASSERT_EQ(kill(pid, sig), 0);
+    ASSERT_EQ(waitpid(pid, &status, 0), pid);
+    EXPECT_TRUE(WIFSIGNALED(status)) << "status " << status;
+    if (WIFSIGNALED(status)) {
+      EXPECT_EQ(WTERMSIG(status), sig);
+    }
+    EXPECT_TRUE(tmpFiles(s).empty()) << "an interrupted export left its temporary file";
+    EXPECT_EQ(readFile(s.out()), "previous");
+  }
 }
