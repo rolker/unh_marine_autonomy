@@ -43,3 +43,18 @@ Findings are from the issue body plus its one comment, and from a read of the re
 - [ ] Require windowed writing + max-pixel cap; define band-name table per layer kind.
 - [ ] Place exporter where both stores are readable (tiled-raster-store core is layer-agnostic; the CLI likely belongs there or in a thin shared tool, not bathymetry_store, since backscatter does not depend on it). Package placement needs a decision at plan time.
 - [ ] Docs consequences: package README(s), `.agents/README.md` package inventory, and ADR-0011 note on exporting from the sidecar.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-10-30 10:20 -04:00
+**By**: Claude Sonnet
+
+**Plan**: `.agent/work-plans/issue-370/plan.md` at `6d2ea7d`
+**Branch**: feature/issue-370 at `6d2ea7d`
+**Phases**: single
+
+### Open questions
+- [ ] Default `--max-pixels` value (proposed 250,000,000)
+- [ ] Dtype probe via GDAL header vs tile-I/O helper (implementation detail)
+- [ ] `--layer-kind auto` by band count acceptable?
+- [ ] Preferred wording for the NAD83(2011)-labelled-WGS84 metadata note
