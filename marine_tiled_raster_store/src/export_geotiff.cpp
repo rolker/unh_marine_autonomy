@@ -972,9 +972,13 @@ ExportResult exportGeoTiff(
     const fs::path given =
       withoutTrailingSeparator(fs::absolute(fs::path(layer_dir)).lexically_normal());
     if (given.filename() == "overviews" || layer.filename() == "overviews") {
+      // The layer is the directory that really holds the sidecar: for a
+      // symlink to an overviews/ that is the TARGET's parent, not the link's.
+      const fs::path suggested = layer.filename() == "overviews" ?
+        layer.parent_path() : given.parent_path();
       throw ExportRefused(
               "<layer_dir> " + layer_dir + " is an overviews/ sidecar, not a layer: pass the "
-              "layer directory (" + given.parent_path().string() + "); its overviews/ sidecar "
+              "layer directory (" + suggested.string() + "); its overviews/ sidecar "
               "is read automatically");
     }
   }

@@ -1232,6 +1232,9 @@ TEST(ExportRefusals, OverviewsSidecarGivenAsTheLayerIsRefused)
   fs::create_directory_symlink(s.sidecar(), sidecar_link);
   const mtrs::ExportOptions o = opts(insideTile(9, kRow10 / 2, kCol10 / 2), 9);
   const std::string slashed = s.sidecar().string() + "/";
+  // The suggested layer is the directory really holding the sidecar, also for
+  // the symlink (whose own directory is the store root, not a layer).
+  const std::string suggested = "(" + fs::canonical(s.layer()).string() + ")";
   for (const std::string & layer : {s.sidecar().string(), slashed, sidecar_link.string()}) {
     for (const fs::path & output : {s.registry(), s.out()}) {
       SCOPED_TRACE(layer + " -> " + output.string());
@@ -1242,6 +1245,7 @@ TEST(ExportRefusals, OverviewsSidecarGivenAsTheLayerIsRefused)
         EXPECT_NE(
           std::string(e.what()).find("its overviews/ sidecar is read automatically"),
           std::string::npos) << e.what();
+        EXPECT_NE(std::string(e.what()).find(suggested), std::string::npos) << e.what();
       }
     }
   }
