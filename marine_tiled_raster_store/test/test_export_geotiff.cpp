@@ -23,6 +23,7 @@
 #include <gdal_priv.h>
 #include <sys/wait.h>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -792,6 +793,51 @@ TEST(ExportRefusals, TileGeoreferencedUnlikeItsNameFails)
     EXPECT_NE(std::string(e.what()).find("not as its name says"), std::string::npos) << e.what();
   }
   expectNothingWritten(s);
+}
+
+// loadTile recovers a tile's grid from its ORIGIN only. A tile with the right
+// origin but another pixel size (or a rotation) would be stretched into place;
+// the exporter's probe checks the pixel grid against the level and fails first.
+TEST(ExportRefusals, TileWithTheWrongPixelSizeFails)
+{
+  const double cell = cellSpan(10);
+  const std::vector<std::pair<std::string, std::array<double, 3>>> bad = {
+    {"doubled pixel width", {2.0 * cell, 0.0, -cell}},
+    {"halved pixel height", {cell, 0.0, -0.5 * cell}},
+    {"rotated", {cell, 1e-6, -cell}},
+  };
+  for (const auto & item : bad) {
+    SCOPED_TRACE(item.first);
+    Store s("pixel_size");
+    writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+    const gggs::GridIndex g = gridAt(10, kRow10, kCol10 + 1);
+    writeConst(s.layer(), g, 2.0);
+    {
+      GDALAllRegister();
+      const fs::path path = s.layer() / mtrs::tileFilename(g);
+      GDALDataset * ds = GDALDataset::FromHandle(GDALOpen(path.c_str(), GA_Update));
+      ASSERT_NE(ds, nullptr);
+      double gt[6];
+      ASSERT_EQ(ds->GetGeoTransform(gt), CE_None);
+      gt[1] = item.second[0];
+      gt[2] = item.second[1];
+      gt[5] = item.second[2];
+      ASSERT_EQ(ds->SetGeoTransform(gt), CE_None);
+      ASSERT_EQ(GDALClose(ds), CE_None);
+    }
+    const double r0 = static_cast<double>(kRow10) * kEdge;
+    const double c0 = static_cast<double>(kCol10) * kEdge;
+    try {
+      mtrs::exportGeoTiff(
+        s.layer().string(), s.out().string(),
+        opts(cellBox(10, r0 + 10, c0 + 10, r0 + 20, c0 + 2 * kEdge - 10)));
+      ADD_FAILURE() << "expected a failure";
+    } catch (const std::runtime_error & e) {
+      EXPECT_NE(std::string(e.what()).find("cannot be placed by its origin"), std::string::npos)
+        << e.what();
+    }
+    expectNothingWritten(s);
+  }
 }
 
 TEST(ExportRefusals, MixedBandCounts)

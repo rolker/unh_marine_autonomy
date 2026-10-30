@@ -74,6 +74,9 @@ constexpr std::uint64_t kEdge = gggs::cell_rows_per_grid;   // 960 cells per til
 constexpr int kBlock = 256;
 /// A box edge this close (in cells) to a lattice line snaps onto it.
 constexpr double kSnapToleranceCells = 1e-4;
+/// Relative tolerance on a tile's pixel size against the level's cell span
+/// (saveTile writes span / 960, exact to rounding).
+constexpr double kPixelSizeTolerance = 1e-9;
 /// GGGS lattice origin: rows count north from -96 deg, columns east from -180.
 constexpr double kLatOrigin = -96.0;
 constexpr double kLonOrigin = -180.0;
@@ -348,7 +351,12 @@ struct Probe
   bool float64 = false;
 };
 
-Probe probeTile(const std::string & path)
+/// Also checks the tile's pixel grid against @p level: 960 x 960 pixels, cell
+/// size `cell_angular_span` in both axes (north-up, so pixel_y negative) and no
+/// rotation terms. `loadTile` recovers a tile's grid from its origin only, so a
+/// tile with the right origin but another pixel size would otherwise be
+/// stretched or squeezed into place without a word.
+Probe probeTile(const std::string & path, std::uint8_t level)
 {
   DatasetCloser in;
   CPLErrorReset();
@@ -373,6 +381,32 @@ Probe probeTile(const std::string & path)
               "; only Float32/Float64 layers can be exported (a non-float layer, "
               "e.g. uint16 sidescan, has no NaN no-data and no band-name table here)");
     }
+  }
+  if (in.ds->GetRasterXSize() != static_cast<int>(kEdge) ||
+    in.ds->GetRasterYSize() != static_cast<int>(kEdge))
+  {
+    throw std::runtime_error(
+            "tile " + path + " is " + std::to_string(in.ds->GetRasterXSize()) + " x " +
+            std::to_string(in.ds->GetRasterYSize()) + " px; a GGGS tile is " +
+            std::to_string(kEdge) + " x " + std::to_string(kEdge));
+  }
+  double gt[6];
+  if (in.ds->GetGeoTransform(gt) != CE_None) {
+    throw std::runtime_error("tile " + path + " has no geotransform");
+  }
+  // The longitude scale factor is 1 for every tile of a non-polar box (72 deg
+  // is a tile boundary at every level), so both axes share the cell span.
+  const double cell = gggs::levels[level].cell_angular_span;
+  const double tol = kPixelSizeTolerance * cell;
+  if (std::abs(gt[1] - cell) > tol || std::abs(gt[5] + cell) > tol ||
+    std::abs(gt[2]) > tol || std::abs(gt[4]) > tol)
+  {
+    throw std::runtime_error(
+            "tile " + path + " has geotransform pixel size " + formatDouble(gt[1]) + " x " +
+            formatDouble(gt[5]) + " (rotation " + formatDouble(gt[2]) + ", " +
+            formatDouble(gt[4]) + "); level " + std::to_string(static_cast<unsigned>(level)) +
+            " expects " + formatDouble(cell) + " x " + formatDouble(-cell) +
+            " with no rotation, so it cannot be placed by its origin");
   }
   return p;
 }
@@ -760,7 +794,7 @@ ExportResult exportGeoTiff(
   std::string first_path;
   bool any_float64 = false;
   for (const auto & item : selection) {
-    const Probe p = probeTile(item.second.path);
+    const Probe p = probeTile(item.second.path, level);
     if (!first.has_value()) {
       first = p;
       first_path = item.second.path;

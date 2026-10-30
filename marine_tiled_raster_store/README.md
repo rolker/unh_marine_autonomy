@@ -223,8 +223,10 @@ anything is allocated) or a dimension over the GeoTIFF limit; a non-float tile;
 mixed band counts; an output anywhere under the store directory that holds the
 layer and its `registry.json` (the layer, its sidecar, any subdirectory, sibling
 layers, the registry itself), compared after resolving symlinks. An unreadable
-tile, or one whose georeferencing does not match its filename, fails
-the export the same way.
+tile, one whose georeferencing does not match its filename, or one whose pixel
+grid is not the level's (960 x 960 pixels of the level's cell size, no
+rotation; checked in the header probe, since `loadTile` validates only a tile's
+origin) fails the export the same way.
 
 **Memory and writing.** The output is written one 256-row block-row strip at a
 time (fewer rows when the box is shorter), and no output block is ever read
