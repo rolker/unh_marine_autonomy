@@ -36,6 +36,7 @@
 #include <cctype>
 #include <cerrno>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -534,9 +535,17 @@ std::optional<std::string> readRegistryDatum(const std::string & path, std::stri
   return datum;
 }
 
-/// Native tiles at levels other than the export level whose data really is
-/// missing from the export. Two cases, judged per tile position (no pixels are
-/// read):
+/// What excludedLevels() found: warnings that can be given from tile names
+/// alone, and the selected export-level positions that lie beneath a coarser
+/// native tile (with those coarser levels), whose NaN cells the writer counts.
+struct ExcludedLevels
+{
+  std::vector<std::string> warnings;
+  std::map<TileKey, std::set<std::uint8_t>> under_coarser;
+};
+
+/// Native tiles at levels other than the export level whose data is (or may
+/// be) missing from the export. Judged per tile position from names only:
 ///  - HOLE: a native tile at another level covers a position the export level
 ///    leaves empty (no native and no sidecar tile there). For a coarser native
 ///    tile that is every uncovered export-level position beneath it (a coarser
@@ -546,26 +555,38 @@ std::optional<std::string> readRegistryDatum(const std::string & path, std::stri
 ///    export level up to its own (exclusive). The overview fold never carries
 ///    data past a native tile (ADR-0011 fold scope), so whatever fills that
 ///    export-level position holds none of the finer tile's data.
-/// A native tile at another level that is fully covered by an export-level
-/// tile carrying its data (a finer native tile whose sidecar ancestor is
-/// present with no native tile in between, or a coarser one under export-level
-/// tiles) is not reported: nothing of it is lost.
+/// A third case needs the pixels and is judged by the writer from
+/// `under_coarser`:
+///  - REPLACED: a coarser native tile lies under export-level tiles. Neither a
+///    native export-level tile nor a sidecar tile (folded only from FINER
+///    levels) carries the coarser data, so wherever such a tile is NaN inside
+///    the window, the coarser tile's data there (if it has any) is lost: a
+///    coarser level is replaced where an export-level tile exists, never used
+///    to fill its holes.
+/// Not reported, because nothing of it is lost: a finer native tile whose
+/// sidecar ancestor is present with no native tile in between (the fold
+/// carried its data), and a coarser native tile under export-level tiles that
+/// are fully valid (band 1 non-NaN) wherever the window crosses its footprint.
+/// Positions outside @p tiles are not in the export and are never counted.
 /// Valid where the longitude scale factor is 1 (every tile in a non-polar
 /// box), where the tile lattice nests exactly: level L tile (r, c) covers level
 /// L+k tile rows [r*2^k, (r+1)*2^k) and columns [c*2^k, (c+1)*2^k).
-std::vector<std::string> excludedLevelWarnings(
+ExcludedLevels excludedLevels(
   std::uint8_t level, const std::map<std::uint8_t, std::vector<gggs::GridIndex>> & native_in_box,
   const std::vector<gggs::GridIndex> & native_all,
   const std::map<TileKey, SelectedTile> & selection, const TileRange & tiles)
 {
+  ExcludedLevels result;
   using LevelKey = std::tuple<std::uint8_t, std::uint64_t, std::uint64_t>;
   std::set<LevelKey> native_keys;
   for (const gggs::GridIndex & g : native_all) {
     native_keys.emplace(g.level(), g.row(), g.column());
   }
-  const auto selected = [&selection](std::uint64_t row, std::uint64_t col) {
-      return selection.count(
-        TileKey{static_cast<std::uint32_t>(row), static_cast<std::uint32_t>(col)}) != 0;
+  const auto key = [](std::uint64_t row, std::uint64_t col) {
+      return TileKey{static_cast<std::uint32_t>(row), static_cast<std::uint32_t>(col)};
+    };
+  const auto selected = [&selection, &key](std::uint64_t row, std::uint64_t col) {
+      return selection.count(key(row, col)) != 0;
     };
   std::set<std::uint8_t> hole_levels, shadowed_levels, shadowing_levels;
   std::set<std::pair<std::uint64_t, std::uint64_t>> holes;
@@ -590,6 +611,8 @@ std::vector<std::string> excludedLevelWarnings(
             if (!selected(r, c)) {
               holes.emplace(r, c);
               hole_levels.insert(other);
+            } else {
+              result.under_coarser[key(r, c)].insert(other);
             }
           }
         }
@@ -621,7 +644,7 @@ std::vector<std::string> excludedLevelWarnings(
       }
     }
   }
-  std::vector<std::string> warnings;
+  std::vector<std::string> & warnings = result.warnings;
   const std::string level_str = std::to_string(static_cast<unsigned>(level));
   if (!holes.empty()) {
     warnings.push_back(
@@ -638,7 +661,7 @@ std::vector<std::string> excludedLevelWarnings(
       "scope), so their data never reached level " + level_str + "; export at their "
       "own level to include it");
   }
-  return warnings;
+  return result;
 }
 
 void checkCE(CPLErr err, const std::string & what)
@@ -901,9 +924,8 @@ ExportResult exportGeoTiff(
             "layer's overviews (build_depth_overviews / build_sidescan_overviews) "
             "or choose an available level");
   }
-  std::vector<std::string> level_warnings =
-    excludedLevelWarnings(level, native_in_box, native_all, selection, tiles);
-  for (std::string & w : level_warnings) {
+  ExcludedLevels excluded = excludedLevels(level, native_in_box, native_all, selection, tiles);
+  for (std::string & w : excluded.warnings) {
     result.warnings.push_back(std::move(w));
   }
 
@@ -1068,6 +1090,10 @@ ExportResult exportGeoTiff(
   std::vector<float> strip(bands * static_cast<std::size_t>(width * strip_rows));
   std::vector<std::uint64_t> valid(bands, 0);
   std::uint64_t overflowed = 0;
+  // REPLACED case of excludedLevels(): band-1 NaN cells of export-level tiles
+  // lying over a coarser native tile, and those coarser levels.
+  std::uint64_t replaced_nan_cells = 0;
+  std::set<std::uint8_t> replaced_levels;
   // Loaded tiles, clipped to the window and cast to Float32, in GGGS cell order
   // (row 0 = SOUTH: loadTile flips the north-up file back once). Strips run
   // north -> south and are at most 256 rows, so the cache spans at most two
@@ -1135,6 +1161,18 @@ ExportResult exportGeoTiff(
             }
           }
         }
+        const auto coarser = excluded.under_coarser.find(key);
+        if (coarser != excluded.under_coarser.end()) {
+          const std::uint64_t nan_cells = static_cast<std::uint64_t>(
+            std::count_if(
+              clipped.data.begin(),
+              clipped.data.begin() + static_cast<std::ptrdiff_t>(clipped.rows() * clipped.cols()),
+              [](float v) {return std::isnan(v);}));
+          if (nan_cells > 0) {
+            replaced_nan_cells += nan_cells;
+            replaced_levels.insert(coarser->second.begin(), coarser->second.end());
+          }
+        }
         cache.emplace(key, std::move(clipped));
       }
     }
@@ -1173,6 +1211,15 @@ ExportResult exportGeoTiff(
   const std::uint64_t total = width * height;
   for (std::size_t b = 0; b < bands; ++b) {
     result.nodata_count.push_back(total - valid[b]);
+  }
+  if (replaced_nan_cells > 0) {
+    result.warnings.push_back(
+      "native tiles at level(s) " + levelList(replaced_levels) + " inside the box are NOT "
+      "used to fill holes: only level " + level_str + " is read, and " +
+      std::to_string(replaced_nan_cells) + " band-1 cell(s) of level-" + level_str +
+      " tiles lying over them are NaN, so any coarser data there is lost from the export "
+      "(a coarser level is replaced where a level-" + level_str + " tile exists, never "
+      "merged into it); export at their own level to see it");
   }
   if (overflowed > 0) {
     result.warnings.push_back(

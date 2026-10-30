@@ -126,9 +126,10 @@ geometric errors, the JSON round-trip, the tolerant read, and the refusal to
 expand a run wider than its level's grid extent.
 
 `test_export_geotiff` covers the exporter: per-tile selection (native wins,
-mixed native + sidecar, excluded native levels warned about only where their
-data is lost (holes, or beneath a native ancestor) and not where a sidecar
-tile carries it, finest native level judged in
+mixed native + sidecar, excluded native levels warned about where their
+data is lost (holes, beneath a native ancestor, or a coarser level under
+export-level NaN cells, counted inside the box only) and not where a sidecar
+tile carries it or fully valid export-level tiles cover it, finest native level judged in
 the box, no-upsample and missing-sidecar-level refusals, sidecar geometric
 error), every pixel of a clipped 2x2 tile neighbourhood against its GGGS cell,
 NaN holes and the NoData count, each refusal leaving no output and no temporary
@@ -174,14 +175,26 @@ geometric error, band-1 NoData count, vertical datum) to stdout.
 that level: the native `<level>_<row>_<col>.tif` wins, else the derived
 `overviews/<level>_<row>_<col>.tif`, else a NaN hole. Native and sidecar tiles
 may mix in one export (`SOURCE_KIND=mixed`). Native tiles at other levels inside
-the box are not read. A WARNING names their levels only where their data is
-really missing from the export: a native tile (coarser or finer) covering a
-position the export level leaves empty, which becomes a NaN hole; or a finer
-native tile beneath a native tile at a level from the export level up, since
-the overview fold never carries data past a native tile (ADR-0011 fold scope).
-A sidecar tile that carries the finer native data, as at an explicit coarse
-`--level` over an up-to-date pyramid, raises no warning. Nothing is folded or
-upsampled on the fly.
+the box are not read. A WARNING names their levels where their data is, or may
+be, missing from the export, in three cases:
+
+- a native tile (coarser or finer) covering a position the export level leaves
+  empty, which becomes a NaN hole;
+- a finer native tile beneath a native tile at a level from the export level
+  up, since the overview fold never carries data past a native tile (ADR-0011
+  fold scope);
+- a coarser native tile under export-level tiles that are NaN (band 1) somewhere
+  inside the box. Neither a native export-level tile nor a sidecar tile (folded
+  only from finer levels) carries coarser data: a coarser level is replaced
+  where an export-level tile exists, never used to fill its holes. The warning
+  counts those NaN cells; the coarser tile itself is not read, so it says the
+  data there *may* be lost. This is the normal shape of a mixed-resolution
+  reference layer.
+
+No warning is raised for a sidecar tile that carries the finer native data, as
+at an explicit coarse `--level` over an up-to-date pyramid, or for a coarser
+native tile under export-level tiles that are fully valid (band 1) wherever the
+box crosses it. Nothing is folded or upsampled on the fly.
 
 **Band names** come from the band count only: 2 = `depth,uncertainty`;
 3 = `mean,scaled_standard_error,sample_sd`; anything else `band_1..N` (with a

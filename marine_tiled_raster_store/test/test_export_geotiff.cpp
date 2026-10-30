@@ -538,7 +538,8 @@ TEST(ExportSelection, OtherNativeLevelsInTheBoxAreExcludedWithAWarning)
 // The reviewer's reproduction: an explicit coarse --level whose sidecar tile
 // carries the finer native data (no native tile in between) loses nothing, so
 // it must not warn. Likewise a coarser native tile under the box whose every
-// export-level position holds a tile.
+// export-level position holds a tile that is fully valid (band 1 non-NaN)
+// inside the window: there is no hole the coarser data could have filled.
 TEST(ExportSelection, CoveredOtherLevelsDoNotWarn)
 {
   Store s("covered_levels");
@@ -550,12 +551,61 @@ TEST(ExportSelection, CoveredOtherLevelsDoNotWarn)
   EXPECT_EQ(res.source_kind, "overview");
   EXPECT_FALSE(hasWarning(res, "NOT exported")) << "sidecar-covered native data is not lost";
   // A native level-8 tile over the same ground, default level 10: the box's
-  // only level-10 position holds a native tile, so nothing of level 8 is a hole.
+  // only level-10 position holds a native tile with no NaN cell, so nothing of
+  // level 8 can be missing.
   writeConst(s.layer(), gridAt(8, kRow10 / 4, kCol10 / 4), 3.0);
   res = mtrs::exportGeoTiff(
     s.layer().string(), s.out().string(), opts(insideTile(10, kRow10, kCol10)));
   EXPECT_EQ(res.source_level, 10);
-  EXPECT_FALSE(hasWarning(res, "NOT exported"));
+  EXPECT_EQ(res.nodata_count[0], 0u);
+  EXPECT_TRUE(res.warnings.empty()) << res.warnings.front();
+}
+
+// The reviewer's other reproduction: a coarser native tile under export-level
+// tiles that have NaN cells. Neither a native export-level tile nor a sidecar
+// tile (folded from FINER levels only) carries the coarser data, so it is lost
+// wherever the export-level tile is NaN, and that is warned about, counting
+// only the NaN cells inside the window. Typical of a mixed-resolution
+// reference layer.
+TEST(ExportSelection, CoarserNativeUnderNanCellsOfExportLevelTilesWarns)
+{
+  Store s("coarser_under_nan");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  // Level-10 tile: the southern half (local rows < 480) NaN in band 1 only;
+  // band 2 is valid everywhere, so only band 1 decides.
+  writeTile<double>(
+    s.layer(), gridAt(10, kRow10, kCol10), 2,
+    [](std::size_t r, std::size_t, std::size_t b) {return b == 0 && r < 480 ? kNaN : 1.0;},
+    kNaN);
+  writeConst(s.layer(), gridAt(8, kRow10 / 4, kCol10 / 4), 3.0);
+  const double r0 = static_cast<double>(kRow10) * kEdge;
+  const double c0 = static_cast<double>(kCol10) * kEdge;
+  // Rows 400..600 x columns 100..200: 80 NaN rows (400..479) x 100 columns.
+  mtrs::ExportResult res = mtrs::exportGeoTiff(
+    s.layer().string(), s.out().string(),
+    opts(cellBox(10, r0 + 400, c0 + 100, r0 + 600, c0 + 200)));
+  EXPECT_EQ(res.source_level, 10);
+  EXPECT_EQ(res.nodata_count[0], 8000u);
+  EXPECT_TRUE(
+    hasWarning(res, "native tiles at level(s) 8 inside the box are NOT used to fill holes"));
+  EXPECT_TRUE(hasWarning(res, "8000 band-1 cell(s) of level-10 tiles"));
+  EXPECT_FALSE(hasWarning(res, "NaN holes")) << "the position holds a tile: not a hole";
+  // The same tile, but a window over its valid northern half only: no warning.
+  res = mtrs::exportGeoTiff(
+    s.layer().string(), s.out().string(),
+    opts(cellBox(10, r0 + 500, c0 + 100, r0 + 600, c0 + 200)));
+  EXPECT_EQ(res.nodata_count[0], 0u);
+  EXPECT_FALSE(hasWarning(res, "NOT used to fill holes"));
+  // A sidecar tile at the export level carries no coarser data either.
+  writeTile<double>(
+    s.sidecar(), gridAt(9, kRow10 / 2, kCol10 / 2), 2,
+    [](std::size_t r, std::size_t, std::size_t) {return r < 300 ? kNaN : 2.0;}, kNaN);
+  res = mtrs::exportGeoTiff(
+    s.layer().string(), s.out().string(),
+    opts(insideTile(9, kRow10 / 2, kCol10 / 2), 9));
+  EXPECT_EQ(res.source_kind, "overview");
+  EXPECT_TRUE(
+    hasWarning(res, "native tiles at level(s) 8 inside the box are NOT used to fill holes"));
 }
 
 // Finer native data beneath a NATIVE ancestor never reaches the export level:
