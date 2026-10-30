@@ -222,6 +222,15 @@ applies whenever the layer had an `overviews/` when the export started, even
 if the export used none of its tiles: which positions became holes was still
 decided from the old sidecar.
 
+The check has two limits. It compares the directory's device and inode
+numbers, and on some filesystems those can change without any rebuild: CIFS
+mounted without `serverino`, FUSE without `use_ino`, or a share remounted by
+autofs mid-export (the NAS season archive under `/mnt/nadata` is
+autofs-mounted). The export then fails with "was replaced during the export;
+retry", which is safe but misleading; retrying, or exporting from a local
+copy, gets past it. And a rebuild that rewrites tiles inside the existing
+`overviews/` without renaming the directory is not detected at all.
+
 **Band names** come from the band count only: 2 = `depth,uncertainty`;
 3 = `mean,scaled_standard_error,sample_sd`; anything else `band_1..N` (with a
 warning). A header probe of every selected tile refuses any band that is not
