@@ -126,7 +126,9 @@ geometric errors, the JSON round-trip, the tolerant read, and the refusal to
 expand a run wider than its level's grid extent.
 
 `test_export_geotiff` covers the exporter: per-tile selection (native wins,
-mixed native + sidecar, excluded native levels, finest native level judged in
+mixed native + sidecar, excluded native levels warned about only where their
+data is lost (holes, or beneath a native ancestor) and not where a sidecar
+tile carries it, finest native level judged in
 the box, no-upsample and missing-sidecar-level refusals, sidecar geometric
 error), every pixel of a clipped 2x2 tile neighbourhood against its GGGS cell,
 NaN holes and the NoData count, each refusal leaving no output and no temporary
@@ -165,7 +167,13 @@ geometric error, band-1 NoData count, vertical datum) to stdout.
 that level: the native `<level>_<row>_<col>.tif` wins, else the derived
 `overviews/<level>_<row>_<col>.tif`, else a NaN hole. Native and sidecar tiles
 may mix in one export (`SOURCE_KIND=mixed`). Native tiles at other levels inside
-the box are not read, and a WARNING lists those levels. Nothing is folded or
+the box are not read. A WARNING names their levels only where their data is
+really missing from the export: a native tile (coarser or finer) covering a
+position the export level leaves empty, which becomes a NaN hole; or a finer
+native tile beneath a native tile at a level from the export level up, since
+the overview fold never carries data past a native tile (ADR-0011 fold scope).
+A sidecar tile that carries the finer native data, as at an explicit coarse
+`--level` over an up-to-date pyramid, raises no warning. Nothing is folded or
 upsampled on the fly.
 
 **Band names** come from the band count only: 2 = `depth,uncertainty`;

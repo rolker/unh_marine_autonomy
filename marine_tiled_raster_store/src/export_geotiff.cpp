@@ -48,6 +48,7 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -373,6 +374,113 @@ std::optional<std::string> readRegistryDatum(const std::string & path, std::stri
   return datum;
 }
 
+/// Native tiles at levels other than the export level whose data really is
+/// missing from the export. Two cases, judged per tile position (no pixels are
+/// read):
+///  - HOLE: a native tile at another level covers a position the export level
+///    leaves empty (no native and no sidecar tile there). For a coarser native
+///    tile that is every uncovered export-level position beneath it (a coarser
+///    level is never upsampled); for a finer one, its own export-level ancestor
+///    position (stale or missing sidecar).
+///  - SHADOWED: a finer native tile has a NATIVE ancestor at a level from the
+///    export level up to its own (exclusive). The overview fold never carries
+///    data past a native tile (ADR-0011 fold scope), so whatever fills that
+///    export-level position holds none of the finer tile's data.
+/// A native tile at another level that is fully covered by an export-level
+/// tile carrying its data (a finer native tile whose sidecar ancestor is
+/// present with no native tile in between, or a coarser one under export-level
+/// tiles) is not reported: nothing of it is lost.
+/// Valid where the longitude scale factor is 1 (every tile in a non-polar
+/// box), where the tile lattice nests exactly: level L tile (r, c) covers level
+/// L+k tile rows [r*2^k, (r+1)*2^k) and columns [c*2^k, (c+1)*2^k).
+std::vector<std::string> excludedLevelWarnings(
+  std::uint8_t level, const std::map<std::uint8_t, std::vector<gggs::GridIndex>> & native_in_box,
+  const std::vector<gggs::GridIndex> & native_all,
+  const std::map<TileKey, SelectedTile> & selection, const TileRange & tiles)
+{
+  using LevelKey = std::tuple<std::uint8_t, std::uint64_t, std::uint64_t>;
+  std::set<LevelKey> native_keys;
+  for (const gggs::GridIndex & g : native_all) {
+    native_keys.emplace(g.level(), g.row(), g.column());
+  }
+  const auto selected = [&selection](std::uint64_t row, std::uint64_t col) {
+      return selection.count(
+        TileKey{static_cast<std::uint32_t>(row), static_cast<std::uint32_t>(col)}) != 0;
+    };
+  std::set<std::uint8_t> hole_levels, shadowed_levels, shadowing_levels;
+  std::set<std::pair<std::uint64_t, std::uint64_t>> holes;
+  for (const auto & item : native_in_box) {
+    const std::uint8_t other = item.first;
+    if (other == level) {
+      continue;
+    }
+    for (const gggs::GridIndex & g : item.second) {
+      if (other < level) {
+        const unsigned k = static_cast<unsigned>(level - other);
+        const std::uint64_t r_first =
+          std::max<std::uint64_t>(static_cast<std::uint64_t>(g.row()) << k, tiles.row_first);
+        const std::uint64_t r_last = std::min<std::uint64_t>(
+          ((static_cast<std::uint64_t>(g.row()) + 1) << k) - 1, tiles.row_last);
+        const std::uint64_t c_first =
+          std::max<std::uint64_t>(static_cast<std::uint64_t>(g.column()) << k, tiles.col_first);
+        const std::uint64_t c_last = std::min<std::uint64_t>(
+          ((static_cast<std::uint64_t>(g.column()) + 1) << k) - 1, tiles.col_last);
+        for (std::uint64_t r = r_first; r <= r_last; ++r) {
+          for (std::uint64_t c = c_first; c <= c_last; ++c) {
+            if (!selected(r, c)) {
+              holes.emplace(r, c);
+              hole_levels.insert(other);
+            }
+          }
+        }
+        continue;
+      }
+      // Finer: the nearest native ancestor from its own level - 1 down to the
+      // export level, if any.
+      bool shadowed = false;
+      for (int a = static_cast<int>(other) - 1; a >= static_cast<int>(level); --a) {
+        const unsigned k = static_cast<unsigned>(static_cast<int>(other) - a);
+        if (native_keys.count(
+            LevelKey{static_cast<std::uint8_t>(a), g.row() >> k, g.column() >> k}) != 0)
+        {
+          shadowed = true;
+          shadowing_levels.insert(static_cast<std::uint8_t>(a));
+          break;
+        }
+      }
+      if (shadowed) {
+        shadowed_levels.insert(other);
+        continue;
+      }
+      const unsigned k = static_cast<unsigned>(other - level);
+      const std::uint64_t r = static_cast<std::uint64_t>(g.row()) >> k;
+      const std::uint64_t c = static_cast<std::uint64_t>(g.column()) >> k;
+      if (!selected(r, c)) {
+        holes.emplace(r, c);
+        hole_levels.insert(other);
+      }
+    }
+  }
+  std::vector<std::string> warnings;
+  const std::string level_str = std::to_string(static_cast<unsigned>(level));
+  if (!holes.empty()) {
+    warnings.push_back(
+      "native tiles at level(s) " + levelList(hole_levels) + " inside the box are NOT "
+      "exported: only level " + level_str + " is read (native, else sidecar), and " +
+      std::to_string(holes.size()) + " level-" + level_str + " tile position(s) they "
+      "cover have no tile at that level, so their data appears there as NaN holes");
+  }
+  if (!shadowed_levels.empty()) {
+    warnings.push_back(
+      "native tiles at level(s) " + levelList(shadowed_levels) + " inside the box are NOT "
+      "exported: they lie beneath native tile(s) at level(s) " + levelList(shadowing_levels) +
+      ", and the overview fold never carries data past a native tile (ADR-0011 fold "
+      "scope), so their data never reached level " + level_str + "; export at their "
+      "own level to include it");
+  }
+  return warnings;
+}
+
 void checkCE(CPLErr err, const std::string & what)
 {
   if (err != CE_None) {
@@ -602,13 +710,8 @@ ExportResult exportGeoTiff(
             "layer's overviews (build_depth_overviews / build_sidescan_overviews) "
             "or choose an available level");
   }
-  std::set<std::uint8_t> excluded = native_levels;
-  excluded.erase(level);
-  if (!excluded.empty()) {
-    result.warnings.push_back(
-      "native tiles at level(s) " + levelList(excluded) + " inside the box are NOT "
-      "exported: only level " + level_str + " is read (native, else sidecar), so "
-      "where level " + level_str + " has no tile they appear as NaN holes");
+  for (std::string & w : excludedLevelWarnings(level, native_in_box, native_all, selection, tiles)) {
+    result.warnings.push_back(std::move(w));
   }
 
   // ---- Required dtype probe of every selected tile (headers only). ----

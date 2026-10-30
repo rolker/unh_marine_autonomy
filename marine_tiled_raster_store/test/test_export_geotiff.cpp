@@ -510,6 +510,77 @@ TEST(ExportSelection, OtherNativeLevelsInTheBoxAreExcludedWithAWarning)
     s.layer().string(), s.out().string(), opts(cellBox(10, r0 + 10, c0 + 10, r0 + 20, c9 + 10)));
   EXPECT_EQ(res.source_level, 10);
   EXPECT_TRUE(hasWarning(res, "native tiles at level(s) 9 inside the box are NOT exported"));
+  EXPECT_TRUE(hasWarning(res, "NaN holes"));
+}
+
+// The reviewer's reproduction: an explicit coarse --level whose sidecar tile
+// carries the finer native data (no native tile in between) loses nothing, so
+// it must not warn. Likewise a coarser native tile under the box whose every
+// export-level position holds a tile.
+TEST(ExportSelection, CoveredOtherLevelsDoNotWarn)
+{
+  Store s("covered_levels");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  writeConst(s.sidecar(), gridAt(9, kRow10 / 2, kCol10 / 2), 2.0);
+  mtrs::ExportResult res = mtrs::exportGeoTiff(
+    s.layer().string(), s.out().string(), opts(insideTile(10, kRow10, kCol10), 9));
+  EXPECT_EQ(res.source_kind, "overview");
+  EXPECT_FALSE(hasWarning(res, "NOT exported")) << "sidecar-covered native data is not lost";
+  // A native level-8 tile over the same ground, default level 10: the box's
+  // only level-10 position holds a native tile, so nothing of level 8 is a hole.
+  writeConst(s.layer(), gridAt(8, kRow10 / 4, kCol10 / 4), 3.0);
+  res = mtrs::exportGeoTiff(
+    s.layer().string(), s.out().string(), opts(insideTile(10, kRow10, kCol10)));
+  EXPECT_EQ(res.source_level, 10);
+  EXPECT_FALSE(hasWarning(res, "NOT exported"));
+}
+
+// Finer native data beneath a NATIVE ancestor never reaches the export level:
+// the fold stops at a native tile (ADR-0011 fold scope).
+TEST(ExportSelection, FinerNativeBeneathANativeAncestorWarns)
+{
+  Store s("shadowed_levels");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  writeConst(s.layer(), gridAt(9, kRow10 / 2, kCol10 / 2), 2.0);
+  // Export at the native ancestor's own level: the native level-9 tile is read.
+  mtrs::ExportResult res = mtrs::exportGeoTiff(
+    s.layer().string(), s.out().string(), opts(insideTile(10, kRow10, kCol10), 9));
+  EXPECT_EQ(res.source_kind, "native");
+  EXPECT_TRUE(hasWarning(res, "native tiles at level(s) 10 inside the box are NOT exported"));
+  EXPECT_TRUE(hasWarning(res, "beneath native tile(s) at level(s) 9"));
+  EXPECT_FALSE(hasWarning(res, "NaN holes"));
+  // Export coarser still, from a sidecar level-8 tile: the level-9 native tile
+  // is in between, so the level-10 data is still missing.
+  writeConst(s.sidecar(), gridAt(8, kRow10 / 4, kCol10 / 4), 3.0);
+  res = mtrs::exportGeoTiff(
+    s.layer().string(), s.out().string(), opts(insideTile(10, kRow10, kCol10), 8));
+  EXPECT_EQ(res.source_kind, "overview");
+  EXPECT_TRUE(hasWarning(res, "native tiles at level(s) 10 inside the box are NOT exported"));
+  EXPECT_TRUE(hasWarning(res, "beneath native tile(s) at level(s) 9"));
+}
+
+// Finer native data whose export-level position has no tile at all (a stale or
+// partial sidecar) is a hole, and says so.
+TEST(ExportSelection, FinerNativeOverAnExportLevelHoleWarns)
+{
+  Store s("finer_over_hole");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  const gggs::GridIndex west = gridAt(10, kRow10, kCol10);
+  // Four level-9 tiles further east (8 level-10 tiles): a different level-9 parent.
+  const gggs::GridIndex east = gridAt(10, kRow10, kCol10 + 8);
+  writeConst(s.layer(), west, 1.0);
+  writeConst(s.layer(), east, 1.0);
+  writeConst(s.sidecar(), gridAt(9, kRow10 / 2, kCol10 / 2), 2.0);   // west's parent only
+  const double r0 = static_cast<double>(kRow10) * kEdge;
+  const double c0 = static_cast<double>(kCol10) * kEdge;
+  const mtrs::ExportResult res = mtrs::exportGeoTiff(
+    s.layer().string(), s.out().string(),
+    opts(cellBox(10, r0 + 10, c0 + 10, r0 + 20, c0 + 9 * kEdge - 10), 9));
+  EXPECT_TRUE(hasWarning(res, "native tiles at level(s) 10 inside the box are NOT exported"));
+  EXPECT_TRUE(hasWarning(res, "1 level-9 tile position(s)"));
+  EXPECT_FALSE(hasWarning(res, "beneath native"));
 }
 
 TEST(ExportSelection, FinestNativeLevelIsJudgedInsideTheBox)
@@ -583,7 +654,9 @@ TEST(ExportSelection, CoarseLevelFromTheSidecarCarriesItsGeometricError)
   EXPECT_EQ(res.source_level, 8);
   EXPECT_EQ(res.source_kind, "overview");
   EXPECT_DOUBLE_EQ(res.geometric_error_m, 3.625);
-  EXPECT_TRUE(hasWarning(res, "native tiles at level(s) 10"));
+  // The sidecar tile carries the native level-10 data (no native tile in
+  // between): nothing is lost, so no excluded-level warning.
+  EXPECT_FALSE(hasWarning(res, "NOT exported"));
   const Raster out = readRaster(s.out());
   EXPECT_EQ(out.at(0, 0, 0), 7.0f);
   EXPECT_EQ(out.md.at("SOURCE_LEVEL"), "8");
