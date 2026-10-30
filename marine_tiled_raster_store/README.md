@@ -132,7 +132,8 @@ tile carries it, finest native level judged in
 the box, no-upsample and missing-sidecar-level refusals, sidecar geometric
 error), every pixel of a clipped 2x2 tile neighbourhood against its GGGS cell,
 NaN holes and the NoData count, each refusal leaving no output and no temporary
-file, output replacement, foreign temporary-file lookalikes left untouched,
+file, output replacement, an existing output left byte-identical by a failure
+after the dataset was created, foreign temporary-file lookalikes left untouched,
 concurrent exports to one output, the datum policy, the Float32 and
 Float64 value paths, the pixel cap at its boundary and on a 64-bit-overflow box,
 and the CLI's exit codes (it runs the built executable).

@@ -950,6 +950,46 @@ TEST(ExportOutput, ExistingOutputReplacedOnSuccessUntouchedOnRefusal)
   EXPECT_TRUE(tmpFiles(s).empty());
 }
 
+// A failure AFTER the temporary file and dataset exist (every other
+// existing-output test fails before Create): a truncated tile has a valid
+// header, so it passes the probe, and fails only when its pixels are read
+// during the strip loop. The existing output must be byte-identical and no
+// temporary file may remain.
+TEST(ExportOutput, FailureAfterCreateLeavesTheExistingOutputUntouched)
+{
+  Store s("fail_after_create");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  const gggs::GridIndex bad = gridAt(10, kRow10, kCol10 + 1);
+  // Varying values so the compressed pixel data is large and lies after the
+  // header (GDAL writes the IFD first): cutting the file in half keeps the
+  // header readable and loses pixel strips.
+  writeTile<double>(
+    s.layer(), bad, 2,
+    [](std::size_t r, std::size_t c, std::size_t b) {
+      return std::sin(0.37 * static_cast<double>(r * kEdge + c)) + static_cast<double>(b);
+    },
+    kNaN);
+  const fs::path bad_path = s.layer() / mtrs::tileFilename(bad);
+  fs::resize_file(bad_path, fs::file_size(bad_path) / 2);
+  const std::string previous = "previous output, not a GeoTIFF";
+  std::ofstream(s.out()) << previous;
+  const double r0 = static_cast<double>(kRow10) * kEdge, c0 = static_cast<double>(kCol10) * kEdge;
+  try {
+    mtrs::exportGeoTiff(
+      s.layer().string(), s.out().string(),
+      opts(cellBox(10, r0 + 10, c0 + 10, r0 + 20, c0 + 2 * kEdge - 10)));
+    FAIL() << "expected a failure";
+  } catch (const mtrs::ExportRefused & e) {
+    FAIL() << "the truncated tile was refused by the probe, before Create: " << e.what();
+  } catch (const std::runtime_error & e) {
+    // Failed in loadTile's pixel read, i.e. after the dataset was created.
+    EXPECT_NE(std::string(e.what()).find("read band"), std::string::npos) << e.what();
+  }
+  EXPECT_EQ(readFile(s.out()), previous);
+  EXPECT_TRUE(tmpFiles(s).empty()) << "a failed export left its temporary file";
+}
+
 // The temporary file is unique and exclusively created, and only this run's
 // own file is ever removed: files that merely look like one (a user's file, a
 // crashed run's debris, another run's in-flight file) survive a refusal and a
