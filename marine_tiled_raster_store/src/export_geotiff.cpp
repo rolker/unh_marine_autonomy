@@ -1233,9 +1233,14 @@ ExportResult exportGeoTiff(
   // north -> south and are at most 256 rows, so the cache spans at most two
   // tile rows, and a tile whose tile row lies wholly north of the current strip
   // is never needed again. Memory is bounded by the window, not by the tiles:
-  // at most min(height, 1920) window rows of cached cells plus the strip plus
-  // one tile being decoded, i.e. no more than about twice the uncompressed
-  // output, which --max-pixels caps.
+  // at most min(height, 1920) window rows of cached cells plus the strip,
+  // 4 B x bands x width x (min(height, 1920) + min(height, 256)), never more
+  // than twice the uncompressed output (which --max-pixels caps). On top of
+  // that comes a fixed part: the tile being decoded, as double (7.4 MB per
+  // band), loadTile's 7.4 MB read buffer, and GDAL's own state (about 85 MB
+  // RSS in all, process included, measured for a 2-band export). So the peak is
+  // about twice the output only for a large output; for a small one the fixed
+  // part dominates.
   std::map<TileKey, ClippedTile> cache;
   for (std::uint64_t y0 = 0; y0 < height; y0 += kBlock) {
     const std::uint64_t rows = std::min<std::uint64_t>(kBlock, height - y0);

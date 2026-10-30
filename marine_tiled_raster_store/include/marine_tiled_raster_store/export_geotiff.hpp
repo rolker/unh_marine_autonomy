@@ -37,11 +37,14 @@
 /// The stores hold one GeoTIFF per GGGS tile; sharing a survey needs one file.
 /// `exportGeoTiff()` reads the tiles of one level that intersect a lat/lon box
 /// and writes a single north-up EPSG:4326 Float32 GeoTIFF, strip by strip.
-/// Memory is bounded by the window: one strip of up to 256 output rows, the
+/// Memory is bounded by the window: one strip of up to 256 output rows and the
 /// window's cells from at most two tile rows (up to 1920 rows, kept as
-/// Float32), and one tile being decoded; never more than about twice the
-/// uncompressed output (4 bytes x bands x width x height), which `max_pixels`
-/// caps.
+/// Float32), together never more than twice the uncompressed output (4 bytes x
+/// bands x width x height), which `max_pixels` caps; plus a fixed part, the
+/// tile being decoded (7.4 MB per band as double), a 7.4 MB read buffer and
+/// GDAL's own state (about 85 MB RSS in all, process included, measured for 2
+/// bands). The peak is about twice the output only for a large output; for a
+/// small one the fixed part dominates.
 ///
 /// **Layer-agnostic.** Nothing is keyed on a layer name. The band count picks
 /// the band names (2 = depth/uncertainty, 3 = mean/scaled_standard_error/

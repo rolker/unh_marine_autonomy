@@ -270,12 +270,20 @@ evicted as soon as the strips have passed it, so peak memory is about
 
     4 bytes x bands x width x (min(height, 1920) + min(height, 256))
       + 7.4 MB x bands   (the one tile being decoded, as double)
+      + 7.4 MB           (loadTile's read buffer)
+      + GDAL's own state and the process itself
 
-where width and height are the output's pixels. That is never more than about
-twice the uncompressed output size, so `--max-pixels` does bound memory: at the
-default cap the worst case (a corridor at most 256 rows tall) is about 2 GB per
-band. A square box needs far less, e.g. about 130 MB per band for 15,000 x
-15,000 pixels.
+where width and height are the output's pixels and the first line counts only
+tile positions that hold a tile. The first line is never more than twice the
+uncompressed output size, so `--max-pixels` does bound memory; the rest is a
+fixed part, measured at about 85 MB RSS in all for a 2-band export (a 124 x
+124 pixel export peaked at 88 MB). The peak is therefore about twice the output
+only for a large output; for a small one the fixed part dominates. Measured on
+a dense 2-band synthetic layer, 12,449 x 3,810 pixels (379 MB uncompressed):
+the first line predicts 217 MB, and the peak RSS was 299 MB. At the default cap
+the worst case (a corridor at most 256 rows tall) is about 2 GB per band. A
+square box needs far less, e.g. about 130 MB per band plus the fixed part for
+15,000 x 15,000 pixels.
 
 ## Dependencies
 

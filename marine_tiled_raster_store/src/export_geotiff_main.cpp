@@ -72,8 +72,10 @@ void usage(std::ostream & os)
     "                  (default " << kDefaultMaxPixelsPerBand <<
     " = 1 GB of Float32 per band uncompressed;\n"
     "                  multiply by the band count for the total). Peak memory\n"
-    "                  is at most about twice the uncompressed output, usually\n"
-    "                  far less (see the package README)\n"
+    "                  is the strip and tile-row cache (at most twice the\n"
+    "                  uncompressed output) plus a fixed part of about 85 MB,\n"
+    "                  so about twice the output only for a large one (see the\n"
+    "                  package README)\n"
     "  Exit status: 0 written, 1 refused or failed (nothing written), 2 usage.\n"
     "  Interrupted (SIGINT/SIGTERM/SIGHUP): the temporary file is removed and the\n"
     "  process dies of the signal; the output is untouched.\n";
