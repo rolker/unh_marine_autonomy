@@ -1043,6 +1043,33 @@ TEST(ExportRefusals, NonFloatDtype)
   expectNothingWritten(s);
 }
 
+// Pixels are read raw, so a finite (or infinite) no-data sentinel would be
+// exported as data under the output's NaN no-data tag. Every float writer in
+// the stores uses NaN; anything else is refused.
+TEST(ExportRefusals, NonNanNoDataIsRefused)
+{
+  for (const double nodata : {-9999.0, std::numeric_limits<double>::infinity()}) {
+    SCOPED_TRACE(nodata);
+    Store s("finite_nodata");
+    writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+    writeTile<double>(
+      s.layer(), gridAt(10, kRow10, kCol10 + 1), 2,
+      [](std::size_t, std::size_t c, std::size_t) {return c < 100 ? -9999.0 : 2.0;}, nodata);
+    const double r0 = static_cast<double>(kRow10) * kEdge;
+    const double c0 = static_cast<double>(kCol10) * kEdge;
+    try {
+      mtrs::exportGeoTiff(
+        s.layer().string(), s.out().string(),
+        opts(cellBox(10, r0 + 10, c0 + 10, r0 + 20, c0 + 2 * kEdge - 10)));
+      ADD_FAILURE() << "expected a refusal";
+    } catch (const mtrs::ExportRefused & e) {
+      EXPECT_NE(std::string(e.what()).find("only NaN no-data can be exported"),
+        std::string::npos) << e.what();
+    }
+    expectNothingWritten(s);
+  }
+}
+
 TEST(ExportRefusals, OutputInsideTheLayerDirectory)
 {
   Store s("inside_layer");

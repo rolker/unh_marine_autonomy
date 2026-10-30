@@ -245,7 +245,8 @@ native tiles and the sidecar (build the layer's overviews first; a missing
 `overviews/` may be a rebuild in progress, so retry); a box reaching |lat| >= 72
 (tile I/O is validated only below 72, and GGGS longitude-scale bands cannot share
 one pixel width); width x height over `--max-pixels` (checked in 64-bit before
-anything is allocated) or a dimension over the GeoTIFF limit; a non-float tile;
+anything is allocated) or a dimension over the GeoTIFF limit; a non-float tile, or a band declaring a no-data value other than NaN (pixels are
+read raw, so a `-9999` sentinel would be exported as data);
 mixed band counts; a `<layer_dir>` that is an `overviews/` sidecar; an output
 anywhere under a store directory of the layer (the layer, its sidecar, any
 subdirectory, sibling layers, the registry itself). A store directory is the

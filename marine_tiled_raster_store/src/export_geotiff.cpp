@@ -516,7 +516,8 @@ std::set<std::uint8_t> levelsOf(
 }
 
 /// Header-only GDAL probe of one tile: band count + whether any band is
-/// Float64. Refuses a non-float band; an unopenable file is a runtime failure.
+/// Float64. Refuses a non-float band or a non-NaN no-data value; an unopenable
+/// file is a runtime failure.
 struct Probe
 {
   int bands = 0;
@@ -555,6 +556,16 @@ Probe probeTile(const std::string & path, const gggs::GridIndex & grid)
               GDALGetDataTypeName(t) +
               "; only Float32/Float64 layers can be exported (a non-float layer, "
               "e.g. uint16 sidescan, has no NaN no-data and no band-name table here)");
+    }
+    // Pixels are read raw, so a non-NaN no-data sentinel (-9999, +inf) would be
+    // exported as a valid value under the output's NaN no-data tag.
+    int has_nodata = 0;
+    const double nodata = in.ds->GetRasterBand(b)->GetNoDataValue(&has_nodata);
+    if (has_nodata != 0 && !std::isnan(nodata)) {
+      throw ExportRefused(
+              "tile " + path + " band " + std::to_string(b) + " declares the no-data value " +
+              formatDouble(nodata) + "; only NaN no-data can be exported (its no-data cells "
+              "would be written as valid values)");
     }
   }
   if (in.ds->GetRasterXSize() != static_cast<int>(kEdge) ||
