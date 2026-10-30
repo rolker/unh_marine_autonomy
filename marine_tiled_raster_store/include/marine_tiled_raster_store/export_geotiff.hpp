@@ -159,8 +159,11 @@ struct CellWindow
 /// @brief Snap @p box outward to @p level's cell lattice.
 ///
 /// A box edge within 1e-4 of a cell of a lattice line snaps onto that line, so
-/// floating-point noise never adds a sliver row; the window is never empty.
-/// @throws std::invalid_argument for a level > 20.
+/// floating-point noise never adds a sliver row; the window is never empty
+/// (a zero-size box yields one cell). Values outside the lattice are clamped
+/// onto it.
+/// @throws std::invalid_argument for a level > 20, a non-finite box value, or
+///   a box with LATMIN > LATMAX or LONMIN > LONMAX.
 CellWindow snapBoxToLevel(const ExportBox & box, std::uint8_t level);
 
 /// @brief Band names for a band count: 2 = `depth,uncertainty`;

@@ -571,18 +571,34 @@ CellWindow snapBoxToLevel(const ExportBox & box, std::uint8_t level)
             "snapBoxToLevel: level " + std::to_string(static_cast<unsigned>(level)) +
             " is not a GGGS level (0-20)");
   }
+  // A NaN or infinity reaching the float-to-integer casts below would be
+  // undefined behaviour, so it is refused rather than documented away.
+  for (const double v : {box.lat_min, box.lon_min, box.lat_max, box.lon_max}) {
+    if (!std::isfinite(v)) {
+      throw std::invalid_argument("snapBoxToLevel: box values must be finite");
+    }
+  }
+  if (box.lat_min > box.lat_max || box.lon_min > box.lon_max) {
+    throw std::invalid_argument(
+            "snapBoxToLevel: box needs LATMIN <= LATMAX and LONMIN <= LONMAX");
+  }
   const gggs::LevelSpecs & spec = gggs::levels[level];
   const double cell = spec.cell_angular_span;
-  const auto lower = [cell](double degrees_from_origin) {
-      const double v = std::floor(degrees_from_origin / cell + kSnapToleranceCells);
-      return static_cast<std::uint64_t>(std::max(0.0, v));
-    };
-  const auto upper = [cell](double degrees_from_origin) {
-      const double v = std::ceil(degrees_from_origin / cell - kSnapToleranceCells);
-      return static_cast<std::uint64_t>(std::max(0.0, v));
-    };
   const std::uint64_t max_rows = static_cast<std::uint64_t>(spec.row_count) * kEdge;
   const std::uint64_t max_cols = static_cast<std::uint64_t>(spec.column_count) * kEdge;
+  // Clamped in double BEFORE the cast, so a finite but far out-of-range value
+  // (1e300) cannot overflow the integer conversion either. The results are
+  // clamped to the lattice again below.
+  const double cell_limit = static_cast<double>(std::max(max_rows, max_cols));
+  const auto toCells = [cell_limit](double v) {
+      return static_cast<std::uint64_t>(std::clamp(v, 0.0, cell_limit));
+    };
+  const auto lower = [cell, &toCells](double degrees_from_origin) {
+      return toCells(std::floor(degrees_from_origin / cell + kSnapToleranceCells));
+    };
+  const auto upper = [cell, &toCells](double degrees_from_origin) {
+      return toCells(std::ceil(degrees_from_origin / cell - kSnapToleranceCells));
+    };
   CellWindow w;
   w.row_begin = std::min(lower(box.lat_min - kLatOrigin), max_rows - 1);
   w.row_end = std::min(std::max(upper(box.lat_max - kLatOrigin), w.row_begin + 1), max_rows);

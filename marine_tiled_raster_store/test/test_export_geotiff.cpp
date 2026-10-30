@@ -288,6 +288,27 @@ TEST(ExportSnap, EdgeOnALatticeLineAddsNoSliver)
   EXPECT_EQ(w.col_begin, c0);
 }
 
+TEST(ExportSnap, NonFiniteOrUnorderedBoxIsRefusedAndHugeValuesClamp)
+{
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  for (const mtrs::ExportBox & b : {mtrs::ExportBox{nan, 0.0, 1.0, 1.0},
+      mtrs::ExportBox{0.0, 0.0, 1.0, inf}, mtrs::ExportBox{0.0, -inf, 1.0, 1.0},
+      mtrs::ExportBox{2.0, 0.0, 1.0, 1.0}, mtrs::ExportBox{0.0, 2.0, 1.0, 1.0}})
+  {
+    EXPECT_THROW(mtrs::snapBoxToLevel(b, 10), std::invalid_argument);
+  }
+  // Finite but far outside the lattice: clamped, never an overflowing cast.
+  const mtrs::CellWindow w =
+    mtrs::snapBoxToLevel(mtrs::ExportBox{-1e300, -1e300, 1e300, 1e300}, 3);
+  const std::uint64_t rows = static_cast<std::uint64_t>(gggs::levels[3].row_count) * kEdge;
+  const std::uint64_t cols = static_cast<std::uint64_t>(gggs::levels[3].column_count) * kEdge;
+  EXPECT_EQ(w.row_begin, 0u);
+  EXPECT_EQ(w.row_end, rows);
+  EXPECT_EQ(w.col_begin, 0u);
+  EXPECT_EQ(w.col_end, cols);
+}
+
 TEST(ExportBandNames, ByBandCountOnly)
 {
   EXPECT_EQ(mtrs::bandNamesForCount(2), (std::vector<std::string>{"depth", "uncertainty"}));
