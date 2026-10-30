@@ -28,6 +28,7 @@
 #include <unistd.h>
 
 #include <gdal_priv.h>
+#include <cpl_error.h>
 #include <cpl_string.h>
 #include <ogr_spatialref.h>
 
@@ -114,6 +115,18 @@ struct ClippedTile
     return data.data() + offset(band, global_row);
   }
 };
+
+/// GDAL's own reason for the most recent failure, as ` (GDAL: <message>)`, or
+/// empty when it recorded none. Callers CPLErrorReset() before the call they
+/// check, so a stale message from an earlier, harmless error is never blamed.
+std::string gdalReason()
+{
+  const char * msg = CPLGetLastErrorMsg();
+  if (msg == nullptr || *msg == '\0') {
+    return {};
+  }
+  return std::string(" (GDAL: ") + msg + ")";
+}
 
 /// RAII: closes a GDAL dataset on every exit path.
 struct DatasetCloser
@@ -338,9 +351,11 @@ struct Probe
 Probe probeTile(const std::string & path)
 {
   DatasetCloser in;
+  CPLErrorReset();
   in.ds = GDALDataset::FromHandle(GDALOpen(path.c_str(), GA_ReadOnly));
   if (in.ds == nullptr) {
-    throw std::runtime_error("cannot open tile " + path + " (unreadable or not a raster)");
+    throw std::runtime_error(
+            "cannot open tile " + path + " (unreadable or not a raster)" + gdalReason());
   }
   Probe p;
   p.bands = in.ds->GetRasterCount();
@@ -509,7 +524,7 @@ std::vector<std::string> excludedLevelWarnings(
 void checkCE(CPLErr err, const std::string & what)
 {
   if (err != CE_None) {
-    throw std::runtime_error("GDAL error: " + what);
+    throw std::runtime_error("GDAL error: " + what + gdalReason());
   }
 }
 
@@ -854,16 +869,18 @@ ExportResult exportGeoTiff(
     create = CSLSetNameValue(create, "COMPRESS", "DEFLATE");
     create = CSLSetNameValue(create, "PREDICTOR", "3");
     create = CSLSetNameValue(create, "BIGTIFF", "IF_SAFER");
+    CPLErrorReset();
     out.ds = driver->Create(
       tmp_path.c_str(), static_cast<int>(width), static_cast<int>(height),
       static_cast<int>(bands), GDT_Float32, create);
     CSLDestroy(create);
   }
   if (out.ds == nullptr) {
-    throw std::runtime_error("could not create " + tmp_path.string());
+    throw std::runtime_error("could not create " + tmp_path.string() + gdalReason());
   }
   double gt[6];
   std::copy(result.geotransform.begin(), result.geotransform.end(), gt);
+  CPLErrorReset();
   checkCE(out.ds->SetGeoTransform(gt), "set geotransform");
   {
     OGRSpatialReference srs;
@@ -978,6 +995,7 @@ ExportResult exportGeoTiff(
       }
     }
 
+    CPLErrorReset();
     checkCE(
       out.ds->RasterIO(
         GF_Write, 0, static_cast<int>(y0), static_cast<int>(width), static_cast<int>(rows),
@@ -1023,8 +1041,9 @@ ExportResult exportGeoTiff(
   // I/O failure surfaces only now (GDALClose returns CPLErr since GDAL 3.7).
   GDALDataset * ds = out.ds;
   out.ds = nullptr;
+  CPLErrorReset();
   if (GDALClose(ds) != CE_None) {
-    throw std::runtime_error("failed to flush/close " + tmp_path.string());
+    throw std::runtime_error("failed to flush/close " + tmp_path.string() + gdalReason());
   }
   fs::rename(tmp_path, out_path);   // atomic replace of an existing output
   tmp_guard.armed = false;

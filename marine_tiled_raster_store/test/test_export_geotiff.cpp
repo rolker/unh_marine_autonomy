@@ -757,11 +757,16 @@ TEST(ExportRefusals, CorruptTileFailsTheWholeExport)
   writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
   std::ofstream(s.layer() / mtrs::tileFilename(gridAt(10, kRow10, kCol10 + 1))) << "not a tiff";
   const double r0 = static_cast<double>(kRow10) * kEdge, c0 = static_cast<double>(kCol10) * kEdge;
-  EXPECT_THROW(
+  try {
     mtrs::exportGeoTiff(
       s.layer().string(), s.out().string(),
-      opts(cellBox(10, r0 + 10, c0 + 10, r0 + 20, c0 + 2 * kEdge - 10))),
-    std::runtime_error);
+      opts(cellBox(10, r0 + 10, c0 + 10, r0 + 20, c0 + 2 * kEdge - 10)));
+    FAIL() << "expected a failure";
+  } catch (const std::runtime_error & e) {
+    // GDAL's own reason travels with the message.
+    EXPECT_NE(std::string(e.what()).find("(GDAL: "), std::string::npos) << e.what();
+    EXPECT_NE(std::string(e.what()).find("not recognized"), std::string::npos) << e.what();
+  }
   expectNothingWritten(s);
 }
 
