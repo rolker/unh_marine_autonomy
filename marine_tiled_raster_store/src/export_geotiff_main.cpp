@@ -77,8 +77,10 @@ void usage(std::ostream & os)
     "                  so about twice the output only for a large one (see the\n"
     "                  package README)\n"
     "  Exit status: 0 written, 1 refused or failed (nothing written), 2 usage.\n"
-    "  Interrupted (SIGINT/SIGTERM/SIGHUP): the temporary file is removed and the\n"
-    "  process dies of the signal; the output is untouched.\n";
+    "  Interrupted (SIGINT/SIGTERM/SIGHUP): the process dies of the signal. Before\n"
+    "  the rename the temporary file is removed and the output is untouched\n"
+    "  (\"nothing written\"); a signal arriving during or after the rename says\n"
+    "  the output WAS replaced.\n";
 }
 
 /// A finite decimal number with nothing before or after it. strtod skips
@@ -125,12 +127,22 @@ bool parseUnsigned(const std::string & text, std::uint64_t & out)
 /// the same signal (SA_RESETHAND restored the default action on entry, and the
 /// re-raised signal is delivered as soon as the handler returns). Ctrl-C is the
 /// normal way to stop a long export, so it must not leave a partial
-/// `<out>.tmp.XXXXXX` behind. Async-signal-safe calls only.
+/// `<out>.tmp.XXXXXX` behind. The message says whether the output was already
+/// replaced: the library holds a signal back from just before its rename until
+/// it has counted the replacement (and removed the stale sidecars), so a
+/// non-zero count is exact for this one-export process. Async-signal-safe
+/// calls only.
 extern "C" void onTerminationSignal(int sig)
 {
   mtrs::removeInFlightExportTmpFiles();
-  static const char kMsg[] = "export_geotiff: interrupted; nothing written\n";
-  const ssize_t ignored = ::write(STDERR_FILENO, kMsg, sizeof(kMsg) - 1);
+  static const char kNothing[] = "export_geotiff: interrupted; nothing written\n";
+  static const char kReplaced[] =
+    "export_geotiff: interrupted after the rename; the output WAS replaced with the new "
+    "export\n";
+  const bool replaced = mtrs::exportOutputsReplaced() > 0;
+  const ssize_t ignored = replaced ?
+    ::write(STDERR_FILENO, kReplaced, sizeof(kReplaced) - 1) :
+    ::write(STDERR_FILENO, kNothing, sizeof(kNothing) - 1);
   (void)ignored;
   ::raise(sig);
 }

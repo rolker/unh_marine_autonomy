@@ -194,12 +194,28 @@ std::string registryPathForLayer(const std::string & layer_dir);
 ///
 /// Async-signal-safe (atomic loads and `unlink(2)` only), for a SIGINT /
 /// SIGTERM / SIGHUP handler, which should then re-raise the signal with its
-/// default action: the export never reaches its rename, so the output (or an
-/// existing one) is untouched. `exportGeoTiff()` blocks those three signals in
-/// its own thread only for the moment between creating its temporary file and
-/// recording it here. Up to 16 concurrent exports are tracked; beyond that, or
-/// for a path of 4096 bytes or more, an export has no signal-time cleanup.
+/// default action. An export interrupted before its rename leaves the output
+/// (or an existing one) untouched; check exportOutputsReplaced() to tell that
+/// case from one interrupted after it. `exportGeoTiff()` blocks those three
+/// signals in its own thread at two moments only: between creating its
+/// temporary file and recording it here, and from just before the rename
+/// through the removal of the output's stale sidecars and the directory sync.
+/// A signal arriving then is delivered when the block ends. Up to 16
+/// concurrent exports are tracked; beyond that, or for a path of 4096 bytes or
+/// more, an export has no signal-time cleanup.
 void removeInFlightExportTmpFiles() noexcept;
+
+/// @brief How many `exportGeoTiff()` calls in this process have renamed their
+///        output into place (counted right after the rename, inside the
+///        blocked window above).
+///
+/// Async-signal-safe (one atomic load). A SIGINT / SIGTERM / SIGHUP handler in
+/// a program running one export at a time reads it to say whether the output
+/// was replaced: a value above the one taken before the export means it was
+/// (a signal arriving during the rename is held back until the count, the
+/// sidecar removal and the directory sync are done), otherwise nothing was
+/// written. The `export_geotiff` CLI does this.
+std::uint64_t exportOutputsReplaced() noexcept;
 
 /// @brief Export @p options.box of the layer in @p layer_dir to @p output_path.
 ///

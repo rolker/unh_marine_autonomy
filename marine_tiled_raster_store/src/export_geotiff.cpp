@@ -200,6 +200,12 @@ struct TmpSlot
 TmpSlot g_tmp_slots[kTmpSlots];
 static_assert(std::atomic<int>::is_always_lock_free, "the signal handler needs lock-free atomics");
 
+/// How many exports in this process have renamed their output into place,
+/// readable from a signal handler (exportOutputsReplaced()).
+std::atomic<std::uint64_t> g_outputs_replaced{0};
+static_assert(
+  std::atomic<std::uint64_t>::is_always_lock_free, "the signal handler needs lock-free atomics");
+
 /// Record @p p as in flight; returns its slot, or -1 when the table is full or
 /// the path too long (that export then simply has no signal-time cleanup).
 int registerInFlightTmp(const fs::path & p)
@@ -256,9 +262,14 @@ struct TmpRemover
   }
 };
 
-/// Blocks SIGINT, SIGTERM and SIGHUP in the calling thread while alive, so the
-/// temporary file cannot be created and then missed by a signal handler
-/// before it is registered.
+/// Blocks SIGINT, SIGTERM and SIGHUP in the calling thread while alive. Used
+/// twice: so the temporary file cannot be created and then missed by a signal
+/// handler before it is registered, and from just before the rename through
+/// the sidecar removal and directory sync, so a handler never runs between the
+/// rename and g_outputs_replaced (it would report "nothing written" over a
+/// replaced output) and never stops the run with the old sidecars still
+/// attached to the new raster. A signal arriving meanwhile stays pending and is
+/// delivered when this is destroyed.
 struct TerminationSignalsBlocked
 {
   sigset_t previous;
@@ -844,6 +855,11 @@ void checkCE(CPLErr err, const std::string & what)
 }
 
 }  // namespace
+
+std::uint64_t exportOutputsReplaced() noexcept
+{
+  return g_outputs_replaced.load(std::memory_order_acquire);
+}
 
 void removeInFlightExportTmpFiles() noexcept
 {
@@ -1465,8 +1481,13 @@ ExportResult exportGeoTiff(
     throw std::runtime_error(
             "could not sync " + tmp_path.string() + " to disk: " + std::strerror(err));
   }
+  // Signals stay blocked from here to the end: a handler then sees either the
+  // temporary file still registered (rename failed: nothing written) or the
+  // output replaced and counted, with its stale sidecars already removed.
+  signals_blocked.emplace();
   fs::rename(tmp_path, out_path);   // atomic replace of an existing output
   tmp_guard.disarm();
+  g_outputs_replaced.fetch_add(1, std::memory_order_release);
   // A replaced output's sidecars (statistics, overviews, mask) would otherwise
   // be attached to the new raster. After the rename, so a failed run leaves
   // the previous output and its sidecars exactly as they were.
@@ -1482,6 +1503,7 @@ ExportResult exportGeoTiff(
       "synced to disk (" + std::strerror(err) + "): a power loss soon after could lose "
       "the new name");
   }
+  signals_blocked.reset();   // a signal pending meanwhile is delivered here
   return result;
 }
 

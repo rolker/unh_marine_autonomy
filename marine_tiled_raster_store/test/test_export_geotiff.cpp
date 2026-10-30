@@ -22,8 +22,10 @@
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <gdal_priv.h>
+#include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -33,6 +35,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -1530,6 +1533,101 @@ TEST(ExportOutput, SidecarSwappedDuringTheExportFailsIt)
   EXPECT_TRUE(tmpFiles(s).empty());
 }
 
+// A SIGHUP observer for the commit-window test: records, at delivery, how
+// many exports had replaced their output and whether the stale sidecar was
+// still there. Only async-signal-safe calls (atomic stores, access(2)).
+namespace
+{
+std::atomic<int> g_hup_seen{0};
+std::atomic<std::uint64_t> g_hup_replaced{0};
+std::atomic<int> g_hup_sidecar_present{-1};
+char g_hup_sidecar[4096];
+extern "C" void onTestHup(int)
+{
+  g_hup_replaced.store(mtrs::exportOutputsReplaced());
+  g_hup_sidecar_present.store(::access(g_hup_sidecar, F_OK) == 0 ? 1 : 0);
+  g_hup_seen.store(1);
+}
+}  // namespace
+
+// A signal sent the moment the rename is visible is held back until the
+// export has counted the replacement and removed the old sidecars: a handler
+// then never sees "no output replaced" (the CLI would print "nothing written"
+// over a replaced output) or the old .aux.xml still attached to the new raster.
+// The signal goes to the exporting thread as soon as another thread sees the
+// output's inode change, so it usually lands inside the blocked window; when
+// it lands after the export returned, the same invariants hold.
+TEST(ExportOutput, SignalDuringTheRenameReportsTheOutputReplaced)
+{
+  Store s("signal_commit_window");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  std::ofstream(s.out()) << "previous";
+  const fs::path aux = s.out().string() + ".aux.xml";
+  std::ofstream(aux) << "<PAMDataset/>";
+  ASSERT_LT(aux.native().size(), sizeof(g_hup_sidecar));
+  std::memcpy(g_hup_sidecar, aux.c_str(), aux.native().size() + 1);
+  struct stat before_st;
+  ASSERT_EQ(::stat(s.out().c_str(), &before_st), 0);
+
+  // A refusal does not count as a replaced output.
+  const std::uint64_t before = mtrs::exportOutputsReplaced();
+  EXPECT_THROW(
+    mtrs::exportGeoTiff(
+      s.layer().string(), s.out().string(), opts(insideTile(10, kRow10 + 50, kCol10))),
+    mtrs::ExportRefused);
+  EXPECT_EQ(mtrs::exportOutputsReplaced(), before);
+
+  struct sigaction sa, old_sa;
+  std::memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = onTestHup;
+  sigemptyset(&sa.sa_mask);
+  ASSERT_EQ(::sigaction(SIGHUP, &sa, &old_sa), 0);
+  g_hup_seen = 0;
+  g_hup_sidecar_present = -1;
+  const pthread_t exporter = pthread_self();
+  std::atomic<bool> done{false}, sent{false};
+  std::thread watcher([&]() {
+      // Spin without sleeping, to catch the rename as early as possible.
+      while (!done) {
+        struct stat st;
+        if (::stat(s.out().c_str(), &st) == 0 && st.st_ino != before_st.st_ino) {
+          pthread_kill(exporter, SIGHUP);
+          sent = true;
+          return;
+        }
+      }
+    });
+  const double r0 = static_cast<double>(kRow10) * kEdge;
+  const double c0 = static_cast<double>(kCol10) * kEdge;
+  std::string error;
+  try {
+    mtrs::exportGeoTiff(
+      s.layer().string(), s.out().string(),
+      opts(cellBox(10, r0 + 10, c0 + 10, r0 + 4010, c0 + 3010)));
+  } catch (const std::exception & e) {
+    error = e.what();
+  }
+  done = true;
+  watcher.join();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (sent && !g_hup_seen && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ::sigaction(SIGHUP, &old_sa, nullptr);
+  ASSERT_TRUE(error.empty()) << error;
+  ASSERT_TRUE(sent) << "the rename was never seen";
+  ASSERT_TRUE(g_hup_seen) << "the signal was never delivered";
+  EXPECT_EQ(g_hup_replaced.load(), before + 1) <<
+    "a handler ran with the output replaced but not yet counted";
+  EXPECT_EQ(g_hup_sidecar_present.load(), 0) <<
+    "a handler ran before the old sidecar was removed";
+  EXPECT_EQ(mtrs::exportOutputsReplaced(), before + 1);
+  EXPECT_FALSE(fs::exists(aux));
+  EXPECT_EQ(readRaster(s.out()).bands, 2);
+  EXPECT_TRUE(tmpFiles(s).empty());
+}
+
 // ------------------------------------------------------------------ datum ----
 
 TEST(ExportDatum, EmptyDatumWarnsAndLabelsEllipsoidal)
@@ -1955,4 +2053,80 @@ TEST(ExportCli, InterruptRemovesTheTemporaryFile)
     EXPECT_TRUE(tmpFiles(s).empty()) << "an interrupted export left its temporary file";
     EXPECT_EQ(readFile(s.out()), "previous");
   }
+}
+
+// A signal that reaches the CLI once the output has been renamed into place
+// must not claim "nothing written". The signal is sent as soon as the output's
+// inode changes; the run either dies of it (and must say the output WAS
+// replaced) or has already exited 0. A few attempts, so at least one is
+// expected to die of the signal (the library holds it back until the
+// replacement is counted, and the CLI still prints its summary afterwards).
+TEST(ExportCli, InterruptAfterTheRenameSaysTheOutputWasReplaced)
+{
+  Store s("cli_interrupt_after_rename");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  const double r0 = static_cast<double>(kRow10) * kEdge;
+  const double c0 = static_cast<double>(kCol10) * kEdge;
+  const mtrs::ExportBox box = cellBox(10, r0 + 10, c0 + 10, r0 + 4010, c0 + 3010);
+  const auto num = [](double v) {
+      std::ostringstream ss;
+      ss.precision(17);
+      ss << v;
+      return ss.str();
+    };
+  const fs::path err_file = s.root() / "cli_after_rename.stderr";
+  int signalled = 0;
+  for (int attempt = 0; attempt < 5 && signalled == 0; ++attempt) {
+    SCOPED_TRACE(attempt);
+    std::ofstream(s.out()) << "previous";
+    struct stat before_st;
+    ASSERT_EQ(::stat(s.out().c_str(), &before_st), 0);
+    std::vector<std::string> args = {EXPORT_GEOTIFF_EXE, s.layer().string(), "--box",
+      num(box.lat_min), num(box.lon_min), num(box.lat_max), num(box.lon_max), "-o",
+      s.out().string()};
+    std::vector<char *> argv;
+    for (std::string & a : args) {
+      argv.push_back(a.data());
+    }
+    argv.push_back(nullptr);
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(
+      &fa, STDERR_FILENO, err_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    pid_t pid = 0;
+    const int spawned = posix_spawn(&pid, EXPORT_GEOTIFF_EXE, &fa, nullptr, argv.data(), environ);
+    posix_spawn_file_actions_destroy(&fa);
+    ASSERT_EQ(spawned, 0);
+    int status = 0;
+    bool exited = false, renamed = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (!renamed && !exited && std::chrono::steady_clock::now() < deadline) {
+      struct stat st;
+      renamed = ::stat(s.out().c_str(), &st) == 0 && st.st_ino != before_st.st_ino;
+      if (!renamed) {
+        exited = waitpid(pid, &status, WNOHANG) == pid;
+      }
+    }
+    if (renamed) {
+      kill(pid, SIGTERM);   // may find a zombie or nothing: both are fine
+      ASSERT_EQ(waitpid(pid, &status, 0), pid);
+    } else if (!exited) {
+      kill(pid, SIGKILL);
+      waitpid(pid, &status, 0);
+      FAIL() << "timed out before the rename";
+    }
+    const std::string err = readFile(err_file);
+    EXPECT_EQ(err.find("nothing written"), std::string::npos) << err;
+    if (WIFSIGNALED(status)) {
+      EXPECT_EQ(WTERMSIG(status), SIGTERM);
+      EXPECT_NE(err.find("the output WAS replaced"), std::string::npos) << err;
+      ++signalled;
+    } else {
+      EXPECT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 0) << "status " << status;
+    }
+    EXPECT_EQ(readRaster(s.out()).bands, 2);
+    EXPECT_TRUE(tmpFiles(s).empty());
+  }
+  EXPECT_GT(signalled, 0) << "no attempt died of the signal after the rename";
 }

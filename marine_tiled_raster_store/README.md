@@ -162,14 +162,16 @@ ros2 run marine_tiled_raster_store export_geotiff <layer_dir> \
 |---|---|
 | `<layer_dir>` | The layer directory, e.g. `~/data/world/depths/processed` or `~/data/world/imagery/backscatter/survey`. No layer name is inspected, except that a directory named `overviews` is refused: pass the layer, and its `overviews/` sidecar is read automatically. |
 | `--box LATMIN LONMIN LATMAX LONMAX` | **Required**, degrees, in that order. Snapped outward to the level's cell grid. |
-| `-o`, `--output PATH` | Written to a unique, exclusively created `PATH.tmp.XXXXXX` beside `PATH`, closed (close checked), synced to disk, then renamed over `PATH`, and the directory synced after the rename, so a power loss cannot leave `PATH` empty or partial. After the rename the previous output's GDAL sidecars (`PATH.aux.xml`, `PATH.aux`, `PATH.ovr`, `PATH.msk`) are removed, as GDAL's own overwrite would, so old statistics, overviews or a mask never attach to the new raster; nothing else is touched. A failed run removes only its own temporary file, and so does an interrupted one (SIGINT, SIGTERM or SIGHUP: the CLI removes the file and dies of the signal, the output untouched); a crashed run's leftover is never cleaned up automatically, since nothing this run did not create is ever removed. |
+| `-o`, `--output PATH` | Written to a unique, exclusively created `PATH.tmp.XXXXXX` beside `PATH`, closed (close checked), synced to disk, then renamed over `PATH`, and the directory synced after the rename, so a power loss cannot leave `PATH` empty or partial. After the rename the previous output's GDAL sidecars (`PATH.aux.xml`, `PATH.aux`, `PATH.ovr`, `PATH.msk`) are removed, as GDAL's own overwrite would, so old statistics, overviews or a mask never attach to the new raster; nothing else is touched. A failed run removes only its own temporary file, and so does an interrupted one (SIGINT, SIGTERM or SIGHUP before the rename: the CLI removes the file and dies of the signal, the output untouched). Those signals are held back from just before the rename until the stale sidecars are removed and the directory is synced, so an interrupt can never land between the rename and that cleanup, and one arriving then or later says the output WAS replaced instead of "nothing written"; a crashed run's leftover is never cleaned up automatically, since nothing this run did not create is ever removed. |
 | `--level N` | Level to export (0-20). Default: the finest level holding a native tile **inside the box**. |
 | `--max-pixels N` | Refuse when width x height (pixels **per band**) exceeds `N`. Default 250,000,000 (1 GB of Float32 per band uncompressed; multiply by the band count for the total). The library has no default. |
 
 Exit status: 0 written, 1 refused or failed (nothing written), 2 usage error;
-an interrupted run dies of the signal, with its temporary file removed. A
-program calling `exportGeoTiff()` directly gets the same from its own signal
-handler by calling `removeInFlightExportTmpFiles()` (async-signal-safe).
+an interrupted run dies of the signal, with its temporary file removed, and
+its message says whether the output had already been replaced. A program
+calling `exportGeoTiff()` directly gets the same from its own signal handler
+by calling `removeInFlightExportTmpFiles()` and `exportOutputsReplaced()`
+(both async-signal-safe).
 Numbers are parsed strictly: `--level` and `--max-pixels` take decimal digits
 only (no sign, no whitespace), and a `--box` value with leading whitespace or
 trailing text is rejected, all as usage errors.
