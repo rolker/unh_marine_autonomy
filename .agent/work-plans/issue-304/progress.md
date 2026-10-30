@@ -66,3 +66,38 @@ Issue: rolker/unh_marine_autonomy#304, "Radiometry-phase ray geometry: seabed-no
 3. Back-facing incidence over 90 degrees: return the raw angle, unclamped, documented and tested (grazing goes negative). The ray-march follow-up needs the raw geometry, and clamping would hide it.
 4. 1% tolerance: replace it with exact source-identity equality (M1). If a metric check stays, 1% is fine, since GGGS levels step 2x (3x at the polar bands).
 5. Shadow / ray march: a separate PR. Footprint inputs (design note Q7) and the multi-valued semantics are still open, and it belongs with the sidescan re-point.
+
+## Implementation
+**Status**: complete
+**When**: 2026-10-30 15:01 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-304 at `674a164a` (not pushed, no PR). Part of #304; nothing here may close it.
+
+### Plan fold (`e6ac9b98`)
+- M1: one `heightAt` call returns height, per-axis spans and a `SourceId` (layer, level, tile); the normal requires exact identity across centre + four probes, else flat + `layer_seam`.
+- M2: per-axis spans in metres; one shared WGS84 `metresPerDegree` helper used by the step conversion and by `BathyDem`'s spans.
+- M3: strict-stencil `BathyDem::heightAt` (`kStencilIncomplete` / `kNoData`, never renormalised) with its own reason code, tested on a real store at a survey edge.
+- M4: one library target; README says the header (not the library) is dependency-free.
+- M5: "Part of #304" everywhere, no closing keyword.
+- Recommended answers and adopted suggestions folded in (own-survey `processed,draft` slope rule as a caller argument, 3-cell default with 1-cell floor + `step_clamped`, raw >90 deg incidence, sampler exceptions propagate, flagged bad beam vectors, overview-name guard, `seabed::` namespace, timing test dropped).
+
+### Implementation
+- `194b15ff` geometry unit: `marine_backscatter/{include/marine_backscatter/seabed_geometry.hpp,src/seabed_geometry.cpp}`.
+- `984cf847` `git mv` of BathyDem + its test into `marine_backscatter`; `heightAt` added, `depthAt` unchanged (shared lookup routine); constructor rejects empty, `.`, `..`, `/`-containing and `overviews`-prefixed layer names; mosaic re-pointed (includes, CMake, `test_tier2_processed_dem` dependency).
+- `980546bd` tests: `test_seabed_geometry` (24 cases; sampler ENU via gz4d `LocalENU`, 43N/60N/33S) and 9 new real-store cases in `test_bathy_dem` (edge, layer/level/tile seams, spans vs gz4d, overviews, tilted store, corrupt tile).
+- `13f079c3` docs: new `marine_backscatter/README.md`, package.xml description, `.agents/README.md` row + rewritten coupling pitfall, mosaic README, ADR-0006 D4 dated status note.
+- `674a164a` plan synced with the landed code.
+
+### Results
+- `./core_ws/test.sh marine_backscatter marine_sidescan_mosaic`: `Summary: 318 tests, 0 errors, 0 failures, 37 skipped` (marine_backscatter 122/0/0/14 skipped; marine_sidescan_mosaic 196/0/0/23 skipped; skips are cppcheck). `test_tier2_processed_dem` 23/23.
+- `./core_ws/build.sh` (whole core layer): `Summary: 42 packages finished`; no consumer of the old `marine_sidescan_mosaic/bathy_dem.hpp` exists in any layer.
+
+### Deviations and notes
+- Method is `heightAt` (the rename suggestion) rather than `sample`.
+- `kMissingSample` (no data at the probe's own cell anywhere) is kept distinct from `kStencilIncomplete` (own cell present, an interpolation neighbour missing).
+- Tile-in-identity means a stencil across a GGGS tile boundary at the same layer/level falls back flat: about 1.5 % of area at the default step. Recorded in plan and README; relax to layer + level if it bites.
+- Added `beamFromAzimuthDepression` / `enuFromNed` helpers so the README recipes are tested code.
+- Small fixes in passing: moved test's `-Wrange-loop-construct` warning; `.agents/README.md` pitfall cited ADR-0010 D3 for the layer split (it is D8); mosaic README Dependencies now lists `marine_backscatter`.
+- The proposed new `.agents/README.md` seam pitfall stays a proposal (not added).
+- Next: `/review-code` pre-push.
