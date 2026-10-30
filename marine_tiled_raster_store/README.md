@@ -160,6 +160,9 @@ ros2 run marine_tiled_raster_store export_geotiff <layer_dir> \
 | `--max-pixels N` | Refuse when width x height (pixels **per band**) exceeds `N`. Default 250,000,000 (1 GB of Float32 per band uncompressed; multiply by the band count for the total). The library has no default. |
 
 Exit status: 0 written, 1 refused or failed (nothing written), 2 usage error.
+Numbers are parsed strictly: `--level` and `--max-pixels` take decimal digits
+only (no sign, no whitespace), and a `--box` value with leading whitespace or
+trailing text is rejected, all as usage errors.
 Warnings go to stderr, the summary (level, source kind, tiles used, size,
 geometric error, band-1 NoData count, vertical datum) to stdout.
 

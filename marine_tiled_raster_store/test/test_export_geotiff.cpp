@@ -1340,6 +1340,34 @@ TEST(ExportCli, RefusalExitsOneAndWritesNothing)
   expectNothingWritten(s);
 }
 
+// Malformed numbers are usage errors, never silently reinterpreted: strtoull
+// alone would read " -1" as UINT64_MAX and switch the cap off.
+TEST(ExportCli, MalformedNumbersAreUsageErrors)
+{
+  Store s("cli_numbers");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  const std::string prefix =
+    "'" + s.layer().string() + "' " + boxArgs(insideTile(10, kRow10, kCol10)) + " -o '" +
+    s.out().string() + "' ";
+  for (const std::string & bad : {"' -1'", "-1", "+5", "' 5'", "'5 '", "12abc", "0x10", "''",
+      "1e9", "0"})
+  {
+    const CliRun r = runCli(s, prefix + "--max-pixels " + bad);
+    EXPECT_EQ(r.status, 2) << "--max-pixels " << bad << ": " << r.err;
+    EXPECT_NE(r.err.find("--max-pixels needs a positive integer"), std::string::npos) << r.err;
+  }
+  for (const std::string & bad : {"' 3'", "+3", "-3", "3x", "21"}) {
+    const CliRun r = runCli(s, prefix + "--level " + bad);
+    EXPECT_EQ(r.status, 2) << "--level " << bad << ": " << r.err;
+  }
+  const CliRun r = runCli(
+    s, "'" + s.layer().string() + "' --box ' 43.1' -70.6 43.2 -70.5 -o '" + s.out().string() +
+    "'");
+  EXPECT_EQ(r.status, 2) << r.err;
+  EXPECT_NE(r.err.find("--box: not a number"), std::string::npos) << r.err;
+  expectNothingWritten(s);
+}
+
 TEST(ExportCli, MaxPixelsOptionIsHonoured)
 {
   Store s("cli_cap");

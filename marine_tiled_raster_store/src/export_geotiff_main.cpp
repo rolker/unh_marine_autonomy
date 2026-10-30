@@ -24,6 +24,7 @@
 // marine_tiled_raster_store::exportGeoTiff (export_geotiff.cpp), where the
 // selection, refusals and writing live and are tested.
 
+#include <cctype>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -72,9 +73,11 @@ void usage(std::ostream & os)
     "  Exit status: 0 written, 1 refused or failed (nothing written), 2 usage.\n";
 }
 
+/// A finite decimal number with nothing before or after it. strtod skips
+/// leading whitespace, so that is rejected up front.
 bool parseDouble(const std::string & text, double & out)
 {
-  if (text.empty()) {
+  if (text.empty() || std::isspace(static_cast<unsigned char>(text[0]))) {
     return false;
   }
   char * end = nullptr;
@@ -87,10 +90,18 @@ bool parseDouble(const std::string & text, double & out)
   return true;
 }
 
+/// Decimal digits only. strtoull alone accepts leading whitespace and a sign,
+/// and wraps a negative value (`" -1"` would become UINT64_MAX and turn the cap
+/// off), so every character is checked first.
 bool parseUnsigned(const std::string & text, std::uint64_t & out)
 {
-  if (text.empty() || text[0] == '-' || text[0] == '+') {
+  if (text.empty()) {
     return false;
+  }
+  for (const char c : text) {
+    if (!std::isdigit(static_cast<unsigned char>(c))) {
+      return false;
+    }
   }
   char * end = nullptr;
   errno = 0;
