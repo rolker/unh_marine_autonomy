@@ -233,3 +233,31 @@ Real-data checks (read-only on `~/data`, output only under `.agent/scratchpad/is
 
 ### Deferred actions
 - None. Not taken: the optional tile-shaped output name refusal in must-fix 1 (reason above).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-10-30 12:13 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-370 at `7d9819e` (reviewed `git diff 7b8dd20..10085b6`)
+**Mode**: pre-push
+**Depth**: Standard, round 3 targeted (reason: re-review of the round-2 fixes only; static analysis + one fresh-context Claude adversarial pass, no cross-model, by request)
+**Must-fix**: 0 | **Suggestions**: 6
+**Round**: 3 | **Ship**: recommended — all three round-2 must-fixes hold up under attack; what remains is small hardening and wording, none of it a data-of-record or wrong-output risk
+
+Checks run:
+- `./core_ws/test.sh marine_tiled_raster_store`: `183 tests, 0 errors, 0 failures, 16 skipped` (the 16 skips are ament_cppcheck's blanket cppcheck-2.13 skip). cppcheck run directly on `export_geotiff.cpp` and `export_geotiff_main.cpp` (warning, performance, portability): clean. cpplint and uncrustify pass.
+- Real store, read-only, output under `.agent/scratchpad/issue370_r3/`: `~/data/world/depths/processed/overviews` is refused as a layer when given plain, with a trailing slash, through a symlink, as `overviews/../overviews`, and as `.` or `./` from inside it. Nothing was written into the store.
+- Synthetic store under `.agent/scratchpad/issue370_r3_guard/`: refused were an output through a symlinked output directory, `dirlink/../x.tif`, an output beside a symlinked layer, an output in the target store of a symlinked layer, and a sibling of a layer that holds its own `registry.json`. A dangling output symlink into the store passes the guard, but the rename replaces the link itself and the store stays untouched (verified). Sidecar cleanup was verified end to end: the `.aux.xml`, `.AUX.XML`, `.ovr`, `.msk` and `.aux` sidecars were removed. A `.MSK` symlink was removed as a link and its target kept, and a `.OVR` directory was left with a warning. The look-alikes `x.ovr`, `x.aux.xml`, `x.tifaux.xml` and `x.tif.aux.xml.bak` were kept.
+- The REPLACED ("NOT used to fill holes") rule is right and is computed on the right window. The clipped region is the window intersected with the export-level tile. That tile nests inside its coarser ancestor, so the clipped region is a subset of the coarser footprint intersected with the window. Each tile is counted once, since tiles are never reloaded after eviction, and the count covers band 1 only (band-major layout). Unselected positions are reported as HOLE instead.
+- Signal path: the handler calls only atomic loads, `unlink`, `write` and `raise`. It is installed with `sigaction` and `SA_RESETHAND`, and the re-raise is delivered when the handler returns. No allocation, iostream or lock is involved.
+- fsync ordering is correct: checked close, tmp fsync, identity check, rename, sidecar removal, then directory fsync as a warning.
+
+### Findings
+- [ ] (suggestion) The window from the rename through sidecar removal and the directory fsync is not covered by blocked signals. An interrupt there prints "interrupted; nothing written" although the output was already replaced, and it can leave the old `.aux.xml` (whose georeferencing overrides the file's) attached to the new raster. Block SIGINT/SIGTERM/SIGHUP across that span, or reword the message. Found by both the lead and the adversarial pass. — `src/export_geotiff.cpp:1468-1475`, `src/export_geotiff_main.cpp:132`
+- [ ] (suggestion) The `storeRoots` walk starts at the layer itself, so a stray `registry.json` inside a layer becomes the "nearest" store. A store two levels up is then unguarded. Verified with `store/sub/layerC/registry.json`: `-o store/layerB/x.tif` passes the guard. Start the walk at the layer's parent. — `src/export_geotiff.cpp:454`
+- [ ] (suggestion) The overviews-as-layer refusal suggests the parent of the path as given. For a symlinked `overviews` that is the link's directory (verified: it suggested the scratchpad dir). Suggest `layer.parent_path()` when the resolved name is `overviews`. — `src/export_geotiff.cpp:959`
+- [ ] (suggestion) Compare the sidecar identity whenever it was captured, not only when `tiles_overview > 0`. A rename-aside that falls between the capture and the listing currently goes unreported. That export is self-consistent (native only), so this is low priority. — `src/export_geotiff.cpp:1018,1455`
+- [ ] (suggestion) The README should say two more things. First, `(st_dev, st_ino)` can change spuriously on CIFS without `serverino`, on FUSE without `use_ino`, or after an autofs remount (the NAS season archive is autofs-mounted). That fails a sidecar export as "replaced; retry" (fail-closed). Second, an in-place rebuild, with no rename, is not detected. — `README.md:207`
+- [ ] (suggestion) An output that is an existing directory, or ends in `/`, is refused only after the whole raster is written (`rename`: Is a directory / Directory not empty). Verified; cleanup is correct. This predates round 2, but the check is cheap: refuse it up front next to the store guard. — `src/export_geotiff.cpp:1235`
