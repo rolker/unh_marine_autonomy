@@ -11,6 +11,7 @@
 | `helm_manager` | C++ | Control arbitrator ensuring single-active-mode command authority (standby/manual/autonomous) |
 | `joy_to_helm` | Python | Converts joystick input to helm commands for manual piloting |
 | `marine_autonomy` | C++/Python | Meta-package with launch files, geodesic utilities, and system configuration |
+| `marine_backscatter` | C++ | Modality-agnostic backscatter core shared by the sidescan and MBES layers (ADR-0006 / ADR-0007), one library: `grazingQuality`, the ADR-0005 registry writer, the sidescan `ProcessedAccumulator`, the `seabed::` geometry unit (seabed normal from a `SeabedHeightSampler`, incidence / grazing angles, shared WGS84 metres-per-degree; #304) and `BathyDem`, the bathy-store tile reader (moved from `marine_sidescan_mosaic` in #304, used for sidescan DEM placement and as the store-backed height sampler) |
 | `marine_autonomy_integration_tests` | Python (CMake) | Cross-package integration tests for mission and navigation flows |
 | `marine_bathymetry_store` | C++ | Persistent multi-source bathymetric data store: GGGS-tiled, priority source layers, best-source / shallowest-reliable queries, per-tile GeoTIFF (ADR-0002 / #86); `s102_import` CLI fetches + converts NOAA S-102 tiles (#278) |
 | `marine_interfaces` | C++ (IDL) | ROS 2 message definitions for helm commands, heartbeats, navigation, perception contacts, and sensor data (50 msg types) |
@@ -167,16 +168,21 @@ defines the `.repos` files that pull in all project repos across 6 layers:
 - **Legacy code**: Some launch files (`.launch` extension) use ROS 1 XML format and
   are no longer active. The current launch files use Python (`.py` extension).
 - **Cross-store file-format coupling with no package dependency**:
-  `marine_sidescan_mosaic`'s `BathyDem` (`sidescan_tier2_processed --bathy-store`,
-  #297) reads `marine_bathymetry_store`'s value tiles **directly off disk** —
-  ADR-0006 D9 requires the decoupling, so there is deliberately no
-  `marine_bathymetry_store` entry in `package.xml` or `CMakeLists.txt` and no
-  compiler check on the format. The contract it assumes:
-  `<store_root>/<layer>/<level>_<row>_<col>.tif`, 2-band `Float64`, band 0 =
-  **WGS84 ellipsoidal height, up-positive** with `NaN` for no data, band 1 =
-  1-sigma vertical uncertainty. Changing any of those in the bathy store silently
-  breaks this reader (wrong placements, not a build failure), so change them
-  together and re-run `test_bathy_dem` / `test_tier2_processed_dem`, which author
-  their own value tiles against the same contract. The layer directory names are
-  configuration (`--bathy-layers`), not code — ADR-0010 D3's `survey/`→`processed/`
-  re-classification is a flag change here.
+  `marine_backscatter`'s `BathyDem` (moved from `marine_sidescan_mosaic` in #304;
+  used by `sidescan_tier2_processed --bathy-store`, #297, and as the store-backed
+  `seabed::SeabedHeightSampler`) reads `marine_bathymetry_store`'s value tiles
+  **directly off disk** — ADR-0006 D9 requires the decoupling, so there is
+  deliberately no `marine_bathymetry_store` entry in either package's
+  `package.xml` or `CMakeLists.txt` and no compiler check on the format. The
+  contract it assumes: `<store_root>/<layer>/<level>_<row>_<col>.tif`, 2-band
+  `Float64`, band 0 = **WGS84 ellipsoidal height, up-positive** with `NaN` for no
+  data, band 1 = 1-sigma vertical uncertainty, and **fine tiles only** (the
+  `overviews/` sidecar folds to the shallowest value and is never read; the
+  constructor refuses a layer name that would point at it). Changing any of those
+  in the bathy store silently breaks this reader (wrong placements and wrong
+  slopes, not a build failure), so change them together and re-run
+  `marine_backscatter`'s `test_bathy_dem` and `marine_sidescan_mosaic`'s
+  `test_tier2_processed_dem`, which author their own value tiles against the same
+  contract. The layer directory names are configuration (`--bathy-layers`, or the
+  `BathyDem` constructor argument), not code — ADR-0010 D8's
+  `survey/`→`processed/` re-classification is a flag change here.
