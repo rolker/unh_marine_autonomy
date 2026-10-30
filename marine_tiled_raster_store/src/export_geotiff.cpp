@@ -1006,6 +1006,22 @@ ExportResult exportGeoTiff(
       }
     }
   }
+  // An output that names a directory would otherwise be refused only by the
+  // rename, after the whole raster had been written. A trailing separator (or
+  // `.` / `..`) names a directory whether or not one exists; an existing
+  // directory, or a symlink to one, is followed.
+  {
+    std::error_code dir_ec;
+    const bool names_dir = out_path.filename().empty() || out_path.filename() == "." ||
+      out_path.filename() == "..";
+    if (names_dir || fs::is_directory(out_path, dir_ec)) {
+      throw ExportRefused(
+              "output path " + output_path + " " +
+              (names_dir ? std::string("names a directory") :
+              std::string("is an existing directory")) +
+              ": give the GeoTIFF's file name");
+    }
+  }
   // Polar refusal. 72 deg is a tile boundary at every level, so a box below it
   // snaps to tile rows that are all scale factor 1.
   if (box.lat_max >= kPolarLimit || box.lat_min <= -kPolarLimit) {

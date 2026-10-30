@@ -276,7 +276,9 @@ one pixel width); width x height over `--max-pixels` (checked in 64-bit before
 anything is allocated) or a dimension over the GeoTIFF limit; a non-float tile, or a band declaring a no-data value other than NaN (pixels are
 read raw, so a `-9999` sentinel would be exported as data);
 mixed band counts; a `<layer_dir>` that is an `overviews/` sidecar; an output
-anywhere under a store directory of the layer (the layer, its sidecar, any
+path that is an existing directory (or a symlink to one), ends in `/`, or is
+`.` or `..` (checked up front, not left to fail at the rename after the whole
+raster is written); an output anywhere under a store directory of the layer (the layer, its sidecar, any
 subdirectory, sibling layers, the registry itself). A store directory is the
 nearest directory above the layer that holds a `registry.json` (the search
 starts at the layer's parent, so a stray `registry.json` inside a layer is

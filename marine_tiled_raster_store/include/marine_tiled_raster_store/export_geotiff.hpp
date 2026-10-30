@@ -235,7 +235,9 @@ std::uint64_t exportOutputsReplaced() noexcept;
 ///   holds a `registry.json`, and the layer's parent, each found along both the
 ///   path as given and its symlink-resolved form (so a symlinked layer guards
 ///   the store holding the link and the one holding its target). Paths are
-///   compared after resolving symlinks.
+///   compared after resolving symlinks. Also an @p output_path that is an
+///   existing directory (or a symlink to one), ends in `/`, or is `.` / `..`,
+///   refused before anything is written.
 /// @throws std::runtime_error on an unreadable tile or any GDAL / filesystem
 ///   failure. In every throwing case no output and no temporary file of this
 ///   run is left, and an existing @p output_path is untouched.

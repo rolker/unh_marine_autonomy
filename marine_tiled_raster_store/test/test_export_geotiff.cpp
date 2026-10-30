@@ -39,6 +39,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
@@ -1299,6 +1300,54 @@ TEST(ExportRefusals, LayerWithNoRegistryAnywhereStillExports)
   const mtrs::ExportResult res = mtrs::exportGeoTiff(s.layer().string(), beside.string(), o);
   EXPECT_EQ(res.source_level, 10);
   EXPECT_EQ(readRaster(beside).at(0, 0, 0), 1.0f);
+}
+
+// An output naming a directory is refused before anything is written (it used
+// to fail only at the rename, after the whole raster was written).
+TEST(ExportRefusals, OutputThatIsADirectoryIsRefusedUpFront)
+{
+  Store s("output_is_directory");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  const fs::path existing = s.outDir() / "existing_dir";
+  fs::create_directories(existing);
+  std::ofstream(existing / "keep.txt") << "keep";
+  const fs::path dir_link = s.outDir() / "dir_link";
+  fs::create_directory_symlink(existing, dir_link);
+  const mtrs::ExportOptions o = opts(insideTile(10, kRow10, kCol10));
+  struct Case
+  {
+    std::string what;
+    std::string output;
+  };
+  const std::vector<Case> cases = {
+    {"existing directory", existing.string()},
+    {"existing directory with a trailing slash", existing.string() + "/"},
+    {"symlink to a directory", dir_link.string()},
+    {"trailing slash on a name that does not exist", (s.outDir() / "new_dir").string() + "/"},
+    {"trailing slash on the would-be file", s.out().string() + "/"},
+    {"dot", (s.outDir() / ".").string()},
+    {"dot-dot", (existing / "..").string()},
+  };
+  for (const Case & c : cases) {
+    SCOPED_TRACE(c.what);
+    try {
+      mtrs::exportGeoTiff(s.layer().string(), c.output, o);
+      ADD_FAILURE() << "expected a refusal";
+    } catch (const mtrs::ExportRefused & e) {
+      EXPECT_NE(std::string(e.what()).find("directory"), std::string::npos) << e.what();
+      EXPECT_NE(std::string(e.what()).find("give the GeoTIFF's file name"), std::string::npos) <<
+        e.what();
+    }
+  }
+  EXPECT_EQ(readFile(existing / "keep.txt"), "keep");
+  EXPECT_EQ(
+    std::distance(fs::directory_iterator(existing), fs::directory_iterator{}), 1);
+  EXPECT_FALSE(fs::exists(s.outDir() / "new_dir"));
+  EXPECT_TRUE(fs::is_symlink(dir_link));
+  for (const fs::directory_entry & e : fs::directory_iterator(s.outDir())) {
+    EXPECT_EQ(e.path().filename().string().find(".tmp."), std::string::npos) << e.path();
+  }
+  expectNothingWritten(s);
 }
 
 TEST(ExportRefusals, InvalidOptions)
