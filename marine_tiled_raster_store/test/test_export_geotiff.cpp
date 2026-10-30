@@ -32,9 +32,11 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 #include "marine_autonomy/gggs.h"
@@ -45,7 +47,7 @@
 
 // [#370 Slice A] Whole-area GeoTIFF export: per-tile selection precedence
 // (native > sidecar > hole, ADR-0011), pixel placement across a clipped 2x2
-// tile neighbourhood, refusals that leave no output and no `.tmp`, the datum
+// tile neighbourhood, refusals that leave no output and no temporary file, the datum
 // policy (ADR-0002 D4), the pixel cap, and the CLI's exit codes.
 
 namespace
@@ -119,7 +121,9 @@ public:
   fs::path registry() const {return root_ / "theme" / "registry.json";}
   fs::path outDir() const {return root_ / "out";}
   fs::path out() const {return outDir() / "export.tif";}
-  fs::path tmp() const {return outDir() / "export.tif.tmp";}
+  /// The prefix of every temporary file an export to out() may create
+  /// (`export.tif.tmp.XXXXXX`); also the name of a plain foreign lookalike.
+  fs::path tmpPrefix() const {return outDir() / "export.tif.tmp";}
 
   void writeRegistry(const std::string & json) const {std::ofstream(registry()) << json;}
 
@@ -226,11 +230,25 @@ bool hasWarning(const mtrs::ExportResult & r, const std::string & needle)
   return false;
 }
 
-/// Every refusal/failure must leave neither an output nor a stray `.tmp`.
+/// Every file in the output directory whose name starts with `export.tif.tmp`.
+std::set<std::string> tmpFiles(const Store & s)
+{
+  std::set<std::string> names;
+  const std::string prefix = s.tmpPrefix().filename().string();
+  for (const fs::directory_entry & e : fs::directory_iterator(s.outDir())) {
+    const std::string name = e.path().filename().string();
+    if (name.compare(0, prefix.size(), prefix) == 0) {
+      names.insert(name);
+    }
+  }
+  return names;
+}
+
+/// Every refusal/failure must leave neither an output nor a stray temporary file.
 void expectNothingWritten(const Store & s)
 {
   EXPECT_FALSE(fs::exists(s.out())) << "a refused/failed export left an output";
-  EXPECT_FALSE(fs::exists(s.tmp())) << "a refused/failed export left a .tmp";
+  EXPECT_TRUE(tmpFiles(s).empty()) << "a refused/failed export left a temporary file";
 }
 
 std::string readFile(const fs::path & p)
@@ -847,28 +865,90 @@ TEST(ExportOutput, ExistingOutputReplacedOnSuccessUntouchedOnRefusal)
       s.layer().string(), s.out().string(), opts(insideTile(10, kRow10 + 50, kCol10))),
     mtrs::ExportRefused);
   EXPECT_EQ(readFile(s.out()), "previous");
-  EXPECT_FALSE(fs::exists(s.tmp()));
+  EXPECT_TRUE(tmpFiles(s).empty());
   // Success: replaced by the rename.
   mtrs::exportGeoTiff(s.layer().string(), s.out().string(), opts(insideTile(10, kRow10, kCol10)));
   EXPECT_EQ(readRaster(s.out()).at(0, 0, 0), 1.0f);
-  EXPECT_FALSE(fs::exists(s.tmp()));
+  EXPECT_TRUE(tmpFiles(s).empty());
 }
 
-TEST(ExportOutput, StaleTmpIsCleaned)
+// The temporary file is unique and exclusively created, and only this run's
+// own file is ever removed: files that merely look like one (a user's file, a
+// crashed run's debris, another run's in-flight file) survive a refusal and a
+// success alike. There is deliberately no stale-file cleanup.
+TEST(ExportOutput, ForeignTmpLookalikesAreNeverTouched)
 {
-  Store s("stale_tmp");
+  Store s("foreign_tmp");
   s.writeRegistry(R"({"datum": "mllw"})");
   writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
-  std::ofstream(s.tmp()) << "crashed run";
+  const fs::path plain = s.tmpPrefix();
+  fs::path suffixed = s.tmpPrefix();
+  suffixed += ".abc123";
+  std::ofstream(plain) << "a user's file";
+  std::ofstream(suffixed) << "another run's file";
+  const std::set<std::string> foreign = {
+    plain.filename().string(), suffixed.filename().string()};
   EXPECT_THROW(
     mtrs::exportGeoTiff(
       s.layer().string(), s.out().string(), opts(insideTile(10, kRow10 + 50, kCol10))),
     mtrs::ExportRefused);
-  expectNothingWritten(s);
-  std::ofstream(s.tmp()) << "crashed run";
+  EXPECT_FALSE(fs::exists(s.out()));
+  EXPECT_EQ(tmpFiles(s), foreign);
   mtrs::exportGeoTiff(s.layer().string(), s.out().string(), opts(insideTile(10, kRow10, kCol10)));
-  EXPECT_TRUE(fs::exists(s.out()));
-  EXPECT_FALSE(fs::exists(s.tmp()));
+  EXPECT_EQ(readRaster(s.out()).at(0, 0, 0), 1.0f);
+  EXPECT_EQ(tmpFiles(s), foreign) << "only this run's own temporary file may be removed";
+  EXPECT_EQ(readFile(plain), "a user's file");
+  EXPECT_EQ(readFile(suffixed), "another run's file");
+}
+
+// Exclusive creation must not cost the output its normal mode: it is created
+// under the umask like any new file, not 0600 as mkstemp would leave it.
+TEST(ExportOutput, OutputModeFollowsTheUmask)
+{
+  Store s("output_mode");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  const fs::path reference = s.outDir() / "reference";
+  std::ofstream(reference) << "x";
+  mtrs::exportGeoTiff(s.layer().string(), s.out().string(), opts(insideTile(10, kRow10, kCol10)));
+  EXPECT_EQ(fs::status(s.out()).permissions(), fs::status(reference).permissions());
+}
+
+// Several exports aimed at ONE output at the same time: each writes its own
+// temporary file, so none can rename another's half-written file or unlink it
+// mid-write. Every run succeeds, the output is a complete raster, and no
+// temporary file is left.
+TEST(ExportOutput, ConcurrentExportsToOneOutputDoNotCollide)
+{
+  Store s("concurrent");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  constexpr int kRuns = 4;
+  std::vector<std::string> errors(kRuns);
+  std::vector<std::thread> runs;
+  for (int i = 0; i < kRuns; ++i) {
+    runs.emplace_back(
+      [&s, &errors, i]() {
+        try {
+          mtrs::exportGeoTiff(
+            s.layer().string(), s.out().string(), opts(insideTile(10, kRow10, kCol10)));
+        } catch (const std::exception & e) {
+          errors[i] = e.what();
+        }
+      });
+  }
+  for (std::thread & t : runs) {
+    t.join();
+  }
+  for (int i = 0; i < kRuns; ++i) {
+    EXPECT_EQ(errors[i], "") << "run " << i;
+  }
+  const mtrs::CellWindow w = mtrs::snapBoxToLevel(insideTile(10, kRow10, kCol10), 10);
+  const Raster out = readRaster(s.out());
+  EXPECT_EQ(static_cast<std::uint64_t>(out.width), w.col_end - w.col_begin);
+  EXPECT_EQ(static_cast<std::uint64_t>(out.height), w.row_end - w.row_begin);
+  EXPECT_EQ(out.at(0, out.width - 1, out.height - 1), 1.0f);
+  EXPECT_TRUE(tmpFiles(s).empty());
 }
 
 // ------------------------------------------------------------------ datum ----
@@ -1172,7 +1252,7 @@ TEST(ExportCli, SuccessPrintsTheSummaryAndTheDatumWarning)
     std::string::npos) << r.err;
   EXPECT_NE(r.out.find("level:            10 (native)"), std::string::npos) << r.out;
   EXPECT_TRUE(fs::exists(s.out()));
-  EXPECT_FALSE(fs::exists(s.tmp()));
+  EXPECT_TRUE(tmpFiles(s).empty());
 }
 
 TEST(ExportCli, RefusalExitsOneAndWritesNothing)

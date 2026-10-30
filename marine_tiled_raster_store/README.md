@@ -129,8 +129,9 @@ expand a run wider than its level's grid extent.
 mixed native + sidecar, excluded native levels, finest native level judged in
 the box, no-upsample and missing-sidecar-level refusals, sidecar geometric
 error), every pixel of a clipped 2x2 tile neighbourhood against its GGGS cell,
-NaN holes and the NoData count, each refusal leaving no output and no `.tmp`,
-output replacement and stale-`.tmp` cleanup, the datum policy, the Float32 and
+NaN holes and the NoData count, each refusal leaving no output and no temporary
+file, output replacement, foreign temporary-file lookalikes left untouched,
+concurrent exports to one output, the datum policy, the Float32 and
 Float64 value paths, the pixel cap at its boundary and on a 64-bit-overflow box,
 and the CLI's exit codes (it runs the built executable).
 
@@ -152,7 +153,7 @@ ros2 run marine_tiled_raster_store export_geotiff <layer_dir> \
 |---|---|
 | `<layer_dir>` | The layer directory, e.g. `~/data/world/depths/processed` or `~/data/world/imagery/backscatter/survey`. No layer name is inspected. |
 | `--box LATMIN LONMIN LATMAX LONMAX` | **Required**, degrees, in that order. Snapped outward to the level's cell grid. |
-| `-o`, `--output PATH` | Written as `PATH.tmp`, closed (close checked), then renamed over `PATH`. |
+| `-o`, `--output PATH` | Written to a unique, exclusively created `PATH.tmp.XXXXXX` beside `PATH`, closed (close checked), then renamed over `PATH`. A failed run removes only its own temporary file; a crashed run's leftover is never cleaned up automatically, since nothing this run did not create is ever removed. |
 | `--level N` | Level to export (0-20). Default: the finest level holding a native tile **inside the box**. |
 | `--max-pixels N` | Refuse when width x height (pixels **per band**) exceeds `N`. Default 250,000,000 (1 GB of Float32 per band uncompressed; multiply by the band count for the total). The library has no default. |
 
@@ -199,7 +200,7 @@ or `mixed`), `GEOMETRIC_ERROR_M` (max over contributing tiles: the sidecar's
 `NODATA_COUNT` (band 1); every band also carries its own `NODATA_COUNT` and a
 description.
 
-**Refusals** (exit 1, no output, no `.tmp`, an existing output untouched): a box
+**Refusals** (exit 1, no output, no temporary file, an existing output untouched): a box
 that intersects no tile at the chosen level; a level finer than the finest
 native level in the box (no upsampling); a coarser level absent from both the
 native tiles and the sidecar (build the layer's overviews first; a missing

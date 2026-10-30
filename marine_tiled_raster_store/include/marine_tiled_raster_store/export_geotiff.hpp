@@ -58,9 +58,12 @@
 /// not recorded). A 3-band (backscatter) export is `NOT_APPLICABLE`.
 ///
 /// **Never a partial file.** Everything that can be refused is checked before
-/// the output is created; the raster is written to `<output>.tmp`, closed (and
-/// the close checked), then renamed over the output. Every failure path removes
-/// the `.tmp`, and an existing output is replaced only by that final rename.
+/// the output is created; the raster is written to a uniquely named
+/// `<output>.tmp.XXXXXX` created exclusively beside the output, closed (and the
+/// close checked), then renamed over the output. Every failure path removes
+/// that run's own temporary file and nothing else, so two exports aimed at one
+/// output cannot rename each other's half-written file; an existing output is
+/// replaced only by the final rename.
 ///
 /// @note Boxes reaching |lat| >= 72 are refused: `tile_io` is validated only
 ///   below 72 degrees, and above it GGGS widens tile longitude spans by 3x / 9x,
@@ -171,8 +174,10 @@ std::string registryPathForLayer(const std::string & layer_dir);
 
 /// @brief Export @p options.box of the layer in @p layer_dir to @p output_path.
 ///
-/// Reads only; writes only `<output_path>.tmp` and then `output_path`. A stale
-/// `<output_path>.tmp` from a crashed run is removed first.
+/// Reads only; writes only its own exclusively created
+/// `<output_path>.tmp.XXXXXX` and then `output_path`. A crashed run's
+/// temporary file is NOT cleaned up: no file this run did not create is ever
+/// removed.
 ///
 /// @throws std::invalid_argument for invalid options (unset `max_pixels`, box
 ///   out of range or with min >= max, level > 20).
@@ -180,8 +185,8 @@ std::string registryPathForLayer(const std::string & layer_dir);
 ///   including an @p output_path anywhere under the store directory that holds
 ///   the layer and its `registry.json` (compared after resolving symlinks).
 /// @throws std::runtime_error on an unreadable tile or any GDAL / filesystem
-///   failure. In every throwing case no output and no `.tmp` is left, and an
-///   existing @p output_path is untouched.
+///   failure. In every throwing case no output and no temporary file of this
+///   run is left, and an existing @p output_path is untouched.
 ExportResult exportGeoTiff(
   const std::string & layer_dir, const std::string & output_path,
   const ExportOptions & options);

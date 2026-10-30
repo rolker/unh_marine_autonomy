@@ -24,13 +24,18 @@
 
 #include "marine_tiled_raster_store/export_geotiff.hpp"
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <gdal_priv.h>
 #include <cpl_string.h>
 #include <ogr_spatialref.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -38,6 +43,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <random>
 #include <set>
 #include <sstream>
 #include <string>
@@ -90,8 +96,44 @@ struct DatasetCloser
   ~DatasetCloser() {if (ds) {GDALClose(ds);}}
 };
 
-/// RAII: removes the `.tmp` on every exit path that does not disarm it. Declared
-/// BEFORE the dataset closer so the dataset is closed first.
+/// Create `<output>.tmp.XXXXXX` beside the output, EXCLUSIVELY (O_CREAT |
+/// O_EXCL), and return its path. The random suffix means two exports aimed at
+/// one output never share a temporary file, and O_EXCL means this run never
+/// adopts (or later removes) a file it did not create. Created 0666 so the
+/// umask decides the final output's mode, as for any new file (mkstemp would
+/// force 0600 onto the renamed output).
+fs::path createUniqueTmp(const std::string & output_path)
+{
+  static constexpr char kAlphabet[] =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  std::random_device seed;
+  std::mt19937_64 gen((static_cast<std::uint64_t>(seed()) << 32) ^ seed());
+  std::uniform_int_distribution<std::size_t> pick(0, sizeof(kAlphabet) - 2);
+  constexpr int kAttempts = 64;
+  for (int attempt = 0; attempt < kAttempts; ++attempt) {
+    std::string suffix(6, 'x');
+    for (char & c : suffix) {
+      c = kAlphabet[pick(gen)];
+    }
+    const fs::path p(output_path + ".tmp." + suffix);
+    const int fd = ::open(p.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+    if (fd >= 0) {
+      ::close(fd);
+      return p;
+    }
+    if (errno != EEXIST) {
+      throw std::runtime_error(
+              "could not create the temporary file " + p.string() + ": " +
+              std::strerror(errno));
+    }
+  }
+  throw std::runtime_error(
+          "could not create a unique temporary file " + output_path + ".tmp.XXXXXX after " +
+          std::to_string(kAttempts) + " attempts");
+}
+
+/// RAII: removes THIS run's temporary file on every exit path that does not
+/// disarm it. Declared BEFORE the dataset closer so the dataset is closed first.
 struct TmpRemover
 {
   fs::path path;
@@ -409,7 +451,6 @@ ExportResult exportGeoTiff(
     throw std::invalid_argument("exportGeoTiff: output path is empty");
   }
   const fs::path out_path(output_path);
-  const fs::path tmp_path(output_path + ".tmp");
   const fs::path layer = resolvedPath(fs::path(layer_dir));
   const fs::path sidecar = layer / "overviews";
   // The store is data of record and the tool is read-only on it. Refuse an
@@ -434,14 +475,6 @@ ExportResult exportGeoTiff(
       }
     }
   }
-  // A crashed run's debris. Removed only after the guard above, so nothing is
-  // ever deleted inside the store; removing it before any other check means a
-  // refusal below can never leave one behind either.
-  {
-    std::error_code rm_ec;
-    fs::remove(tmp_path, rm_ec);
-  }
-
   std::error_code ec;
   if (!fs::is_directory(layer, ec)) {
     throw ExportRefused("layer directory does not exist: " + layer.string());
@@ -675,11 +708,14 @@ ExportResult exportGeoTiff(
   const double north = kLatOrigin + static_cast<double>(window.row_end) * cell;
   result.geotransform = {west, cell, 0.0, north, 0.0, -cell};
 
-  // ---- Write: <output>.tmp, strip by strip, close checked, rename. ----
+  // ---- Write: a unique <output>.tmp.XXXXXX, strip by strip, close checked,
+  // rename. Only the file this run created is ever removed; nothing else
+  // matching the pattern (another run's, or a crashed run's) is touched. ----
   GDALDriver * driver = GetGDALDriverManager()->GetDriverByName("GTiff");
   if (driver == nullptr) {
     throw std::runtime_error("GTiff driver unavailable");
   }
+  const fs::path tmp_path = createUniqueTmp(output_path);
   TmpRemover tmp_guard{tmp_path};
   DatasetCloser out;
   {

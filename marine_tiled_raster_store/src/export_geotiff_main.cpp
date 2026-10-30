@@ -58,7 +58,7 @@ void usage(std::ostream & os)
     "  NaN no-data, band descriptions + provenance metadata). Reads only.\n"
     "  --box LATMIN LONMIN LATMAX LONMAX   required; degrees, snapped outward to the\n"
     "                  level's cell grid; boxes reaching |lat| >= 72 are refused\n"
-    "  -o, --output PATH   written as PATH.tmp, then renamed over PATH\n"
+    "  -o, --output PATH   written as a unique PATH.tmp.XXXXXX, then renamed over PATH\n"
     "  --level N       level to export (0-20). Default: the finest level holding a\n"
     "                  native tile inside the box. Per tile: native tile, else the\n"
     "                  overviews/ sidecar tile, else a NaN hole; never upsampled\n"
