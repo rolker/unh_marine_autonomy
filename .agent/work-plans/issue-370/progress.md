@@ -156,3 +156,45 @@ plan.md was kept in sync inline in each commit: store guard, registry resolution
 Not committed, per the host: the cross-model review's untracked files in `.agent/work-plans/issue-370/` (`review-{gemini,codex}-{prompt,findings}.md`, `.cross-model-review.lock`) are left in place.
 
 Next: a re-review (`review-code`, pre-push).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-10-30 11:35 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-370 at `25fba00`
+**Mode**: pre-push
+**Depth**: Deep (reason: 3476 changed lines across 10 files)
+**Must-fix**: 3 | **Suggestions**: 9
+**Round**: 2 | **Ship**: continue: the count is not rising (3 to 3) and every fix is mechanical, but the store guard (round 1's top must-fix) still lets an ordinary input overwrite the store's registry.json, so its next fix deserves one more independent read (a targeted round is enough)
+
+Specialists: static analysis (cpplint, uncrustify, copyright, lint_cmake and xmllint clean), governance, plan drift, Claude adversarial Lens A + Lens B (Deep), cross-model Gemini + Codex (both completed). Local Ollama review was not run (opt-in). Build and test reproduced: 172 tests, 0 failures, 16 skipped.
+
+Real-data checks were read-only on `~/data` and wrote only to `.agent/scratchpad/issue370_r2_{lead,lensA,lensB}/`.
+- Probe: the new pixel-grid check passed on all 544 real tiles at their own level: depth processed (69) and its `overviews/` (82, levels 0-9), reference (47), chart (277, levels 2/3/6/7/8), and backscatter survey (69).
+- Warnings on the multi-level chart layer: default and `--level 8` give the same output. Lower levels raise hole warnings, and native 8 under native 6 and 3 raises the shadowed warning. The rule does not mis-fire when `--level` equals the native level.
+- CLI: negative decimal `--box` values still parse.
+
+Round-1 findings, checked against the fix commits `0e12f51..935e2a1`:
+- Resolved: 10 of 12. That covers the unique exclusive temporary file, the strip sized by `min(height, 256)`, registry resolution, strict parsing, GDAL reasons, the after-Create failure test, the pixel-grid probe, the `snapBoxToLevel` guards and the datum ambiguity.
+- Exclusive temporary file: strace shows GDAL's `Create` reopens the empty O_EXCL file with O_TRUNC rather than unlinking it, so the inode and the umask mode are kept.
+- Memory: measured at about 1.2-1.9x the output size, against the claimed 2x.
+- Store guard: resolved for symlinks, trailing slashes, `..`, relative outputs and an output on another filesystem, but still open when `overviews/` is given as the layer (must-fix 1).
+- Excluded-level warning: built as round 1 recommended, but one claim in it is false (must-fix 3).
+
+### Findings
+- [ ] (must-fix) The store guard uses `layer.parent_path()` as the store root by position. With `<store>/processed/overviews` given as the layer, the store directory, its `registry.json` and sibling layers all pass. Lens A reproduced in a scratch store: `-o <store>/registry.json` exited 0 and turned the registry into a TIFF. The same input labels sidecar tiles `SOURCE_KIND=native` with the native nominal error, and misses the registry. Lens B also found that, for a symlinked layer, a store holding the link is not guarded. Fix: take the store root as the nearest ancestor holding `registry.json`, from both the lexical and the resolved layer path, and treat or refuse an `overviews` basename. Optionally refuse a tile-shaped output name. Add these cases to `OutputAnywhereInTheStoreIsRefused`. Cross-pass confirmed (Lens A, Lens B) — `marine_tiled_raster_store/src/export_geotiff.cpp:657-678`
+- [ ] (must-fix) Replacing an existing output leaves its GDAL sidecars (`<out>.aux.xml`, `<out>.ovr`, `<out>.msk`) attached to the new file. Lens B reproduced both: old `STATISTICS_*` on the new raster, and `gdaladdo` overviews of the previous, larger export shown on a smaller one. GDAL's own overwrite deletes them through QuietDelete. Fix: remove them after a successful rename, test it, and say so in the README and header — `marine_tiled_raster_store/src/export_geotiff.cpp:1113`
+- [ ] (must-fix) `excludedLevelWarnings` treats a coarser native tile under filled export-level positions as "nothing of it is lost". But neither a native export-level tile nor a sidecar tile (folded only from finer levels) carries the coarse data, so wherever the export-level tile is NaN, the coarse data is silently dropped. Lens A reproduced it: native level 8 at value 3.0 under a half-NaN native level 10 gave 289,180 NaN cells and no warning. This is the normal shape of a mixed-resolution reference/S-102 layer. `CoveredOtherLevelsDoNotWarn` (second half) locks it in with a constant tile. Fix: at minimum correct the comment, the README ("only where their data is really missing") and the plan. Preferably keep a separately worded warning that level-L data is replaced, not filled in, where export-level tiles exist — `marine_tiled_raster_store/src/export_geotiff.cpp:466-469,505-511`, `README.md` (Tile selection)
+- [ ] (suggestion) The probe checks pixel size but not origin. `loadTile` accepts an origin up to half a cell off, and the exporter then places the tile exactly. Lens A shifted a tile 0.3 cell and the export moved its data silently. Check `gt[0]`/`gt[3]` against the named grid's west/north with the same 1e-9 relative tolerance (`saveTile` writes exact origins). Cross-model confirmed (Codex) — `src/export_geotiff.cpp:393-410`
+- [ ] (suggestion) In the finer-native branch, an export-level ancestor outside `tiles` can count as a "NaN hole" that is not in the file, when a box edge sits just past a tile boundary (the snap tolerance is per level). Lens B reproduced: "1 native of 1 tile position" plus a hole warning. Skip ancestors outside `tiles` in both the hole and the shadowed paths. Cross-model confirmed (Gemini, Lens A, Lens B) — `src/export_geotiff.cpp:518-538`
+- [ ] (suggestion) A missing or misspelled relative `<layer_dir>` with a relative `-o` in the same directory reports "refusing to write the export inside the store" instead of "layer directory does not exist" (reproduced by the lead). Move the `is_directory(layer)` check before the guard. Gemini — `src/export_geotiff.cpp:657-680`
+- [ ] (suggestion) Ctrl-C leaves a partial `<out>.tmp.XXXXXX` (reproduced with `timeout -s INT`). That is the normal way to stop a long export, not a crash. Add a SIGINT/SIGTERM handler that unlinks the recorded temporary path and re-raises. Lens B — `src/export_geotiff_main.cpp:196`
+- [ ] (suggestion) A source band with a finite NoData sentinel is read raw, so its sentinel cells would export as valid values under a NaN-only no-data tag. All current float writers use NaN (bathymetry and backscatter `valueBandNoData`, the depth overview builder), so this is hypothetical today. Refuse a finite `GetNoDataValue` in the probe. Codex — `src/export_geotiff.cpp:368-392`
+- [ ] (suggestion) The peak-memory formula leaves out `loadTile`'s per-band scratch raster (another 7.4 MB per band) and fixed overhead. Lens A measured 276 MB RSS against 215 MB predicted, and "never more than about twice the output" is false for small outputs. Correct the wording in the comment, the header, the CLI help and the README — `src/export_geotiff.cpp:973-980`, `export_geotiff.hpp:40-44`, `README.md` (Memory and writing)
+- [ ] (suggestion) `importFromEPSG`, `SetSpatialRef` and `SetNoDataValue` run without `CPLErrorReset()` before them, so a failure can carry a stale GDAL reason. Strip-loop tile failures from `tile_io` carry no GDAL reason at all — `src/export_geotiff.cpp:950-966`
+- [ ] (suggestion) Nothing is fsynced before the rename, so after a power loss a new output can be left empty or partial. fsync the temporary file after GDALClose and the directory after the rename. Unverified; reasoned from filesystem semantics. Lens B — `src/export_geotiff.cpp:1107-1113`
+- [ ] (suggestion) The README should say outright that a stale pyramid is not detected (uma#389) and that exports assume a quiet store. An overview rebuild during an export can mix two sidecar generations with no error (unverified, from reading the code). Optionally record the `(st_dev, st_ino)` of `overviews/` at discovery and re-check it before the rename. Lens B — `README.md`, `src/export_geotiff.cpp:711-722,849`
+
+Dismissed: Codex said that `--level` finer than the finest native level should be refused even when a sidecar tile exists at that level. A sidecar tile at that level is derived data, not upsampling, and the plan refuses only when the selection is empty, which is what the code does.
