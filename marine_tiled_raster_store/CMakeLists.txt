@@ -62,6 +62,13 @@ install(TARGETS ${PROJECT_NAME}
   RUNTIME DESTINATION bin
 )
 
+# Whole-area GeoTIFF export (#370): one mosaicked GeoTIFF from a box of a tiled
+# raster layer. A thin CLI over exportGeoTiff() in the library.
+add_executable(export_geotiff src/export_geotiff_main.cpp)
+target_link_libraries(export_geotiff ${PROJECT_NAME})
+install(TARGETS export_geotiff
+  RUNTIME DESTINATION lib/${PROJECT_NAME})
+
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(marine_autonomy GDAL nlohmann_json)
 
