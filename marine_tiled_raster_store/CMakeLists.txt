@@ -90,6 +90,15 @@ if(BUILD_TESTING)
   # encoding, JSON round-trip, and the tolerant read of a malformed document.
   ament_add_gtest(test_coverage_manifest test/test_coverage_manifest.cpp)
   target_link_libraries(test_coverage_manifest ${PROJECT_NAME})
+
+  # Whole-area GeoTIFF export (#370): selection precedence, pixel placement,
+  # refusals (each leaving no output and no .tmp), datum policy, the pixel cap,
+  # and the CLI's exit codes (the built executable is run by path).
+  ament_add_gtest(test_export_geotiff test/test_export_geotiff.cpp)
+  target_link_libraries(test_export_geotiff ${PROJECT_NAME} GDAL::GDAL nlohmann_json::nlohmann_json)
+  target_compile_definitions(test_export_geotiff PRIVATE
+    EXPORT_GEOTIFF_EXE="$<TARGET_FILE:export_geotiff>")
+  add_dependencies(test_export_geotiff export_geotiff)
 endif()
 
 ament_package()
