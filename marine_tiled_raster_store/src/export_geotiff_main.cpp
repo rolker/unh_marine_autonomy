@@ -66,7 +66,9 @@ void usage(std::ostream & os)
     "  --max-pixels N  refuse when width x height (pixels per band) exceeds N\n"
     "                  (default " << kDefaultMaxPixelsPerBand <<
     " = 1 GB of Float32 per band uncompressed;\n"
-    "                  multiply by the band count for the total)\n"
+    "                  multiply by the band count for the total). Peak memory\n"
+    "                  is at most about twice the uncompressed output, usually\n"
+    "                  far less (see the package README)\n"
     "  Exit status: 0 written, 1 refused or failed (nothing written), 2 usage.\n";
 }
 

@@ -36,8 +36,12 @@
 ///
 /// The stores hold one GeoTIFF per GGGS tile; sharing a survey needs one file.
 /// `exportGeoTiff()` reads the tiles of one level that intersect a lat/lon box
-/// and writes a single north-up EPSG:4326 Float32 GeoTIFF, strip by strip, so
-/// memory stays bounded by one output block-row plus the tiles it overlaps.
+/// and writes a single north-up EPSG:4326 Float32 GeoTIFF, strip by strip.
+/// Memory is bounded by the window: one strip of up to 256 output rows, the
+/// window's cells from at most two tile rows (up to 1920 rows, kept as
+/// Float32), and one tile being decoded; never more than about twice the
+/// uncompressed output (4 bytes x bands x width x height), which `max_pixels`
+/// caps.
 ///
 /// **Layer-agnostic.** Nothing is keyed on a layer name. The band count picks
 /// the band names (2 = depth/uncertainty, 3 = mean/scaled_standard_error/

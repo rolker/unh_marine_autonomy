@@ -223,9 +223,20 @@ tile, or one whose georeferencing does not match its filename, fails
 the export the same way.
 
 **Memory and writing.** The output is written one 256-row block-row strip at a
-time, loading only the tiles that overlap the strip (each tile once), so memory
-is one strip plus at most two tile rows of tiles, and no output block is ever
-read back and rewritten.
+time (fewer rows when the box is shorter), and no output block is ever read
+back and rewritten. Each tile is loaded once, when the first strip that
+overlaps it is written; only its cells inside the box are kept, as Float32, and
+the decoded tile is dropped at once. Strips run north to south and a tile row is
+evicted as soon as the strips have passed it, so peak memory is about
+
+    4 bytes x bands x width x (min(height, 1920) + min(height, 256))
+      + 7.4 MB x bands   (the one tile being decoded, as double)
+
+where width and height are the output's pixels. That is never more than about
+twice the uncompressed output size, so `--max-pixels` does bound memory: at the
+default cap the worst case (a corridor at most 256 rows tall) is about 2 GB per
+band. A square box needs far less, e.g. about 130 MB per band for 15,000 x
+15,000 pixels.
 
 ## Dependencies
 

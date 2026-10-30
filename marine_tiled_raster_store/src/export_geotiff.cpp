@@ -90,6 +90,31 @@ struct SelectedTile
 
 using TileKey = std::pair<std::uint32_t, std::uint32_t>;   // (tile row, tile column)
 
+/// The part of one loaded tile that lies inside the export window, already cast
+/// to Float32: global cell rows [row_begin, row_end) x columns
+/// [col_begin, col_end), band-major, rows SOUTH-first like the tile itself. The
+/// double tile it came from is dropped as soon as this is filled, so the cache
+/// holds only window cells at 4 bytes each.
+struct ClippedTile
+{
+  std::uint64_t row_begin = 0, row_end = 0, col_begin = 0, col_end = 0;
+  std::vector<float> data;
+  std::size_t rows() const {return static_cast<std::size_t>(row_end - row_begin);}
+  std::size_t cols() const {return static_cast<std::size_t>(col_end - col_begin);}
+  std::size_t offset(std::size_t band, std::uint64_t global_row) const
+  {
+    return (band * rows() + static_cast<std::size_t>(global_row - row_begin)) * cols();
+  }
+  const float * row(std::size_t band, std::uint64_t global_row) const
+  {
+    return data.data() + offset(band, global_row);
+  }
+  float * row(std::size_t band, std::uint64_t global_row)
+  {
+    return data.data() + offset(band, global_row);
+  }
+};
+
 /// RAII: closes a GDAL dataset on every exit path.
 struct DatasetCloser
 {
@@ -863,10 +888,15 @@ ExportResult exportGeoTiff(
   std::vector<float> strip(bands * static_cast<std::size_t>(width * strip_rows));
   std::vector<std::uint64_t> valid(bands, 0);
   std::uint64_t overflowed = 0;
-  // Loaded tiles, in GGGS cell order (row 0 = SOUTH: loadTile flips the
-  // north-up file back once). Strips run north -> south, so a tile whose tile
-  // row lies wholly north of the current strip is never needed again.
-  std::map<TileKey, TiledRasterTile<double>> cache;
+  // Loaded tiles, clipped to the window and cast to Float32, in GGGS cell order
+  // (row 0 = SOUTH: loadTile flips the north-up file back once). Strips run
+  // north -> south and are at most 256 rows, so the cache spans at most two
+  // tile rows, and a tile whose tile row lies wholly north of the current strip
+  // is never needed again. Memory is bounded by the window, not by the tiles:
+  // at most min(height, 1920) window rows of cached cells plus the strip plus
+  // one tile being decoded, i.e. no more than about twice the uncompressed
+  // output, which --max-pixels caps.
+  std::map<TileKey, ClippedTile> cache;
   for (std::uint64_t y0 = 0; y0 < height; y0 += kBlock) {
     const std::uint64_t rows = std::min<std::uint64_t>(kBlock, height - y0);
     const std::size_t plane = static_cast<std::size_t>(width * rows);
@@ -890,44 +920,60 @@ ExportResult exportGeoTiff(
         if (sel == selection.end() || cache.count(key) != 0) {
           continue;
         }
-        TiledRasterTile<double> tile =
+        const TiledRasterTile<double> tile =
           loadTile<double>(sel->second.path, gggs::Level(level), bands);
         if (tile.index() != sel->second.grid) {
           throw std::runtime_error(
                   "tile " + sel->second.path + " is georeferenced as " +
                   tileFilename(tile.index()) + ", not as its name says");
         }
-        cache.emplace(key, std::move(tile));
+        // Clip to the window and cast once. Each window cell lies in exactly
+        // one tile and each tile is loaded once, so the valid and overflow
+        // counts are taken here, exactly once per cell.
+        ClippedTile clipped;
+        clipped.row_begin = std::max(window.row_begin, tr * kEdge);
+        clipped.row_end = std::min(window.row_end, tr * kEdge + kEdge);
+        clipped.col_begin = std::max(window.col_begin, tc * kEdge);
+        clipped.col_end = std::min(window.col_end, tc * kEdge + kEdge);
+        clipped.data.resize(bands * clipped.rows() * clipped.cols());
+        for (std::size_t b = 0; b < bands; ++b) {
+          for (std::uint64_t gr = clipped.row_begin; gr < clipped.row_end; ++gr) {
+            const double * src = tile.band(b).data() +
+              static_cast<std::size_t>(gr - tr * kEdge) * kEdge +
+              static_cast<std::size_t>(clipped.col_begin - tc * kEdge);
+            float * dst = clipped.row(b, gr);
+            for (std::size_t i = 0; i < clipped.cols(); ++i) {
+              const double v = src[i];
+              const float f = static_cast<float>(v);
+              dst[i] = f;
+              if (!std::isnan(f)) {
+                ++valid[b];
+                if (std::isfinite(v) && !std::isfinite(f)) {
+                  ++overflowed;
+                }
+              }
+            }
+          }
+        }
+        cache.emplace(key, std::move(clipped));
       }
     }
 
     for (std::uint64_t yy = 0; yy < rows; ++yy) {
       const std::uint64_t gr = top_row - yy;
       const std::uint64_t tr = gr / kEdge;
-      const std::size_t local_row = static_cast<std::size_t>(gr - tr * kEdge);
       for (std::uint64_t tc = tiles.col_first; tc <= tiles.col_last; ++tc) {
         const auto hit = cache.find(
           TileKey{static_cast<std::uint32_t>(tr), static_cast<std::uint32_t>(tc)});
         if (hit == cache.end()) {
           continue;
         }
-        const std::uint64_t tile_col0 = tc * kEdge;
-        const std::uint64_t c_begin = std::max(window.col_begin, tile_col0);
-        const std::uint64_t c_end = std::min(window.col_end, tile_col0 + kEdge);
+        const ClippedTile & ct = hit->second;
         for (std::size_t b = 0; b < bands; ++b) {
-          const double * src = hit->second.band(b).data() + local_row * kEdge;
-          float * dst = strip.data() + b * plane + static_cast<std::size_t>(yy * width);
-          for (std::uint64_t gc = c_begin; gc < c_end; ++gc) {
-            const double v = src[gc - tile_col0];
-            const float f = static_cast<float>(v);
-            dst[gc - window.col_begin] = f;
-            if (!std::isnan(f)) {
-              ++valid[b];
-              if (std::isfinite(v) && !std::isfinite(f)) {
-                ++overflowed;
-              }
-            }
-          }
+          const float * src = ct.row(b, gr);
+          float * dst = strip.data() + b * plane + static_cast<std::size_t>(yy * width) +
+            static_cast<std::size_t>(ct.col_begin - window.col_begin);
+          std::copy(src, src + ct.cols(), dst);
         }
       }
     }
