@@ -655,6 +655,40 @@ TEST(ExportSelection, FinerNativeOverAnExportLevelHoleWarns)
   EXPECT_FALSE(hasWarning(res, "beneath native"));
 }
 
+// The snap tolerance is per level (1e-4 of a cell AT that level), so a box edge
+// just past a level-9 tile boundary snaps onto it at level 9 but still takes in
+// the next level-10 tile at level 10. That finer tile's level-9 position is not
+// in the export, so nothing of it is missing from the file: no hole, nothing
+// shadowed, and no warning (Lens B's reproduction: "1 native of 1 tile
+// position" plus a hole warning).
+TEST(ExportSelection, FinerNativeWhoseExportPositionIsOutsideTheExportIsNotCounted)
+{
+  Store s("finer_outside_export");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  const std::uint32_t row9 = kRow10 / 2, col9 = kCol10 / 2;   // kCol10 is the east child
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  const gggs::GridIndex east = gridAt(10, kRow10, kCol10 + 1);   // under level-9 col9 + 1
+  writeConst(s.layer(), east, 1.0);
+  writeConst(s.sidecar(), gridAt(9, row9, col9), 2.0);
+  const double r9 = static_cast<double>(row9) * kEdge;
+  const double boundary9 = static_cast<double>(col9 + 1) * kEdge;
+  // East edge 0.75e-4 level-9 cells (1.5e-4 level-10 cells) past the boundary.
+  const mtrs::ExportBox box = cellBox(9, r9 + 10, boundary9 - 400, r9 + 20, boundary9 + 0.75e-4);
+  ASSERT_EQ(mtrs::snapBoxToLevel(box, 9).col_end, static_cast<std::uint64_t>(boundary9));
+  ASSERT_GT(mtrs::snapBoxToLevel(box, 10).col_end, static_cast<std::uint64_t>(2 * boundary9))
+    << "the east level-10 tile must count as inside the box at level 10";
+  mtrs::ExportResult res =
+    mtrs::exportGeoTiff(s.layer().string(), s.out().string(), opts(box, 9));
+  EXPECT_EQ(res.tile_positions, 1u);
+  EXPECT_FALSE(hasWarning(res, "NOT exported")) << res.warnings.front();
+  // The same with a native level-9 tile over the east one, just outside the
+  // export: it would have "shadowed" a tile that is not in the file either.
+  writeConst(s.layer(), gridAt(9, row9, col9 + 1), 3.0);
+  res = mtrs::exportGeoTiff(s.layer().string(), s.out().string(), opts(box, 9));
+  EXPECT_EQ(res.tile_positions, 1u);
+  EXPECT_FALSE(hasWarning(res, "NOT exported")) << res.warnings.front();
+}
+
 TEST(ExportSelection, FinestNativeLevelIsJudgedInsideTheBox)
 {
   Store s("finest_in_box");

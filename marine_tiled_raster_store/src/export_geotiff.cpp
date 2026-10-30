@@ -388,11 +388,11 @@ void validateOptions(const ExportOptions & options)
 struct TileRange
 {
   std::uint64_t row_first = 0, row_last = 0, col_first = 0, col_last = 0;
-  bool contains(const gggs::GridIndex & g) const
+  bool contains(std::uint64_t row, std::uint64_t col) const
   {
-    return g.row() >= row_first && g.row() <= row_last &&
-           g.column() >= col_first && g.column() <= col_last;
+    return row >= row_first && row <= row_last && col >= col_first && col <= col_last;
   }
+  bool contains(const gggs::GridIndex & g) const {return contains(g.row(), g.column());}
   std::uint64_t count() const
   {
     return (row_last - row_first + 1) * (col_last - col_first + 1);
@@ -638,13 +638,24 @@ ExcludedLevels excludedLevels(
         }
         continue;
       }
-      // Finer: the nearest native ancestor from its own level - 1 down to the
-      // export level, if any.
+      // Finer. Its export-level ancestor position first: a finer tile counts as
+      // inside the box at its own level, and the snap tolerance is per level,
+      // so a box edge just past a tile boundary can take in a finer tile whose
+      // export-level position is not in the export at all. Nothing of it is
+      // then missing from the file, so it is neither a hole nor shadowed.
+      const unsigned k = static_cast<unsigned>(other - level);
+      const std::uint64_t r = static_cast<std::uint64_t>(g.row()) >> k;
+      const std::uint64_t c = static_cast<std::uint64_t>(g.column()) >> k;
+      if (!tiles.contains(r, c)) {
+        continue;
+      }
+      // The nearest native ancestor from its own level - 1 down to the export
+      // level, if any.
       bool shadowed = false;
       for (int a = static_cast<int>(other) - 1; a >= static_cast<int>(level); --a) {
-        const unsigned k = static_cast<unsigned>(static_cast<int>(other) - a);
+        const unsigned ka = static_cast<unsigned>(static_cast<int>(other) - a);
         if (native_keys.count(
-            LevelKey{static_cast<std::uint8_t>(a), g.row() >> k, g.column() >> k}) != 0)
+            LevelKey{static_cast<std::uint8_t>(a), g.row() >> ka, g.column() >> ka}) != 0)
         {
           shadowed = true;
           shadowing_levels.insert(static_cast<std::uint8_t>(a));
@@ -655,9 +666,6 @@ ExcludedLevels excludedLevels(
         shadowed_levels.insert(other);
         continue;
       }
-      const unsigned k = static_cast<unsigned>(other - level);
-      const std::uint64_t r = static_cast<std::uint64_t>(g.row()) >> k;
-      const std::uint64_t c = static_cast<std::uint64_t>(g.column()) >> k;
       if (!selected(r, c)) {
         holes.emplace(r, c);
         hole_levels.insert(other);

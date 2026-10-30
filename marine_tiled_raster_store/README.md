@@ -194,7 +194,10 @@ be, missing from the export, in three cases:
 No warning is raised for a sidecar tile that carries the finer native data, as
 at an explicit coarse `--level` over an up-to-date pyramid, or for a coarser
 native tile under export-level tiles that are fully valid (band 1) wherever the
-box crosses it. Nothing is folded or upsampled on the fly.
+box crosses it, and never for a tile whose export-level position is outside the
+export (the snap tolerance is per level, so a box edge just past a tile
+boundary can take in a finer tile at its own level). Nothing is folded or
+upsampled on the fly.
 
 **Band names** come from the band count only: 2 = `depth,uncertainty`;
 3 = `mean,scaled_standard_error,sample_sd`; anything else `band_1..N` (with a
