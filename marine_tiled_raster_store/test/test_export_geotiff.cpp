@@ -1783,14 +1783,14 @@ TEST(ExportCli, MalformedNumbersAreUsageErrors)
   const std::string prefix =
     "'" + s.layer().string() + "' " + boxArgs(insideTile(10, kRow10, kCol10)) + " -o '" +
     s.out().string() + "' ";
-  for (const std::string & bad : {"' -1'", "-1", "+5", "' 5'", "'5 '", "12abc", "0x10", "''",
+  for (const char * bad : {"' -1'", "-1", "+5", "' 5'", "'5 '", "12abc", "0x10", "''",
       "1e9", "0"})
   {
     const CliRun r = runCli(s, prefix + "--max-pixels " + bad);
     EXPECT_EQ(r.status, 2) << "--max-pixels " << bad << ": " << r.err;
     EXPECT_NE(r.err.find("--max-pixels needs a positive integer"), std::string::npos) << r.err;
   }
-  for (const std::string & bad : {"' 3'", "+3", "-3", "3x", "21"}) {
+  for (const char * bad : {"' 3'", "+3", "-3", "3x", "21"}) {
     const CliRun r = runCli(s, prefix + "--level " + bad);
     EXPECT_EQ(r.status, 2) << "--level " << bad << ": " << r.err;
   }
