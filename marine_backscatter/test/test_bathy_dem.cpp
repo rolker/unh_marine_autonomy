@@ -31,7 +31,7 @@
 #include <vector>
 
 #include "marine_autonomy/gggs.h"
-#include "marine_sidescan_mosaic/bathy_dem.hpp"
+#include "marine_backscatter/bathy_dem.hpp"
 #include "marine_tiled_raster_store/tile_io.hpp"
 #include "marine_tiled_raster_store/tiled_raster_tile.hpp"
 
@@ -46,7 +46,7 @@ namespace
 
 namespace fs = std::filesystem;
 namespace mtrs = marine_tiled_raster_store;
-namespace msm = marine_sidescan_mosaic;
+namespace mbs = marine_backscatter;
 
 constexpr int kFineLevel = 13;                 // sidescan native level (~0.11 m)
 constexpr int kCoarseLevel = 11;               // typical bathy store level (~0.45 m)
@@ -59,7 +59,7 @@ class ScratchDir
 {
 public:
   explicit ScratchDir(const std::string & name)
-  : path_(fs::path(::testing::TempDir()) / ("msm_dem_" + name))
+  : path_(fs::path(::testing::TempDir()) / ("mbs_dem_" + name))
   {
     fs::remove_all(path_);
     fs::create_directories(path_);
@@ -83,7 +83,7 @@ void writeDepthTile(
 {
   const fs::path dir = root / layer;
   fs::create_directories(dir);
-  mtrs::TiledRasterTile<double> tile(grid, msm::BathyDem::kBands, kNaN);
+  mtrs::TiledRasterTile<double> tile(grid, mbs::BathyDem::kBands, kNaN);
   for (uint16_t r = 0; r < tile.edge; ++r) {
     for (uint16_t c = 0; c < tile.edge; ++c) {
       tile.set(r, c, 0, depth_of(r, c));
@@ -112,7 +112,7 @@ struct CellGeometry
 // so the EXPECT_THROW macro sees ONE argument — its comma is inside parentheses.
 void makeDem(const std::string & root, const std::vector<std::string> & layers)
 {
-  msm::BathyDem dem(root, layers);
+  mbs::BathyDem dem(root, layers);
   (void)dem;
 }
 
@@ -139,7 +139,7 @@ TEST(BathyDem, RoundTripsAKnownDepth)
   const gggs::Level level(kFineLevel);
   writeConstantTile(dir.path(), "survey", level.gridIndex(kLat, kLon), -12.5);
 
-  msm::BathyDem dem(dir.path().string(), {"survey", "reference"});
+  mbs::BathyDem dem(dir.path().string(), {"survey", "reference"});
   const auto depth = dem.depthAt(kLat, kLon);
   ASSERT_TRUE(depth.has_value());
   EXPECT_NEAR(*depth, -12.5, 1e-9);
@@ -158,7 +158,7 @@ TEST(BathyDem, BilinearBlendsBetweenCellCentres)
     dir.path(), "survey", level.gridIndex(kLat, kLon),
     [](uint16_t, uint16_t c) {return -20.0 + static_cast<double>(c) * 0.01;});
 
-  msm::BathyDem dem(dir.path().string(), {"survey"});
+  mbs::BathyDem dem(dir.path().string(), {"survey"});
   const auto geom = cellGeometry(kFineLevel, kLat, kLon);
   const gggs::CellIndex cell =
     level.cellIndex(gggs::geoPoint(geom.centre_lat, geom.centre_lon));
@@ -199,7 +199,7 @@ TEST(BathyDem, PartialStencilRenormalisesRatherThanSnappingToNearest)
       return (r == r0 + 1 && c == c0 + 1) ? kNaN : depth_of(r, c);
     });
 
-  msm::BathyDem dem(dir.path().string(), {"survey"});
+  mbs::BathyDem dem(dir.path().string(), {"survey"});
   // A tenth of a cell toward the NE corner: the missing diagonal carries weight
   // 0.01 of the stencil, the three present cells 0.99 between them.
   const auto value = dem.depthAt(
@@ -223,7 +223,7 @@ TEST(BathyDem, DuplicateLayerNamesAreScannedOnce)
   const gggs::Level level(kFineLevel);
   writeConstantTile(dir.path(), "survey", level.gridIndex(kLat, kLon), -9.0);
 
-  msm::BathyDem dem(dir.path().string(), {"survey", "survey"});
+  mbs::BathyDem dem(dir.path().string(), {"survey", "survey"});
   EXPECT_EQ(dem.tileCount(), 1u);
   EXPECT_EQ(dem.layers().size(), 1u);
   ASSERT_EQ(dem.warnings().size(), 1u);
@@ -247,7 +247,7 @@ TEST(BathyDem, NoDataCellYieldsNullopt)
   const gggs::Level level(kFineLevel);
   writeConstantTile(dir.path(), "survey", level.gridIndex(kLat, kLon), kNaN);
 
-  msm::BathyDem dem(dir.path().string(), {"survey"});
+  mbs::BathyDem dem(dir.path().string(), {"survey"});
   EXPECT_FALSE(dem.depthAt(kLat, kLon).has_value());
 }
 
@@ -258,7 +258,7 @@ TEST(BathyDem, MissingTileYieldsNullopt)
   const gggs::Level level(kFineLevel);
   writeConstantTile(dir.path(), "survey", level.gridIndex(kLat, kLon), -8.0);
 
-  msm::BathyDem dem(dir.path().string(), {"survey"});
+  mbs::BathyDem dem(dir.path().string(), {"survey"});
   EXPECT_TRUE(dem.depthAt(kLat, kLon).has_value());
   EXPECT_FALSE(dem.depthAt(kLat + 1.0, kLon + 1.0).has_value());
 }
@@ -275,7 +275,7 @@ TEST(BathyDem, NeighbourAcrossGridBoundaryResolves)
   writeConstantTile(dir.path(), "survey", west_grid, -10.0);
   writeConstantTile(dir.path(), "survey", east_grid, -20.0);
 
-  msm::BathyDem dem(dir.path().string(), {"survey"});
+  mbs::BathyDem dem(dir.path().string(), {"survey"});
   // Sit on the shared boundary (a hair inside the western grid) at a cell-centre
   // latitude, so the stencil is exactly the two cells straddling the boundary.
   const double boundary_lon = west_grid.eastLongitude();
@@ -295,7 +295,7 @@ TEST(BathyDem, MultiLevelStorePrefersTheFinerLevel)
   writeConstantTile(
     dir.path(), "survey", gggs::Level(kFineLevel).gridIndex(kLat, kLon), -31.0);
 
-  msm::BathyDem dem(dir.path().string(), {"survey"});
+  mbs::BathyDem dem(dir.path().string(), {"survey"});
   ASSERT_EQ(dem.levels().size(), 2u);
   EXPECT_EQ(dem.levels().front(), kFineLevel);   // finest first
   const auto depth = dem.depthAt(kLat, kLon);
@@ -314,7 +314,7 @@ TEST(BathyDem, LayerPriorityAndFallthrough)
   writeConstantTile(dir.path(), "reference", grid, -6.0);
 
   {
-    msm::BathyDem dem(dir.path().string(), {"survey", "reference"});
+    mbs::BathyDem dem(dir.path().string(), {"survey", "reference"});
     const auto depth = dem.depthAt(kLat, kLon);
     ASSERT_TRUE(depth.has_value());
     EXPECT_NEAR(*depth, -5.0, 1e-9);
@@ -322,7 +322,7 @@ TEST(BathyDem, LayerPriorityAndFallthrough)
     EXPECT_EQ(dem.lookupsByLayer().at("reference"), 0u);
   }
   {
-    msm::BathyDem dem(dir.path().string(), {"reference", "survey"});
+    mbs::BathyDem dem(dir.path().string(), {"reference", "survey"});
     const auto depth = dem.depthAt(kLat, kLon);
     ASSERT_TRUE(depth.has_value());
     EXPECT_NEAR(*depth, -6.0, 1e-9);
@@ -332,7 +332,7 @@ TEST(BathyDem, LayerPriorityAndFallthrough)
   ScratchDir hole("layers_hole");
   writeConstantTile(hole.path(), "survey", grid, kNaN);
   writeConstantTile(hole.path(), "reference", grid, -7.0);
-  msm::BathyDem dem(hole.path().string(), {"survey", "reference"});
+  mbs::BathyDem dem(hole.path().string(), {"survey", "reference"});
   const auto depth = dem.depthAt(kLat, kLon);
   ASSERT_TRUE(depth.has_value());
   EXPECT_NEAR(*depth, -7.0, 1e-9);
@@ -378,7 +378,7 @@ TEST(BathyDem, PartiallyMissingLayersWarnRatherThanVanish)
 
   // survey/ absent, reference/ present.
   {
-    msm::BathyDem dem(dir.path().string(), {"survey", "reference"});
+    mbs::BathyDem dem(dir.path().string(), {"survey", "reference"});
     ASSERT_EQ(dem.warnings().size(), 1u);
     EXPECT_NE(dem.warnings()[0].find("survey/"), std::string::npos) << dem.warnings()[0];
     EXPECT_EQ(dem.layers(), std::vector<std::string>{"reference"});
@@ -390,7 +390,7 @@ TEST(BathyDem, PartiallyMissingLayersWarnRatherThanVanish)
   // survey/ present but holding no value tiles: same treatment.
   fs::create_directories(dir.path() / "survey");
   {
-    msm::BathyDem dem(dir.path().string(), {"survey", "reference"});
+    mbs::BathyDem dem(dir.path().string(), {"survey", "reference"});
     ASSERT_EQ(dem.warnings().size(), 1u);
     EXPECT_NE(dem.warnings()[0].find("no <level>_<row>_<col>.tif"), std::string::npos)
       << dem.warnings()[0];
@@ -399,7 +399,7 @@ TEST(BathyDem, PartiallyMissingLayersWarnRatherThanVanish)
 
   // Everything the caller asked for is there: nothing to say.
   {
-    msm::BathyDem dem(dir.path().string(), {"reference"});
+    mbs::BathyDem dem(dir.path().string(), {"reference"});
     EXPECT_TRUE(dem.warnings().empty());
   }
 }
@@ -421,7 +421,7 @@ TEST(BathyDem, AbsentDraftIsSilentWhenAnotherLayerPresent)
     ScratchDir dir("draft_absent_ok");
     writeConstantTile(dir.path(), "processed", grid, -9.0);
     writeConstantTile(dir.path(), "reference", grid, -10.0);
-    msm::BathyDem dem(dir.path().string(), {"processed", "draft", "reference"});
+    mbs::BathyDem dem(dir.path().string(), {"processed", "draft", "reference"});
     ASSERT_TRUE(dem.warnings().empty())
       << (dem.warnings().empty() ? std::string{} : dem.warnings()[0]);
     EXPECT_EQ(dem.layers(), (std::vector<std::string>{"processed", "reference"}));
@@ -436,7 +436,7 @@ TEST(BathyDem, AbsentDraftIsSilentWhenAnotherLayerPresent)
   {
     ScratchDir dir("nondraft_absent_warns");
     writeConstantTile(dir.path(), "reference", grid, -10.0);
-    msm::BathyDem dem(dir.path().string(), {"processed", "draft", "reference"});
+    mbs::BathyDem dem(dir.path().string(), {"processed", "draft", "reference"});
     ASSERT_EQ(dem.warnings().size(), 1u);
     EXPECT_NE(dem.warnings()[0].find("'processed/' does not exist"), std::string::npos)
       << dem.warnings()[0];
@@ -457,7 +457,7 @@ TEST(BathyDem, CompanionRastersAreNotValueTiles)
   fs::create_directories(layer);
   const std::string value_name = mtrs::tileFilename(grid);
   const std::string stem = value_name.substr(0, value_name.size() - 4);
-  for (const std::string & suffix : {"_time.tif", "_source.tif"}) {
+  for (const char * suffix : {"_time.tif", "_source.tif"}) {
     std::ofstream companion(layer / (stem + suffix), std::ios::binary);
     companion << "companion raster";
   }
@@ -467,7 +467,7 @@ TEST(BathyDem, CompanionRastersAreNotValueTiles)
 
   // With a real value tile alongside them, exactly one tile is counted.
   writeConstantTile(dir.path(), "survey", grid, -4.0);
-  msm::BathyDem dem(dir.path().string(), {"survey"});
+  mbs::BathyDem dem(dir.path().string(), {"survey"});
   EXPECT_EQ(dem.tileCount(), 1u);
   const auto depth = dem.depthAt(kLat, kLon);
   ASSERT_TRUE(depth.has_value());
@@ -476,12 +476,12 @@ TEST(BathyDem, CompanionRastersAreNotValueTiles)
 
 TEST(BathyDem, SplitCsvTrimsAndDropsEmpties)
 {
-  const auto parts = msm::splitCsv(" survey , reference ,, chart");
+  const auto parts = mbs::splitCsv(" survey , reference ,, chart");
   ASSERT_EQ(parts.size(), 3u);
   EXPECT_EQ(parts[0], "survey");
   EXPECT_EQ(parts[1], "reference");
   EXPECT_EQ(parts[2], "chart");
-  EXPECT_TRUE(msm::splitCsv("  ").empty());
+  EXPECT_TRUE(mbs::splitCsv("  ").empty());
 }
 
 // The LRU must not change what a lookup returns, only how often a tile is read:
@@ -501,7 +501,7 @@ TEST(BathyDem, TileCacheEvictionPreservesResults)
     lon = grid.eastLongitude() + 1e-7;
   }
 
-  msm::BathyDem dem(dir.path().string(), {"survey"}, 1 /* one resident tile */);
+  mbs::BathyDem dem(dir.path().string(), {"survey"}, 1 /* one resident tile */);
   for (int pass = 0; pass < 2; ++pass) {
     for (std::size_t i = 0; i < grids.size(); ++i) {
       const auto centre = grids[i].southWestPosition();

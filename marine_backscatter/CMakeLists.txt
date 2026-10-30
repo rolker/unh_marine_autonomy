@@ -20,7 +20,10 @@ find_package(geographic_msgs REQUIRED)
 # geometry of the GeoCoder radiometry chain (slope-aware incidence, #304). The
 # COMPOSITOR is per-store, not shared — this lib ships the sidescan best-source
 # ProcessedAccumulator (uint16); MBES adds its own Welford mean+variance
-# accumulator (float). See ADR-0007 D6.
+# accumulator (float). See ADR-0007 D6. Also the store-backed height sampler
+# BathyDem (moved from marine_sidescan_mosaic, #304), which reads the bathy
+# store's value tiles directly off disk: a file-level coupling with no
+# marine_bathymetry_store package dependency (ADR-0006 D9).
 #
 # ONE library on purpose (#304 plan review): it already links
 # marine_tiled_raster_store through processed_accumulator, so a separate
@@ -28,6 +31,7 @@ find_package(geographic_msgs REQUIRED)
 # consumer's link. What IS dependency-free is seabed_geometry.hpp itself (std
 # only).
 add_library(${PROJECT_NAME}
+  src/bathy_dem.cpp
   src/processed_accumulator.cpp
   src/quality.cpp
   src/registry.cpp
@@ -65,6 +69,15 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_quality test/test_quality.cpp)
   target_link_libraries(test_quality ${PROJECT_NAME})
+
+  # DEM reader over synthetic bathy value tiles (#297, moved here in #304).
+  # Fixtures are written with marine_tiled_raster_store::saveTile<double> — NOT
+  # marine_bathymetry_store's writer, which would add a test-only package
+  # dependency cutting against ADR-0006 D9's decoupling.
+  ament_add_gtest(test_bathy_dem test/test_bathy_dem.cpp)
+  target_link_libraries(test_bathy_dem ${PROJECT_NAME})
+  ament_target_dependencies(test_bathy_dem
+    geographic_msgs marine_autonomy marine_tiled_raster_store)
 endif()
 
 ament_package()

@@ -58,10 +58,10 @@
 #include "marine_autonomy/gggs.h"
 #include "marine_tiled_raster_store/tile_io.hpp"
 
+#include "marine_backscatter/bathy_dem.hpp"
 #include "marine_backscatter/processed_accumulator.hpp"
 #include "marine_backscatter/quality.hpp"
 #include "marine_backscatter/registry.hpp"
-#include "marine_sidescan_mosaic/bathy_dem.hpp"
 #include "marine_sidescan_mosaic/projection.hpp"
 #include "marine_sidescan_mosaic/tier1.hpp"
 

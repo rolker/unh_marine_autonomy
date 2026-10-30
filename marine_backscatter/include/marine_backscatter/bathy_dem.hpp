@@ -19,8 +19,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#ifndef MARINE_SIDESCAN_MOSAIC__BATHY_DEM_HPP_
-#define MARINE_SIDESCAN_MOSAIC__BATHY_DEM_HPP_
+#ifndef MARINE_BACKSCATTER__BATHY_DEM_HPP_
+#define MARINE_BACKSCATTER__BATHY_DEM_HPP_
 
 #include <cstddef>
 #include <cstdint>
@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "marine_autonomy/gggs.h"
+#include "marine_backscatter/seabed_geometry.hpp"
 #include "marine_tiled_raster_store/tiled_raster_tile.hpp"
 
 /// @file
@@ -52,8 +53,18 @@
 /// depth as a **WGS84 ellipsoidal height, up-positive** (NaN = no data), band 1 is
 /// 1-sigma vertical uncertainty (read but unused in v1, so a future sigma-weighted
 /// variant needs no format change).
+///
+/// Moved here from `marine_sidescan_mosaic` (#304) so both backscatter layers can
+/// use it: it is the store-backed @ref seabed::SeabedHeightSampler for the seabed
+/// normal, as well as the DEM behind sidescan orthorectification (#297).
+///
+/// **Fine tiles only** (ADR-0011 §2 / ADR-0013 D8): a depth overview folds to the
+/// shallowest value, so a gradient taken across overview cells is not the seabed's.
+/// The scan reads only exact `<level>_<row>_<col>.tif` names directly inside each
+/// layer directory (non-recursive), so an `overviews/` sidecar is never read, and
+/// the constructor rejects a layer name that would point at one.
 
-namespace marine_sidescan_mosaic
+namespace marine_backscatter
 {
 
 /// @brief Default layer search order for @ref BathyDem.
@@ -80,9 +91,10 @@ std::vector<std::string> splitCsv(const std::string & csv);
 /// empty store therefore aborts the run at startup instead of silently degrading
 /// every sample to the flat-bottom fallback.
 ///
-/// @note Not thread-safe: `depthAt` mutates the tile LRU and the hit counters.
-///   The offline Tier-2 build is single-threaded.
-class BathyDem
+/// @note Not thread-safe: `depthAt` / `heightAt` mutate the tile LRU and the hit
+///   counters. The offline Tier-2 build is single-threaded; use one reader per
+///   thread otherwise.
+class BathyDem : public seabed::SeabedHeightSampler
 {
 public:
   /// @brief Band index of depth in the store's 2-band value tile.
@@ -105,6 +117,9 @@ public:
   /// @param store_root Bathy store root (the directory holding the layer dirs).
   /// @param layer_names Layer directory names in **descending priority**.
   /// @param cache_tiles Resident-tile budget for the LRU (>= 1).
+  /// @throws std::invalid_argument if a layer name is empty, `.` or `..`, contains
+  ///   `/`, or starts with `overviews` — a layer is one directory directly under
+  ///   the root, and an overview sidecar is never a source of heights.
   /// @throws std::runtime_error if no requested layer directory exists, or if the
   ///   scan finds no `<level>_<row>_<col>.tif` tiles at all.
   BathyDem(
@@ -143,6 +158,27 @@ public:
   ///   corrupt or truncated tile is an error, never a silent no-coverage).
   std::optional<double> depthAt(double lat_deg, double lon_deg);
 
+  /// @brief Strict-stencil height for the seabed normal
+  ///   (@ref seabed::SeabedHeightSampler).
+  ///
+  /// Same resolution order as @ref depthAt, but no renormalisation: when the
+  /// probe's own cell has no data anywhere the status is
+  /// @ref seabed::SampleStatus::kNoData, and when any bilinear neighbour carrying
+  /// a non-zero weight is missing at the resolved (layer, level) it is
+  /// @ref seabed::SampleStatus::kStencilIncomplete. A renormalised partial
+  /// stencil is fine for placing a sample but biases a gradient at every survey
+  /// edge (up to ~50 % slope error at a one-cell step), so the normal must not
+  /// see one.
+  ///
+  /// The spans are the resolved cell's angular spans converted with
+  /// @ref seabed::metresPerDegree at the cell-centre latitude. The source is
+  /// (layer index in @ref layers(), GGGS level, tile row << 32 | column) of the
+  /// probe's own cell. The bilinear neighbours of one probe may still read across
+  /// a tile boundary at the same layer and level, as @ref depthAt does.
+  ///
+  /// @throws std::runtime_error if a tile the scan listed cannot be loaded.
+  seabed::HeightSample heightAt(double lat_deg, double lon_deg) override;
+
   /// @brief The layer directory names actually found, in priority order.
   const std::vector<std::string> & layers() const {return layer_names_;}
 
@@ -152,7 +188,8 @@ public:
   /// @brief Total tiles found by the startup scan.
   std::size_t tileCount() const {return tile_count_;}
 
-  /// @brief Successful @ref depthAt **calls** per layer directory name.
+  /// @brief Successful @ref depthAt and valid @ref heightAt **calls** per layer
+  ///   directory name.
   ///
   /// These count store *probes* that returned data, not placed samples: a caller
   /// iterating a ray/bottom intersection calls `depthAt` several times for one
@@ -194,6 +231,23 @@ private:
     int level = 0;
   };
 
+  /// @brief One bilinear lookup, shared by @ref depthAt and @ref heightAt.
+  struct Lookup
+  {
+    seabed::SampleStatus status = seabed::SampleStatus::kNoData;
+    double value = 0.0;
+    Source source;
+    std::uint32_t tile_row = 0;
+    std::uint32_t tile_column = 0;
+    double lat_span_deg = 0.0;
+    double lon_span_deg = 0.0;
+    double centre_lat_deg = 0.0;
+  };
+
+  /// @brief Resolve and interpolate. @p strict: any missing non-zero-weight
+  ///   neighbour makes the result kStencilIncomplete; otherwise the blend is
+  ///   renormalised over the neighbours present (the @ref depthAt behaviour).
+  Lookup lookup(double lat_deg, double lon_deg, bool strict);
   std::optional<Source> resolveSource(double lat_deg, double lon_deg);
   std::optional<double> cellValue(std::size_t layer, int level_n, double lat_deg, double lon_deg);
   const Tile * tileFor(std::size_t layer, int level_n, const gggs::GridIndex & grid);
@@ -212,6 +266,6 @@ private:
   std::vector<std::string> warnings_;
 };
 
-}  // namespace marine_sidescan_mosaic
+}  // namespace marine_backscatter
 
-#endif  // MARINE_SIDESCAN_MOSAIC__BATHY_DEM_HPP_
+#endif  // MARINE_BACKSCATTER__BATHY_DEM_HPP_

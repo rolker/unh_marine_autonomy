@@ -58,7 +58,7 @@
 #include "geodesy/ecef.h"
 #include "geographic_msgs/msg/geo_point.hpp"
 #include "marine_autonomy/gggs.h"
-#include "marine_sidescan_mosaic/bathy_dem.hpp"
+#include "marine_backscatter/bathy_dem.hpp"
 #include "marine_sidescan_mosaic/tier1.hpp"
 #include "marine_tiled_raster_store/tile_io.hpp"
 #include "marine_tiled_raster_store/tiled_raster_tile.hpp"
@@ -228,7 +228,7 @@ void writeBathyStore(
   }
 
   for (const auto & grid : grids) {
-    mtrs::TiledRasterTile<double> tile(grid, msm::BathyDem::kBands, kNaN);
+    mtrs::TiledRasterTile<double> tile(grid, marine_backscatter::BathyDem::kBands, kNaN);
     const double lat_span = grid.latitudinalSpan() / gggs::cell_rows_per_grid;
     const double lon_span = grid.longitudinalSpan() / gggs::cell_columns_per_grid;
     for (uint16_t r = 0; r < tile.edge; ++r) {
