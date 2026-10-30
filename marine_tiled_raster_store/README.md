@@ -125,9 +125,100 @@ loud-skip cases), the run encoding and its refusal to merge across differing
 geometric errors, the JSON round-trip, the tolerant read, and the refusal to
 expand a run wider than its level's grid extent.
 
+`test_export_geotiff` covers the exporter: per-tile selection (native wins,
+mixed native + sidecar, excluded native levels, finest native level judged in
+the box, no-upsample and missing-sidecar-level refusals, sidecar geometric
+error), every pixel of a clipped 2x2 tile neighbourhood against its GGGS cell,
+NaN holes and the NoData count, each refusal leaving no output and no `.tmp`,
+output replacement and stale-`.tmp` cleanup, the datum policy, the Float32 and
+Float64 value paths, the pixel cap at its boundary and on a 64-bit-overflow box,
+and the CLI's exit codes (it runs the built executable).
+
+## Whole-area GeoTIFF export (#370)
+
+The stores hold one GeoTIFF per GGGS tile; sharing a survey needs one file.
+`export_geotiff` mosaics one level of a tiled raster layer inside a box into a
+single north-up EPSG:4326 **Float32** GeoTIFF (tiled 256x256, DEFLATE with
+`PREDICTOR=3`, `BIGTIFF=IF_SAFER`, NaN no-data). It reads the store and never
+writes into it. The library entry point is `exportGeoTiff()` in
+`export_geotiff.hpp`; the CLI is a thin shell over it.
+
+```bash
+ros2 run marine_tiled_raster_store export_geotiff <layer_dir> \
+  --box LATMIN LONMIN LATMAX LONMAX -o out.tif [--level N] [--max-pixels N]
+```
+
+| Option | Meaning |
+|---|---|
+| `<layer_dir>` | The layer directory, e.g. `~/data/world/depths/processed` or `~/data/world/imagery/backscatter/survey`. No layer name is inspected. |
+| `--box LATMIN LONMIN LATMAX LONMAX` | **Required**, degrees, in that order. Snapped outward to the level's cell grid. |
+| `-o`, `--output PATH` | Written as `PATH.tmp`, closed (close checked), then renamed over `PATH`. |
+| `--level N` | Level to export (0-20). Default: the finest level holding a native tile **inside the box**. |
+| `--max-pixels N` | Refuse when width x height (pixels **per band**) exceeds `N`. Default 250,000,000 (1 GB of Float32 per band uncompressed; multiply by the band count for the total). The library has no default. |
+
+Exit status: 0 written, 1 refused or failed (nothing written), 2 usage error.
+Warnings go to stderr, the summary (level, source kind, tiles used, size,
+geometric error, band-1 NoData count, vertical datum) to stdout.
+
+**Tile selection (ADR-0011).** Exactly one level is read. Per tile position at
+that level: the native `<level>_<row>_<col>.tif` wins, else the derived
+`overviews/<level>_<row>_<col>.tif`, else a NaN hole. Native and sidecar tiles
+may mix in one export (`SOURCE_KIND=mixed`). Native tiles at other levels inside
+the box are not read, and a WARNING lists those levels. Nothing is folded or
+upsampled on the fly.
+
+**Band names** come from the band count only: 2 = `depth,uncertainty`;
+3 = `mean,scaled_standard_error,sample_sd`; anything else `band_1..N` (with a
+warning). A header probe of every selected tile refuses any band that is not
+Float32/Float64, so a uint16 sidescan layer is never labelled as backscatter.
+Every tile is read as double and cast once to Float32: float32 spacing is about
+7.6e-6 m for |values| of 64-128 m, against cm-dm sounding uncertainty. The cast
+is recorded as `DOWNCAST=Float64->Float32` (`NONE` when every source band was
+already Float32).
+
+**Datum (ADR-0002 D4).** Stored depth is always WGS84 ellipsoidal; the
+registry's `datum` is the SOURCE datum an import converted from. A 2-band export
+is therefore labelled `VERTICAL_DATUM=WGS84_ELLIPSOIDAL` and carries
+`SOURCE_VERTICAL_DATUM=<registry datum>`. When that is empty, missing or the
+registry is absent or unparsable, the export **continues** with
+`SOURCE_VERTICAL_DATUM=UNKNOWN` and a multi-line WARNING that the source datum
+conversion is not recorded. The registry is read from
+`<layer_dir>/../registry.json` (a trailing slash on `<layer_dir>` is ignored).
+That file is shared by sibling layers (`processed`, `chart`, `reference`), so it
+may describe a different layer than the one exported, e.g. a chart-datum source.
+3-band (backscatter) exports are exempt: `VERTICAL_DATUM=NOT_APPLICABLE`, no
+source datum, no check. The horizontal CRS is written as EPSG:4326, as the tiles
+are labelled.
+
+**Metadata.** Dataset tags `SOURCE_LEVEL`, `SOURCE_KIND` (`native`, `overview`
+or `mixed`), `GEOMETRIC_ERROR_M` (max over contributing tiles: the sidecar's
+`coverage.json` value for a derived tile, the nominal equatorial
+`Level::cellSize()` for a native one, not the local ground size), `BAND_NAMES`,
+`VERTICAL_DATUM`, `SOURCE_VERTICAL_DATUM` (depth only), `DOWNCAST` and
+`NODATA_COUNT` (band 1); every band also carries its own `NODATA_COUNT` and a
+description.
+
+**Refusals** (exit 1, no output, no `.tmp`, an existing output untouched): a box
+that intersects no tile at the chosen level; a level finer than the finest
+native level in the box (no upsampling); a coarser level absent from both the
+native tiles and the sidecar (build the layer's overviews first; a missing
+`overviews/` may be a rebuild in progress, so retry); a box reaching |lat| >= 72
+(tile I/O is validated only below 72, and GGGS longitude-scale bands cannot share
+one pixel width); width x height over `--max-pixels` (checked in 64-bit before
+anything is allocated) or a dimension over the GeoTIFF limit; a non-float tile;
+mixed band counts; an output path inside the layer or its sidecar. An
+unreadable tile, or one whose georeferencing does not match its filename, fails
+the export the same way.
+
+**Memory and writing.** The output is written one 256-row block-row strip at a
+time, loading only the tiles that overlap the strip (each tile once), so memory
+is one strip plus at most two tile rows of tiles, and no output block is ever
+read back and rewritten.
+
 ## Dependencies
 
 - `marine_autonomy` — the GGGS spatial index (`gggs::Level` / `GridIndex`).
-- GDAL — GeoTIFF persistence (private; in `tile_io.cpp` only).
-- `nlohmann_json` — the coverage manifest (private; in `coverage_manifest.cpp`
-  only).
+- GDAL — GeoTIFF persistence and the export writer (private; in `tile_io.cpp`
+  and `export_geotiff.cpp` only).
+- `nlohmann_json` — the coverage manifest and the export's registry read
+  (private; in `coverage_manifest.cpp` and `export_geotiff.cpp` only).
