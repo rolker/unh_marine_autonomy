@@ -1569,6 +1569,50 @@ TEST(ExportOutput, SidecarSwappedDuringTheExportFailsIt)
   EXPECT_TRUE(tmpFiles(s).empty());
 }
 
+// The sidecar identity is compared whenever it was recorded, so a swap also
+// fails an export that used no sidecar tile (here a native level-10 export of
+// a layer whose sidecar holds only level 9): its listing and hole decisions
+// came from a sidecar that is no longer the published one.
+TEST(ExportOutput, SidecarSwappedDuringANativeOnlyExportFailsIt)
+{
+  Store s("sidecar_swap_native");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  const gggs::GridIndex g9 = gridAt(9, kRow10 / 2, kCol10 / 2);
+  writeConst(s.sidecar(), g9, 2.0);
+  const fs::path staged = s.layer() / "overviews.tmp";
+  writeConst(staged, g9, 3.0);
+  std::ofstream(s.out()) << "previous";
+  const double r0 = static_cast<double>(kRow10) * kEdge;
+  const double c0 = static_cast<double>(kCol10) * kEdge;
+  const mtrs::ExportOptions o = opts(cellBox(10, r0 + 10, c0 + 10, r0 + 16010, c0 + 3010), 10);
+  std::atomic<bool> swapped{false};
+  std::atomic<bool> done{false};
+  std::thread rebuild([&]() {
+      while (!done && tmpFiles(s).empty()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      if (done) {
+        return;
+      }
+      fs::rename(s.sidecar(), s.layer() / "overviews.old");
+      fs::rename(staged, s.sidecar());
+      swapped = true;
+    });
+  std::string error;
+  try {
+    mtrs::exportGeoTiff(s.layer().string(), s.out().string(), o);
+  } catch (const std::runtime_error & e) {
+    error = e.what();
+  }
+  done = true;
+  rebuild.join();
+  ASSERT_TRUE(swapped) << "the export finished before the swap could be made";
+  EXPECT_NE(error.find("was replaced during the export"), std::string::npos) << error;
+  EXPECT_EQ(readFile(s.out()), "previous");
+  EXPECT_TRUE(tmpFiles(s).empty());
+}
+
 // A SIGHUP observer for the commit-window test: records, at delivery, how
 // many exports had replaced their output and whether the stale sidecar was
 // still there. Only async-signal-safe calls (atomic stores, access(2)).

@@ -214,11 +214,13 @@ then shows the old data. Rebuild the overviews after updating a layer before
 exporting a sidecar level. Exports also assume a quiet store: a native tile
 rewritten during an export may be read before or after the change. The one
 case that is caught is an overview rebuild publishing a new `overviews/` (the
-builders swap it in by rename) while an export reads sidecar tiles: the
-sidecar directory's identity is taken before it is listed and checked again
-before the rename, and a change fails the export (nothing written; retry once
-the rebuild has finished), since the file could otherwise mix two sidecar
-generations.
+builders swap it in by rename) during an export: the sidecar directory's
+identity is taken before it is listed and checked again before the rename, and
+a change fails the export (nothing written; retry once the rebuild has
+finished), since the file could otherwise mix two sidecar generations. This
+applies whenever the layer had an `overviews/` when the export started, even
+if the export used none of its tiles: which positions became holes was still
+decided from the old sidecar.
 
 **Band names** come from the band count only: 2 = `depth,uncertainty`;
 3 = `mean,scaled_standard_error,sample_sd`; anything else `band_1..N` (with a
