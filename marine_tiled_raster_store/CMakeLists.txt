@@ -19,6 +19,7 @@ find_package(nlohmann_json REQUIRED)
 
 add_library(${PROJECT_NAME}
   src/coverage_manifest.cpp
+  src/export_geotiff.cpp
   src/tile_io.cpp
   src/tile_catalog.cpp
 )
