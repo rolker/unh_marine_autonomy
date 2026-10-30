@@ -28,6 +28,7 @@
 #include <unistd.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -1480,6 +1481,52 @@ TEST(ExportOutput, ConcurrentExportsToOneOutputDoNotCollide)
   EXPECT_EQ(static_cast<std::uint64_t>(out.width), w.col_end - w.col_begin);
   EXPECT_EQ(static_cast<std::uint64_t>(out.height), w.row_end - w.row_begin);
   EXPECT_EQ(out.at(0, out.width - 1, out.height - 1), 1.0f);
+  EXPECT_TRUE(tmpFiles(s).empty());
+}
+
+// An overview rebuild publishes a new overviews/ by rename while an export is
+// reading the old one: the export would mix two sidecar generations, so it
+// fails, leaving the existing output untouched and no temporary file. The swap
+// is made from another thread as soon as this export's temporary file exists
+// (the export is large enough to still be writing then).
+TEST(ExportOutput, SidecarSwappedDuringTheExportFailsIt)
+{
+  Store s("sidecar_swap");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  const gggs::GridIndex g9 = gridAt(9, kRow10 / 2, kCol10 / 2);
+  writeConst(s.sidecar(), g9, 2.0);
+  const fs::path staged = s.layer() / "overviews.tmp";
+  writeConst(staged, g9, 3.0);
+  std::ofstream(s.out()) << "previous";
+  const double r9 = static_cast<double>(g9.row()) * kEdge;
+  const double c9 = static_cast<double>(g9.column()) * kEdge;
+  const mtrs::ExportOptions o = opts(cellBox(9, r9 + 10, c9 + 10, r9 + 16010, c9 + 3010), 9);
+  std::atomic<bool> swapped{false};
+  std::atomic<bool> done{false};
+  std::thread rebuild([&]() {
+      while (!done && tmpFiles(s).empty()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      if (done) {
+        return;
+      }
+      // rename-aside, as the builders' fallback does
+      fs::rename(s.sidecar(), s.layer() / "overviews.old");
+      fs::rename(staged, s.sidecar());
+      swapped = true;
+    });
+  std::string error;
+  try {
+    mtrs::exportGeoTiff(s.layer().string(), s.out().string(), o);
+  } catch (const std::runtime_error & e) {
+    error = e.what();
+  }
+  done = true;
+  rebuild.join();
+  ASSERT_TRUE(swapped) << "the export finished before the swap could be made";
+  EXPECT_NE(error.find("was replaced during the export"), std::string::npos) << error;
+  EXPECT_EQ(readFile(s.out()), "previous");
   EXPECT_TRUE(tmpFiles(s).empty());
 }
 

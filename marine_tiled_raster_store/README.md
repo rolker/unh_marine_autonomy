@@ -138,7 +138,8 @@ file, a replaced output's stale `.aux.xml`/`.ovr`/`.msk` sidecars removed
 layer guarding both stores, an `overviews/` sidecar refused as the layer),
 output replacement, an existing output left byte-identical by a failure
 after the dataset was created, foreign temporary-file lookalikes left untouched,
-concurrent exports to one output, the datum policy, the Float32 and
+concurrent exports to one output, an `overviews/` swapped in during an export
+failing it, the datum policy, the Float32 and
 Float64 value paths, the pixel cap at its boundary and on a 64-bit-overflow box,
 and the CLI's exit codes and its SIGINT/SIGTERM cleanup (it runs the built
 executable).
@@ -202,6 +203,20 @@ box crosses it, and never for a tile whose export-level position is outside the
 export (the snap tolerance is per level, so a box edge just past a tile
 boundary can take in a finer tile at its own level). Nothing is folded or
 upsampled on the fly.
+
+**Stale pyramids and a busy store.** The exporter trusts the `overviews/`
+sidecar as it finds it. A pyramid that is older than the native tiles it was
+folded from is **not detected** (see #389, depth overview pyramids go stale):
+its sidecar tiles are exported as they are, and an explicit coarse `--level`
+then shows the old data. Rebuild the overviews after updating a layer before
+exporting a sidecar level. Exports also assume a quiet store: a native tile
+rewritten during an export may be read before or after the change. The one
+case that is caught is an overview rebuild publishing a new `overviews/` (the
+builders swap it in by rename) while an export reads sidecar tiles: the
+sidecar directory's identity is taken before it is listed and checked again
+before the rename, and a change fails the export (nothing written; retry once
+the rebuild has finished), since the file could otherwise mix two sidecar
+generations.
 
 **Band names** come from the band count only: 2 = `depth,uncertainty`;
 3 = `mean,scaled_standard_error,sample_sd`; anything else `band_1..N` (with a

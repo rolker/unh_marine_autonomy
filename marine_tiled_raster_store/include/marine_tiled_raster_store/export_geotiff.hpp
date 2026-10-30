@@ -56,7 +56,9 @@
 /// the finest level holding a native tile inside the box. Per tile position at
 /// that level: the native `<level>_<row>_<col>.tif` wins, else the derived
 /// `overviews/<level>_<row>_<col>.tif` sidecar tile, else a NaN hole. Nothing is
-/// folded or upsampled on the fly.
+/// folded or upsampled on the fly. The sidecar is trusted as found (a stale
+/// pyramid is not detected); an `overviews/` swapped in by a rebuild while
+/// sidecar tiles are read fails the export.
 ///
 /// **Datum (ADR-0002 D4).** Stored depth is always WGS84 ellipsoidal; the
 /// registry's `datum` is the SOURCE datum an import converted from. A 2-band

@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <gdal_priv.h>
@@ -340,6 +341,18 @@ int syncToDisk(const fs::path & p, bool directory)
     err = errno;
   }
   return err;
+}
+
+/// The identity (device, inode) of a directory, to tell whether an overview
+/// rebuild swapped a new `overviews/` in (the builders publish by rename, so
+/// the path then names another inode). Empty when it cannot be stat'ed.
+std::optional<std::pair<dev_t, ino_t>> directoryIdentity(const fs::path & p)
+{
+  struct stat st;
+  if (::stat(p.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+    return std::nullopt;
+  }
+  return std::make_pair(st.st_dev, st.st_ino);
 }
 
 std::string levelList(const std::set<std::uint8_t> & levels)
@@ -998,6 +1011,11 @@ ExportResult exportGeoTiff(
       " could not be parsed and are ignored; any of them inside the box is "
       "exported as a NaN hole");
   }
+  // Taken BEFORE the sidecar is listed and compared again before the rename:
+  // an overview rebuild that swaps a new overviews/ in meanwhile would let one
+  // export mix two sidecar generations (the listing, coverage.json and tiles
+  // read at different times), so it fails the export instead.
+  const std::optional<std::pair<dev_t, ino_t>> sidecar_identity = directoryIdentity(sidecar);
   const bool has_sidecar = fs::is_directory(sidecar, ec);
   std::size_t skipped_sidecar = 0;
   const std::vector<gggs::GridIndex> sidecar_all = has_sidecar ?
@@ -1433,6 +1451,12 @@ ExportResult exportGeoTiff(
   CPLErrorReset();
   if (GDALClose(ds) != CE_None) {
     throw std::runtime_error("failed to flush/close " + tmp_path.string() + gdalReason());
+  }
+  if (result.tiles_overview > 0 && directoryIdentity(sidecar) != sidecar_identity) {
+    throw std::runtime_error(
+            "the overviews/ sidecar of " + layer.string() + " was replaced during the export "
+            "(an overview rebuild swapped it in), so the export could mix two sidecar "
+            "generations; retry once the rebuild has finished");
   }
   // On disk before the rename: otherwise a power loss soon after could leave
   // the new name pointing at an empty or partial file, with the previous
