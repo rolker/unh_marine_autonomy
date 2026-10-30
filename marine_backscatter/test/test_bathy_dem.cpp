@@ -26,16 +26,20 @@
 #include <fstream>
 #include <functional>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
 
 #include "marine_autonomy/gggs.h"
+#include "marine_autonomy/gz4d_geo.h"
 #include "marine_backscatter/bathy_dem.hpp"
+#include "marine_backscatter/seabed_geometry.hpp"
 #include "marine_tiled_raster_store/tile_io.hpp"
 #include "marine_tiled_raster_store/tiled_raster_tile.hpp"
 
-// [#297] The DEM reader behind sidescan orthorectification. Fixtures are written
+// [#297] The DEM reader behind sidescan orthorectification, moved here in #304
+// where it also became the store-backed seabed::SeabedHeightSampler. Fixtures are written
 // with marine_tiled_raster_store::saveTile<double> — the same on-disk contract
 // marine_bathymetry_store writes (2-band Float64, band 0 = ellipsoidal height,
 // NaN = no data) — so the test takes no marine_bathymetry_store dependency, per
@@ -47,6 +51,7 @@ namespace
 namespace fs = std::filesystem;
 namespace mtrs = marine_tiled_raster_store;
 namespace mbs = marine_backscatter;
+namespace sb = marine_backscatter::seabed;
 
 constexpr int kFineLevel = 13;                 // sidescan native level (~0.11 m)
 constexpr int kCoarseLevel = 11;               // typical bathy store level (~0.45 m)
@@ -512,4 +517,342 @@ TEST(BathyDem, TileCacheEvictionPreservesResults)
       EXPECT_NEAR(*depth, depths[i], 1e-9);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// #304: BathyDem as the strict-stencil seabed height sampler
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+// The cell at (@p row_off, @p col_off) cells from the south-west corner of the
+// level-@p level_n grid containing (kLat, kLon), so a fixture can sit well inside
+// one tile (or on its edge) without depending on where kLat/kLon happens to fall.
+CellGeometry gridCell(int level_n, double row_off, double col_off)
+{
+  const gggs::Level level(static_cast<uint8_t>(level_n));
+  const gggs::GridIndex grid = level.gridIndex(kLat, kLon);
+  const auto sw = grid.southWestPosition();
+  const double lat_span = grid.latitudinalSpan() / gggs::cell_rows_per_grid;
+  const double lon_span = grid.longitudinalSpan() / gggs::cell_columns_per_grid;
+  return cellGeometry(
+    level_n, sw.latitude + (row_off + 0.5) * lat_span, sw.longitude + (col_off + 0.5) * lon_span);
+}
+
+gggs::CellIndex cellAt(int level_n, double lat, double lon)
+{
+  return gggs::Level(static_cast<uint8_t>(level_n)).cellIndex(gggs::geoPoint(lat, lon));
+}
+
+// Local ENU of (lat, lon) about (lat0, lon0), from gz4d's geodetic -> ECEF -> ENU:
+// independent of the metresPerDegree helper the reader and the module share.
+gz4d::Point<double> enuOf(double lat0, double lon0, double lat, double lon)
+{
+  const gz4d::LocalENU frame(gz4d::GeoPointLatLongDegrees(lat0, lon0, 0.0));
+  return frame.toLocal(gz4d::GeoPointLatLongDegrees(lat, lon, 0.0));
+}
+
+}  // namespace
+
+// The strict lookup never renormalises: a partial stencil at a survey edge is
+// kStencilIncomplete (where depthAt still renormalises for placement), and a
+// position beyond the edge is kNoData.
+TEST(BathyDemSampler, StrictLookupAtASurveyEdge)
+{
+  ScratchDir dir("strict_edge");
+  const auto geom = gridCell(kFineLevel, 480, 480);
+  const uint16_t c0 = cellAt(kFineLevel, geom.centre_lat, geom.centre_lon).column();
+  const auto ramp = [](uint16_t c) {return -20.0 + 0.01 * static_cast<double>(c);};
+  // Survey edge: data up to column c0, nothing east of it.
+  writeDepthTile(
+    dir.path(), "processed", geom.grid,
+    [&](uint16_t, uint16_t c) {return c <= c0 ? ramp(c) : kNaN;});
+  mbs::BathyDem dem(dir.path().string(), {"processed"});
+
+  // At the edge cell's centre the east neighbour carries zero weight: complete.
+  const auto at_centre = dem.heightAt(geom.centre_lat, geom.centre_lon);
+  ASSERT_EQ(at_centre.status, sb::SampleStatus::kValid);
+  EXPECT_NEAR(at_centre.height_m, ramp(c0), 1e-9);
+
+  // A quarter cell west: the full bilinear value.
+  const auto west = dem.heightAt(geom.centre_lat, geom.centre_lon - 0.25 * geom.lon_span);
+  ASSERT_EQ(west.status, sb::SampleStatus::kValid);
+  EXPECT_NEAR(west.height_m, ramp(c0) - 0.25 * 0.01, 1e-9);
+
+  // A quarter cell east: the missing neighbour has weight 0.25.
+  const double east_lon = geom.centre_lon + 0.25 * geom.lon_span;
+  const auto east = dem.heightAt(geom.centre_lat, east_lon);
+  EXPECT_EQ(east.status, sb::SampleStatus::kStencilIncomplete);
+  EXPECT_TRUE(std::isnan(east.height_m));
+  // depthAt is unchanged: it renormalises over the cells present.
+  const auto placed = dem.depthAt(geom.centre_lat, east_lon);
+  ASSERT_TRUE(placed.has_value());
+  EXPECT_NEAR(*placed, ramp(c0), 1e-9);
+
+  // Beyond the edge.
+  EXPECT_EQ(
+    dem.heightAt(geom.centre_lat, geom.centre_lon + geom.lon_span).status,
+    sb::SampleStatus::kNoData);
+}
+
+// seabedNormal at a survey edge falls back with kStencilIncomplete instead of
+// differencing a renormalised (snapped-toward-nearest) probe; the same point on
+// a store without the edge gives a surface normal.
+TEST(BathyDemSampler, NormalAtASurveyEdgeFallsBackFlat)
+{
+  const auto geom = gridCell(kFineLevel, 480, 480);
+  const uint16_t c0 = cellAt(kFineLevel, geom.centre_lat, geom.centre_lon).column();
+  const auto ramp = [](uint16_t r, uint16_t c) {
+      return -20.0 + 0.01 * static_cast<double>(c) + 0.005 * static_cast<double>(r);
+    };
+  // Centre 1.1 cells west of the edge cell's centre; an explicit step of 1.4
+  // east spans puts the east probe 0.3 cells east of c0's centre — its own cell
+  // has data, its east neighbour does not.
+  const double lat = geom.centre_lat;
+  const double lon = geom.centre_lon - 1.1 * geom.lon_span;
+
+  ScratchDir edge_dir("normal_edge");
+  writeDepthTile(
+    edge_dir.path(), "processed", geom.grid,
+    [&](uint16_t r, uint16_t c) {return c <= c0 ? ramp(r, c) : kNaN;});
+  mbs::BathyDem edge(edge_dir.path().string(), {"processed"});
+  const auto centre = edge.heightAt(lat, lon);
+  ASSERT_TRUE(centre.valid());
+  ASSERT_LT(centre.span_north_m, 1.4 * centre.span_east_m);   // so 1.4 east spans is unclamped
+  sb::NormalOptions options;
+  options.step_m = 1.4 * centre.span_east_m;
+
+  const sb::Normal at_edge = sb::seabedNormal(edge, lat, lon, options);
+  EXPECT_FALSE(at_edge.from_surface);
+  EXPECT_EQ(at_edge.reason, sb::FallbackReason::kStencilIncomplete);
+  EXPECT_FALSE(at_edge.step_clamped);
+
+  ScratchDir full_dir("normal_full");
+  writeDepthTile(full_dir.path(), "processed", geom.grid, ramp);
+  mbs::BathyDem full(full_dir.path().string(), {"processed"});
+  const sb::Normal inside = sb::seabedNormal(full, lat, lon, options);
+  EXPECT_TRUE(inside.from_surface) << sb::toString(inside.reason);
+}
+
+// Two layers at the same level with a 1 m vertical offset: a stencil straddling
+// the processed -> reference boundary is a seam, not an ~18 deg slope.
+TEST(BathyDemSampler, LayerChangeAcrossTheStencilIsASeam)
+{
+  ScratchDir dir("layer_seam");
+  const auto geom = gridCell(kFineLevel, 480, 480);
+  const uint16_t c0 = cellAt(kFineLevel, geom.centre_lat, geom.centre_lon).column();
+  writeDepthTile(
+    dir.path(), "processed", geom.grid,
+    [&](uint16_t, uint16_t c) {return c <= c0 ? -10.0 : kNaN;});
+  writeConstantTile(dir.path(), "reference", geom.grid, -11.0);
+  mbs::BathyDem dem(dir.path().string(), {"processed", "reference"});
+
+  const double lat = geom.centre_lat;
+  const double lon = geom.centre_lon - 0.1 * geom.lon_span;
+  const auto centre = dem.heightAt(lat, lon);
+  ASSERT_TRUE(centre.valid());
+  EXPECT_EQ(centre.source.layer, 0);
+  sb::NormalOptions options;
+  options.step_m = 1.4 * centre.span_east_m;   // east probe lands in column c0 + 1
+
+  const sb::Normal seam = sb::seabedNormal(dem, lat, lon, options);
+  EXPECT_FALSE(seam.from_surface);
+  EXPECT_EQ(seam.reason, sb::FallbackReason::kLayerSeam);
+
+  // Five cells further west the whole stencil is in processed/: a surface normal.
+  const sb::Normal inside = sb::seabedNormal(dem, lat, lon - 5.0 * geom.lon_span, options);
+  EXPECT_TRUE(inside.from_surface) << sb::toString(inside.reason);
+  EXPECT_NEAR(inside.normal.u, 1.0, 1e-12);
+}
+
+// One layer, a fine patch over a coarse surface at the SAME height: the level
+// change alone is a seam (the identity is compared, not the heights).
+TEST(BathyDemSampler, LevelChangeAcrossTheStencilIsASeam)
+{
+  ScratchDir dir("level_seam");
+  const auto geom = gridCell(kFineLevel, 480, 480);
+  const uint16_t c0 = cellAt(kFineLevel, geom.centre_lat, geom.centre_lon).column();
+  writeDepthTile(
+    dir.path(), "processed", geom.grid,
+    [&](uint16_t, uint16_t c) {return c <= c0 ? -10.0 : kNaN;});
+  const gggs::Level coarse(kCoarseLevel);
+  writeConstantTile(
+    dir.path(), "processed", coarse.gridIndex(geom.centre_lat, geom.centre_lon), -10.0);
+  writeConstantTile(
+    dir.path(), "processed",
+    coarse.gridIndex(geom.centre_lat, geom.centre_lon + 2.0 * geom.lon_span), -10.0);
+  mbs::BathyDem dem(dir.path().string(), {"processed"});
+
+  const double lat = geom.centre_lat;
+  const double lon = geom.centre_lon - 0.1 * geom.lon_span;
+  const auto centre = dem.heightAt(lat, lon);
+  ASSERT_TRUE(centre.valid());
+  EXPECT_EQ(centre.source.level, kFineLevel);
+  const auto beyond = dem.heightAt(lat, geom.centre_lon + 1.5 * geom.lon_span);
+  ASSERT_TRUE(beyond.valid());
+  EXPECT_EQ(beyond.source.level, kCoarseLevel);
+
+  sb::NormalOptions options;
+  options.step_m = 1.4 * centre.span_east_m;
+  const sb::Normal seam = sb::seabedNormal(dem, lat, lon, options);
+  EXPECT_FALSE(seam.from_surface);
+  EXPECT_EQ(seam.reason, sb::FallbackReason::kLayerSeam);
+}
+
+// The tile is part of the source identity (operator decision, #304): a stencil
+// across a GGGS tile boundary falls back even at the same layer and level, since
+// two tiles can be of different vintage. Well inside the tile it does not.
+TEST(BathyDemSampler, TileChangeAcrossTheStencilIsASeam)
+{
+  ScratchDir dir("tile_seam");
+  const gggs::Level level(kFineLevel);
+  const auto west_grid = level.gridIndex(kLat, kLon);
+  const auto east_grid = level.gridIndex(kLat, west_grid.eastLongitude() + 1e-7);
+  ASSERT_NE(west_grid, east_grid);
+  writeConstantTile(dir.path(), "processed", west_grid, -10.0);
+  writeConstantTile(dir.path(), "processed", east_grid, -10.0);
+  mbs::BathyDem dem(dir.path().string(), {"processed"});
+
+  // The last column of the western tile, 0.1 cell west of its centre.
+  const auto last = gridCell(kFineLevel, 480, gggs::cell_columns_per_grid - 1);
+  const double lat = last.centre_lat;
+  const double lon = last.centre_lon - 0.1 * last.lon_span;
+  const auto centre = dem.heightAt(lat, lon);
+  ASSERT_TRUE(centre.valid());
+  const auto across = dem.heightAt(lat, west_grid.eastLongitude() + 0.5 * last.lon_span);
+  ASSERT_TRUE(across.valid());
+  EXPECT_EQ(across.source.layer, centre.source.layer);
+  EXPECT_EQ(across.source.level, centre.source.level);
+  EXPECT_NE(across.source.tile, centre.source.tile);
+
+  sb::NormalOptions options;
+  options.step_m = 1.4 * centre.span_east_m;
+  const sb::Normal seam = sb::seabedNormal(dem, lat, lon, options);
+  EXPECT_FALSE(seam.from_surface);
+  EXPECT_EQ(seam.reason, sb::FallbackReason::kLayerSeam);
+
+  const auto inner = gridCell(kFineLevel, 480, 480);
+  EXPECT_TRUE(sb::seabedNormal(dem, inner.centre_lat, inner.centre_lon, options).from_surface);
+}
+
+// The reported spans are per axis, in metres, and agree with an independent
+// geodetic computation; the identity names layer, level and tile.
+TEST(BathyDemSampler, ReportsPerAxisSpansAndSourceIdentity)
+{
+  ScratchDir dir("spans");
+  const auto geom = gridCell(kFineLevel, 300, 600);
+  writeConstantTile(dir.path(), "reference", geom.grid, -7.0);
+  writeConstantTile(dir.path(), "processed", geom.grid, -8.0);
+  mbs::BathyDem dem(dir.path().string(), {"processed", "reference"});
+
+  const auto sample = dem.heightAt(geom.centre_lat, geom.centre_lon);
+  ASSERT_TRUE(sample.valid());
+  EXPECT_NEAR(sample.height_m, -8.0, 1e-9);
+
+  const double north_m =
+    enuOf(
+    geom.centre_lat, geom.centre_lon, geom.centre_lat + 0.5 * geom.lat_span,
+    geom.centre_lon)[1] -
+    enuOf(
+    geom.centre_lat, geom.centre_lon, geom.centre_lat - 0.5 * geom.lat_span,
+    geom.centre_lon)[1];
+  const double east_m =
+    enuOf(
+    geom.centre_lat, geom.centre_lon, geom.centre_lat,
+    geom.centre_lon + 0.5 * geom.lon_span)[0] -
+    enuOf(
+    geom.centre_lat, geom.centre_lon, geom.centre_lat,
+    geom.centre_lon - 0.5 * geom.lon_span)[0];
+  EXPECT_NEAR(sample.span_north_m, north_m, 1e-6 * north_m);
+  EXPECT_NEAR(sample.span_east_m, east_m, 1e-6 * east_m);
+  // Square in degrees, not in metres: at 43N east-west is ~0.73 of north-south.
+  EXPECT_LT(sample.span_east_m, 0.8 * sample.span_north_m);
+
+  EXPECT_EQ(sample.source.layer, 0);
+  EXPECT_EQ(sample.source.level, kFineLevel);
+  EXPECT_EQ(
+    sample.source.tile,
+    (static_cast<std::uint64_t>(geom.grid.row()) << 32) | geom.grid.column());
+}
+
+// ADR-0011 s.2 / ADR-0013 D8: depth overviews fold to the shallowest value and
+// are never a source of heights. A hole in the fine tile stays a hole even with
+// a valued overview tile under it, and naming the sidecar as a layer is refused.
+TEST(BathyDemSampler, OverviewsAreNeverRead)
+{
+  ScratchDir dir("overviews");
+  const auto geom = gridCell(kFineLevel, 480, 480);
+  writeConstantTile(dir.path(), "processed", geom.grid, kNaN);
+  for (const int level_n : {kFineLevel - 1, kCoarseLevel}) {
+    const gggs::Level level(static_cast<uint8_t>(level_n));
+    writeConstantTile(
+      dir.path() / "processed", "overviews", level.gridIndex(geom.centre_lat, geom.centre_lon),
+      -5.0);
+  }
+  mbs::BathyDem dem(dir.path().string(), {"processed"});
+  EXPECT_EQ(dem.tileCount(), 1u);
+  EXPECT_EQ(dem.heightAt(geom.centre_lat, geom.centre_lon).status, sb::SampleStatus::kNoData);
+  EXPECT_FALSE(dem.depthAt(geom.centre_lat, geom.centre_lon).has_value());
+  EXPECT_EQ(
+    sb::seabedNormal(dem, geom.centre_lat, geom.centre_lon).reason,
+    sb::FallbackReason::kMissingSample);
+
+  for (const char * bad : {"overviews", "processed/overviews", "overviews.old", "", ".", ".."}) {
+    EXPECT_THROW(makeDem(dir.path().string(), {"processed", bad}), std::invalid_argument)
+      << "layer name '" << bad << "'";
+  }
+}
+
+// End to end through the SeabedHeightSampler base: a tilted store gives the
+// analytic normal. The expected gradient comes from gz4d's geodetic ENU, not
+// from the module's radius helper.
+TEST(BathyDemSampler, SeabedNormalOnATiltedStore)
+{
+  ScratchDir dir("tilted");
+  const auto geom = gridCell(kFineLevel, 480, 480);
+  constexpr double kPerColumn = 0.01;
+  constexpr double kPerRow = 0.005;
+  writeDepthTile(
+    dir.path(), "processed", geom.grid, [](uint16_t r, uint16_t c) {
+      return -20.0 + kPerColumn * static_cast<double>(c) + kPerRow * static_cast<double>(r);
+    });
+  mbs::BathyDem dem(dir.path().string(), {"processed"});
+
+  const double lat = geom.centre_lat + 0.3 * geom.lat_span;
+  const double lon = geom.centre_lon + 0.2 * geom.lon_span;
+  sb::SeabedHeightSampler & sampler = dem;
+  const sb::Normal result = sb::seabedNormal(sampler, lat, lon);
+  ASSERT_TRUE(result.from_surface) << sb::toString(result.reason);
+  const auto centre = dem.heightAt(lat, lon);
+  EXPECT_NEAR(result.step_used_m, 3.0 * centre.span_north_m, 1e-12);
+
+  const double metres_per_column = enuOf(lat, lon, lat, lon + geom.lon_span)[0];
+  const double metres_per_row = enuOf(lat, lon, lat + geom.lat_span, lon)[1];
+  const int row_step = static_cast<int>(cellAt(kFineLevel, lat + geom.lat_span, lon).row()) -
+    static_cast<int>(cellAt(kFineLevel, lat, lon).row());
+  ASSERT_EQ(std::abs(row_step), 1);
+  const double dh_de = kPerColumn / metres_per_column;
+  const double dh_dn = kPerRow * row_step / metres_per_row;
+  const double norm = std::sqrt(dh_de * dh_de + dh_dn * dh_dn + 1.0);
+  EXPECT_NEAR(result.normal.e, -dh_de / norm, 1e-6);
+  EXPECT_NEAR(result.normal.n, -dh_dn / norm, 1e-6);
+  EXPECT_NEAR(result.normal.u, 1.0 / norm, 1e-6);
+}
+
+// A corrupt tile is a fault, and the fault reaches the caller of seabedNormal
+// rather than becoming a flat fallback.
+TEST(BathyDemSampler, CorruptTileThrowsThroughSeabedNormal)
+{
+  ScratchDir dir("corrupt");
+  const auto geom = gridCell(kFineLevel, 480, 480);
+  const fs::path layer = dir.path() / "processed";
+  fs::create_directories(layer);
+  {
+    std::ofstream junk(layer / mtrs::tileFilename(geom.grid), std::ios::binary);
+    junk << "not a GeoTIFF";
+  }
+  mbs::BathyDem dem(dir.path().string(), {"processed"});
+  EXPECT_THROW(
+    sb::seabedNormal(dem, geom.centre_lat, geom.centre_lon), std::runtime_error);
 }

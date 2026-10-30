@@ -70,6 +70,13 @@ if(BUILD_TESTING)
   ament_add_gtest(test_quality test/test_quality.cpp)
   target_link_libraries(test_quality ${PROJECT_NAME})
 
+  # Seabed geometry (#304) against synthetic surfaces. gz4d's LocalENU (in
+  # marine_autonomy) gives the test an ENU conversion independent of the
+  # module's own metres-per-degree helper.
+  ament_add_gtest(test_seabed_geometry test/test_seabed_geometry.cpp)
+  target_link_libraries(test_seabed_geometry ${PROJECT_NAME})
+  ament_target_dependencies(test_seabed_geometry marine_autonomy)
+
   # DEM reader over synthetic bathy value tiles (#297, moved here in #304).
   # Fixtures are written with marine_tiled_raster_store::saveTile<double> — NOT
   # marine_bathymetry_store's writer, which would add a test-only package
