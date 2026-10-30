@@ -67,7 +67,9 @@
 /// **Never a partial file.** Everything that can be refused is checked before
 /// the output is created; the raster is written to a uniquely named
 /// `<output>.tmp.XXXXXX` created exclusively beside the output, closed (and the
-/// close checked), then renamed over the output. Every failure path removes
+/// close checked), synced to disk (`fsync`), then renamed over the output, and
+/// the directory is synced after the rename (a failure there, with the output
+/// already in place, is a warning). Every failure path removes
 /// that run's own temporary file and nothing else, so two exports aimed at one
 /// output cannot rename each other's half-written file; an existing output is
 /// replaced only by the final rename. After the rename the previous output's

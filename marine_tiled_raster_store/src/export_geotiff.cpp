@@ -322,6 +322,26 @@ std::vector<std::string> removeStaleSidecars(const fs::path & output)
   return problems;
 }
 
+/// fsync(2) @p p (a file, or a directory when @p directory). Returns 0, or the
+/// errno of the failing step. EINVAL and ENOTSUP from fsync itself mean the
+/// filesystem cannot sync that object, which no retry would change, so they
+/// count as success.
+int syncToDisk(const fs::path & p, bool directory)
+{
+  const int fd = ::open(p.c_str(), O_RDONLY | O_CLOEXEC | (directory ? O_DIRECTORY : 0));
+  if (fd < 0) {
+    return errno;
+  }
+  int err = 0;
+  if (::fsync(fd) != 0 && errno != EINVAL && errno != ENOTSUP) {
+    err = errno;
+  }
+  if (::close(fd) != 0 && err == 0) {
+    err = errno;
+  }
+  return err;
+}
+
 std::string levelList(const std::set<std::uint8_t> & levels)
 {
   if (levels.empty()) {
@@ -1414,6 +1434,13 @@ ExportResult exportGeoTiff(
   if (GDALClose(ds) != CE_None) {
     throw std::runtime_error("failed to flush/close " + tmp_path.string() + gdalReason());
   }
+  // On disk before the rename: otherwise a power loss soon after could leave
+  // the new name pointing at an empty or partial file, with the previous
+  // output already gone.
+  if (const int err = syncToDisk(tmp_path, false)) {
+    throw std::runtime_error(
+            "could not sync " + tmp_path.string() + " to disk: " + std::strerror(err));
+  }
   fs::rename(tmp_path, out_path);   // atomic replace of an existing output
   tmp_guard.disarm();
   // A replaced output's sidecars (statistics, overviews, mask) would otherwise
@@ -1421,6 +1448,15 @@ ExportResult exportGeoTiff(
   // the previous output and its sidecars exactly as they were.
   for (std::string & w : removeStaleSidecars(out_path)) {
     result.warnings.push_back(std::move(w));
+  }
+  // The rename and removals are durable once the directory is synced. The
+  // output is already in place, so a failure here is a warning, not a throw.
+  const fs::path out_dir = out_path.has_parent_path() ? out_path.parent_path() : fs::path(".");
+  if (const int err = syncToDisk(out_dir, true)) {
+    result.warnings.push_back(
+      "the output is written, but its directory " + out_dir.string() + " could not be "
+      "synced to disk (" + std::strerror(err) + "): a power loss soon after could lose "
+      "the new name");
   }
   return result;
 }
