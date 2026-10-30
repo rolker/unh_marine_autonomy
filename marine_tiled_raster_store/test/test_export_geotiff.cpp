@@ -823,10 +823,20 @@ TEST(ExportSelection, BoxIntersectingNothingIsRefused)
 TEST(ExportSelection, MissingLayerDirectoryIsRefused)
 {
   Store s("missing_layer");
-  EXPECT_THROW(
-    mtrs::exportGeoTiff(
-      (s.root() / "nope").string(), s.out().string(), opts(insideTile(10, kRow10, kCol10))),
-    mtrs::ExportRefused);
+  // Also with the output beside the would-be layer (the parent of a missing
+  // layer is not a store): the error names the real problem.
+  for (const fs::path & output : {s.out(), s.root() / "x.tif"}) {
+    SCOPED_TRACE(output.string());
+    try {
+      mtrs::exportGeoTiff(
+        (s.root() / "nope").string(), output.string(), opts(insideTile(10, kRow10, kCol10)));
+      ADD_FAILURE() << "expected a refusal";
+    } catch (const mtrs::ExportRefused & e) {
+      EXPECT_NE(std::string(e.what()).find("layer directory does not exist"), std::string::npos)
+        << e.what();
+    }
+    EXPECT_FALSE(fs::exists(output));
+  }
   expectNothingWritten(s);
 }
 

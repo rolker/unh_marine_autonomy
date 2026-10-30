@@ -788,6 +788,12 @@ ExportResult exportGeoTiff(
   const fs::path out_path(output_path);
   const fs::path layer = resolvedPath(fs::path(layer_dir));
   const fs::path sidecar = layer / "overviews";
+  // First, so a mistyped layer is reported as such, not as an output "inside
+  // the store" of a directory that is no layer at all.
+  std::error_code ec;
+  if (!fs::is_directory(layer, ec)) {
+    throw ExportRefused("layer directory does not exist: " + layer.string());
+  }
   // An overviews/ sidecar is not a layer: read as one, its derived tiles would
   // be labelled native with the native error, and the store guard below would
   // be anchored one level too low.
@@ -825,11 +831,6 @@ ExportResult exportGeoTiff(
       }
     }
   }
-  std::error_code ec;
-  if (!fs::is_directory(layer, ec)) {
-    throw ExportRefused("layer directory does not exist: " + layer.string());
-  }
-
   // Polar refusal. 72 deg is a tile boundary at every level, so a box below it
   // snaps to tile rows that are all scale factor 1.
   if (box.lat_max >= kPolarLimit || box.lat_min <= -kPolarLimit) {
