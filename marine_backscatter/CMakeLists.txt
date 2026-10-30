@@ -16,14 +16,22 @@ find_package(marine_tiled_raster_store REQUIRED)
 find_package(geographic_msgs REQUIRED)
 
 # Modality-agnostic backscatter processing core. Shared by the sidescan + MBES
-# layers (ADR-0006/0007): grazing-angle quality, provenance registry, and (later)
-# the GeoCoder radiometry chain. The COMPOSITOR is per-store, not shared — this lib
-# ships the sidescan best-source ProcessedAccumulator (uint16); MBES adds its own
-# Welford mean+variance accumulator (float). See ADR-0007 D6.
+# layers (ADR-0006/0007): grazing-angle quality, provenance registry, the seabed
+# geometry of the GeoCoder radiometry chain (slope-aware incidence, #304). The
+# COMPOSITOR is per-store, not shared — this lib ships the sidescan best-source
+# ProcessedAccumulator (uint16); MBES adds its own Welford mean+variance
+# accumulator (float). See ADR-0007 D6.
+#
+# ONE library on purpose (#304 plan review): it already links
+# marine_tiled_raster_store through processed_accumulator, so a separate
+# "pure geometry" target would not have kept the GeoTIFF reader out of a
+# consumer's link. What IS dependency-free is seabed_geometry.hpp itself (std
+# only).
 add_library(${PROJECT_NAME}
   src/processed_accumulator.cpp
   src/quality.cpp
   src/registry.cpp
+  src/seabed_geometry.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
