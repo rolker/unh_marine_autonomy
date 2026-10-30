@@ -261,3 +261,29 @@ Checks run:
 - [x] (suggestion) Compare the sidecar identity whenever it was captured, not only when `tiles_overview > 0`. A rename-aside that falls between the capture and the listing currently goes unreported. That export is self-consistent (native only), so this is low priority. — `src/export_geotiff.cpp:1018,1455`
 - [x] (suggestion) The README should say two more things. First, `(st_dev, st_ino)` can change spuriously on CIFS without `serverino`, on FUSE without `use_ino`, or after an autofs remount (the NAS season archive is autofs-mounted). That fails a sidecar export as "replaced; retry" (fail-closed). Second, an in-place rebuild, with no rename, is not detected. — `README.md:207`
 - [x] (suggestion) An output that is an existing directory, or ends in `/`, is refused only after the whole raster is written (`rename`: Is a directory / Directory not empty). Verified; cleanup is correct. This predates round 2, but the check is cheap: refuse it up front next to the store guard. — `src/export_geotiff.cpp:1235`
+
+## Implementation
+**Status**: complete
+**When**: 2026-10-30 12:28 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-370 at `fb2dc36`
+**Addressed**: Local Review (Pre-Push), round 3, 2026-10-30 12:13 -04:00 (reviewed `7b8dd20..10085b6` on `7d9819e`): 0 must-fix, 6 suggestions
+**Commits**: `bad935c`, `bbb422d`, `73da063`, `8da4983`, `69041d2`, `078eadd`, `fb2dc36` (cpplint fix to the first commit's test)
+
+### Actions
+- [x] (suggestion) SIGINT/SIGTERM/SIGHUP are blocked again from just before the rename through the stale-sidecar removal and the directory fsync, then unblocked. Right after the rename the library bumps a lock-free counter, the new async-signal-safe `exportOutputsReplaced()`. The CLI handler reads it and prints "interrupted after the rename; the output WAS replaced" in place of "nothing written". Two tests. The library test sends SIGHUP to the exporting thread the moment another thread sees the output's inode change. The handler must then see the replacement counted and the old `.aux.xml` gone. With the block removed it failed 6 of 6 runs; with it, it passed 10 of 10. The CLI test sends SIGTERM once the inode changes. It must never say "nothing written", and a run that dies of the signal must say "WAS replaced". The first attempt died of the signal every time it was run. — `src/export_geotiff.cpp` (commit window, `g_outputs_replaced`), `src/export_geotiff_main.cpp` `onTerminationSignal`, `export_geotiff.hpp` (`bad935c`)
+- [x] (suggestion) The `storeRoots` registry search starts at the layer's parent, so a stray `registry.json` inside a layer no longer shadows the store. The layer's parent is still added as a guarded root regardless. New test `StrayRegistryInsideTheLayerDoesNotShadowTheStore` uses the reviewer's `store/sub/layerC/registry.json` layout. It fails with the old walk: `store/layerB/x.tif` and the store's `registry.json` got past the guard. — `src/export_geotiff.cpp` `storeRoots` (`bbb422d`)
+- [x] (suggestion) When the resolved path is named `overviews`, the overviews-as-layer refusal now suggests the resolved sidecar's parent; otherwise it suggests the given path's parent. The refusal test checks the suggested directory for the plain, trailing-slash and symlinked spellings. — `src/export_geotiff.cpp` (`73da063`)
+- [x] (suggestion) The `overviews/` identity is compared before the rename whenever one was recorded, not only when sidecar tiles were used. The message now also says "or miss the new one's tiles". New test `SidecarSwappedDuringANativeOnlyExportFailsIt` swaps the sidecar during a native-only export: it fails, and the existing output is untouched. — `src/export_geotiff.cpp` (`8da4983`)
+- [x] (suggestion) The README states the swap check's two limits. First, `(st_dev, st_ino)` can change with no rebuild: CIFS without `serverino`, FUSE without `use_ino`, or an autofs remount. `/mnt/nadata` was verified as autofs in the mount table. Such a change fails safe but confusingly, as "replaced; retry". Second, an in-place rebuild without a rename is not detected. — `README.md` (`69041d2`)
+- [x] (suggestion) An output path that is an existing directory (or a symlink to one), ends in `/`, or is `.` / `..` is now refused beside the store guard, before any file exists. New test `OutputThatIsADirectoryIsRefusedUpFront` covers seven cases and checks that nothing was written or touched. — `src/export_geotiff.cpp`, `export_geotiff.hpp` (`078eadd`)
+
+plan.md and README were kept in sync in each commit. The plan's test list for the overviews refusal picked up the suggested-layer check in `078eadd`.
+
+Checks run:
+- `./core_ws/test.sh marine_tiled_raster_store`: `Summary: 188 tests, 0 errors, 0 failures, 16 skipped` (183 before, plus 5 new gtests; the 16 skips are ament_cppcheck's blanket skip). The first full run caught a cpplint false positive in the new test's handler signature, fixed in `fb2dc36`.
+- cppcheck run directly on `export_geotiff.cpp` and `export_geotiff_main.cpp` (warning, performance, portability): clean.
+
+### Deferred actions
+- None.
