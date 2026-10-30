@@ -79,6 +79,12 @@ constexpr double kSnapToleranceCells = 1e-4;
 /// Relative tolerance on a tile's pixel size against the level's cell span
 /// (saveTile writes span / 960, exact to rounding).
 constexpr double kPixelSizeTolerance = 1e-9;
+/// Tolerance on a tile's origin against its named grid's corner, in cells, with
+/// a floor in degrees for the finest levels, where a millionth of a cell is
+/// below double rounding of a coordinate near 180 (saveTile writes the grid's
+/// exact corner, so a real tile is off by rounding at most).
+constexpr double kOriginToleranceCells = 1e-6;
+constexpr double kOriginToleranceFloorDeg = 1e-12;
 /// GGGS lattice origin: rows count north from -96 deg, columns east from -180.
 constexpr double kLatOrigin = -96.0;
 constexpr double kLonOrigin = -180.0;
@@ -435,13 +441,16 @@ struct Probe
   bool float64 = false;
 };
 
-/// Also checks the tile's pixel grid against @p level: 960 x 960 pixels, cell
-/// size `cell_angular_span` in both axes (north-up, so pixel_y negative) and no
-/// rotation terms. `loadTile` recovers a tile's grid from its origin only, so a
-/// tile with the right origin but another pixel size would otherwise be
-/// stretched or squeezed into place without a word.
-Probe probeTile(const std::string & path, std::uint8_t level)
+/// Also checks the tile's pixel grid against its named @p grid: 960 x 960
+/// pixels, cell size `cell_angular_span` in both axes (north-up, so pixel_y
+/// negative), no rotation terms, and the origin on the grid's north-west
+/// corner. `loadTile` accepts an origin up to half a cell off and recovers the
+/// grid from it, and the writer then places the tile exactly, so a tile with
+/// another pixel size would be stretched or squeezed into place, and one with
+/// an off-grid origin shifted by a fraction of a cell, without a word.
+Probe probeTile(const std::string & path, const gggs::GridIndex & grid)
 {
+  const std::uint8_t level = grid.level();
   DatasetCloser in;
   CPLErrorReset();
   in.ds = GDALDataset::FromHandle(GDALOpen(path.c_str(), GA_ReadOnly));
@@ -491,6 +500,17 @@ Probe probeTile(const std::string & path, std::uint8_t level)
             formatDouble(gt[4]) + "); level " + std::to_string(static_cast<unsigned>(level)) +
             " expects " + formatDouble(cell) + " x " + formatDouble(-cell) +
             " with no rotation, so it cannot be placed by its origin");
+  }
+  const double west = grid.westLongitude();
+  const double north = grid.northLatitude();
+  const double origin_tol = std::max(kOriginToleranceCells * cell, kOriginToleranceFloorDeg);
+  if (std::abs(gt[0] - west) > origin_tol || std::abs(gt[3] - north) > origin_tol) {
+    throw std::runtime_error(
+            "tile " + path + " has its origin at lon " + formatDouble(gt[0]) + ", lat " +
+            formatDouble(gt[3]) + "; its grid " + tileFilename(grid) + " has its north-west "
+            "corner at lon " + formatDouble(west) + ", lat " + formatDouble(north) + " (off by " +
+            formatDouble((gt[0] - west) / cell) + " x " + formatDouble((gt[3] - north) / cell) +
+            " cells), so placing it on the grid would shift its data");
   }
   return p;
 }
@@ -935,7 +955,7 @@ ExportResult exportGeoTiff(
   std::string first_path;
   bool any_float64 = false;
   for (const auto & item : selection) {
-    const Probe p = probeTile(item.second.path, level);
+    const Probe p = probeTile(item.second.path, item.second.grid);
     if (!first.has_value()) {
       first = p;
       first_path = item.second.path;

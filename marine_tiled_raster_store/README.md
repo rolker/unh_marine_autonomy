@@ -247,10 +247,11 @@ layer's parent, each looked up along both the path as given and its
 symlink-resolved form, so a symlinked layer guards the store holding the link
 as well as the one holding its target, and a layer with no registry anywhere
 above it still guards its siblings. Paths are compared after resolving symlinks. An unreadable
-tile, one whose georeferencing does not match its filename, or one whose pixel
-grid is not the level's (960 x 960 pixels of the level's cell size, no
-rotation; checked in the header probe, since `loadTile` validates only a tile's
-origin) fails the export the same way.
+tile, or one whose pixel grid is not its filename's (960 x 960 pixels of the
+level's cell size, no rotation, origin on the named grid's north-west corner to
+within a millionth of a cell; checked in the header probe, since `loadTile`
+accepts an origin up to half a cell off and validates no pixel size) fails the
+export the same way.
 
 **Memory and writing.** The output is written one 256-row block-row strip at a
 time (fewer rows when the box is shorter), and no output block is ever read

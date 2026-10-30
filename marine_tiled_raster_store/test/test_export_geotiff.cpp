@@ -848,6 +848,8 @@ TEST(ExportRefusals, TileGeoreferencedUnlikeItsNameFails)
   writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
   // A real level-10 tile whose content is (kRow10, kCol10+5), saved under the
   // name of (kRow10, kCol10+1): placing it by name would put it 4 tiles off.
+  // The header probe's origin check catches it before anything is created
+  // (the writer's own grid check after loadTile stays as a second line).
   {
     mtrs::TiledRasterTile<double> t(gridAt(10, kRow10, kCol10 + 5), 2, 1.0);
     mtrs::saveTile<double>(
@@ -861,7 +863,9 @@ TEST(ExportRefusals, TileGeoreferencedUnlikeItsNameFails)
       opts(cellBox(10, r0 + 10, c0 + 10, r0 + 20, c0 + 2 * kEdge - 10)));
     FAIL() << "expected a failure";
   } catch (const std::runtime_error & e) {
-    EXPECT_NE(std::string(e.what()).find("not as its name says"), std::string::npos) << e.what();
+    const std::string msg = e.what();
+    EXPECT_NE(msg.find("would shift its data"), std::string::npos) << msg;
+    EXPECT_NE(msg.find("off by 3840 x 0 cells"), std::string::npos) << msg;
   }
   expectNothingWritten(s);
 }
@@ -905,6 +909,50 @@ TEST(ExportRefusals, TileWithTheWrongPixelSizeFails)
       ADD_FAILURE() << "expected a failure";
     } catch (const std::runtime_error & e) {
       EXPECT_NE(std::string(e.what()).find("cannot be placed by its origin"), std::string::npos)
+        << e.what();
+    }
+    expectNothingWritten(s);
+  }
+}
+
+// loadTile accepts an origin up to half a cell off and the writer places the
+// tile on the grid, which would shift its data by that fraction silently. The
+// probe checks the origin against the named grid's north-west corner.
+TEST(ExportRefusals, TileWithAnOffGridOriginFails)
+{
+  const double cell = cellSpan(10);
+  const std::vector<std::pair<std::string, std::array<double, 2>>> bad = {
+    {"0.3 cell east", {0.3 * cell, 0.0}},
+    {"0.3 cell south", {0.0, -0.3 * cell}},
+    {"1e-4 cell north", {0.0, 1e-4 * cell}},
+  };
+  for (const auto & item : bad) {
+    SCOPED_TRACE(item.first);
+    Store s("off_grid_origin");
+    writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+    const gggs::GridIndex g = gridAt(10, kRow10, kCol10 + 1);
+    writeConst(s.layer(), g, 2.0);
+    {
+      GDALAllRegister();
+      const fs::path path = s.layer() / mtrs::tileFilename(g);
+      GDALDataset * ds = GDALDataset::FromHandle(GDALOpen(path.c_str(), GA_Update));
+      ASSERT_NE(ds, nullptr);
+      double gt[6];
+      ASSERT_EQ(ds->GetGeoTransform(gt), CE_None);
+      gt[0] += item.second[0];
+      gt[3] += item.second[1];
+      ASSERT_EQ(ds->SetGeoTransform(gt), CE_None);
+      ASSERT_EQ(GDALClose(ds), CE_None);
+    }
+    const double r0 = static_cast<double>(kRow10) * kEdge;
+    const double c0 = static_cast<double>(kCol10) * kEdge;
+    try {
+      mtrs::exportGeoTiff(
+        s.layer().string(), s.out().string(),
+        opts(cellBox(10, r0 + 10, c0 + 10, r0 + 20, c0 + 2 * kEdge - 10)));
+      ADD_FAILURE() << "expected a failure";
+    } catch (const std::runtime_error & e) {
+      EXPECT_NE(std::string(e.what()).find("would shift its data"), std::string::npos)
         << e.what();
     }
     expectNothingWritten(s);
