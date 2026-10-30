@@ -162,8 +162,11 @@ std::vector<std::string> bandNamesForCount(std::size_t band_count);
 
 /// @brief The registry a layer's datum is read from:
 ///        `<layer_dir>/../registry.json`, resolved after making @p layer_dir
-///        absolute, normalizing it and dropping a trailing slash (so `a/b/`
-///        resolves to `a/registry.json`, never `a/b/registry.json`).
+///        absolute, resolving symlinks (`weakly_canonical`) and dropping a
+///        trailing slash (so `a/b/` resolves to `a/registry.json`, never
+///        `a/b/registry.json`, and a symlink to a layer finds the registry of
+///        the store the layer really lives in, not of the link's directory).
+///        Falls back to the lexical parent if the path cannot be resolved.
 std::string registryPathForLayer(const std::string & layer_dir);
 
 /// @brief Export @p options.box of the layer in @p layer_dir to @p output_path.

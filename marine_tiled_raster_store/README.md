@@ -183,7 +183,8 @@ is therefore labelled `VERTICAL_DATUM=WGS84_ELLIPSOIDAL` and carries
 registry is absent or unparsable, the export **continues** with
 `SOURCE_VERTICAL_DATUM=UNKNOWN` and a multi-line WARNING that the source datum
 conversion is not recorded. The registry is read from
-`<layer_dir>/../registry.json` (a trailing slash on `<layer_dir>` is ignored).
+`<layer_dir>/../registry.json` after resolving symlinks (a trailing slash on
+`<layer_dir>` is ignored, and a symlink to a layer finds its own store's registry).
 That file is shared by sibling layers (`processed`, `chart`, `reference`), so it
 may describe a different layer than the one exported, e.g. a chart-datum source.
 3-band (backscatter) exports are exempt: `VERTICAL_DATUM=NOT_APPLICABLE`, no

@@ -384,8 +384,16 @@ std::vector<std::string> bandNamesForCount(std::size_t band_count)
 
 std::string registryPathForLayer(const std::string & layer_dir)
 {
-  const fs::path layer =
-    withoutTrailingSeparator(fs::absolute(fs::path(layer_dir)).lexically_normal());
+  // Resolved like the store guard: through a symlinked layer path the lexical
+  // parent would be the LINK's directory, missing the store's registry.json or
+  // reading another store's. If the path cannot be resolved (a permission
+  // error on a component), fall back to the lexical parent; the read below
+  // then reports what it found there.
+  std::error_code ec;
+  fs::path layer = resolvedPath(fs::path(layer_dir), ec);
+  if (ec) {
+    layer = withoutTrailingSeparator(fs::absolute(fs::path(layer_dir)).lexically_normal());
+  }
   return (layer.parent_path() / "registry.json").string();
 }
 

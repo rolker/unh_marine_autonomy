@@ -931,6 +931,29 @@ TEST(ExportDatum, TrailingSlashLayerDirFindsTheParentRegistry)
   EXPECT_EQ(res.source_vertical_datum.value_or(""), "mllw");
 }
 
+TEST(ExportDatum, SymlinkedLayerPathFindsTheStoresOwnRegistry)
+{
+  Store s("symlinked_registry");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  // A link in another directory that holds a decoy registry: the lexical parent
+  // of the link would read the decoy.
+  const fs::path elsewhere = s.root() / "elsewhere";
+  fs::create_directories(elsewhere);
+  std::ofstream(elsewhere / "registry.json") << R"({"datum": "decoy"})";
+  const fs::path link = elsewhere / "processed_link";
+  fs::create_directory_symlink(s.layer(), link);
+  EXPECT_EQ(
+    fs::path(mtrs::registryPathForLayer(link.string())),
+    fs::weakly_canonical(s.registry()));
+  EXPECT_EQ(
+    fs::path(mtrs::registryPathForLayer(link.string() + "/")),
+    fs::weakly_canonical(s.registry()));
+  const mtrs::ExportResult res = mtrs::exportGeoTiff(
+    link.string(), s.out().string(), opts(insideTile(10, kRow10, kCol10)));
+  EXPECT_EQ(res.source_vertical_datum.value_or(""), "mllw");
+}
+
 TEST(ExportDatum, BackscatterIsExempt)
 {
   Store s("backscatter_datum");
