@@ -132,7 +132,8 @@ tile carries it, finest native level judged in
 the box, no-upsample and missing-sidecar-level refusals, sidecar geometric
 error), every pixel of a clipped 2x2 tile neighbourhood against its GGGS cell,
 NaN holes and the NoData count, each refusal leaving no output and no temporary
-file, the store guard (the store found by its `registry.json`, a symlinked
+file, a replaced output's stale `.aux.xml`/`.ovr`/`.msk` sidecars removed
+(look-alikes kept), the store guard (the store found by its `registry.json`, a symlinked
 layer guarding both stores, an `overviews/` sidecar refused as the layer),
 output replacement, an existing output left byte-identical by a failure
 after the dataset was created, foreign temporary-file lookalikes left untouched,
@@ -158,7 +159,7 @@ ros2 run marine_tiled_raster_store export_geotiff <layer_dir> \
 |---|---|
 | `<layer_dir>` | The layer directory, e.g. `~/data/world/depths/processed` or `~/data/world/imagery/backscatter/survey`. No layer name is inspected, except that a directory named `overviews` is refused: pass the layer, and its `overviews/` sidecar is read automatically. |
 | `--box LATMIN LONMIN LATMAX LONMAX` | **Required**, degrees, in that order. Snapped outward to the level's cell grid. |
-| `-o`, `--output PATH` | Written to a unique, exclusively created `PATH.tmp.XXXXXX` beside `PATH`, closed (close checked), then renamed over `PATH`. A failed run removes only its own temporary file; a crashed run's leftover is never cleaned up automatically, since nothing this run did not create is ever removed. |
+| `-o`, `--output PATH` | Written to a unique, exclusively created `PATH.tmp.XXXXXX` beside `PATH`, closed (close checked), then renamed over `PATH`. After the rename the previous output's GDAL sidecars (`PATH.aux.xml`, `PATH.aux`, `PATH.ovr`, `PATH.msk`) are removed, as GDAL's own overwrite would, so old statistics, overviews or a mask never attach to the new raster; nothing else is touched. A failed run removes only its own temporary file; a crashed run's leftover is never cleaned up automatically, since nothing this run did not create is ever removed. |
 | `--level N` | Level to export (0-20). Default: the finest level holding a native tile **inside the box**. |
 | `--max-pixels N` | Refuse when width x height (pixels **per band**) exceeds `N`. Default 250,000,000 (1 GB of Float32 per band uncompressed; multiply by the band count for the total). The library has no default. |
 

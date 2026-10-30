@@ -1125,6 +1125,68 @@ TEST(ExportOutput, ExistingOutputReplacedOnSuccessUntouchedOnRefusal)
   EXPECT_TRUE(tmpFiles(s).empty());
 }
 
+// Replacing an output must not leave the previous file's GDAL sidecars attached
+// to the new one: old statistics in `.aux.xml`, `gdaladdo` overviews of a
+// larger raster in `.ovr`, an external `.msk` mask. Only the output's own
+// sidecar names are removed; look-alikes of other names survive.
+TEST(ExportOutput, ReplacedOutputsStaleSidecarsAreRemoved)
+{
+  Store s("stale_sidecars");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10), 1.0);
+  writeConst(s.layer(), gridAt(10, kRow10, kCol10 + 1), 5.0);
+  const double r0 = static_cast<double>(kRow10) * kEdge, c0 = static_cast<double>(kCol10) * kEdge;
+  // First export: both tiles (values 1 and 5), then statistics, overviews and a mask.
+  mtrs::exportGeoTiff(
+    s.layer().string(), s.out().string(),
+    opts(cellBox(10, r0 + 10, c0 + 10, r0 + 600, c0 + 2 * kEdge - 10)));
+  GDALAllRegister();
+  {
+    GDALDataset * ds = GDALDataset::FromHandle(GDALOpen(s.out().c_str(), GA_ReadOnly));
+    ASSERT_NE(ds, nullptr);
+    double mn = 0, mx = 0, mean = 0, sd = 0;
+    ASSERT_EQ(ds->GetRasterBand(1)->ComputeStatistics(false, &mn, &mx, &mean, &sd, nullptr,
+      nullptr), CE_None);
+    const int factors[] = {2, 4};
+    ASSERT_EQ(ds->BuildOverviews("NEAREST", 2, factors, 0, nullptr, nullptr, nullptr), CE_None);
+    ASSERT_EQ(ds->CreateMaskBand(GMF_PER_DATASET), CE_None);
+    GDALClose(ds);
+  }
+  fs::path aux = s.out(), ovr = s.out(), msk = s.out();
+  aux += ".aux.xml";
+  ovr += ".ovr";
+  msk += ".msk";
+  ASSERT_TRUE(fs::exists(aux));
+  ASSERT_TRUE(fs::exists(ovr));
+  ASSERT_TRUE(fs::exists(msk));
+  // Look-alikes that are not the output's own sidecars.
+  const fs::path stem_ovr = s.outDir() / "export.ovr";
+  const fs::path other_ovr = s.outDir() / "other.tif.ovr";
+  fs::path backup = s.out();
+  backup += ".ovr.bak";
+  for (const fs::path & p : {stem_ovr, other_ovr, backup}) {
+    std::ofstream(p) << "keep";
+  }
+  // Second export: the west tile only (value 1), a smaller raster.
+  mtrs::exportGeoTiff(
+    s.layer().string(), s.out().string(),
+    opts(cellBox(10, r0 + 10, c0 + 10, r0 + 300, c0 + 500)));
+  EXPECT_FALSE(fs::exists(aux)) << "stale statistics survived";
+  EXPECT_FALSE(fs::exists(ovr)) << "stale overviews survived";
+  EXPECT_FALSE(fs::exists(msk)) << "stale mask survived";
+  for (const fs::path & p : {stem_ovr, other_ovr, backup}) {
+    EXPECT_EQ(readFile(p), "keep") << p;
+  }
+  GDALDataset * ds = GDALDataset::FromHandle(GDALOpen(s.out().c_str(), GA_ReadOnly));
+  ASSERT_NE(ds, nullptr);
+  GDALRasterBand * band = ds->GetRasterBand(1);
+  EXPECT_EQ(band->GetOverviewCount(), 0);
+  EXPECT_EQ(band->GetMetadataItem("STATISTICS_MAXIMUM"), nullptr);
+  EXPECT_NE(band->GetMaskFlags() & GMF_NODATA, 0) << "the mask must come from the NaN no-data";
+  GDALClose(ds);
+  EXPECT_EQ(readRaster(s.out()).width, 490);
+}
+
 // A failure AFTER the temporary file and dataset exist (every other
 // existing-output test fails before Create): a truncated tile has a valid
 // header, so it passes the probe, and fails only when its pixels are read

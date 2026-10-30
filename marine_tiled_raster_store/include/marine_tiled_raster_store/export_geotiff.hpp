@@ -67,7 +67,11 @@
 /// close checked), then renamed over the output. Every failure path removes
 /// that run's own temporary file and nothing else, so two exports aimed at one
 /// output cannot rename each other's half-written file; an existing output is
-/// replaced only by the final rename.
+/// replaced only by the final rename. After the rename the previous output's
+/// GDAL sidecars (`<output>.aux.xml`, `.aux`, `.ovr`, `.msk`, as GDAL's own
+/// overwrite would) are removed, so old statistics, overviews or a mask are
+/// never attached to the new raster; a sidecar that cannot be removed is a
+/// warning.
 ///
 /// @note Boxes reaching |lat| >= 72 are refused: `tile_io` is validated only
 ///   below 72 degrees, and above it GGGS widens tile longitude spans by 3x / 9x,
@@ -182,7 +186,8 @@ std::string registryPathForLayer(const std::string & layer_dir);
 /// @brief Export @p options.box of the layer in @p layer_dir to @p output_path.
 ///
 /// Reads only; writes only its own exclusively created
-/// `<output_path>.tmp.XXXXXX` and then `output_path`. A crashed run's
+/// `<output_path>.tmp.XXXXXX` and then `output_path`, and after a successful
+/// rename removes `output_path`'s own stale GDAL sidecars. A crashed run's
 /// temporary file is NOT cleaned up: no file this run did not create is ever
 /// removed.
 ///

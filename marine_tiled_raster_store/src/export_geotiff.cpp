@@ -33,6 +33,7 @@
 #include <ogr_spatialref.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -188,6 +189,49 @@ struct TmpRemover
     }
   }
 };
+
+/// Remove the GDAL sidecars of a previous file at @p output (`<output>.aux.xml`
+/// PAM statistics and georeferencing, `<output>.aux`, `<output>.ovr` external
+/// overviews, `<output>.msk` external mask; also their upper-case extension,
+/// which GDAL looks for beside an upper-case name). GDAL attaches these to
+/// whatever raster now has that name, and a PAM `.aux.xml` georeferencing even
+/// takes precedence over the file's own; GDAL's own overwrite deletes them
+/// too. Only names derived from @p output are touched, never the output itself,
+/// and never a directory. Returns a warning per sidecar that could not be removed.
+std::vector<std::string> removeStaleSidecars(const fs::path & output)
+{
+  std::vector<std::string> problems;
+  std::set<fs::path> candidates;
+  for (const char * ext : {".aux.xml", ".aux", ".ovr", ".msk"}) {
+    std::string upper(ext);
+    for (char & c : upper) {
+      c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+    for (const std::string & e : {std::string(ext), upper}) {
+      fs::path p = output;
+      p += e;
+      candidates.insert(p);
+    }
+  }
+  for (const fs::path & p : candidates) {
+    std::error_code ec;
+    const fs::file_status st = fs::symlink_status(p, ec);
+    if (ec || !fs::exists(st)) {
+      continue;
+    }
+    if (fs::is_directory(st)) {
+      problems.push_back(
+        p.string() + " is a directory named like a GDAL sidecar of the output; left in place");
+      continue;
+    }
+    if (!fs::remove(p, ec) && ec) {
+      problems.push_back(
+        "could not remove the stale GDAL sidecar " + p.string() + " (" + ec.message() +
+        "): GDAL will attach it to the new output; remove it by hand");
+    }
+  }
+  return problems;
+}
 
 std::string levelList(const std::set<std::uint8_t> & levels)
 {
@@ -1166,6 +1210,12 @@ ExportResult exportGeoTiff(
   }
   fs::rename(tmp_path, out_path);   // atomic replace of an existing output
   tmp_guard.armed = false;
+  // A replaced output's sidecars (statistics, overviews, mask) would otherwise
+  // be attached to the new raster. After the rename, so a failed run leaves
+  // the previous output and its sidecars exactly as they were.
+  for (std::string & w : removeStaleSidecars(out_path)) {
+    result.warnings.push_back(std::move(w));
+  }
   return result;
 }
 
