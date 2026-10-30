@@ -128,13 +128,52 @@ std::string formatDouble(double v)
   return s.str();
 }
 
-fs::path normalizedDir(const std::string & dir)
+fs::path withoutTrailingSeparator(fs::path p)
 {
-  fs::path p = fs::absolute(fs::path(dir)).lexically_normal();
   if (p.has_parent_path() && p.filename().empty()) {
     p = p.parent_path();   // "a/b/" -> "a/b"
   }
   return p;
+}
+
+/// @p p made absolute with every symlink resolved (`weakly_canonical`: the
+/// existing prefix is resolved, a not-yet-existing tail is normalized), and no
+/// trailing separator. Two spellings of one place compare equal, which is what
+/// both the store guard and the registry lookup need.
+fs::path resolvedPath(const fs::path & p, std::error_code & ec)
+{
+  const fs::path abs = fs::absolute(p, ec);
+  if (ec) {
+    return {};
+  }
+  const fs::path r = fs::weakly_canonical(abs, ec);
+  if (ec) {
+    return {};
+  }
+  return withoutTrailingSeparator(r);
+}
+
+fs::path resolvedPath(const fs::path & p)
+{
+  std::error_code ec;
+  fs::path r = resolvedPath(p, ec);
+  if (ec) {
+    throw std::runtime_error("cannot resolve path " + p.string() + ": " + ec.message());
+  }
+  return r;
+}
+
+/// Whether @p p is @p dir or lies anywhere beneath it (component-wise, so
+/// `/a/bc` is not under `/a/b`). Both must come from resolvedPath().
+bool isWithin(const fs::path & p, const fs::path & dir)
+{
+  auto pi = p.begin();
+  for (auto di = dir.begin(); di != dir.end(); ++di, ++pi) {
+    if (pi == p.end() || *pi != *di) {
+      return false;
+    }
+  }
+  return true;
 }
 
 void validateOptions(const ExportOptions & options)
@@ -345,7 +384,9 @@ std::vector<std::string> bandNamesForCount(std::size_t band_count)
 
 std::string registryPathForLayer(const std::string & layer_dir)
 {
-  return (normalizedDir(layer_dir).parent_path() / "registry.json").string();
+  const fs::path layer =
+    withoutTrailingSeparator(fs::absolute(fs::path(layer_dir)).lexically_normal());
+  return (layer.parent_path() / "registry.json").string();
 }
 
 ExportResult exportGeoTiff(
@@ -361,15 +402,29 @@ ExportResult exportGeoTiff(
   }
   const fs::path out_path(output_path);
   const fs::path tmp_path(output_path + ".tmp");
-  const fs::path layer = normalizedDir(layer_dir);
+  const fs::path layer = resolvedPath(fs::path(layer_dir));
   const fs::path sidecar = layer / "overviews";
-  // The store is data of record and the tool is read-only on it: never drop a
-  // GeoTIFF among its tiles (or into the derived sidecar).
-  const fs::path out_parent = normalizedDir(fs::absolute(out_path).parent_path().string());
-  if (out_parent == layer || out_parent == sidecar) {
-    throw ExportRefused(
-            "refusing to write the export into the layer directory (" +
-            out_parent.string() + "); choose an output outside the store");
+  // The store is data of record and the tool is read-only on it. Refuse an
+  // output anywhere under the directory holding the layer and its registry.json:
+  // that covers the layer, its overviews/ sidecar, any subdirectory, sibling
+  // layers and the registry itself. Paths are compared after resolving
+  // symlinks, so a link to the layer is no way around it. Checked twice: the
+  // output as given (following it if it is itself a symlink), and its resolved
+  // directory, where the temporary file is created. Runs before any file exists.
+  {
+    const fs::path store_root = layer.parent_path();
+    const fs::path out_abs = fs::absolute(out_path);
+    for (const fs::path & candidate :
+      {resolvedPath(out_abs), resolvedPath(out_abs.parent_path()) / out_abs.filename()})
+    {
+      if (isWithin(candidate, store_root)) {
+        throw ExportRefused(
+                "refusing to write the export inside the store: " + candidate.string() +
+                " is under " + store_root.string() + ", the directory holding layer " +
+                layer.filename().string() + " and its registry.json; choose an output "
+                "outside the store");
+      }
+    }
   }
   // A crashed run's debris. Removed only after the guard above, so nothing is
   // ever deleted inside the store; removing it before any other check means a

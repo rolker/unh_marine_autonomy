@@ -751,6 +751,71 @@ TEST(ExportRefusals, OutputInsideTheLayerDirectory)
   EXPECT_EQ(readFile(s.layer() / "y.tif.tmp"), "not ours");
 }
 
+// The guard compares symlink-resolved paths and covers the whole store
+// directory (the one holding registry.json), not only the layer itself.
+TEST(ExportRefusals, OutputAnywhereInTheStoreIsRefused)
+{
+  Store s("inside_store");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  const gggs::GridIndex g = gridAt(10, kRow10, kCol10);
+  writeConst(s.layer(), g, 1.0);
+  writeConst(s.sidecar(), gridAt(9, kRow10 / 2, kCol10 / 2), 2.0);
+  const fs::path tile = s.layer() / mtrs::tileFilename(g);
+  const std::string tile_bytes = readFile(tile);
+  const std::string registry_bytes = readFile(s.registry());
+  const fs::path sibling = s.layer().parent_path() / "chart";
+  fs::create_directories(sibling);
+  const fs::path link_dir = s.root() / "links";
+  fs::create_directories(link_dir);
+  const fs::path layer_link = link_dir / "processed_link";
+  fs::create_directory_symlink(s.layer(), layer_link);
+  const fs::path out_link = s.outDir() / "alias.tif";
+  fs::create_symlink(tile, out_link);
+  const mtrs::ExportOptions o = opts(insideTile(10, kRow10, kCol10));
+
+  struct Case
+  {
+    std::string what;
+    fs::path layer;
+    fs::path output;
+    fs::path must_not_exist;
+  };
+  const std::vector<Case> cases = {
+    {"layer itself", s.layer(), s.layer() / "x.tif", s.layer() / "x.tif"},
+    {"sidecar", s.layer(), s.sidecar() / "x.tif", s.sidecar() / "x.tif"},
+    {"subdirectory of the layer", s.layer(), s.layer() / "sub" / "x.tif", s.layer() / "sub"},
+    {"sibling layer", s.layer(), sibling / "x.tif", sibling / "x.tif"},
+    {"store directory", s.layer(), s.layer().parent_path() / "x.tif",
+      s.layer().parent_path() / "x.tif"},
+    {"registry.json", s.layer(), s.registry(), {}},
+    {"output through a symlink to the layer", s.layer(), layer_link / "x.tif",
+      s.layer() / "x.tif"},
+    {"layer given through a symlink", layer_link, s.layer() / "x.tif", s.layer() / "x.tif"},
+    {"output path is a symlink to a native tile", s.layer(), out_link, {}},
+    {"output path replaces a native tile through a symlinked layer", s.layer(),
+      layer_link / mtrs::tileFilename(g), {}},
+  };
+  for (const Case & c : cases) {
+    SCOPED_TRACE(c.what);
+    try {
+      mtrs::exportGeoTiff(c.layer.string(), c.output.string(), o);
+      ADD_FAILURE() << "expected a refusal";
+    } catch (const mtrs::ExportRefused & e) {
+      EXPECT_NE(std::string(e.what()).find("inside the store"), std::string::npos) << e.what();
+    }
+    if (!c.must_not_exist.empty()) {
+      EXPECT_FALSE(fs::exists(c.must_not_exist));
+    }
+  }
+  EXPECT_EQ(readFile(tile), tile_bytes) << "a native tile was modified";
+  EXPECT_EQ(readFile(s.registry()), registry_bytes) << "registry.json was modified";
+  EXPECT_TRUE(fs::is_symlink(out_link));
+  // An output beside the store (a sibling of its directory) is fine.
+  const fs::path beside = s.root() / "beside.tif";
+  mtrs::exportGeoTiff(layer_link.string(), beside.string(), o);
+  EXPECT_TRUE(fs::exists(beside));
+}
+
 TEST(ExportRefusals, InvalidOptions)
 {
   Store s("invalid_options");

@@ -206,8 +206,10 @@ native tiles and the sidecar (build the layer's overviews first; a missing
 (tile I/O is validated only below 72, and GGGS longitude-scale bands cannot share
 one pixel width); width x height over `--max-pixels` (checked in 64-bit before
 anything is allocated) or a dimension over the GeoTIFF limit; a non-float tile;
-mixed band counts; an output path inside the layer or its sidecar. An
-unreadable tile, or one whose georeferencing does not match its filename, fails
+mixed band counts; an output anywhere under the store directory that holds the
+layer and its `registry.json` (the layer, its sidecar, any subdirectory, sibling
+layers, the registry itself), compared after resolving symlinks. An unreadable
+tile, or one whose georeferencing does not match its filename, fails
 the export the same way.
 
 **Memory and writing.** The output is written one 256-row block-row strip at a
