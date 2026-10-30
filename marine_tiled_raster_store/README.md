@@ -267,8 +267,9 @@ read raw, so a `-9999` sentinel would be exported as data);
 mixed band counts; a `<layer_dir>` that is an `overviews/` sidecar; an output
 anywhere under a store directory of the layer (the layer, its sidecar, any
 subdirectory, sibling layers, the registry itself). A store directory is the
-nearest directory at or above the layer that holds a `registry.json`, plus the
-layer's parent, each looked up along both the path as given and its
+nearest directory above the layer that holds a `registry.json` (the search
+starts at the layer's parent, so a stray `registry.json` inside a layer is
+ignored), plus the layer's parent, each looked up along both the path as given and its
 symlink-resolved form, so a symlinked layer guards the store holding the link
 as well as the one holding its target, and a layer with no registry anywhere
 above it still guards its siblings. Paths are compared after resolving symlinks. An unreadable

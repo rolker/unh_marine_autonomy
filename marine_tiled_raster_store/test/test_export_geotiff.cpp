@@ -1185,6 +1185,38 @@ TEST(ExportRefusals, StoreRootIsTheNearestDirectoryHoldingTheRegistry)
   EXPECT_TRUE(fs::exists(s.out()));
 }
 
+// A stray registry.json INSIDE a layer is not its store: the search starts at
+// the layer's parent, so the real store above still guards a sibling layer.
+// (Searching from the layer itself made store/sub/layerC the "store" and let
+// an output into store/layerB through.)
+TEST(ExportRefusals, StrayRegistryInsideTheLayerDoesNotShadowTheStore)
+{
+  Store s("stray_registry");
+  s.writeRegistry(R"({"datum": "mllw"})");
+  const fs::path store = s.registry().parent_path();
+  const fs::path layer_c = store / "sub" / "layerC";
+  writeConst(layer_c, gridAt(10, kRow10, kCol10), 1.0);
+  std::ofstream(layer_c / "registry.json") << R"({"datum": "lat"})";
+  const fs::path layer_b = store / "layerB";
+  fs::create_directories(layer_b);
+  const mtrs::ExportOptions o = opts(insideTile(10, kRow10, kCol10));
+  for (const fs::path & output : {layer_b / "x.tif", s.registry(), store / "sub" / "x.tif",
+      layer_c / "x.tif"})
+  {
+    SCOPED_TRACE(output.string());
+    try {
+      mtrs::exportGeoTiff(layer_c.string(), output.string(), o);
+      ADD_FAILURE() << "expected a refusal";
+    } catch (const mtrs::ExportRefused & e) {
+      EXPECT_NE(std::string(e.what()).find("inside the store"), std::string::npos) << e.what();
+    }
+  }
+  EXPECT_FALSE(fs::exists(layer_b / "x.tif"));
+  EXPECT_EQ(readFile(s.registry()), R"({"datum": "mllw"})");
+  mtrs::exportGeoTiff(layer_c.string(), s.out().string(), o);
+  EXPECT_TRUE(fs::exists(s.out()));
+}
+
 // An overviews/ sidecar given as the layer is refused outright, whatever the
 // output: read as a layer, its derived tiles would be labelled native and the
 // store guard would be anchored one level too low (the reviewer's reproduction

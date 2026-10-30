@@ -231,7 +231,7 @@ std::uint64_t exportOutputsReplaced() noexcept;
 /// @throws ExportRefused when the request cannot be exported as asked,
 ///   including a @p layer_dir that is an `overviews/` sidecar (pass the layer;
 ///   its sidecar is read automatically) and an @p output_path anywhere under a
-///   store directory of the layer: the nearest directory at or above it that
+///   store directory of the layer: the nearest directory above it that
 ///   holds a `registry.json`, and the layer's parent, each found along both the
 ///   path as given and its symlink-resolved form (so a symlinked layer guards
 ///   the store holding the link and the one holding its target). Paths are

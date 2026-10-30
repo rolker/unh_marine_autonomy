@@ -440,12 +440,14 @@ bool isWithin(const fs::path & p, const fs::path & dir)
 /// The directories an export must never write into, all from resolvedPath().
 ///
 /// A layer's store is found by CONTENT, not by position: the nearest directory
-/// at or above the layer that holds a `registry.json`, looked up from both the
-/// path as given (made absolute, lexically normalized) and its symlink-resolved
-/// form. The layer's parent along both paths is always added too, so a layer
-/// with no registry anywhere above it still protects its siblings, and a
-/// symlinked layer protects the directory holding the LINK (which may be
-/// another store) as well as the one holding its target.
+/// ABOVE the layer that holds a `registry.json`, looked up from both the path
+/// as given (made absolute, lexically normalized) and its symlink-resolved
+/// form. The search starts at the layer's parent, never the layer itself, so a
+/// stray `registry.json` inside a layer cannot pose as the store and leave the
+/// real store above it unguarded. The layer's parent along both paths is
+/// always added too, so a layer with no registry anywhere above it still
+/// protects its siblings, and a symlinked layer protects the directory holding
+/// the LINK (which may be another store) as well as the one holding its target.
 std::vector<fs::path> storeRoots(const std::string & layer_dir, const fs::path & resolved_layer)
 {
   std::vector<fs::path> roots;
@@ -462,7 +464,7 @@ std::vector<fs::path> storeRoots(const std::string & layer_dir, const fs::path &
     withoutTrailingSeparator(fs::absolute(fs::path(layer_dir)).lexically_normal());
   for (const fs::path & start : {lexical, resolved_layer}) {
     add(start.parent_path());
-    for (fs::path dir = start; ; dir = dir.parent_path()) {
+    for (fs::path dir = start.parent_path(); ; dir = dir.parent_path()) {
       std::error_code ec;
       if (fs::exists(dir / "registry.json", ec)) {
         add(dir);
