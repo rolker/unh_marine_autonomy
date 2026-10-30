@@ -754,7 +754,10 @@ ExportResult exportGeoTiff(
     checkCE(band->SetNoDataValue(nan), "set no-data");
   }
 
-  std::vector<float> strip(bands * static_cast<std::size_t>(width) * kBlock);
+  // One block-row strip, never taller than the output: a short, wide box must
+  // not allocate 256 rows it will never fill.
+  const std::uint64_t strip_rows = std::min<std::uint64_t>(height, kBlock);
+  std::vector<float> strip(bands * static_cast<std::size_t>(width * strip_rows));
   std::vector<std::uint64_t> valid(bands, 0);
   std::uint64_t overflowed = 0;
   // Loaded tiles, in GGGS cell order (row 0 = SOUTH: loadTile flips the
