@@ -118,7 +118,8 @@ so generic names like `Normal`/`Enu` must not sit at package level).
    - **Consequence of tile-in-identity (operator decision):** a stencil that
      straddles a GGGS tile boundary falls back to flat even when both tiles are
      the same layer and level (two tiles can be of different vintage in the
-     store). At a 3-cell step on 960-cell tiles that is about 1.3 % of area.
+     store). At the default step (3 × the larger span, about 4 east-west cells
+     at 43°N) on 960-cell tiles that is about 1.5 % of area.
      Recorded so it can be relaxed to layer + level later if it bites.
 4. **Incidence and grazing.** `AngleResult incidenceAngle(const Enu& beam_dir, const Enu& normal)`
    with `AngleResult{double rad; bool valid;}`. `beam_dir` is the **direction
@@ -252,11 +253,11 @@ so generic names like `Normal`/`Enu` must not sit at package level).
 | `marine_backscatter/CMakeLists.txt` | Add the two sources to the one library; new tests |
 | `marine_backscatter/package.xml` | Description only; no dependency change |
 | `marine_backscatter/test/test_seabed_geometry.cpp` | New tests |
-| `marine_backscatter/test/test_bathy_dem.cpp` | Moved from `marine_sidescan_mosaic/test/`, extended |
+| `marine_backscatter/test/test_bathy_dem.cpp` | Moved from `marine_sidescan_mosaic/test/`, extended (also fixes its pre-existing `-Wrange-loop-construct` warning) |
 | `marine_backscatter/README.md` | New |
 | `marine_sidescan_mosaic/CMakeLists.txt` | Drop `bathy_dem.cpp` and its test; `marine_backscatter` on `test_tier2_processed_dem` |
 | `marine_sidescan_mosaic/src/sidescan_tier2_processed.cpp`, `test/test_tier2_processed_dem.cpp` | Include/namespace updates only |
-| `marine_sidescan_mosaic/README.md`, `.agents/README.md` | Doc updates (row + pitfall) |
+| `marine_sidescan_mosaic/README.md`, `.agents/README.md` | Doc updates: mosaic README points at the moved reader/test and lists `marine_backscatter` under Dependencies; `.agents/README.md` row + rewritten pitfall (also corrects its ADR-0010 D3 reference to D8) |
 | `docs/decisions/0006-multi-platform-backscatter-store.md` | Dated status note under D4 |
 
 ## Principles Self-Check
@@ -286,7 +287,7 @@ so generic names like `Normal`/`Enu` must not sit at package level).
 |---|---|---|
 | `BathyDem` location/namespace | tier-2 tool, its DEM test + CMake deps, mosaic CMake/README, `.agents/README.md` row + pitfall | Yes |
 | New sources in the exported library | install rules (headers already installed by directory), downstream `find_package` users (mosaic) | Yes |
-| Tile in the source identity | stencils across a tile boundary fall back (about 1.3 % of area at 3 cells); revisit if it bites | Recorded |
+| Tile in the source identity | stencils across a tile boundary fall back (about 1.5 % of area at the default step); revisit if it bites | Recorded |
 | Stored M3 values will change once adapters land | Bag re-import, empirical curves re-derived (they currently absorb the flat falloff) | No: follow-up in cube#173 |
 | Processed-rung fingerprint / `projection.json` sidecar must name the depth surface used for slope | tier-2 sidecar writer | No: follow-up with the sidescan re-point |
 | `grazingQuality` slope-aware overload | quality tests, tier-2 call site | No: follow-up |
@@ -313,8 +314,9 @@ so generic names like `Normal`/`Enu` must not sit at package level).
 
 ## Estimated Scope
 
-Single PR (new geometry unit + sampler move + docs, roughly 900 to 1200 changed
-lines including the moved files and tests). Follow-ups, each its own PR:
+Single PR (new geometry unit + sampler move + docs). Landed at about 1900
+added / 100 removed lines outside the plan files, most of it tests (two suites,
+33 new cases) and the new README; the moved files are renames. Follow-ups, each its own PR:
 ensonified footprint area and the shadow / multi-valued ray march (second half
 of #304); `grazingQuality` slope-aware overload and sidescan radiometric chain
 re-point (plus sidecar fingerprint of the slope surface); CUBE adapters and
