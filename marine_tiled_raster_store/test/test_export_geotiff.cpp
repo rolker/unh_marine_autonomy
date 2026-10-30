@@ -1394,8 +1394,11 @@ TEST(ExportOutput, FailureAfterCreateLeavesTheExistingOutputUntouched)
   } catch (const mtrs::ExportRefused & e) {
     FAIL() << "the truncated tile was refused by the probe, before Create: " << e.what();
   } catch (const std::runtime_error & e) {
-    // Failed in loadTile's pixel read, i.e. after the dataset was created.
+    // Failed in loadTile's pixel read, i.e. after the dataset was created, and
+    // GDAL's own reason travels with tile_io's step name.
     EXPECT_NE(std::string(e.what()).find("read band"), std::string::npos) << e.what();
+    EXPECT_NE(std::string(e.what()).find("(GDAL: "), std::string::npos) << e.what();
+    EXPECT_NE(std::string(e.what()).find(bad_path.string()), std::string::npos) << e.what();
   }
   EXPECT_EQ(readFile(s.out()), previous);
   EXPECT_TRUE(tmpFiles(s).empty()) << "a failed export left its temporary file";

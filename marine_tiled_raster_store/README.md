@@ -259,7 +259,8 @@ tile, or one whose pixel grid is not its filename's (960 x 960 pixels of the
 level's cell size, no rotation, origin on the named grid's north-west corner to
 within a millionth of a cell; checked in the header probe, since `loadTile`
 accepts an origin up to half a cell off and validates no pixel size) fails the
-export the same way.
+export the same way. GDAL's own reason, where it gave one, is part of every
+such message, including a tile that fails only when its pixels are read.
 
 **Memory and writing.** The output is written one 256-row block-row strip at a
 time (fewer rows when the box is shorter), and no output block is ever read

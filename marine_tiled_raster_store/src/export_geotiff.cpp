@@ -785,6 +785,24 @@ ExcludedLevels excludedLevels(
   return result;
 }
 
+/// loadTile, with GDAL's own reason added to its error (tile_io's messages
+/// name only the step, e.g. "read band"). Reset first, so only an error raised
+/// during this load is reported.
+TiledRasterTile<double> loadTileWithReason(
+  const std::string & path, std::uint8_t level, std::size_t bands)
+{
+  CPLErrorReset();
+  try {
+    return loadTile<double>(path, gggs::Level(level), bands);
+  } catch (const std::runtime_error & e) {
+    const std::string reason = gdalReason();
+    if (reason.empty()) {
+      throw;
+    }
+    throw std::runtime_error(std::string(e.what()) + " in " + path + reason);
+  }
+}
+
 void checkCE(CPLErr err, const std::string & what)
 {
   if (err != CE_None) {
@@ -1203,18 +1221,21 @@ ExportResult exportGeoTiff(
   checkCE(out.ds->SetGeoTransform(gt), "set geotransform");
   {
     OGRSpatialReference srs;
+    CPLErrorReset();
     if (srs.importFromEPSG(4326) != OGRERR_NONE) {
-      throw std::runtime_error("could not build EPSG:4326");
+      throw std::runtime_error("could not build EPSG:4326" + gdalReason());
     }
     // The geotransform is x = longitude, y = latitude (GDAL's traditional GIS
     // order), whatever axis order the EPSG definition declares.
     srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    CPLErrorReset();
     checkCE(out.ds->SetSpatialRef(&srs), "set spatial reference");
   }
   const double nan = std::numeric_limits<double>::quiet_NaN();
   for (std::size_t b = 0; b < bands; ++b) {
     GDALRasterBand * band = out.ds->GetRasterBand(static_cast<int>(b) + 1);
     band->SetDescription(result.band_names[b].c_str());
+    CPLErrorReset();
     checkCE(band->SetNoDataValue(nan), "set no-data");
   }
 
@@ -1265,8 +1286,7 @@ ExportResult exportGeoTiff(
         if (sel == selection.end() || cache.count(key) != 0) {
           continue;
         }
-        const TiledRasterTile<double> tile =
-          loadTile<double>(sel->second.path, gggs::Level(level), bands);
+        const TiledRasterTile<double> tile = loadTileWithReason(sel->second.path, level, bands);
         if (tile.index() != sel->second.grid) {
           throw std::runtime_error(
                   "tile " + sel->second.path + " is georeferenced as " +
