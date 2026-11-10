@@ -724,40 +724,152 @@ TEST(BathyDemSampler, LevelChangeAcrossTheStencilIsASeam)
   EXPECT_EQ(seam.reason, sb::FallbackReason::kLayerSeam);
 }
 
-// The tile is part of the source identity (operator decision, #304): a stencil
-// across a GGGS tile boundary falls back even at the same layer and level, since
-// two tiles can be of different vintage. Well inside the tile it does not.
-TEST(BathyDemSampler, TileChangeAcrossTheStencilIsASeam)
+namespace
 {
-  ScratchDir dir("tile_seam");
+
+// Two adjacent level-kFineLevel tiles, west then east of a meridian, holding ONE
+// plane that rises 0.01 m per cell eastward and is constant northward, so the
+// store is a single continuous surface split by a tile boundary. Returns the
+// slope-aware closed-form normal for that plane through the cell spans.
+struct SeamStore
+{
+  gggs::GridIndex west;
+  gggs::GridIndex east;
+  double lat;               // a row near the tile's middle.
+  double last_lon;          // centre of the western tile's last column.
+  double first_lon;         // centre of the eastern tile's first column.
+  double boundary_lon;      // the meridian between the tiles.
+  double lon_span;
+  sb::Enu expected;
+};
+
+SeamStore writeSeamStore(
+  const fs::path & root, double seed_lat, double seed_lon, bool write_east = true)
+{
   const gggs::Level level(kFineLevel);
-  const auto west_grid = level.gridIndex(kLat, kLon);
-  const auto east_grid = level.gridIndex(kLat, west_grid.eastLongitude() + 1e-7);
-  ASSERT_NE(west_grid, east_grid);
-  writeConstantTile(dir.path(), "processed", west_grid, -10.0);
-  writeConstantTile(dir.path(), "processed", east_grid, -10.0);
+  SeamStore out;
+  out.west = level.gridIndex(seed_lat, seed_lon);
+  double east_lon = out.west.eastLongitude() + 1e-7;
+  if (east_lon >= 180.0) {
+    east_lon -= 360.0;
+  }
+  out.east = level.gridIndex(seed_lat, east_lon);
+  const double kPerCell = 0.01;
+  writeDepthTile(
+    root, "processed", out.west,
+    [kPerCell](uint16_t, uint16_t c) {return -50.0 + kPerCell * c;});
+  if (write_east) {
+    writeDepthTile(
+      root, "processed", out.east,
+      [kPerCell](uint16_t, uint16_t c) {
+        return -50.0 + kPerCell * (c + gggs::cell_columns_per_grid);
+      });
+  }
+  const auto sw = out.west.southWestPosition();
+  out.lon_span = out.west.longitudinalSpan() / gggs::cell_columns_per_grid;
+  const double lat_span = out.west.latitudinalSpan() / gggs::cell_rows_per_grid;
+  out.lat = sw.latitude + 480.5 * lat_span;
+  out.boundary_lon = sw.longitude + gggs::cell_columns_per_grid * out.lon_span;
+  out.last_lon = out.boundary_lon - 0.5 * out.lon_span;
+  out.first_lon = out.boundary_lon + 0.5 * out.lon_span;
+  const sb::MetresPerDegree mpd = sb::metresPerDegree(out.lat);
+  const double dh_de = kPerCell / (out.lon_span * mpd.east);
+  const double norm = std::sqrt(dh_de * dh_de + 1.0);
+  out.expected = sb::Enu{-dh_de / norm, 0.0, 1.0 / norm};
+  return out;
+}
+
+double angleTo(const sb::Enu & a, const sb::Enu & b)
+{
+  const double dot = a.e * b.e + a.n * b.n + a.u * b.u;
+  return std::acos(std::min(1.0, std::max(-1.0, dot)));
+}
+
+}  // namespace
+
+// Within one layer and level the tiles are one continuous surface (reversed
+// 2026-11-10): a tilted plane spanning a tile boundary gives the closed-form
+// normal on both sides of the seam and exactly on it, and the source identity is
+// the same on both sides.
+TEST(BathyDemSampler, TiltedPlaneAcrossATileBoundaryGivesTheSurfaceNormal)
+{
+  ScratchDir dir("tile_seam_plane");
+  const SeamStore store = writeSeamStore(dir.path(), kLat, kLon);
+  ASSERT_NE(store.west, store.east);
   mbs::BathyDem dem(dir.path().string(), {"processed"});
 
-  // The last column of the western tile, 0.1 cell west of its centre.
-  const auto last = gridCell(kFineLevel, 480, gggs::cell_columns_per_grid - 1);
-  const double lat = last.centre_lat;
-  const double lon = last.centre_lon - 0.1 * last.lon_span;
-  const auto centre = dem.heightAt(lat, lon);
-  ASSERT_TRUE(centre.valid());
-  const auto across = dem.heightAt(lat, west_grid.eastLongitude() + 0.5 * last.lon_span);
-  ASSERT_TRUE(across.valid());
-  EXPECT_EQ(across.source.layer, centre.source.layer);
-  EXPECT_EQ(across.source.level, centre.source.level);
-  EXPECT_NE(across.source.tile, centre.source.tile);
+  const auto west_sample = dem.heightAt(store.lat, store.last_lon);
+  const auto east_sample = dem.heightAt(store.lat, store.first_lon);
+  ASSERT_TRUE(west_sample.valid());
+  ASSERT_TRUE(east_sample.valid());
+  EXPECT_EQ(west_sample.source, east_sample.source);
 
   sb::NormalOptions options;
-  options.step_m = 1.4 * centre.span_east_m;
-  const sb::Normal seam = sb::seabedNormal(dem, lat, lon, options);
-  EXPECT_FALSE(seam.from_surface);
-  EXPECT_EQ(seam.reason, sb::FallbackReason::kLayerSeam);
+  options.step_m = 1.4 * west_sample.span_east_m;   // each stencil reaches the other tile.
+  for (const double lon : {
+    store.last_lon - 0.3 * store.lon_span, store.last_lon, store.boundary_lon,
+    store.first_lon, store.first_lon + 0.3 * store.lon_span})
+  {
+    const sb::Normal result = sb::seabedNormal(dem, store.lat, lon, options);
+    ASSERT_TRUE(result.from_surface) << "lon " << lon << " " << sb::toString(result.reason);
+    EXPECT_EQ(result.reason, sb::FallbackReason::kNone);
+    EXPECT_LT(angleTo(result.normal, store.expected), 1e-4) << "lon " << lon;
+  }
+  // The default 3-cell step too.
+  EXPECT_TRUE(sb::seabedNormal(dem, store.lat, store.boundary_lon).from_surface);
+}
 
-  const auto inner = gridCell(kFineLevel, 480, 480);
-  EXPECT_TRUE(sb::seabedNormal(dem, inner.centre_lat, inner.centre_lon, options).from_surface);
+// A real source change at the same position is still a layer_seam, and a missing
+// neighbour tile is still a fallback (no data), never a surface normal.
+TEST(BathyDemSampler, SourceChangeStillSeamsAndMissingTileStillFallsBack)
+{
+  {
+    ScratchDir dir("tile_missing");
+    const SeamStore store = writeSeamStore(dir.path(), kLat, kLon, false);
+    mbs::BathyDem dem(dir.path().string(), {"processed"});
+    sb::NormalOptions options;
+    options.step_m = 1.4 * store.lon_span * sb::metresPerDegree(store.lat).east;
+    const sb::Normal result = sb::seabedNormal(dem, store.lat, store.last_lon, options);
+    EXPECT_FALSE(result.from_surface);
+    EXPECT_EQ(result.reason, sb::FallbackReason::kMissingSample);
+  }
+  {
+    // Western tile in "processed", eastern tile only in "draft": the stencil
+    // crosses both a tile boundary and a layer change.
+    ScratchDir dir("tile_layer_change");
+    SeamStore store = writeSeamStore(dir.path(), kLat, kLon, false);
+    writeDepthTile(
+      dir.path(), "draft", store.east,
+      [](uint16_t, uint16_t c) {return -50.0 + 0.01 * (c + gggs::cell_columns_per_grid);});
+    mbs::BathyDem dem(dir.path().string(), {"processed", "draft"});
+    sb::NormalOptions options;
+    options.step_m = 1.4 * store.lon_span * sb::metresPerDegree(store.lat).east;
+    const sb::Normal result = sb::seabedNormal(dem, store.lat, store.last_lon, options);
+    EXPECT_FALSE(result.from_surface);
+    EXPECT_EQ(result.reason, sb::FallbackReason::kLayerSeam);
+  }
+}
+
+// The same continuity holds across the antimeridian, where the eastern tile's
+// longitudes wrap to -180.
+TEST(BathyDemSampler, TiltedPlaneAcrossTheAntimeridianGivesTheSurfaceNormal)
+{
+  ScratchDir dir("antimeridian_plane");
+  const gggs::Level level(kFineLevel);
+  const gggs::GridIndex seed = level.gridIndex(-16.5, 179.9999);
+  const SeamStore store =
+    writeSeamStore(dir.path(), -16.5, seed.southWestPosition().longitude + 1e-7);
+  ASSERT_GE(store.boundary_lon, 180.0 - 1e-6);
+  mbs::BathyDem dem(dir.path().string(), {"processed"});
+
+  sb::NormalOptions options;
+  options.step_m = 1.4 * store.lon_span * sb::metresPerDegree(store.lat).east;
+  const double lon_east = store.first_lon - 360.0;
+  for (const double lon : {store.last_lon, lon_east}) {
+    const sb::Normal result = sb::seabedNormal(dem, store.lat, lon, options);
+    ASSERT_TRUE(result.from_surface) << "lon " << lon << " " << sb::toString(result.reason);
+    EXPECT_LT(angleTo(result.normal, store.expected), 1e-4) << "lon " << lon;
+  }
 }
 
 // The reported spans are per axis, in metres, and agree with an independent
@@ -795,9 +907,7 @@ TEST(BathyDemSampler, ReportsPerAxisSpansAndSourceIdentity)
 
   EXPECT_EQ(sample.source.layer, 0);
   EXPECT_EQ(sample.source.level, kFineLevel);
-  EXPECT_EQ(
-    sample.source.tile,
-    (static_cast<std::uint64_t>(geom.grid.row()) << 32) | geom.grid.column());
+  EXPECT_EQ(sample.source.tile, 0u);   // tiles of one layer and level are one source.
 }
 
 // ADR-0011 s.2 / ADR-0013 D8: depth overviews fold to the shallowest value and

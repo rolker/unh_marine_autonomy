@@ -90,8 +90,10 @@ MetresPerDegree metresPerDegree(double lat_deg);
 
 /// @brief Which surface answered a height query.
 ///
-/// Sampler-defined keys: for `BathyDem` the layer index in the search order, the
-/// GGGS level, and the tile's (row, column) packed into `tile`. A sampler with a
+/// Sampler-defined keys: for `BathyDem` the layer index in the search order and
+/// the GGGS level (`tile` is left 0: tiles of one layer and level are one
+/// continuous surface, not distinct sources). `tile` is available to a sampler
+/// whose sub-surfaces really are distinct sources. A sampler with a
 /// single surface returns the same value (the default one is fine) for every
 /// sample. @ref seabedNormal requires **exact** equality across its stencil.
 struct SourceId
@@ -163,8 +165,8 @@ enum class FallbackReason
   kMissingSample,      ///< centre or a probe had no data.
   kStencilIncomplete,  ///< centre or a probe sat on a partial interpolation stencil
                        ///< (typically within a cell of a survey edge).
-  kLayerSeam,          ///< a probe resolved from a different source (layer, level
-                       ///< or tile) than the centre.
+  kLayerSeam,          ///< a probe resolved from a different source (layer or
+                       ///< level for `BathyDem`) than the centre.
   kNoCellSize,         ///< auto step requested but the sampler reported no span.
   kBadStep,            ///< negative / non-finite step, or bad auto_step_cells.
   kBadPosition,        ///< non-finite or out-of-range position, or the stencil
@@ -208,10 +210,11 @@ struct Normal
 /// constant datum offset cancels.
 ///
 /// Every failure is the flat normal with `from_surface = false` and a
-/// @ref FallbackReason. A bad centre sample (missing, incomplete, no cell size) or
-/// bad position/step returns before any probe is taken; otherwise, once all four
-/// probes are in, the order is: missing, stencil incomplete, source seam. The
-/// module holds no state; callers count fallbacks per reason.
+/// @ref FallbackReason. A bad centre sample (missing, incomplete, or no span
+/// with an automatic step) or bad position/step returns before any probe is
+/// taken; otherwise, once all four probes are in, the order is: missing, stencil
+/// incomplete, source seam. The module holds no state; callers count fallbacks
+/// per reason.
 ///
 /// @throws whatever the sampler throws (propagated, never swallowed).
 Normal seabedNormal(

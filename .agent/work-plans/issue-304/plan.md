@@ -115,12 +115,15 @@ so generic names like `Normal`/`Enu` must not sit at package level).
      for callers' counters. Flat fallback = `{0,0,1}`, `from_surface=false`.
      Callers count fallbacks per reason (same idiom as tier-2's
      `n_dem_nonconverged`); the module holds no state.
-   - **Consequence of tile-in-identity (operator decision):** a stencil that
-     straddles a GGGS tile boundary falls back to flat even when both tiles are
-     the same layer and level (two tiles can be of different vintage in the
-     store). At the default step (3 × the larger span, about 4 east-west cells
-     at 43°N) on 960-cell tiles that is about 1.5 % of area.
-     Recorded so it can be relaxed to layer + level later if it bites.
+   - **Reversed 2026-11-10 (user's direction):** the tile was first made part of
+     the source identity, so a stencil straddling a GGGS tile boundary fell back
+     to flat (about 1.5 % of area at the default step). It was reversed before
+     the push because the downstream consumer (cube#173) would otherwise get
+     tile-aligned strips of flat fallback on sloping ground, and within one layer
+     and one level the tiles are one continuous surface. `BathyDem` now reports
+     the source as (layer, level) with `tile` left 0; `kLayerSeam` means a real
+     source change only. A missing neighbour tile still falls back
+     (`kMissingSample`, or `kStencilIncomplete` for a partial stencil).
 4. **Incidence and grazing.** `AngleResult incidenceAngle(const Enu& beam_dir, const Enu& normal)`
    with `AngleResult{double rad; bool valid;}`. `beam_dir` is the **direction
    of arrival at the seabed point**, a unit vector in local ENU at that point
@@ -155,10 +158,10 @@ so generic names like `Normal`/`Enu` must not sit at package level).
      `kNoData`; if any bilinear neighbour with non-zero weight is missing at the
      resolved (layer, level) → `kStencilIncomplete`, never a renormalised
      partial value. Spans: the resolved cell's angular spans × `metresPerDegree`
-     at the cell-centre latitude. Identity: (layer index, level, tile row/col of
-     the probe's own cell). A probe's bilinear neighbours may still read across
-     a tile boundary at the same layer and level (existing behaviour); the
-     identity names where the probe resolved.
+     at the cell-centre latitude. Identity: (layer index, level) of the probe's
+     own cell; `tile` stays 0 (reversed 2026-11-10, see the normal's
+     consequence note). A probe's bilinear neighbours read across a tile
+     boundary at the same layer and level.
    - Both lookups share one private stencil routine; `lookupsByLayer()` counts
      successful calls of either.
    - **Fine tiles only, enforced in code:** the constructor throws
@@ -218,8 +221,9 @@ so generic names like `Normal`/`Enu` must not sit at package level).
    strict lookup at a survey edge (`kStencilIncomplete` where `depthAt` still
    renormalises, `kNoData` outside) and `seabedNormal` there falling back with
    `kStencilIncomplete`; layer seam (two layers, 1 m offset) → flat +
-   `kLayerSeam`; level seam (fine patch over coarse) → `kLayerSeam`; tile
-   boundary → `kLayerSeam`; per-axis spans against GGGS spans; overview
+   `kLayerSeam`; level seam (fine patch over coarse) → `kLayerSeam`; a tilted
+   plane across a tile boundary (both sides and on it) → surface normal, also
+   across the antimeridian; a missing neighbour tile → `kMissingSample`; per-axis spans against GGGS spans; overview
    exclusion (a hole in a fine tile over a valued `overviews/` tile → no data;
    `overviews`-prefixed and `/`-containing layer names rejected); end-to-end
    `seabedNormal` on a tilted store within a stated tolerance; a corrupt tile
@@ -287,7 +291,7 @@ so generic names like `Normal`/`Enu` must not sit at package level).
 |---|---|---|
 | `BathyDem` location/namespace | tier-2 tool, its DEM test + CMake deps, mosaic CMake/README, `.agents/README.md` row + pitfall | Yes |
 | New sources in the exported library | install rules (headers already installed by directory), downstream `find_package` users (mosaic) | Yes |
-| Tile in the source identity | stencils across a tile boundary fall back (about 1.5 % of area at the default step); revisit if it bites | Recorded |
+| Tile in the source identity | Reversed 2026-11-10: tile no longer in `BathyDem`'s identity; stencils across a tile boundary give a surface normal | Done |
 | Stored M3 values will change once adapters land | Bag re-import, empirical curves re-derived (they currently absorb the flat falloff) | No: follow-up in cube#173 |
 | Processed-rung fingerprint / `projection.json` sidecar must name the depth surface used for slope | tier-2 sidecar writer | No: follow-up with the sidescan re-point |
 | `grazingQuality` slope-aware overload | quality tests, tier-2 call site | No: follow-up |

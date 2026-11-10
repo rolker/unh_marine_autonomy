@@ -86,21 +86,19 @@ converted to degrees with `metresPerDegree(lat)`, the same WGS84 helper
 
 | Reason | `toString` | When |
 |---|---|---|
-| `kMissingSample` | `missing_sample` | centre or a probe has no data, or finite heights whose difference overflows |
+| `kMissingSample` | `missing_sample` | centre or a probe has no data, or finite heights whose gradient or its square overflows |
 | `kStencilIncomplete` | `stencil_incomplete` | centre or a probe sits on a partial interpolation stencil (typically within a cell of a survey edge) |
-| `kLayerSeam` | `layer_seam` | a probe's `SourceId` differs from the centre's: another layer, level **or tile**. Exact equality, no tolerance. A vertical offset between two surfaces would otherwise read as slope (1 m over a 6-cell baseline of 0.5 m cells is about 18°) |
+| `kLayerSeam` | `layer_seam` | a probe's `SourceId` differs from the centre's: another layer or level (for `BathyDem`; a sampler may use `tile` for sub-surfaces that really are distinct sources). Exact equality, no tolerance. A stencil that crosses a GGGS tile boundary within one layer and level is **not** a seam. A vertical offset between two surfaces would otherwise read as slope (1 m over a 6-cell baseline of 0.5 m cells is about 18°) |
 | `kNoCellSize` | `no_cell_size` | auto step requested but the sampler reported no span |
 | `kBadStep` | `bad_step` | negative or non-finite `step_m`, or a non-positive / non-finite `auto_step_cells` |
 | `kBadPosition` | `bad_position` | non-finite or out-of-range position, or a stencil that would reach a pole |
 
 When several apply, the reported one is the first in the table order above
-(missing, then incomplete, then seam). Because the tile is part of the source
-identity, a stencil straddling a GGGS tile boundary falls back even when both
-tiles are the same layer and level (two tiles can be of different vintage in the
-store). At the default step (3 × the larger span, which at 43°N is about 4
-east-west cells) on 960-cell tiles that is about 1.5 % of the area. The
-`layer_seam` counter therefore includes these tile seams; it does not by itself
-mean a source change.
+(missing, then incomplete, then seam). A stencil that crosses a GGGS tile
+boundary within one layer and level reads the neighbouring tile and yields a
+surface normal; if that neighbour tile is absent the probe has no data
+(`missing_sample`), and a partly supported interpolation is `stencil_incomplete`.
+`layer_seam` is therefore a pure source-change signal (different layer or level).
 
 Limitations to know when reading the fallback counts:
 
@@ -163,7 +161,7 @@ Moved here from `marine_sidescan_mosaic` in #304.
   missing, `kNoData` when the own cell is empty. Spans are the resolved cell's
   angular spans through `metresPerDegree` at the cell-centre latitude (GGGS
   cells are square in degrees below 72°, so at 43°N east-west is about 0.73 of
-  north-south); the source is (layer index, level, tile row << 32 | column).
+  north-south); the source is (layer index, level); `tile` stays 0.
 - **Fine tiles only** (ADR-0011 §2, ADR-0013 D8): depth overviews fold to the
   shallowest value, so they are wrong for placement and invent slope. The scan
   is non-recursive and accepts only exact `<level>_<row>_<col>.tif` names, so an
@@ -207,8 +205,9 @@ colcon test --packages-select marine_backscatter
 lat/lon → ENU conversion uses gz4d's `LocalENU`, independently of
 `metresPerDegree`. `test_bathy_dem` covers the reader over value tiles written
 with `marine_tiled_raster_store::saveTile<double>` (no `marine_bathymetry_store`
-dependency), including the strict lookup at a survey edge, layer / level / tile
-seams, overview exclusion and an end-to-end normal on a tilted store.
+dependency), including the strict lookup at a survey edge, layer / level
+seams, normals on a tilted plane across a tile boundary (and across the
+antimeridian), overview exclusion and an end-to-end normal on a tilted store.
 `test_processed_accumulator` and `test_quality` cover the compositor and the
 quality curve.
 

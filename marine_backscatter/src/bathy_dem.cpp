@@ -382,8 +382,6 @@ BathyDem::Lookup BathyDem::lookup(double lat_deg, double lon_deg_in, bool strict
   const double lon_span = cell.grid().longitudinalSpan() / gggs::cell_columns_per_grid;
   const double centre_lat = corner.latitude + 0.5 * lat_span;
   const double centre_lon = corner.longitude + 0.5 * lon_span;
-  result.tile_row = cell.grid().row();
-  result.tile_column = cell.grid().column();
   result.lat_span_deg = lat_span;
   result.lon_span_deg = lon_span;
   result.centre_lat_deg = centre_lat;
@@ -474,8 +472,9 @@ seabed::HeightSample BathyDem::heightAt(double lat_deg, double lon_deg)
   // only needs the status, but a diagnostic can still say where it happened.
   sample.source.layer = static_cast<std::int64_t>(found.source.layer);
   sample.source.level = found.source.level;
-  sample.source.tile =
-    (static_cast<std::uint64_t>(found.tile_row) << 32) | found.tile_column;
+  // `tile` stays 0 on purpose: within one layer and one level the tiles are one
+  // continuous surface, so a stencil across a tile boundary is NOT a source
+  // change (reversed 2026-11-10; see the plan).
   const seabed::MetresPerDegree mpd = seabed::metresPerDegree(found.centre_lat_deg);
   sample.span_north_m = found.lat_span_deg * mpd.north;
   sample.span_east_m = found.lon_span_deg * mpd.east;

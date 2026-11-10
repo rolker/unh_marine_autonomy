@@ -172,9 +172,12 @@ public:
   ///
   /// The spans are the resolved cell's angular spans converted with
   /// @ref seabed::metresPerDegree at the cell-centre latitude. The source is
-  /// (layer index in @ref layers(), GGGS level, tile row << 32 | column) of the
-  /// probe's own cell. The bilinear neighbours of one probe may still read across
-  /// a tile boundary at the same layer and level, as @ref depthAt does.
+  /// (layer index in @ref layers(), GGGS level) of the probe's own cell, with
+  /// `tile` left 0: tiles of one layer and level are one continuous surface, so a
+  /// stencil crossing a tile boundary is not a source change. The bilinear
+  /// neighbours of one probe read across a tile boundary at the same layer and
+  /// level, as @ref depthAt does; a missing neighbour tile is
+  /// @ref seabed::SampleStatus::kStencilIncomplete or kNoData as for any hole.
   ///
   /// @throws std::runtime_error if a tile the scan listed cannot be loaded.
   seabed::HeightSample heightAt(double lat_deg, double lon_deg) override;
@@ -237,8 +240,6 @@ private:
     seabed::SampleStatus status = seabed::SampleStatus::kNoData;
     double value = 0.0;
     Source source;
-    std::uint32_t tile_row = 0;
-    std::uint32_t tile_column = 0;
     double lat_span_deg = 0.0;
     double lon_span_deg = 0.0;
     double centre_lat_deg = 0.0;

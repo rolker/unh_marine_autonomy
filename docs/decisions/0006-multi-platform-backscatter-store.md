@@ -139,7 +139,7 @@ is out of scope here (and limited by the uncalibrated GCV).
 > `marine_backscatter`; a CUBE adapter is cube#173) and the incidence / grazing
 > angle of a beam vector against it. Every case where the surface cannot give a
 > trustworthy normal returns the flat normal with a reason code the caller counts
-> (missing sample, partial stencil at a survey edge, a layer / level / tile seam,
+> (missing sample, partial stencil at a survey edge, a layer / level seam,
 > bad step or position) — the flat-bottom fallback above, extended from "no bathy
 > yet" to "no trustworthy bathy here". Still open: the footprint-area step, the
 > residual beam pattern, speckle removal, the shadow ray march, and re-pointing
