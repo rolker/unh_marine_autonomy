@@ -143,6 +143,8 @@ struct HeightSample
 ///   @ref SampleStatus::kStencilIncomplete, never as a renormalised value: a
 ///   partial stencil biases a gradient at every survey edge.
 /// - Always fill @ref HeightSample::source (see @ref SourceId).
+/// - A position the sampler cannot place (|lat| > 90, say) is
+///   @ref SampleStatus::kNoData, not an error.
 /// - Throw on a genuine fault (a corrupt tile). @ref seabedNormal lets the
 ///   exception propagate; it never turns a fault into a flat fallback.
 /// - **Not thread-safe** by contract: `heightAt` is non-const because
@@ -206,9 +208,10 @@ struct Normal
 /// constant datum offset cancels.
 ///
 /// Every failure is the flat normal with `from_surface = false` and a
-/// @ref FallbackReason, checked in this order once all four probes are in:
-/// missing, stencil incomplete, source seam. The module holds no state; callers
-/// count fallbacks per reason.
+/// @ref FallbackReason. A bad centre sample (missing, incomplete, no cell size) or
+/// bad position/step returns before any probe is taken; otherwise, once all four
+/// probes are in, the order is: missing, stencil incomplete, source seam. The
+/// module holds no state; callers count fallbacks per reason.
 ///
 /// @throws whatever the sampler throws (propagated, never swallowed).
 Normal seabedNormal(
