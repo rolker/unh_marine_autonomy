@@ -101,3 +101,30 @@ Issue: rolker/unh_marine_autonomy#304, "Radiometry-phase ray geometry: seabed-no
 - Small fixes in passing: moved test's `-Wrange-loop-construct` warning; `.agents/README.md` pitfall cited ADR-0010 D3 for the layer split (it is D8); mosaic README Dependencies now lists `marine_backscatter`.
 - The proposed new `.agents/README.md` seam pitfall stays a proposal (not added).
 - Next: `/review-code` pre-push.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-11-10 12:53 -05:00
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-304 at `65345f82` (reviewed after merging origin/jazzy, merge `f4305380`)
+**Mode**: pre-push
+**Depth**: Standard (reason: >1000 changed lines, new shared library API)
+**Must-fix**: 1 | **Suggestions**: 9
+**Round**: 1 | **Ship**: recommended — one mechanical must-fix, no design concern
+
+Specialists: static (ament cpplint/cppcheck/uncrustify/xmllint clean), governance + plan drift (read by lead, no concerns), Claude Lens A and B (Sonnet), Cross-Model gemini + codex (both completed).
+
+### Findings
+- [ ] (must-fix) finite heights can overflow the gradient/norm and return a zero or NaN normal flagged from_surface (gemini + codex) — `marine_backscatter/src/seabed_geometry.cpp:208`
+- [ ] (suggestion) wrapLongitude can return +180.0 for a tiny negative input (gemini + Lens A) — `seabed_geometry.cpp:48`
+- [ ] (suggestion) BathyDem::lookup does not wrap the query longitude before computing weights (Lens A) — `bathy_dem.cpp:350`
+- [ ] (suggestion) README: tile seams are counted under layer_seam; say so (Lens A, Lens B, codex) — `README.md`
+- [ ] (suggestion) README: seabedNormal makes 5 heightAt calls, size cache_tiles accordingly (Lens B) — `README.md`
+- [ ] (suggestion) header: centre failures return before any probe (Lens A) — `seabed_geometry.hpp:209`
+- [ ] (suggestion) document narrow-hole limitation and library-vs-header dependency (Lens A, B) — `README.md`
+- [ ] (suggestion) dangling sentence break in README BathyDem section (Lens B) — `README.md:150`
+- [ ] (suggestion) sampler contract: |lat|>90 is kNoData (Lens B) — `seabed_geometry.hpp`
+- [ ] (suggestion, left open) no BathyDem test at the antimeridian or 72/80 deg bands; separate kTileSeam reason; pole check before the centre sample — `test_bathy_dem.cpp`
+- (dismissed) codex must-fix that interpolation reads across a tile boundary: same layer and level is one continuous surface and the header documents it; the cited case needs adjacent tiles with different vertical offsets
