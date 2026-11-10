@@ -167,6 +167,14 @@ pairing).
   ingest); a stale sidecar renders stale coarse imagery but can never corrupt
   fine data.
 - Overviews add ~1/3 of a layer's fine-tile volume (geometric series).
+- **The sidecar has a second reader, the whole-area exporter (#370).**
+  `export_geotiff` (`marine_tiled_raster_store`) reads one level per export with
+  the same precedence as D2's fold scope: per tile position the native tile
+  wins, else the sidecar tile, else a NaN hole; derived tiles are never merged
+  into native ones. A coarse level absent from the sidecar (or a layer with no
+  `overviews/`) is **refused**, not folded on the fly, and the refusal tells the
+  operator to retry, since a missing `overviews/` may be a rename-aside in
+  progress rather than "this layer has none".
 - **Deferred, for the depths pyramid:** `marine_bathymetry_store`'s flat-layout
   loader (`tile_io.cpp`) WARNs and skips **any** subdirectory it finds under a
   layer dir (the `#221` flat-layout guard against stale epoch dirs). The reserved
