@@ -850,6 +850,21 @@ TEST(BathyDemSampler, SourceChangeStillSeamsAndMissingTileStillFallsBack)
   }
 }
 
+// Longitudes outside [-180, 180) weigh like their wrapped value; NaN is no data.
+TEST(BathyDemSampler, UnwrappedAndNonFiniteLongitudes)
+{
+  ScratchDir dir("lon_wrap_sampler");
+  const SeamStore store = writeSeamStore(dir.path(), -16.5, 179.9995);
+  mbs::BathyDem dem(dir.path().string(), {"processed"});
+  const auto a = dem.heightAt(store.lat, store.first_lon - 360.0);
+  const auto b = dem.heightAt(store.lat, store.first_lon);
+  const auto c = dem.heightAt(store.lat, store.first_lon - 720.0);
+  ASSERT_TRUE(a.valid());
+  EXPECT_NEAR(a.height_m, c.height_m, 1e-9);
+  EXPECT_EQ(b.status, a.status);
+  EXPECT_EQ(dem.heightAt(store.lat, kNaN).status, sb::SampleStatus::kNoData);
+}
+
 // The same continuity holds across the antimeridian, where the eastern tile's
 // longitudes wrap to -180.
 TEST(BathyDemSampler, TiltedPlaneAcrossTheAntimeridianGivesTheSurfaceNormal)
@@ -865,7 +880,7 @@ TEST(BathyDemSampler, TiltedPlaneAcrossTheAntimeridianGivesTheSurfaceNormal)
   sb::NormalOptions options;
   options.step_m = 1.4 * store.lon_span * sb::metresPerDegree(store.lat).east;
   const double lon_east = store.first_lon - 360.0;
-  for (const double lon : {store.last_lon, lon_east}) {
+  for (const double lon : {store.last_lon, 180.0, lon_east}) {
     const sb::Normal result = sb::seabedNormal(dem, store.lat, lon, options);
     ASSERT_TRUE(result.from_surface) << "lon " << lon << " " << sb::toString(result.reason);
     EXPECT_LT(angleTo(result.normal, store.expected), 1e-4) << "lon " << lon;

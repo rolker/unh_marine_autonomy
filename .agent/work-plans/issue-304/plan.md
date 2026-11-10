@@ -46,7 +46,7 @@ so generic names like `Normal`/`Enu` must not sit at package level).
    `marine_backscatter/include/marine_backscatter/seabed_geometry.hpp`:
    ```cpp
    struct Enu { double e, n, u; };               // local ENU at the point; u = up
-   struct SourceId { std::int64_t layer; std::int32_t level; std::uint64_t tile; };  // ==, !=
+   struct SourceId { std::int64_t layer; std::int32_t level; std::uint64_t tile; };  // ==, !=  (BathyDem leaves tile 0 since 2026-11-10)
    enum class SampleStatus { kValid, kNoData, kStencilIncomplete };
    struct HeightSample {
      SampleStatus status;      // kNoData = nothing at the probe's own cell

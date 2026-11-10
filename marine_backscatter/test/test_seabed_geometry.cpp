@@ -266,7 +266,7 @@ TEST(SeabedGeometry, IncompleteStencilAtAProbeFallsBackFlat)
   EXPECT_EQ(result.reason, sb::FallbackReason::kStencilIncomplete);
 }
 
-// A probe answered by a different source (layer, level or tile) is a seam: a
+// A probe answered by a different source (e.g. layer or level) is a seam: a
 // vertical offset between two surfaces would otherwise read as slope.
 TEST(SeabedGeometry, SourceChangeAcrossTheStencilIsALayerSeam)
 {
