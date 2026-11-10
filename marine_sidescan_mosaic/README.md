@@ -102,6 +102,10 @@ bottom. Pass `--bathy-store` and the durable `processed` build instead solves fo
 where the ray actually meets the seafloor, reading the bathymetry store's GeoTIFF
 value tiles directly (ADR-0006 D9 — a file-level dependency, no
 `marine_bathymetry_store` package dependency) and bilinearly interpolating them.
+The reader is `marine_backscatter::BathyDem` (moved to `marine_backscatter` in
+[#304](https://github.com/rolker/unh_marine_autonomy/issues/304), where it also
+serves as the height sampler for the seabed normal); see that package's README
+for its lookup rules.
 
 ```bash
 ros2 run marine_sidescan_mosaic sidescan_tier2_processed \
@@ -285,17 +289,18 @@ Unit tests cover the projection geometry including the DEM correction
 (`test_projection`), the splat accumulator (`test_accumulator`), the normalizer
 (`test_normalizer`), the overview-pyramid builder's production path
 (`test_overview_pyramid` — argument parsing, on-disk fold, level-distinguished
-sidecar, mean/value-idempotency, and the empty-layer / partial-pyramid guards), the
-bathy DEM reader over synthetic value tiles (`test_bathy_dem` — bilinear blend,
-no-data, grid-crossing stencil, multi-level and layer priority, hard-fail
-construction), and the `sidescan_tier2_processed` DEM path end to end through the
-built binary (`test_tier2_processed_dem` — slope-direction placement, flat-path
-equivalence, store hard-fail, coverage gate, `--accumulate` mode guard). Both new
-suites author their own fixtures (`.sst1` via `writeTier1Header`/`writeTier1Ping`,
-value tiles via `marine_tiled_raster_store::saveTile<double>`), so no binary
-fixture is committed.
+sidecar, mean/value-idempotency, and the empty-layer / partial-pyramid guards), and
+the `sidescan_tier2_processed` DEM path end to end through the built binary
+(`test_tier2_processed_dem` — slope-direction placement, flat-path equivalence,
+store hard-fail, coverage gate, `--accumulate` mode guard). That suite authors its
+own fixtures (`.sst1` via `writeTier1Header`/`writeTier1Ping`, value tiles via
+`marine_tiled_raster_store::saveTile<double>`), so no binary fixture is committed.
+The bathy DEM reader's own unit suite, `test_bathy_dem`, moved with the reader to
+`marine_backscatter` (#304).
 
 ## Dependencies
 
 `rclcpp`, `marine_acoustic_msgs`, `sensor_msgs`, `tf2_ros`, `geodesy`,
-`marine_autonomy` (GGGS), `marine_tiled_raster_store` (tiles + GeoTIFF I/O).
+`marine_autonomy` (GGGS), `marine_tiled_raster_store` (tiles + GeoTIFF I/O),
+`marine_backscatter` (best-source compositor, quality, registry, and the
+`BathyDem` reader behind `--bathy-store`).
