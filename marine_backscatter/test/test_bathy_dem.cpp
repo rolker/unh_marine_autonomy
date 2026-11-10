@@ -181,6 +181,30 @@ TEST(BathyDem, BilinearBlendsBetweenCellCentres)
   EXPECT_NEAR(*midway, 0.5 * (here + east), 1e-9);
 }
 
+// A longitude given outside [-180, 180) weighs the same as its wrapped value:
+// the blend weights compare the raw longitude with a cell centre, so an
+// unwrapped caller must not get a different interpolation.
+TEST(BathyDem, UnwrappedLongitudeInterpolatesLikeTheWrappedOne)
+{
+  ScratchDir dir("unwrapped_lon");
+  const gggs::Level level(kFineLevel);
+  writeDepthTile(
+    dir.path(), "survey", level.gridIndex(kLat, kLon),
+    [](uint16_t, uint16_t c) {return -20.0 + static_cast<double>(c) * 0.01;});
+  mbs::BathyDem dem(dir.path().string(), {"survey"});
+  const auto geom = cellGeometry(kFineLevel, kLat, kLon);
+  const double lon = geom.centre_lon + 0.5 * geom.lon_span;
+
+  const auto wrapped = dem.depthAt(geom.centre_lat, lon);
+  const auto unwrapped = dem.depthAt(geom.centre_lat, lon + 360.0);
+  ASSERT_TRUE(wrapped.has_value());
+  ASSERT_TRUE(unwrapped.has_value());
+  EXPECT_NEAR(*unwrapped, *wrapped, 1e-9);
+  const auto strict = dem.heightAt(geom.centre_lat, lon - 360.0);
+  ASSERT_TRUE(strict.valid());
+  EXPECT_NEAR(strict.height_m, *wrapped, 1e-9);
+}
+
 // One missing neighbour must not throw the interpolation away: the blend is
 // renormalised over the cells that ARE present, so a negligible-weight corner
 // dropping out barely moves the result (snapping to the nearest cell would

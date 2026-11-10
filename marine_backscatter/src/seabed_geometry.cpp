@@ -52,6 +52,11 @@ double wrapLongitude(double lon_deg)
   if (wrapped < 0.0) {
     wrapped += 360.0;
   }
+  // A tiny negative input (|x| < ~3e-14) makes `wrapped + 360` round to exactly
+  // 360, which would return +180: fold it back so the range really is [-180, 180).
+  if (wrapped >= 360.0) {
+    wrapped -= 360.0;
+  }
   return wrapped - 180.0;
 }
 
@@ -208,6 +213,12 @@ Normal seabedNormal(
   const double dh_de = (east.height_m - west.height_m) / (2.0 * step);
   const double dh_dn = (north.height_m - south.height_m) / (2.0 * step);
   const double norm = std::sqrt(dh_de * dh_de + dh_dn * dh_dn + 1.0);
+  if (!std::isfinite(dh_de) || !std::isfinite(dh_dn) || !std::isfinite(norm)) {
+    // Finite heights can still overflow the difference or its square (absurd
+    // sampler values): report the sample as unusable rather than hand back a
+    // zero or NaN vector flagged as a surface normal.
+    return flat(FallbackReason::kMissingSample, step, clamped);
+  }
   Normal result;
   result.normal = Enu{-dh_de / norm, -dh_dn / norm, 1.0 / norm};
   result.from_surface = true;

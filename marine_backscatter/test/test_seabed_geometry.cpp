@@ -66,11 +66,13 @@ public:
 
   int calls = 0;
   double max_abs_lon = 0.0;
+  double max_lon = -1000.0;
 
   sb::HeightSample heightAt(double lat_deg, double lon_deg) override
   {
     ++calls;
     max_abs_lon = std::max(max_abs_lon, std::abs(lon_deg));
+    max_lon = std::max(max_lon, lon_deg);
     const auto local = enu_.toLocal(gz4d::GeoPointLatLongDegrees(lat_deg, lon_deg, 0.0));
     const double e = local[0];
     const double n = local[1];
@@ -482,6 +484,29 @@ TEST(SeabedGeometry, AntimeridianWraps)
   ASSERT_TRUE(result.from_surface);
   EXPECT_LT(angleBetween(result.normal, unit(-g.e, -g.n, 1.0)), 1e-6);
   EXPECT_LT(sampler.max_abs_lon, 180.0);
+}
+
+// A longitude a hair west of -180 must wrap to just under +180, never to +180.0
+// itself (fmod(-1e-14) + 360 rounds to exactly 360).
+TEST(SeabedGeometry, LongitudeJustPastTheAntimeridianStaysHalfOpen)
+{
+  TestSampler sampler(10.0, -180.0);
+  sampler.surface = [](double, double) {return -40.0;};
+  const sb::Normal result = sb::seabedNormal(sampler, 10.0, -180.0 - 1e-14);
+  EXPECT_TRUE(result.from_surface);
+  EXPECT_LT(sampler.max_lon, 180.0);
+}
+
+// Finite heights whose differences overflow are an unusable sample, not a
+// zero or NaN "surface" normal.
+TEST(SeabedGeometry, OverflowingHeightsFallBackInsteadOfBadNormal)
+{
+  TestSampler sampler(43.0, -70.0);
+  sampler.surface = [](double e, double) {return e > 0.0 ? 1e200 : (e < 0.0 ? -1e200 : 0.0);};
+  const sb::Normal result = sb::seabedNormal(sampler, 43.0, -70.0);
+  EXPECT_FALSE(result.from_surface);
+  EXPECT_EQ(result.reason, sb::FallbackReason::kMissingSample);
+  EXPECT_DOUBLE_EQ(result.normal.u, 1.0);
 }
 
 TEST(SeabedGeometry, ReasonNamesAreDistinct)
