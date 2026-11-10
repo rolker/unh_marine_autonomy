@@ -352,14 +352,20 @@ BathyDem::Lookup BathyDem::lookup(double lat_deg, double lon_deg_in, bool strict
   // GGGS normalises longitude internally, but the weights below compare the raw
   // longitude with a cell centre in [-180, 180): wrap first so 180 or 190 weighs
   // like -180 or -170.
-  double lon_deg = std::fmod(lon_deg_in + 180.0, 360.0);
-  if (lon_deg < 0.0) {
-    lon_deg += 360.0;
+  if (!std::isfinite(lon_deg_in) || !std::isfinite(lat_deg)) {
+    return Lookup{};   // kNoData: nothing can be placed at a non-finite position.
   }
-  if (lon_deg >= 360.0) {
-    lon_deg -= 360.0;
+  double lon_deg = lon_deg_in;
+  if (lon_deg < -180.0 || lon_deg >= 180.0) {
+    lon_deg = std::fmod(lon_deg + 180.0, 360.0);
+    if (lon_deg < 0.0) {
+      lon_deg += 360.0;
+    }
+    if (lon_deg >= 360.0) {
+      lon_deg -= 360.0;
+    }
+    lon_deg -= 180.0;
   }
-  lon_deg -= 180.0;
   Lookup result;
   const auto source = resolveSource(lat_deg, lon_deg);
   if (!source) {

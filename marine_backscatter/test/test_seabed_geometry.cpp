@@ -487,12 +487,12 @@ TEST(SeabedGeometry, AntimeridianWraps)
 }
 
 // A longitude a hair west of -180 must wrap to just under +180, never to +180.0
-// itself (fmod(-1e-14) + 360 rounds to exactly 360).
+// itself (fmod(-2.84e-14) + 360 rounds to exactly 360; 2^-45 deg is the case).
 TEST(SeabedGeometry, LongitudeJustPastTheAntimeridianStaysHalfOpen)
 {
   TestSampler sampler(10.0, -180.0);
   sampler.surface = [](double, double) {return -40.0;};
-  const sb::Normal result = sb::seabedNormal(sampler, 10.0, -180.0 - 1e-14);
+  const sb::Normal result = sb::seabedNormal(sampler, 10.0, -180.0 - std::ldexp(1.0, -45));
   EXPECT_TRUE(result.from_surface);
   EXPECT_LT(sampler.max_lon, 180.0);
 }
