@@ -159,3 +159,33 @@ Addressed the round-1 Local Review (Pre-Push) findings.
 - [x] (suggestion) wrap only out-of-range longitudes — fixed in `5f3d87c9`
 - [x] (suggestion) non-finite longitude guard in lookup — fixed in `5f3d87c9`
 - [ ] (suggestion) wording: kNoCellSize only arises with an auto step; kMissingSample row could mention norm overflow — `README.md`, `seabed_geometry.hpp`
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-11-10 13:13 -05:00
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+**Verdict**: approved
+
+**Branch**: feature/issue-304 at `e155b20c`
+**Mode**: pre-push
+**Depth**: Light (commits `5f3d87c9` and `e155b20c`, the tile-in-identity reversal, not yet independently read)
+**Must-fix**: 0 | **Suggestions**: 5
+**Round**: 3 | **Ship**: recommended — no must-fix; suggestions fixed
+
+### Findings
+- [x] (suggestion) seam comment in test_seabed_geometry still said "layer, level or tile" — `test_seabed_geometry.cpp:269`
+- [x] (suggestion) direct test of unwrapped and NaN longitudes through BathyDem::heightAt — `bathy_dem.cpp`
+- [x] (suggestion) antimeridian test never queried exactly 180 — `test_bathy_dem.cpp`
+- [x] (suggestion) plan struct sketch still said tile answers — `plan.md:49`
+- [x] (suggestion) older progress.md lines still describe tile-in-identity: superseded, see the Implementation entry below (history is append-only)
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-10 13:13 -05:00
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+
+Reversal of tile-in-identity at the user's direction (2026-11-10); this supersedes the earlier progress.md lines (plan note, Deviations, review round 1) that describe tile seams falling back flat at about 1.5 % of area, and the README item on tile seams counted under layer_seam.
+- `e155b20c` BathyDem reports source (layer, level) with `tile` 0; `layer_seam` is a real source change only; README, headers, plan (decision and consequences table) and the ADR-0006 progress note updated; tests: tilted plane across a tile boundary (both sides and on it, closed-form normal), across the antimeridian, missing neighbour tile (`missing_sample`), layer change still `layer_seam`. The two wording nits (kNoCellSize, overflow) closed.
+- `c75f49e4` follow-up tests from the Light review (unwrapped / NaN longitudes, exactly 180) and comment rewording.
+- Tests: `Summary: 981 tests, 0 errors, 0 failures, 109 skipped` (marine_backscatter, marine_sidescan_mosaic, marine_mbes_backscatter_store).
+- Still open: separate tile-seam reason no longer needed; pole-check reordering left alone.
