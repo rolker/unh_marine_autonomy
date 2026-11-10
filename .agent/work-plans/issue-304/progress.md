@@ -128,3 +128,34 @@ Specialists: static (ament cpplint/cppcheck/uncrustify/xmllint clean), governanc
 - [ ] (suggestion) sampler contract: |lat|>90 is kNoData (Lens B) — `seabed_geometry.hpp`
 - [ ] (suggestion, left open) no BathyDem test at the antimeridian or 72/80 deg bands; separate kTileSeam reason; pole check before the centre sample — `test_bathy_dem.cpp`
 - (dismissed) codex must-fix that interpolation reads across a tile boundary: same layer and level is one continuous surface and the header documents it; the cited case needs adjacent tiles with different vertical offsets
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-10 12:53 -05:00
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+
+Addressed the round-1 Local Review (Pre-Push) findings.
+- `437c7ddf` overflow guard (kMissingSample), half-open wrapLongitude, longitude wrap in BathyDem::lookup, two new tests plus an unwrapped-longitude BathyDem test.
+- `eb0daabf` docs: seam counts, cache sizing, narrow-hole limit, probe order wording, |lat|>90 contract, dangling sentence.
+- `5f3d87c9` follow-up from the Light round: the antimeridian test now uses -180 - 2^-45 deg (the 1e-14 first used rounds to -180 exactly and guarded nothing); lookup wraps only out-of-range finite longitudes and returns no-data for non-finite input.
+- Merged origin/jazzy first (`f4305380`, clean, 50 commits).
+- Findings ticked: must-fix 1/1, suggestions 8/9 fixed; the antimeridian BathyDem test, a distinct tile-seam reason and the pole-check ordering are left open as feature-sized.
+- Tests: `./core_ws/test.sh marine_backscatter marine_sidescan_mosaic marine_mbes_backscatter_store`: `Summary: 978 tests, 0 errors, 0 failures, 109 skipped` (also built and tested marine_tiled_raster_store and marine_bathymetry_store on the merge: `Summary: 975 tests, 0 errors, 0 failures, 109 skipped`).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-11-10 12:53 -05:00
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+**Verdict**: approved
+
+**Branch**: feature/issue-304 at `5f3d87c9`
+**Mode**: pre-push
+**Depth**: Light (fix delta only)
+**Must-fix**: 0 | **Suggestions**: 0 (open)
+**Round**: 2 | **Ship**: recommended — round-2 must-fix (a test that guarded nothing) and three suggestions fixed in `5f3d87c9`; not re-reviewed
+
+### Findings
+- [x] (must-fix) antimeridian test passed without the fix — fixed in `5f3d87c9`
+- [x] (suggestion) wrap only out-of-range longitudes — fixed in `5f3d87c9`
+- [x] (suggestion) non-finite longitude guard in lookup — fixed in `5f3d87c9`
+- [ ] (suggestion) wording: kNoCellSize only arises with an auto step; kMissingSample row could mention norm overflow — `README.md`, `seabed_geometry.hpp`
