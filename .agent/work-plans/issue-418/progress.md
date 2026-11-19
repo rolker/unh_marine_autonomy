@@ -68,3 +68,19 @@ So `marine_autonomy` gates 9 packages. The `marine_interfaces` row of the baseli
 - [ ] Rename the workflow's job so its name says which distro it runs, since the same file currently runs for `rolling` pushes in a Jazzy container and its result reads as a Rolling check.
 - [ ] Treat the cause list as a floor. Only 5 packages have been built on Rolling; the 9 that are blocked will turn up more (the baseline already shows `marine_autonomy` failing on `tf2/utils.h`, which the list has as cause 2, so the list is right so far). Record each new cause in #415's comments as it is found.
 - [ ] State in the pull request, per distro, which packages were built, which tests ran, and which were not (for example `bathymetry_layer` on Rolling CI).
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-19 14:58 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: owner
+**After**: issue-actions
+**Decision**: proceed
+
+Three questions were asked with the Issue Review's dependency levels and its points quoted. The owner's answers, verbatim:
+
+- Q1 "How should the 15 packages be cut into pull requests?": "Three parts by depth (Recommended)". Part 1: levels 0 and 1 (`marine_interfaces`, `marine_vertical_datum`, `command_bridge`, `joy_to_helm`, `marine_web_view`, `marine_autonomy`, `helm_manager`, `marine_contacts`) plus the CI changes. Part 2: the raster and sonar stack and `marine_survey_index` (`marine_tiled_raster_store`, `marine_backscatter`, `marine_sidescan_mosaic`, `marine_bathymetry_store`, `marine_mbes_backscatter_store`, `marine_survey_index`). Part 3: `bathymetry_layer` with its Nav2 fixes and an `initialize()` test, plus the `config/repos/core.repos` pins. Each part is its own pull request to `rolling` saying `Part of #418`, followed by a by-hand backport to `jazzy`. This replaces the review's four-part proposal.
+- Q2 "What CI should this issue add?": "Rolling job + wider Jazzy job (Recommended)". A Rolling job builds and tests every in-scope package except `bathymetry_layer`. The Jazzy job is widened to the same packages plus `bathymetry_layer`, with geographic_info from source (f70b81a or later). No Nav2-from-source job.
+- Q3 "Go on to planning with your answers to Q1 and Q2 and the review's points F1 to F3 handed to the planner?": "Proceed (Recommended)".
+
+The review's points handed on as F1 to F3: `marine_acoustic_msgs` is an outside dependency to confirm for the Jazzy CI image; the workflow's package lists must be widened as the parts land; `helm_manager` and `marine_autonomy` are in the control path, so the pull request states that compiling and unit tests are not validation and no simulation run is in scope.
