@@ -11,12 +11,13 @@
 | `helm_manager` | C++ | Control arbitrator ensuring single-active-mode command authority (standby/manual/autonomous) |
 | `joy_to_helm` | Python | Converts joystick input to helm commands for manual piloting |
 | `marine_autonomy` | C++/Python | Meta-package with launch files, geodesic utilities, and system configuration |
+| `marine_backscatter` | C++ | Modality-agnostic backscatter core shared by the sidescan and MBES layers (ADR-0006 / ADR-0007), one library: `grazingQuality`, the ADR-0005 registry writer, the sidescan `ProcessedAccumulator`, the `seabed::` geometry unit (seabed normal from a `SeabedHeightSampler`, incidence / grazing angles, shared WGS84 metres-per-degree; #304) and `BathyDem`, the bathy-store tile reader (moved from `marine_sidescan_mosaic` in #304, used for sidescan DEM placement and as the store-backed height sampler) |
 | `marine_autonomy_integration_tests` | Python (CMake) | Cross-package integration tests for mission and navigation flows |
 | `marine_bathymetry_store` | C++ | Persistent multi-source bathymetric data store: GGGS-tiled, priority source layers, best-source / shallowest-reliable queries, per-tile GeoTIFF (ADR-0002 / #86); `s102_import` CLI fetches + converts NOAA S-102 tiles (#278) |
-| `marine_interfaces` | C++ (IDL) | ROS 2 message definitions for helm commands, heartbeats, navigation, perception contacts, and sensor data (46 msg types) |
+| `marine_interfaces` | C++ (IDL) | ROS 2 message definitions for helm commands, heartbeats, navigation, perception contacts, and sensor data (50 msg types) |
 | `marine_sidescan_mosaic` | C++ | Georeferenced sidescan backscatter mosaicking, live **and** offline: the live node projects GCV port/stbd RawSonarImage samples to GGGS-tiled uint16 GeoTIFF tiles for CAMP / web display (#173 / #171 / #166); the offline chain archives Tier-1 `.sst1` (#208), builds the durable Tier-2 `flat` / `processed` stores with best-source compositing + registry (#184 / #253), DEM-orthorectifies the `processed` build against a bathy store (#297, `--bathy-store`), and folds overview pyramids (#188 / ADR-0011) |
 | `marine_survey_index` | C++ | Offline survey indexer + query CLI: bags → per-GGGS-tile pass intervals in a regenerable SQLite sidecar; answers "which bags/time-ranges saw this location" (#258 stage 1 / #259; schema contract in `docs/survey_index_schema.md`) |
-| `marine_tiled_raster_store` | C++ | Generic GGGS-tiled raster store core: band/dtype-parametrized `TiledRasterTile<T>` + per-tile GeoTIFF persistence, shared by bathymetry and sidescan (#172); also owns the **coverage manifest** — `scanCoverage` / `CoverageManifest` / `coverage.json`, per-tile geometric error, and the shared `gridsInDir` / `gridFromTileName` tile-name helpers (uma-ADR-0013 D3, #331). Depends on `nlohmann_json`. |
+| `marine_tiled_raster_store` | C++ | Generic GGGS-tiled raster store core: band/dtype-parametrized `TiledRasterTile<T>` + per-tile GeoTIFF persistence, shared by bathymetry and sidescan (#172); also owns the **coverage manifest** — `scanCoverage` / `CoverageManifest` / `coverage.json`, per-tile geometric error, and the shared `gridsInDir` / `gridFromTileName` tile-name helpers (uma-ADR-0013 D3, #331); `export_geotiff` CLI mosaics one level of any Float32/Float64 tiled layer inside a required box into one Float32 GeoTIFF (native tile, else `overviews/` sidecar, else NaN hole; #370). Depends on `nlohmann_json`. |
 | `mission_manager` | Python | Converts mission plans from CAMP GCS into navigation tasks and manages task execution |
 | `mission_manager_interfaces` | C++ (IDL) | Service definitions for task manipulation (3 srv types) |
 
@@ -46,11 +47,12 @@ unh_marine_autonomy/
 │   ├── launch/                 # robot_core_launch.py, operator_core_launch.py
 │   ├── marine_autonomy/        # Python: geodesic, nav, wgs84 utilities
 │   ├── src/                    # C++: utils
+│   ├── test/                   # GTest (gggs) + pytest (nav.py TF-failure paths)
 │   └── docs/                   # system_architecture.md
 ├── marine_autonomy_integration_tests/
 │   └── test/                   # Launch-based integration tests
 ├── marine_interfaces/
-│   ├── msg/                    # 46 message definitions
+│   ├── msg/                    # 50 message definitions
 │   └── bmr/                    # Bag migration rules
 ├── mission_manager/
 │   ├── mission_manager/
@@ -185,16 +187,21 @@ Rolling port of that repo lands; a port is its own issue in that repo, followed 
 - **Legacy code**: Some launch files (`.launch` extension) use ROS 1 XML format and
   are no longer active. The current launch files use Python (`.py` extension).
 - **Cross-store file-format coupling with no package dependency**:
-  `marine_sidescan_mosaic`'s `BathyDem` (`sidescan_tier2_processed --bathy-store`,
-  #297) reads `marine_bathymetry_store`'s value tiles **directly off disk** —
-  ADR-0006 D9 requires the decoupling, so there is deliberately no
-  `marine_bathymetry_store` entry in `package.xml` or `CMakeLists.txt` and no
-  compiler check on the format. The contract it assumes:
-  `<store_root>/<layer>/<level>_<row>_<col>.tif`, 2-band `Float64`, band 0 =
-  **WGS84 ellipsoidal height, up-positive** with `NaN` for no data, band 1 =
-  1-sigma vertical uncertainty. Changing any of those in the bathy store silently
-  breaks this reader (wrong placements, not a build failure), so change them
-  together and re-run `test_bathy_dem` / `test_tier2_processed_dem`, which author
-  their own value tiles against the same contract. The layer directory names are
-  configuration (`--bathy-layers`), not code — ADR-0010 D3's `survey/`→`processed/`
-  re-classification is a flag change here.
+  `marine_backscatter`'s `BathyDem` (moved from `marine_sidescan_mosaic` in #304;
+  used by `sidescan_tier2_processed --bathy-store`, #297, and as the store-backed
+  `seabed::SeabedHeightSampler`) reads `marine_bathymetry_store`'s value tiles
+  **directly off disk** — ADR-0006 D9 requires the decoupling, so there is
+  deliberately no `marine_bathymetry_store` entry in either package's
+  `package.xml` or `CMakeLists.txt` and no compiler check on the format. The
+  contract it assumes: `<store_root>/<layer>/<level>_<row>_<col>.tif`, 2-band
+  `Float64`, band 0 = **WGS84 ellipsoidal height, up-positive** with `NaN` for no
+  data, band 1 = 1-sigma vertical uncertainty, and **fine tiles only** (the
+  `overviews/` sidecar folds to the shallowest value and is never read; the
+  constructor refuses a layer name that would point at it). Changing any of those
+  in the bathy store silently breaks this reader (wrong placements and wrong
+  slopes, not a build failure), so change them together and re-run
+  `marine_backscatter`'s `test_bathy_dem` and `marine_sidescan_mosaic`'s
+  `test_tier2_processed_dem`, which author their own value tiles against the same
+  contract. The layer directory names are configuration (`--bathy-layers`, or the
+  `BathyDem` constructor argument), not code — ADR-0010 D8's
+  `survey/`→`processed/` re-classification is a flag change here.

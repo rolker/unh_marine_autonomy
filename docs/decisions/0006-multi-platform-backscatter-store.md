@@ -131,6 +131,21 @@ The Jackson / APL-UW → GSAB → ESAB composite models are the **separate ARA
 angular-response / ARA literature), not the mosaic-correction model; characterization
 is out of scope here (and limited by the uncalibrated GCV).
 
+> **Implementation status (2026-10-30, Part of
+> [#304](https://github.com/rolker/unh_marine_autonomy/issues/304)):** the
+> incidence step now has code, not yet a call site. `marine_backscatter`'s
+> `seabed_geometry.hpp` computes the seabed normal by central differences over a
+> height sampler (`BathyDem` over the bathy store, moved into
+> `marine_backscatter`; a CUBE adapter is cube#173) and the incidence / grazing
+> angle of a beam vector against it. Every case where the surface cannot give a
+> trustworthy normal returns the flat normal with a reason code the caller counts
+> (missing sample, partial stencil at a survey edge, a layer / level seam,
+> bad step or position) — the flat-bottom fallback above, extended from "no bathy
+> yet" to "no trustworthy bathy here". Still open: the footprint-area step, the
+> residual beam pattern, speckle removal, the shadow ray march, and re-pointing
+> the Tier-2 radiometry (`grazingQuality`) onto the new normal. This note records
+> progress only; the decision text above is unchanged.
+
 ### D5 — Compositing: mean *within* a pass, best-source *across* passes
 
 Within one pass, oversampled cells are mean-combined (legitimate speckle

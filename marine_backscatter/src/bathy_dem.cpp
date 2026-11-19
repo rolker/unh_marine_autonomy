@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#include "marine_sidescan_mosaic/bathy_dem.hpp"
+#include "marine_backscatter/bathy_dem.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -30,7 +30,7 @@
 
 #include "marine_tiled_raster_store/tile_io.hpp"
 
-namespace marine_sidescan_mosaic
+namespace marine_backscatter
 {
 
 namespace fs = std::filesystem;
@@ -129,6 +129,21 @@ BathyDem::BathyDem(
 {
   if (layer_names.empty()) {
     throw std::runtime_error("BathyDem: no layer names requested (see --bathy-layers)");
+  }
+  // A layer is ONE directory directly under the store root. Anything else is a
+  // configuration error, not reduced coverage: `processed/overviews` (or a bare
+  // `overviews`) would read the shallowest-folded overview pyramid as if it were
+  // fine data (ADR-0011 §2 / ADR-0013 D8 — wrong for placement, and it invents
+  // slope), and `..` would escape the store.
+  for (const auto & name : layer_names) {
+    if (name.empty() || name == "." || name == ".." ||
+      name.find('/') != std::string::npos || name.rfind("overviews", 0) == 0)
+    {
+      throw std::invalid_argument(
+              "BathyDem: invalid bathy layer name '" + name + "': a layer is one directory "
+              "directly under the store root, and an overviews sidecar is never a source of "
+              "heights (fine tiles only)");
+    }
   }
   if (!fs::exists(store_root_)) {
     throw std::runtime_error("BathyDem: bathy store root does not exist: " + store_root_);
@@ -332,12 +347,31 @@ std::optional<BathyDem::Source> BathyDem::resolveSource(double lat_deg, double l
   return std::nullopt;
 }
 
-std::optional<double> BathyDem::depthAt(double lat_deg, double lon_deg)
+BathyDem::Lookup BathyDem::lookup(double lat_deg, double lon_deg_in, bool strict)
 {
+  // GGGS normalises longitude internally, but the weights below compare the raw
+  // longitude with a cell centre in [-180, 180): wrap first so 180 or 190 weighs
+  // like -180 or -170.
+  if (!std::isfinite(lon_deg_in) || !std::isfinite(lat_deg)) {
+    return Lookup{};   // kNoData: nothing can be placed at a non-finite position.
+  }
+  double lon_deg = lon_deg_in;
+  if (lon_deg < -180.0 || lon_deg >= 180.0) {
+    lon_deg = std::fmod(lon_deg + 180.0, 360.0);
+    if (lon_deg < 0.0) {
+      lon_deg += 360.0;
+    }
+    if (lon_deg >= 360.0) {
+      lon_deg -= 360.0;
+    }
+    lon_deg -= 180.0;
+  }
+  Lookup result;
   const auto source = resolveSource(lat_deg, lon_deg);
   if (!source) {
-    return std::nullopt;
+    return result;   // kNoData: the query's own cell has no data in any layer.
   }
+  result.source = *source;
 
   const gggs::Level level(static_cast<uint8_t>(source->level));
   const gggs::CellIndex cell = level.cellIndex(gggs::geoPoint(lat_deg, lon_deg));
@@ -348,6 +382,9 @@ std::optional<double> BathyDem::depthAt(double lat_deg, double lon_deg)
   const double lon_span = cell.grid().longitudinalSpan() / gggs::cell_columns_per_grid;
   const double centre_lat = corner.latitude + 0.5 * lat_span;
   const double centre_lon = corner.longitude + 0.5 * lon_span;
+  result.lat_span_deg = lat_span;
+  result.lon_span_deg = lon_span;
+  result.centre_lat_deg = centre_lat;
 
   // The four bracketing cell centres: this cell's, plus its neighbours on the
   // side the query point falls toward. Each neighbour is resolved from its own
@@ -376,8 +413,17 @@ std::optional<double> BathyDem::depthAt(double lat_deg, double lon_deg)
   for (int i = 0; i < 2; ++i) {
     for (int j = 0; j < 2; ++j) {
       const double weight = lat_weight[i] * lon_weight[j];
+      if (strict && !(weight > 0.0)) {
+        continue;   // a zero-weight neighbour cannot bias the value: not needed.
+      }
       const auto value = cellValue(source->layer, source->level, lats[i], lons[j]);
       if (!value) {
+        if (strict) {
+          // The strict lookup never renormalises: a partial stencil is not the
+          // bilinear surface, and a gradient taken from one is biased.
+          result.status = seabed::SampleStatus::kStencilIncomplete;
+          return result;
+        }
         continue;
       }
       blended += weight * *value;
@@ -388,18 +434,54 @@ std::optional<double> BathyDem::depthAt(double lat_deg, double lon_deg)
     // Unreachable: `resolveSource` proved the centre cell (i=j=0) has data, and
     // its weight (1-t)(1-u) >= 0.25 because t,u <= 0.5 by construction. Kept as a
     // guard so a future change to the stencil cannot divide by zero silently.
-    return std::nullopt;
+    return result;
   }
   ++lookups_by_layer_[layers_[source->layer].name];
   // All four present ⇒ the weights sum to 1 and this is the plain bilinear value.
-  // With one or more missing, the SAME expression renormalised by the weights
-  // actually present is the bilinear interpolation over the neighbours that exist:
-  // a missing far corner carrying a negligible weight barely moves the result,
-  // where snapping to the nearest cell would discard an almost-exact
-  // interpolation. Dividing is also what keeps a partial sum unbiased — an
-  // un-renormalised partial blend pulls toward zero, which for ellipsoidal heights
-  // means toward the ellipsoid, not toward a neighbouring depth.
-  return blended / weight_sum;
+  // With one or more missing (non-strict only), the SAME expression renormalised
+  // by the weights actually present is the bilinear interpolation over the
+  // neighbours that exist: a missing far corner carrying a negligible weight
+  // barely moves the result, where snapping to the nearest cell would discard an
+  // almost-exact interpolation. Dividing is also what keeps a partial sum
+  // unbiased — an un-renormalised partial blend pulls toward zero, which for
+  // ellipsoidal heights means toward the ellipsoid, not toward a neighbouring
+  // depth.
+  result.value = blended / weight_sum;
+  result.status = seabed::SampleStatus::kValid;
+  return result;
 }
 
-}  // namespace marine_sidescan_mosaic
+std::optional<double> BathyDem::depthAt(double lat_deg, double lon_deg)
+{
+  const Lookup found = lookup(lat_deg, lon_deg, false);
+  if (found.status != seabed::SampleStatus::kValid) {
+    return std::nullopt;
+  }
+  return found.value;
+}
+
+seabed::HeightSample BathyDem::heightAt(double lat_deg, double lon_deg)
+{
+  const Lookup found = lookup(lat_deg, lon_deg, true);
+  seabed::HeightSample sample;
+  sample.status = found.status;
+  if (found.status == seabed::SampleStatus::kNoData) {
+    return sample;
+  }
+  // Identity and spans are reported for an incomplete stencil too: the caller
+  // only needs the status, but a diagnostic can still say where it happened.
+  sample.source.layer = static_cast<std::int64_t>(found.source.layer);
+  sample.source.level = found.source.level;
+  // `tile` stays 0 on purpose: within one layer and one level the tiles are one
+  // continuous surface, so a stencil across a tile boundary is NOT a source
+  // change (reversed 2026-11-10; see the plan).
+  const seabed::MetresPerDegree mpd = seabed::metresPerDegree(found.centre_lat_deg);
+  sample.span_north_m = found.lat_span_deg * mpd.north;
+  sample.span_east_m = found.lon_span_deg * mpd.east;
+  if (found.status == seabed::SampleStatus::kValid) {
+    sample.height_m = found.value;
+  }
+  return sample;
+}
+
+}  // namespace marine_backscatter
