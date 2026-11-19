@@ -27,6 +27,7 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -54,23 +55,39 @@ CallbackReturn HelmManager::on_configure(const rclcpp_lifecycle::State & state)
     add_post_set_parameters_callback(std::bind(&HelmManager::updateParameters, this,
       std::placeholders::_1));
 
-  declare_parameter<std::string>("output_type", "helm");
+  declareOnce<std::string>("output_type", "helm");
+
+  // Optional startup mode. Empty (the default) keeps the real-boat behaviour:
+  // no mode until one arrives on the piloting_mode topic. The value is
+  // validated against the modes added above when the node is activated.
+  rcl_interfaces::msg::ParameterDescriptor initial_mode_descriptor;
+  // Read-only: the value is consumed once at activation, so a runtime change
+  // could only be silently ignored or fail a later activation. Launch/YAML
+  // overrides still apply at declaration.
+  initial_mode_descriptor.read_only = true;
+  initial_mode_descriptor.description =
+    "Piloting mode applied once on activation, as if it had arrived on the "
+    "piloting_mode topic. Must name a configured mode (standby, manual, "
+    "autonomous) or activation fails. Empty (default) starts with no mode. "
+    "Read-only; set it in the launch file or parameter YAML.";
+  declareReadOnlyString("initial_piloting_mode", "", initial_mode_descriptor);
+  initial_piloting_mode_applied_ = false;
 
   heartbeat_publisher_ = create_publisher<marine_interfaces::msg::Heartbeat>("heartbeat", 1);
   piloting_mode_subscription_ = create_subscription<std_msgs::msg::String>("piloting_mode", 1,
       std::bind(&HelmManager::pilotingModeCallback, this, std::placeholders::_1));
-  declare_parameter<double>("max_speed", 1.0);
-  declare_parameter<double>("max_yaw_speed", 1.0);
+  declareOnce<double>("max_speed", 1.0);
+  declareOnce<double>("max_yaw_speed", 1.0);
   max_speed_ = get_parameter("max_speed").as_double();
   max_yaw_speed_ = get_parameter("max_yaw_speed").as_double();
 
   // Curvature-preserving speed regulation (ADR-0012, #292): per-platform
   // capability envelope; default off so existing platforms are unaffected.
-  declare_parameter<bool>("capability_curve_enabled", false);
-  declare_parameter<std::vector<double>>(
+  declareOnce<bool>("capability_curve_enabled", false);
+  declareOnce<std::vector<double>>(
     "capability_curve_v_omega_max", std::vector<double>());
-  declare_parameter<double>("capability_curve_margin", 0.8);
-  declare_parameter<double>("capability_curve_pivot_speed", 0.05);
+  declareOnce<double>("capability_curve_margin", 0.8);
+  declareOnce<double>("capability_curve_pivot_speed", 0.05);
   loadCurvatureConfig();
 
   helm_status_subscription_ = create_subscription<marine_interfaces::msg::Heartbeat>("status/helm",
@@ -93,7 +110,40 @@ CallbackReturn HelmManager::on_configure(const rclcpp_lifecycle::State & state)
 
 CallbackReturn HelmManager::on_activate(const rclcpp_lifecycle::State & state)
 {
-  return rclcpp_lifecycle::LifecycleNode::on_activate(state);
+  const std::string initial_mode = get_parameter("initial_piloting_mode").as_string();
+
+  // Validate before activating anything: a typo in a launch file must stop
+  // activation (the node stays inactive) rather than silently leave the boat
+  // with no mode.
+  if(!initial_mode.empty() && !hasPilotingMode(initial_mode)) {
+    std::string known;
+    for(const auto & m: piloting_modes_) {
+      known += (known.empty() ? "" : ", ") + m->name();
+    }
+    RCLCPP_ERROR(get_logger(),
+      "initial_piloting_mode '%s' names no configured piloting mode (configured: %s); "
+      "refusing to activate",
+      initial_mode.c_str(), known.c_str());
+    return CallbackReturn::FAILURE;
+  }
+
+  auto result = rclcpp_lifecycle::LifecycleNode::on_activate(state);
+  if(result != CallbackReturn::SUCCESS) {
+    return result;
+  }
+
+  // A mode already chosen on the piloting_mode topic (even before activation)
+  // wins: the callback marks the initial mode as consumed. Both sources go
+  // through setPilotingMode(), so the "active" flags and the heartbeat agree.
+  // (The per-mode "active" publishers are stored as plain rclcpp::Publisher,
+  // so they publish regardless of lifecycle state; a topic message received
+  // while inactive is therefore already reflected and needs no replay here.)
+  if(!initial_mode.empty() && !initial_piloting_mode_applied_) {
+    RCLCPP_INFO(get_logger(), "Applying initial_piloting_mode '%s'", initial_mode.c_str());
+    setPilotingMode(initial_mode);
+  }
+  initial_piloting_mode_applied_ = true;
+  return result;
 }
 
 CallbackReturn HelmManager::on_deactivate(const rclcpp_lifecycle::State & state)
@@ -103,6 +153,8 @@ CallbackReturn HelmManager::on_deactivate(const rclcpp_lifecycle::State & state)
 
 CallbackReturn HelmManager::on_cleanup(const rclcpp_lifecycle::State & state)
 {
+  // A fresh configure cycle starts with no mode, as after construction.
+  piloting_mode_.clear();
   piloting_modes_.clear();
   update_parameters_callback_.reset();
   heartbeat_publisher_.reset();
@@ -124,6 +176,34 @@ CallbackReturn HelmManager::on_shutdown(const rclcpp_lifecycle::State & state)
   helm_publisher_.reset();
   twist_publisher_.reset();
   return rclcpp_lifecycle::LifecycleNode::on_shutdown(state);
+}
+
+template<typename T>
+void HelmManager::declareOnce(
+  const std::string & name, const T & default_value,
+  const rcl_interfaces::msg::ParameterDescriptor & descriptor)
+{
+  // Parameters outlive cleanup, so a second configure must not re-declare.
+  if(!has_parameter(name)) {
+    declare_parameter<T>(name, default_value, descriptor);
+  }
+}
+
+void HelmManager::declareReadOnlyString(
+  const std::string & name, const std::string & default_value,
+  const rcl_interfaces::msg::ParameterDescriptor & descriptor)
+{
+  if(has_parameter(name) && !describe_parameter(name).read_only) {
+    // Declared earlier with the default writable descriptor, which declareOnce
+    // cannot change: NodeOptions::automatically_declare_parameters_from_overrides
+    // does this for every override before on_configure runs. Undeclare it and
+    // declare it again read-only, keeping the value it was given.
+    const std::string value = get_parameter(name).as_string();
+    undeclare_parameter(name);
+    declare_parameter<std::string>(name, value, descriptor);
+    return;
+  }
+  declareOnce<std::string>(name, default_value, descriptor);
 }
 
 void HelmManager::updateParameters(const std::vector<rclcpp::Parameter> & parameters)
@@ -268,10 +348,23 @@ void HelmManager::addPilotingMode(const std::string & mode, bool enable_output)
 
 void HelmManager::pilotingModeCallback(const std_msgs::msg::String & msg)
 {
-  piloting_mode_ = msg.data;
+  // An explicit mode from the topic always outranks initial_piloting_mode.
+  initial_piloting_mode_applied_ = true;
+  setPilotingMode(msg.data);
+}
+
+void HelmManager::setPilotingMode(const std::string & mode)
+{
+  piloting_mode_ = mode;
   for(auto & m: piloting_modes_) {
     m->activeMode(piloting_mode_);
   }
+}
+
+bool HelmManager::hasPilotingMode(const std::string & mode) const
+{
+  return std::any_of(piloting_modes_.begin(), piloting_modes_.end(),
+           [&mode](const std::shared_ptr<PilotingMode> & m) {return m->name() == mode;});
 }
 
 

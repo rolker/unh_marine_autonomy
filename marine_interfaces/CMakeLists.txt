@@ -65,6 +65,11 @@ set(MSG_FILES
   msg/TileCatalogEntry.msg
   msg/TileCatalog.msg
   msg/TileRequest.msg
+  # Survey coverage assessment family - prototype under #403 (#406)
+  msg/SurveyStandard.msg
+  msg/SurveyArea.msg
+  msg/CoverageContribution.msg
+  msg/CoverageAssessment.msg
 )
 
 rosidl_generate_interfaces(
