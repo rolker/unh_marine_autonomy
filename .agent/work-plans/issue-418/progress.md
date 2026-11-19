@@ -92,3 +92,59 @@ The review's points handed on as F1 to F3: `marine_acoustic_msgs` is an outside 
 **Plan**: `.agent/work-plans/issue-418/plan.md` at `cac9f3c5`
 
 Three parts by dependency depth, each its own pull request to rolling saying Part of #418 with a hand backport to jazzy. Part 1 is planned in full (code fixes one per commit, then CI: a guarded Rolling job and a widened, renamed Jazzy job); Parts 2 and 3 are outlines settled when each starts.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-11-19 15:05 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: needs-work
+
+**Issue**: #418 — Port to ROS 2 Rolling, stage 1: the 15 packages with no unported dependency
+**Plan**: `.agent/work-plans/issue-418/plan.md` at `cac9f3c5`
+**Branch**: `feature/issue-418`
+
+The owner's checkpoint decisions (three parts, the CI shape, records in the pull requests, hand backport by cherry-pick) are taken as fixed; this review judges how Part 1 carries them out and whether the Part 2 and 3 outlines are honest.
+
+### Evaluation
+
+| Dimension | Verdict | Notes |
+|---|---|---|
+| Scope | Good | Part 1 is a sensible single pull request (8 packages, about 10 files plus CI); Parts 2 and 3 are outlines, as decided. |
+| Issue alignment | Good | Covers the checkpoint's Q1 and Q2 and handed points F1 to F3. Serves: "None (the project states no goals); keeping `rolling` the development trunk per `.agents/README.md`. No project design document." Acceptable for a project with no stated goals. |
+| File targeting | Needs work | The `logger.warn` rename misses the `marine_web_view` test files that fake or patch `warn` (finding 1). `package.xml` reorder (A6) is not needed for any in-scope package (finding 6). |
+| Consequences | Needs work | The workflow commit will not cherry-pick to `jazzy` unchanged (finding 2). The branch-protection open question is answered: no required checks, so the rename blocks nothing. |
+| Principle alignment | Good | Control-path statement is accurate; it can be made more useful for the `jazzy` backport (finding 5). |
+| ADR compliance | Good | Project ADRs not triggered by Part 1; workspace ADR-0013 records on the branch. |
+| ROS conventions | Needs work | CMake replacement form under-specified: keyword vs plain `target_link_libraries` signatures and the `rclcpp_lifecycle` / `lifecycle_msgs` targets (finding 3). |
+
+### Checked and found sound
+
+- Every dependency key of the 8 Part 1 packages resolves for Rolling (`--os ubuntu:resolute`, the Rolling platform here) and for Jazzy (`ubuntu:noble`); the Rolling apt packages that matter (`marine-acoustic-msgs`, `tf-transformations`, `joy`, `geographic-msgs`) have candidates. The Rolling job's plan (this repository plus a clone of `marine_ais` `rolling`, `rosdep --from-paths` limited to the in-scope directories and `marine_ais/marine_ais_msgs`, no `.repos` imports) keeps navigation2 and the unported repositories out of `src/` and out of rosdep's view. `colcon build --packages-up-to` never reaches `mission_manager*` or `ais_layer`.
+- Dropping `-r` in the Jazzy job: all 121 non-source keys of every package the job's `vcs import` brings in (underlay.repos and core.repos at their pinned branches, fetched from GitHub, plus this repository's 18 packages) resolve with `rosdep resolve --rosdistro jazzy --os ubuntu:noble`; no `*_IGNORE` files hide any package. (Resolution, not apt install; the plan's fallback stays.)
+- The widened Jazzy job still builds `mission_manager` and `marine_autonomy_integration_tests`; `marine_ais_msgs` comes from `marine_ais` `jazzy` through core.repos; three more packages will not make the 12m49s run a problem.
+- All 29 `.warn(` calls in `marine_web_view` are `self.get_logger().warn(` on rclpy loggers; no `logging` or `warnings` receivers. Rolling's `RcutilsLogger` has no `warn` at all, only `warning`; Jazzy has both.
+- `marine_autonomy` has only the one `tf2/*.h` include and already uses `target_link_libraries`; with the host's confirmation that `tf2/utils.hpp` exists on Jazzy, the `__has_include` fallback in A1 can go.
+- core.repos at Part 1 pinning siblings at `jazzy` is right for a Jazzy job; after Part 3 the Jazzy job on `rolling` builds the siblings' `rolling` branches, which both carry Jazzy CI of their own, so that is coherent.
+
+### Findings
+
+1. **[File targeting]** (must-fix) — Renaming to `logger.warning` breaks or hollows out `marine_web_view` tests the plan does not list. `test_render_pass.py:60`, `test_colour.py:64`, `test_local_output.py:53`, `test_tile_ingest.py:58` define fake loggers with `warn` (and `info = debug = error = warn`) but no `warning`, so renamed code raises `AttributeError` on them. `test_ais_renderer.py:311,327,655,670` assign `node.get_logger().warn = lambda ...`; after the rename the code calls `warning`, so the asserts at 331 and 660 fail, and the assert `warnings == []` at 673 passes vacuously (a silent loss of a check). Add these four fakes (add `warning`) and the four monkey-patches (patch `warning`) to the same commit as the rename, and list them in Files to Change.
+2. **[Consequences]** (should-fix) — "kept as one file so it cherry-picks to `jazzy` unchanged" is not so: `jazzy`'s copy differs from `rolling`'s in the header (`name: docker-jazzy-ros-core`, `branches: [ jazzy ]`, from e832faef and 00e65592), within context of the `jobs: build:` lines the split rewrites, so the cherry-pick will conflict. State how the backport resolves it (for example, take `rolling`'s file whole, so the two branches carry the same file from then on, or keep `jazzy`'s header) so the backporter does not decide it ad hoc.
+3. **[ROS conventions]** (should-fix) — `helm_manager` replacements: say the targets per call, `${geometry_msgs_TARGETS}`, `${marine_interfaces_TARGETS}`, `rclcpp::rclcpp`, `rclcpp_lifecycle::rclcpp_lifecycle`, and for the three test calls `${lifecycle_msgs_TARGETS}`. Say the signature: `helm_manager` (line 34) and every `ament_add_gtest` target (whose own `target_link_libraries` calls are plain) already use the plain signature, so their replacements must be plain too (a `PUBLIC`/`PRIVATE` keyword there is a CMake error); only `helm_manager_lib` is free to take `PUBLIC`, which would let the executable and tests drop their duplicate lists. `lifecycle_msgs` is used directly by the tests but not declared in `helm_manager/package.xml`; add `<test_depend>lifecycle_msgs</test_depend>`. `marine_contacts` is an exported static library consumed by `rqt_sonar_waterfall` (rqt_operator_tools): its replacement must be `PUBLIC` with `ament_export_dependencies(marine_interfaces rclcpp)` kept, and the pull request should say that downstream consumer was not rebuilt.
+4. **[Issue alignment]** (should-fix, Part 2 outline) — A known fact is presented as unknown: `ros-rolling-geodesy` resolves through rosdep but has no apt candidate on Rolling (`apt-cache policy` shows none on this resolute machine, while the other Rolling packages do), so the Rolling job will need geographic_info from source (`f70b81a`) for the three `geodesy` users regardless of `ecef.h`. State it in the outline.
+5. **[Principle alignment]** (minor) — The control-path statement is accurate. To serve Safety First and Simulation-First where it matters, the `jazzy` (deployed) backport, add that the `helm_manager` and `marine_autonomy` changes are behaviour-neutral by construction (header rename, link form), that the Jazzy job's `helm_manager` GTests and `marine_autonomy_integration_tests` are the evidence, and that a simulation run before the next field deployment from `jazzy` is still owed.
+6. **[File targeting]** (minor) — Step A6 (cause 9) can be settled now: `ament_xmllint` from Rolling passes on every ament_cmake package of all three parts. Record that and drop the step, keeping A7 for whatever the test run turns up.
+7. **[Consequences]** (minor) — Update the Open Questions from the host's facts: no required status checks, so the rename blocks nothing; drop the `__has_include` fallback in A1. The `marine_ais` clone in the Rolling job is an unpinned branch; say so in the workflow comment (accepted as with core.repos branches).
+
+### Summary
+
+Part 1's approach is sound and the Rolling job design keeps Nav2 and the unported repositories out cleanly; every dependency key checked resolves on both distros. One must-fix gap (the `marine_web_view` test fakes and monkey-patches the `warning` rename breaks or hollows out) and three should-fix specifics (the cherry-pick conflict, the CMake signature and targets, the Rolling `geodesy` fact) should be folded into the plan; none changes its shape.
+
+### Recommended Actions
+
+- [ ] Add the `marine_web_view` test fakes and `warn` monkey-patches to the rename step and Files to Change (finding 1).
+- [ ] State how the workflow cherry-pick to `jazzy` resolves the header conflict (finding 2).
+- [ ] Spell out the `helm_manager` and `marine_contacts` targets and signatures; add `lifecycle_msgs` test_depend (finding 3).
+- [ ] Record in the Part 2 outline that Rolling has no `geodesy` apt package (finding 4).
+- [ ] Extend the control-path statement for the `jazzy` backport (finding 5).
+- [ ] Settle A6, update Open Questions, drop the `__has_include` fallback (findings 6 and 7).
