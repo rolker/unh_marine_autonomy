@@ -142,8 +142,13 @@ step with the workflow's package lists.
 |---|---|---|---|
 | `marine_interfaces`, `marine_vertical_datum`, `command_bridge`, `joy_to_helm`, `marine_web_view`, `marine_autonomy`, `helm_manager`, `marine_contacts` | built and tested | built and tested | |
 | `mission_manager`, `mission_manager_interfaces`, `marine_autonomy_integration_tests` | built and tested | not built | Rolling port blocked on `unh_marine_navigation` (#419) |
-| `marine_tiled_raster_store`, `marine_backscatter`, `marine_sidescan_mosaic`, `marine_bathymetry_store`, `marine_mbes_backscatter_store`, `marine_survey_index` | not built | not built | by hand only; Rolling port is #418 Part 2 |
+| `marine_tiled_raster_store`, `marine_backscatter`, `marine_sidescan_mosaic`, `marine_bathymetry_store`, `marine_mbes_backscatter_store`, `marine_survey_index` | built and tested | built and tested | |
 | `bathymetry_layer` | not built | not built | by hand only; Rolling port is #418 Part 3 (Nav2 has no Rolling release, so Rolling stays by hand) |
+
+`geodesy` (used by `marine_sidescan_mosaic` and `marine_survey_index`) has no
+installable Rolling apt package, so the Rolling job builds it from a
+`geographic_info` clone pinned at `f70b81a` (1.0.7 plus the `<iomanip>` fix);
+the Jazzy job gets it from `config/repos/underlay.repos`.
 
 On Rolling, `ament_cppcheck` skips every file (its own "cppcheck 2.19.0
 performance issues" skip), so the cppcheck results there are skips, not passes.
