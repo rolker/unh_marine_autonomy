@@ -33,11 +33,13 @@
 // Instantiates Bounds<T>::operator<<, which no other code in this package
 // uses: a template body that does not compile (as the old getMin()/getMax()
 // calls did not under GCC 15) is only caught once something streams one.
+// The corners are passed maximum first, so the output also shows that
+// Bounds(p1, p2) sorts them into minimum and maximum.
 TEST(GZ4DGeoBounds, StreamsMinimumAndMaximum)
 {
   gz4d::BoundsDegrees bounds(
-    gz4d::PositionDegrees(43.0, -70.5),
-    gz4d::PositionDegrees(44.0, -70.0));
+    gz4d::PositionDegrees(44.0, -70.0),
+    gz4d::PositionDegrees(43.0, -70.5));
 
   std::ostringstream stream;
   stream << bounds;
