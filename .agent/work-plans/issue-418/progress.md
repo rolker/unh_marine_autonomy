@@ -434,3 +434,33 @@ Outside reviewers: Gemini and Codex ran (cross_model_review.sh, both EXIT=0); th
 ### Not changed
 - ROS packages that are imported but not declared, outside the non-ROS scope of this audit and all present in the ros-core images: `launch`, `launch_ros` and `lifecycle_msgs` in the launch files of `joy_to_helm`, `marine_autonomy` and `helm_manager`; `rcl_interfaces` in `marine_web_view`; `std_msgs` in `helm_manager` sources. They are reported to the host, not fixed.
 - `gz4d_geo.h:1014` `-Wparentheses` warning, left for #420 as instructed.
+
+## Local Review
+**Status**: complete
+**When**: 2026-11-20 09:54 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent a195cbe59293ccebd, resume 1 of 3)
+**Verdict**: approved
+
+**PR**: #421 at `666b23b`
+**Depth**: Deep (reason: round 3 convergence check per handoff; only the four findings of the review at `18913fd` and the fix diff `18913fd..666b23b`)
+**Must-fix**: 0 | **Suggestions**: 0
+
+Cross-model: skipped (round-3 convergence check, per handoff).
+
+All four earlier findings are resolved:
+- (must-fix, Boost) `8c0a188` adds `<depend>libboost-dev</depend>` to `marine_autonomy/package.xml`. Right: `boost/math/quaternion.hpp` is header-only and ships in `libboost1.xx-dev` (`dpkg -S` here gives `libboost1.90-dev`), which `libboost-dev` depends on; `depend` covers build_export for the header's consumers. The key resolves to `libboost-dev` on noble/jazzy and resolute/rolling.
+- (suggestion, Rolling rosdep list) `0caf126` derives the paths from `colcon list --base-paths src --paths-only --packages-up-to <the build list>` with `set -euo pipefail` and an empty-list guard, the same as the Jazzy job. CI's rosdep step on Rolling passed.
+- (suggestion, comment wording) `0caf126` now says "declared workspace dependencies" and notes that `/opt/ros/rolling` is on every package's path. Accurate.
+- (suggestion, test corners) `d57b864` passes the maximum corner first; the expected string is unchanged; `test_gz4d_geo_bounds` passed on both CI jobs.
+
+The audit commits are also right:
+- `ee7dbaa`: `<buildtool_depend>pkg-config</buildtool_depend>` matches `find_package(PkgConfig REQUIRED)` / `pkg_check_modules` at `marine_vertical_datum/CMakeLists.txt:9-10`. The key resolves on both platforms, and `pkg-config` has a candidate on resolute (2.5.1-4); it was already in both images, since rosdep installed nothing for it.
+- `47ba59a`: `<exec_depend>python3-gdal</exec_depend>`. `scripts/publish_history_tiles.py` (installed under share/ by `setup.py:60-61`) imports `osgeo`/`osgeo_utils` inside functions (lines 285, 392, 425). `exec_depend` is the right kind, and `osgeo_utils` ships in `python3-gdal`. The key resolves on both platforms, and CI installed it on both.
+
+CI on `666b23b` (run 44756906020):
+- `build-and-test (jazzy)` (job 136358904158): success. Build `Summary: 16 packages finished`; `Summary: 936 tests, 0 errors, 0 failures, 37 skipped`. rosdep ran `apt-get install -y libboost-dev` and `apt-get install -y python3-gdal`.
+- `build-and-test (rolling)` (job 136358904634): success. Build `Summary: 9 packages finished`; `Summary: 808 tests, 0 errors, 0 failures, 37 skipped`. The rosdep installs were the same.
+
+### Findings
+- [ ] No issues found. LGTM.
