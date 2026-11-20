@@ -570,3 +570,13 @@ Part 2 is accurate where I could check it against source, upstream and apt: line
 - [ ] Reword step 3's `geodesy` sentence and add a CMake comment for the `PUBLIC` `geoconv` link (finding 1).
 - [ ] Mark the tf2 `.hpp` and `GDALConfig.cmake` Jazzy questions as settled, with their sources (finding 2).
 - [ ] Correct the header-comment line range in step 9 (finding 3).
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 11:34 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the Plan Review's verdict is ready; its three findings are two minor and one nit, each with its resolution stated, and none changes scope)
+**After**: plan
+**Decision**: proceed
+
+Read: `plan.md` at `5b9b80b7` and the Plan Review of it (verdict ready). Part 2 only is implemented now. The three findings go to the implementer as corrections: F1 in step 3 keep `geodesy`'s library `PUBLIC` on `marine_sidescan_mosaic`, do not say "as `ais_layer` does" for the link part, and add a one-line CMake comment saying why it is `PUBLIC`; F2 Jazzy's tf2 has `buffer_core.hpp` and `time.hpp`, and noble's `libgdal-dev` ships `GDALConfig.cmake`, so no `__has_include` fallback; F3 the Rolling job's header comment in the workflow is lines 10 to 19.
