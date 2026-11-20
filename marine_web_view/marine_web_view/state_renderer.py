@@ -479,7 +479,7 @@ class StateRenderer(Node):
         """Write the current state if it has changed since the last write."""
         if self._fix is None:
             self.get_logger().warning('no position yet',
-                                   throttle_duration_sec=15.0)
+                                      throttle_duration_sec=15.0)
             return
 
         # Publish only genuinely new data. Without this the last fix would be
