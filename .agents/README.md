@@ -129,6 +129,25 @@ Known build requirements:
 - Integration tests depend on `command_bridge`, `mission_manager`, `marine_interfaces`,
   and `marine_nav_interfaces` (from `unh_marine_navigation`)
 
+### What CI checks, per distro
+
+`.github/workflows/ros-base-docker.yml` has two jobs: `build-and-test (jazzy)`
+(every push and pull request) and `build-and-test (rolling)` (skipped on
+`jazzy`). "Built and tested" means the job builds the package and runs its
+tests; anything else is checked only by hand on a development machine, or not
+at all. The Rolling port (#418) widens this table part by part; keep it in
+step with the workflow's package lists.
+
+| Package | Jazzy CI | Rolling CI | Otherwise |
+|---|---|---|---|
+| `marine_interfaces`, `marine_vertical_datum`, `command_bridge`, `joy_to_helm`, `marine_web_view`, `marine_autonomy`, `helm_manager`, `marine_contacts` | built and tested | built and tested | |
+| `mission_manager`, `mission_manager_interfaces`, `marine_autonomy_integration_tests` | built and tested | not built | Rolling port blocked on `unh_marine_navigation` (#419) |
+| `marine_tiled_raster_store`, `marine_backscatter`, `marine_sidescan_mosaic`, `marine_bathymetry_store`, `marine_mbes_backscatter_store`, `marine_survey_index` | not built | not built | by hand only; Rolling port is #418 Part 2 |
+| `bathymetry_layer` | not built | not built | by hand only; Rolling port is #418 Part 3 (Nav2 has no Rolling release, so Rolling stays by hand) |
+
+On Rolling, `ament_cppcheck` skips every file (its own "cppcheck 2.19.0
+performance issues" skip), so the cppcheck results there are skips, not passes.
+
 ## Cross-Layer Dependencies
 
 | Package | Depends On | Layer | What It Imports |
