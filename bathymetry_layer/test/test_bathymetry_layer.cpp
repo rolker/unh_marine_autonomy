@@ -84,6 +84,8 @@ public:
   // enabled_ is set from the "enabled" param in onInitialize(); the blit tests
   // skip initialize(), so set it directly.
   void setEnabled(bool v) {enabled_ = v;}
+  // Whether openStore built a store (it does only for a non-empty store_path).
+  bool hasStore() const {return store_ != nullptr;}
 
   using BathymetryLayer::computeCost;
   using BathymetryLayer::evaluateCell;
@@ -971,37 +973,96 @@ const char * const kLayerParameters[] = {
 // each override up. A declaration under any other name would leave the layer
 // on its defaults and silently ignore the boat's configuration (the case the
 // pre-declared TideFrameTest cases above cannot see).
+//
+// The layer is named "bathy", not "bathymetry_layer", so a prefix hard-coded
+// to the package name cannot pass, and every one of the 13 parameters gets a
+// non-default value, so a get_parameter reading the wrong name leaves a
+// default the test sees. What the test can read back:
+//   - minimum_depth, maximum_caution_depth, confidence_gate,
+//     unsurveyed_is_lethal: the protected members, through the getters above.
+//   - max_uncertainty: the #276 deprecation latch.
+//   - enabled: Layer::isEnabled().
+//   - store_path: the store is built only for a non-empty path (openStore),
+//     and the default is empty.
+//   - map_frame, map_tide_frame: updateBounds opens the tide gate only from a
+//     transform between the two overridden frames; none involving the
+//     defaults "map" / "map_tide" exists.
+//   - buffer_fraction, tide_invalidate_threshold, update_timeout, ready_radius:
+//     private to the layer, with no cheap observable effect, so they are
+//     checked as declared under the layer's name with the override applied,
+//     not as read back by the layer.
 TEST_F(TideFrameTest, ReadsParameterOverridesWithoutPreDeclare)
 {
+  const std::string store_path = "/nonexistent/bathymetry_layer_test_store";
   rclcpp::NodeOptions options;
   options.parameter_overrides(
   {
-    rclcpp::Parameter("bathymetry_layer.confidence_gate", 1.25),
-    rclcpp::Parameter("bathymetry_layer.minimum_depth", 2.0),
-    rclcpp::Parameter("bathymetry_layer.maximum_caution_depth", 4.0),
-    rclcpp::Parameter("bathymetry_layer.unsurveyed_is_lethal", true),
-    rclcpp::Parameter("bathymetry_layer.max_uncertainty", 0.5),
+    rclcpp::Parameter("bathy.enabled", false),
+    rclcpp::Parameter("bathy.store_path", store_path),
+    rclcpp::Parameter("bathy.minimum_depth", 2.0),
+    rclcpp::Parameter("bathy.maximum_caution_depth", 4.0),
+    rclcpp::Parameter("bathy.confidence_gate", 1.25),
+    rclcpp::Parameter("bathy.max_uncertainty", 0.5),
+    rclcpp::Parameter("bathy.unsurveyed_is_lethal", true),
+    rclcpp::Parameter("bathy.map_tide_frame", std::string("test_tide_surface")),
+    rclcpp::Parameter("bathy.map_frame", std::string("test_ellipsoid")),
+    rclcpp::Parameter("bathy.buffer_fraction", 0.2),
+    rclcpp::Parameter("bathy.tide_invalidate_threshold", 0.3),
+    rclcpp::Parameter("bathy.update_timeout", 0.25),
+    rclcpp::Parameter("bathy.ready_radius", 50.0),
   });
   auto node = std::make_shared<TestLifecycleNode>(
     "test_parameter_overrides_" + std::to_string(getpid()), "", options);
 
   auto tf_buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
-  nav2_costmap_2d::LayeredCostmap layered_costmap("map_tide", false, false);
+  geometry_msgs::msg::TransformStamped tide;
+  tide.header.stamp = rclcpp::Time(1);
+  tide.header.frame_id = "test_ellipsoid";
+  tide.child_frame_id = "test_tide_surface";
+  tide.transform.translation.z = 12.5;
+  tide.transform.rotation.w = 1.0;
+  tf_buffer->setTransform(tide, "test_authority", false);
+
+  nav2_costmap_2d::LayeredCostmap layered_costmap("test_tide_surface", false, false);
   layered_costmap.resizeMap(10, 10, 1.0, 0.0, 0.0);
 
   BathymetryLayerForTest layer;
-  layer.initialize(&layered_costmap, "bathymetry_layer", tf_buffer.get(), node, nullptr);
+  layer.initialize(&layered_costmap, "bathy", tf_buffer.get(), node, nullptr);
 
-  EXPECT_DOUBLE_EQ(layer.getConfidenceGate(), 1.25);
+  for (const char * param : kLayerParameters) {
+    EXPECT_TRUE(node->has_parameter(std::string("bathy.") + param))
+      << "bathy." << param << " must be declared under the layer's name";
+    EXPECT_FALSE(node->has_parameter(std::string("bathymetry_layer.") + param))
+      << "bathymetry_layer." << param << " must not be declared: the layer is named bathy";
+    EXPECT_FALSE(node->has_parameter(param))
+      << param << " must not be declared without the layer's name";
+  }
+
+  EXPECT_FALSE(layer.isEnabled());
   EXPECT_DOUBLE_EQ(layer.getMinimumDepth(), 2.0);
   EXPECT_DOUBLE_EQ(layer.getMaximumCautionDepth(), 4.0);
-  EXPECT_TRUE(layer.getUnsurveyedIsLethal());
+  EXPECT_DOUBLE_EQ(layer.getConfidenceGate(), 1.25);
   EXPECT_TRUE(layer.deprecatedMaxUncertaintySeen())
     << "a max_uncertainty override must trip the #276 deprecation guard";
-  for (const char * param : kLayerParameters) {
-    EXPECT_TRUE(node->has_parameter(std::string("bathymetry_layer.") + param))
-      << "bathymetry_layer." << param << " must be declared under the layer's name";
-  }
+  EXPECT_TRUE(layer.getUnsurveyedIsLethal());
+  EXPECT_TRUE(layer.hasStore())
+    << "a store_path override must reach the layer (it builds a store only for a "
+       "non-empty path)";
+
+  // Declared-only: the node holds the overrides under the layer's name.
+  EXPECT_DOUBLE_EQ(node->get_parameter("bathy.buffer_fraction").as_double(), 0.2);
+  EXPECT_DOUBLE_EQ(node->get_parameter("bathy.tide_invalidate_threshold").as_double(), 0.3);
+  EXPECT_DOUBLE_EQ(node->get_parameter("bathy.update_timeout").as_double(), 0.25);
+  EXPECT_DOUBLE_EQ(node->get_parameter("bathy.ready_radius").as_double(), 50.0);
+
+  // updateBounds returns at once while disabled; enable it to read the tide.
+  layer.setEnabled(true);
+  double minx = 1e30, miny = 1e30, maxx = -1e30, maxy = -1e30;
+  layer.updateBounds(0.0, 0.0, 0.0, &minx, &miny, &maxx, &maxy);
+  EXPECT_TRUE(layer.isMapTideValid())
+    << "map_frame and map_tide_frame overrides must reach the layer: the only "
+       "transform published is test_ellipsoid -> test_tide_surface";
+  EXPECT_NEAR(layer.getMapTideZ(), 12.5, 1e-6);
 }
 
 // With no overrides and nothing pre-declared, every parameter is declared under
