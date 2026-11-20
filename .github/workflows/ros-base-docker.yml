@@ -140,11 +140,13 @@ jobs:
         colcon build --packages-up-to
         marine_interfaces marine_vertical_datum command_bridge joy_to_helm
         marine_web_view marine_autonomy helm_manager marine_contacts'
+    # No install/setup.bash, as in the jazzy job: colcon test gives each
+    # package the environment of its declared dependencies only, so a missing
+    # test_depend fails here instead of being hidden by the whole overlay.
     - name: Colcon test
       working-directory: ../ws
       run: >
         bash -c 'source /opt/ros/rolling/setup.bash &&
-        source install/setup.bash &&
         colcon test --packages-select
         marine_interfaces marine_vertical_datum command_bridge joy_to_helm
         marine_web_view marine_autonomy helm_manager marine_contacts
