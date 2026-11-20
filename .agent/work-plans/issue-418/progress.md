@@ -464,3 +464,28 @@ CI on `666b23b` (run 44756906020):
 
 ### Findings
 - [ ] No issues found. LGTM.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-11-20 09:55 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent acde355353072e72a, resume 1 of 3)
+
+**PR**: #421 at `666b23b`
+**Sources**: 4 (Local Review @ `18913fd` (changes-requested, all four findings closed by the Implementation at `d57b864`), Local Review @ `666b23b` (approved, nothing open), Gemini and Codex findings files from the review at `18913fd`, CI rollup)
+**Cross-source confirmations**: 0
+**CI**: all-pass
+
+No GitHub reviews, inline comments, conversation comments, requested reviewers or Copilot check-run on the pull request at `666b23b`. The `sources` helper returns no open local findings at this head. The only dropped entry is the Local Review (Pre-Push) at `d66bec9`, marked stale. Its three suggestions were ruled in the Integrated Review at `2a3670d` and fixed by the Implementation at `95fd221` (`ca49655`, `a3432e0`, `95fd221`). They are not listed again here. The unchecked "No issues found" line in the Local Review at `666b23b` is not a finding.
+
+CI run 44756906020 on `666b23b`, as `gh pr checks 421` reports it: `build-and-test (jazzy)` passed (job 136358904158) and `build-and-test (rolling)` passed (job 136358904634). The Local Review at `666b23b` quotes the logs: Jazzy built 16 packages and ran 936 tests with 0 failures; Rolling built 9 packages and ran 808 tests with 0 failures.
+
+The Local Review at `18913fd` already ruled on most outside findings: the job rename, `rclcpp` PUBLIC, `persist-credentials`, `.warn(` calls, the colcon misspelled-name claim and the `marine_ais` pin. Gemini's hand-listed Rolling rosdep paths became a finding there and are fixed in `0caf126`. The three it did not name are ruled below.
+
+### Findings
+None open.
+
+### False positives
+- (Codex #1 @ `18913fd`) `.agents/README.md:143` should say that a green Rolling check leaves robot bring-up unverified, because `robot_core_launch.py` needs `mission_manager`. The table already shows `mission_manager` as "not built" on Rolling (blocked on #419), and it defines "built and tested" as building a package and running its tests. Neither job runs the robot launch, on Jazzy either, so the table claims no launch coverage that a note would need to correct.
+- (Gemini #3 @ `18913fd`) The Jazzy `colcon list`/`colcon build` omit `marine_interfaces` and `mission_manager_interfaces`. Both are dependencies of the listed packages, so `--packages-up-to` includes them. The Jazzy run on `666b23b` built 16 packages and tested them. The second half of the finding, that a misspelled name exits 0, was already shown wrong in the Local Review at `18913fd`: `sys.exit` runs under `set -euo pipefail`.
+- (Gemini #4 @ `18913fd`) Use `mapfile` instead of unquoted `$paths` (SC2086). The words are colcon package paths under `src/`, made of repository names fixed by the `.repos` files and the clone step plus package directory names. None of them contains whitespace or glob characters. SC2086 is disabled on purpose, with a comment, and a path that did split would make rosdep fail loudly, not silently.
