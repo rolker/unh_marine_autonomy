@@ -1004,3 +1004,15 @@ CI at `4d02c86f`: `build-and-test (jazzy)` pass (7m30s): `Finished <<< bathymetr
 
 ### False positives
 - None new this round. The three Gemini pre-push false positives were ruled on in the Integrated Review at `f2021b01`.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 14:57 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: owner
+**After**: merge
+**Decision**: merge
+
+Asked "Merge pull request 426 into `rolling`?" with what merges (one change to non-test code, the local parameter helper), CI at `4d02c86f` (Jazzy 24 packages including `bathymetry_layer`, 2151 tests, 0 failures, the parameter tests passing against Jazzy's own helper; Rolling 16 packages, 1966 tests, 0 failures), the hand check on Rolling (57 tests, 0 failures), the parameter evidence (13 lines byte-identical; nine reads proved by mutation; four with no read-back check, named), the review history, and that no simulation was run and one is owed before any Rolling deployment. The owner answered: "Merge (Recommended)".
+
+In the same dialog he approved a comment on issue 415 adding cause 13 and Part 3's notes ("Post it (Recommended)"), and the `jazzy` backport pull request right after the merge ("Yes, backport right after (Recommended)"); the backport's own merge and the closing of issue 418 are still asked of him.
