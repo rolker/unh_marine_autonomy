@@ -43,6 +43,11 @@
        redundancy costs nothing. Verified: rosdep resolve python3-boto3
        yields apt python3-boto3, candidate 1.34.46+dfsg-1ubuntu1 on noble. -->
   <depend>python3-boto3</depend>
+  <!-- scripts/publish_history_tiles.py (installed under share/) imports
+       osgeo.gdal, osgeo.osr and osgeo_utils.gdal2tiles at run time. Only
+       that script uses GDAL, no node does, so exec_depend: nothing builds
+       against it. -->
+  <exec_depend>python3-gdal</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
