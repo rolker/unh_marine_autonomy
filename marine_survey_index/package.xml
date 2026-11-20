@@ -29,7 +29,7 @@
   <depend>marine_sidescan_mosaic</depend>
   <depend>rosbag2_cpp</depend>
   <depend>rosbag2_storage</depend>
-  <depend>sqlite3</depend>
+  <depend>libsqlite3-dev</depend>
 
   <!-- Storage plugins are loaded at run time by name, so `rosbag2_cpp` does
        not pull one in: without these the indexer opens no bag at all (mcap is
