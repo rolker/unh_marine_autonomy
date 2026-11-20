@@ -976,12 +976,17 @@ const char * const kLayerParameters[] = {
 //
 // The layer is named "bathy", not "bathymetry_layer", so a prefix hard-coded
 // to the package name cannot pass, and every one of the 13 parameters gets a
-// non-default value, so a get_parameter reading the wrong name leaves a
-// default the test sees. What the test can read back:
+// value other than its declared default. A read-back below proves the read
+// only where the asserted value also differs from the member's own initial
+// value (what a misnamed get_parameter leaves behind). What the test reads back:
 //   - minimum_depth, maximum_caution_depth, confidence_gate,
 //     unsurveyed_is_lethal: the protected members, through the getters above.
 //   - max_uncertainty: the #276 deprecation latch.
-//   - enabled: Layer::isEnabled().
+//   - enabled: NOT read back here. Nav2's Layer() constructor sets enabled_ to
+//     false, so the override false cannot be told from a misnamed read; it is
+//     overridden only so that every parameter is. The read is proved by
+//     DeclaresEveryParameterUnderTheLayerName, where the default true differs
+//     from the constructor's false.
 //   - store_path: the store is built only for a non-empty path (openStore),
 //     and the default is empty.
 //   - map_frame, map_tide_frame: updateBounds opens the tide gate only from a
@@ -1038,7 +1043,6 @@ TEST_F(TideFrameTest, ReadsParameterOverridesWithoutPreDeclare)
       << param << " must not be declared without the layer's name";
   }
 
-  EXPECT_FALSE(layer.isEnabled());
   EXPECT_DOUBLE_EQ(layer.getMinimumDepth(), 2.0);
   EXPECT_DOUBLE_EQ(layer.getMaximumCautionDepth(), 4.0);
   EXPECT_DOUBLE_EQ(layer.getConfidenceGate(), 1.25);
@@ -1086,6 +1090,9 @@ TEST_F(TideFrameTest, DeclaresEveryParameterUnderTheLayerName)
       << param << " must not be declared without the layer's name";
   }
   EXPECT_TRUE(node->get_parameter("bathymetry_layer.enabled").as_bool());
+  // Nav2's Layer() constructor sets enabled_ to false, so only a read of the
+  // declared default (true) under the layer's name makes this true.
+  EXPECT_TRUE(layer.isEnabled());
   EXPECT_DOUBLE_EQ(node->get_parameter("bathymetry_layer.confidence_gate").as_double(), 0.5);
   EXPECT_DOUBLE_EQ(layer.getConfidenceGate(), 0.5);
   EXPECT_DOUBLE_EQ(layer.getMinimumDepth(), 1.0);
