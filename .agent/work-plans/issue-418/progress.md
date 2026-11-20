@@ -301,3 +301,13 @@ Part 1 only, as planned: 8 packages, CI (Jazzy job renamed and widened, guarded 
 - [ ] (suggestion) Jazzy job's `rosdep install` now runs without `-r` over every imported repo, most of them never built by the job and pinned to moving branches; scope `--from-paths` to the build closure, as the Rolling job does, or accept the coupling knowingly (raised independently by the Claude adversarial reviewer, Gemini and Codex) — `.github/workflows/ros-base-docker.yml:61`
 - [ ] (suggestion) Rolling job sources `install/setup.bash` before `colcon test` while the Jazzy job does not; the overlay puts every built package on the path for every package's tests and can hide a missing `test_depend`. Drop it for parity unless a test needs it — `.github/workflows/ros-base-docker.yml:132`
 - [ ] (suggestion) The fixed `Bounds<T>` `operator<<` is still instantiated by no test, so the next compiler or edit has nothing to catch a regression; a one-case gtest streaming a `Bounds` would pin it — `marine_autonomy/include/marine_autonomy/gz4d_geo.h:1369`
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 09:29 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the pre-push review approved round 1 with no must-fix; what is left unverified is Jazzy, which only CI on the pushed branch can check)
+**After**: publish
+**Decision**: publish
+
+Read: the Local Review (Pre-Push) at `d66bec96`, verdict approved, ship recommended, three suggestions open: the Jazzy job's `rosdep install` without `-r` over every imported repository (`.github/workflows/ros-base-docker.yml:61`; raised by the Claude adversarial reviewer, Gemini and Codex); the Rolling job sourcing `install/setup.bash` before `colcon test` (`:132`); no test instantiates the fixed `Bounds<T>` `operator<<` (`gz4d_geo.h:1369`). They stay open and go through triage after publish, where CI's first Jazzy run is evidence on the first of them. This is a project issue, so the host runs no full pre-commit pass. The pull request says `Part of #418`.
