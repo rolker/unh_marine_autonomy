@@ -652,3 +652,20 @@ Round 1 findings: both resolved. (1) Concurrent export crash: `775f8b62` is soun
 
 ### Findings
 - [x] (must-fix) The CLI's signal guarantees assume a single-threaded process, but `TerminationSignalsBlocked` blocks with `pthread_sigmask`, which is per thread, and the `export_geotiff` process has about 20 threads created at library load by GDAL's dependency chain (strace: `clone3` before `main`'s work; linked `libgomp`, `libblosc`, HDF5, netCDF). A process-directed SIGINT/SIGTERM is delivered to an unblocked worker, which runs `onTerminationSignal` inside the "blocked" windows: traced failure shows `openat(...export.tif.tmp.CMOAw9, O_CREAT|O_EXCL)` in the main thread, `kill(SIGINT)`, handler run on worker thread 975845 before registration, so the temporary file is left behind. The same mechanism breaks the rename window (a signal between `rename` and `g_outputs_replaced` reports "nothing written" over a replaced output, and can stop before stale sidecars are removed). Pre-existing, not caused by the fix commits, but this branch adds the package's tests to both CI jobs: `ExportCli.InterruptRemovesTheTemporaryFile` failed 1 of 100 and 1 of 300 isolated runs here (and 1 of 10, 1 of 30 full-binary runs). Needs an owner decision as in round 1: fix in Part 2 (e.g. block the three signals process-wide before any thread exists, or handle them on a dedicated `sigwait` thread), or a separate issue plus a stated CI plan — `marine_tiled_raster_store/src/export_geotiff.cpp:274`, `:1273` (deferred: owner, 2026-11-20: "Separate issue, test stays on (Recommended)"; fixed under its own issue, the test keeps running in CI)
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-20 12:56 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent a2e724d2a1fba334c, resume 1 of 3)
+
+**Branch**: feature/issue-418 at `7a63128e`
+**Addressed**: Local Review (Pre-Push) at `7a63128e` (2026-11-20 12:51 -05:00)
+**Commits**: `e25f0205` (records only: the deferral)
+
+Owner decision on the one must-fix, asked "Where should the signal-handling defect be fixed?": "Separate issue, test stays on (Recommended)". The host drafts that issue for his approval.
+
+### Actions
+- [x] (must-fix) `export_geotiff` CLI signal handling assumes a single-threaded process (`TerminationSignalsBlocked` uses per-thread `pthread_sigmask` while GDAL's dependencies start worker threads) — `marine_tiled_raster_store/src/export_geotiff.cpp:274`, `:1273` (deferred: owner, 2026-11-20: "Separate issue, test stays on (Recommended)"; fixed under its own issue, the test keeps running in CI)
+
+No code, test or CI changed in this pass: the fix is a design change to the signal handling, it predates this branch, and the owner moved it to its own issue. The test is not skipped, disabled, retried or excluded anywhere. The pull request must state the known intermittent failure of `ExportCli.InterruptRemovesTheTemporaryFile`: about 1 run in 100 on Ubuntu 26.04 (reviewer: 1 of 100 and 1 of 300 isolated runs); the rate in CI's containers and on Jazzy is unknown; a re-run clears it. Code head unchanged at `ac273079`, so the round-2 build and test results stand (`Summary: 1158 tests, 0 errors, 0 failures, 129 skipped`); nothing was rebuilt.
