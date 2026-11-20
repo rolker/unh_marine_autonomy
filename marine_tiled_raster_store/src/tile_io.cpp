@@ -36,6 +36,8 @@
 #include <utility>
 #include <vector>
 
+#include "gdal_registration.hpp"
+
 namespace marine_tiled_raster_store
 {
 
@@ -101,7 +103,7 @@ std::string tileFilename(const gggs::GridIndex & grid)
 
 int tileRasterCount(const std::string & path)
 {
-  GDALAllRegister();
+  ensureGdalRegistered();
   DatasetCloser in;
   in.ds = GDALDataset::FromHandle(GDALOpen(path.c_str(), GA_ReadOnly));
   if (in.ds == nullptr) {
@@ -120,7 +122,7 @@ void saveTile(
     throw std::invalid_argument("saveTile: band_nodata size must equal tile.bandCount()");
   }
 
-  GDALAllRegister();
+  ensureGdalRegistered();
   GDALDriver * driver = GetGDALDriverManager()->GetDriverByName("GTiff");
   if (driver == nullptr) {
     throw std::runtime_error("saveTile: GTiff driver unavailable");
@@ -191,7 +193,7 @@ template<typename T>
 TiledRasterTile<T> loadTile(
   const std::string & path, const gggs::Level & level, std::size_t band_count)
 {
-  GDALAllRegister();
+  ensureGdalRegistered();
   DatasetCloser in;
   in.ds = GDALDataset::FromHandle(GDALOpen(path.c_str(), GA_ReadOnly));
   if (in.ds == nullptr) {
