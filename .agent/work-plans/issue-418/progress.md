@@ -396,7 +396,41 @@ The new `-Wparentheses` at `gz4d_geo.h:1014` is cosmetic: precedence already giv
 Outside reviewers: Gemini and Codex ran (cross_model_review.sh, both EXIT=0); their repeats of points already ruled false positives in the Integrated Review (job rename, `rclcpp` PUBLIC, `persist-credentials`, `.warn(` calls) stay dismissed. Gemini's claim that a misspelled name in `colcon list --packages-up-to` exits 0 is wrong: colcon_package_selection `dependencies.py:88-119` calls `sys.exit` for a name not found, which fails the step under `set -euo pipefail`. Codex's pin for `marine_ais` is the accepted unpinned-branch choice recorded in the plan. No Copilot review or GitHub comments on the pull request.
 
 ### Findings
-- [ ] (must-fix) CI fails at `Colcon build` on Rolling and on Jazzy (after ca49655) with `gz4d_geo.h:38:10: fatal error: boost/math/quaternion.hpp: No such file or directory`: `marine_autonomy` uses Boost in a public header and declares no Boost dependency. Fix, holding on both distros: add `<depend>boost</depend>` (or the narrower header-only `<depend>libboost-math-dev</depend>`; both keys resolve on noble and resolute) to `marine_autonomy/package.xml`, as its own code commit and backported to `jazzy` by hand; `<depend>` also covers build_export for helm_manager and marine_contacts — `marine_autonomy/package.xml:12`
-- [ ] (suggestion) The Rolling job's rosdep lists nine `--from-paths` by hand while the Jazzy job now derives its closure with `colcon list --paths-only --packages-up-to`; use the same derivation (plus `marine_ais_msgs`' path) so the list cannot drift from the build step as Parts 2 and 3 add packages (raised by Gemini) — `.github/workflows/ros-base-docker.yml:122`
-- [ ] (suggestion) The new comment says a missing `test_depend` "fails here"; that holds only for workspace packages, since `/opt/ros/<distro>/setup.bash` still provides everything in ros-core (e.g. `marine_web_view`'s undeclared `launch`, `launch_ros` in `test/test_web_view_launch.py:51-56` and `rcl_interfaces` in `ais_renderer.py:92` pass unnoticed); reword to "a missing workspace test_depend" — `.github/workflows/ros-base-docker.yml:143`
-- [ ] (suggestion) The gtest passes the corners already ordered, so `Bounds(p1, p2)`'s min/max sorting is never exercised; pass them in reverse (the expected string is the same, checked with g++ 15.2) — `marine_autonomy/test/test_gz4d_geo_bounds.cpp:39`
+- [x] (must-fix) CI fails at `Colcon build` on Rolling and on Jazzy (after ca49655) with `gz4d_geo.h:38:10: fatal error: boost/math/quaternion.hpp: No such file or directory`: `marine_autonomy` uses Boost in a public header and declares no Boost dependency. Fix, holding on both distros: add `<depend>boost</depend>` (or the narrower header-only `<depend>libboost-math-dev</depend>`; both keys resolve on noble and resolute) to `marine_autonomy/package.xml`, as its own code commit and backported to `jazzy` by hand; `<depend>` also covers build_export for helm_manager and marine_contacts — `marine_autonomy/package.xml:12`
+- [x] (suggestion) The Rolling job's rosdep lists nine `--from-paths` by hand while the Jazzy job now derives its closure with `colcon list --paths-only --packages-up-to`; use the same derivation (plus `marine_ais_msgs`' path) so the list cannot drift from the build step as Parts 2 and 3 add packages (raised by Gemini) — `.github/workflows/ros-base-docker.yml:122`
+- [x] (suggestion) The new comment says a missing `test_depend` "fails here"; that holds only for workspace packages, since `/opt/ros/<distro>/setup.bash` still provides everything in ros-core (e.g. `marine_web_view`'s undeclared `launch`, `launch_ros` in `test/test_web_view_launch.py:51-56` and `rcl_interfaces` in `ais_renderer.py:92` pass unnoticed); reword to "a missing workspace test_depend" — `.github/workflows/ros-base-docker.yml:143`
+- [x] (suggestion) The gtest passes the corners already ordered, so `Bounds(p1, p2)`'s min/max sorting is never exercised; pass them in reverse (the expected string is the same, checked with g++ 15.2) — `marine_autonomy/test/test_gz4d_geo_bounds.cpp:39`
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-20 09:47 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent a19160170e3c0f148, resume 1 of 3)
+
+**PR**: #421 at `d57b864`
+**Addressed**: Local Review at `18913fd` (2026-11-20 09:44 -05:00)
+**Commits**: `8c0a188`, `ee7dbaa`, `47ba59a`, `0caf126`, `d57b864`
+
+### Actions
+- [x] (must-fix) Boost: `marine_autonomy` includes exactly one Boost header, `boost/math/quaternion.hpp` (in `gz4d_geo.h`; no source file includes Boost). That header comes from `libboost1.90-dev` here, and `libboost-dev` depends only on that headers package, while `libboost-math-dev` also pulls in the compiled math, random and container libraries. `quaternion.hpp` is header-only, so `libboost-dev` is the narrowest key. `rosdep resolve libboost-dev` gives `libboost-dev` on both `ubuntu:noble` and `ubuntu:resolute`. Declared with `<depend>` so `helm_manager` and `marine_contacts`, which include the header, get it too. This changes the manifest only: no source or CMake change in this control-path package. Commit `8c0a188` — `marine_autonomy/package.xml:12`
+- [x] Audit of the other seven Part 1 packages (non-ROS system headers and Python modules compared with each `package.xml`):
+  - `marine_interfaces`: messages only; nothing system-level is used, so no gap.
+  - `marine_vertical_datum`: `proj` and `yaml-cpp` are declared. **Gap:** `find_package(PkgConfig)` and `pkg_check_modules` need the `pkg-config` tool, which was not declared. Fix: `<buildtool_depend>pkg-config</buildtool_depend>` (resolves on noble and resolute). Commit `ee7dbaa`.
+  - `command_bridge`: only the standard library, plus `kongsberg_em_control` behind a guarded optional import (documented as optional). No gap.
+  - `joy_to_helm`: no system imports. No gap.
+  - `marine_web_view`: numpy, PIL and boto3 are declared. `botocore` arrives with `python3-boto3`, which the manifest already documents as deliberate, so it was left alone. **Gap:** `scripts/publish_history_tiles.py` (installed under share/) imports `osgeo` and `osgeo_utils`, and GDAL was not declared. Fix: `<exec_depend>python3-gdal</exec_depend>` (resolves on noble and resolute). Commit `47ba59a`.
+  - `helm_manager`, `marine_contacts`: only the standard library and gtest. No gap.
+  - Checked the way CI sees the Rolling closure: `rosdep install --simulate --reinstall --ignore-src -y --rosdistro rolling --from-paths <colcon list closure>` resolves every key with no error and lists `libboost-dev`, `pkg-config`, `python3-gdal`, `libproj-dev`, `libyaml-cpp-dev`, `python3-boto3`, `python3-numpy`, `python3-pil` and `python3-pytest`.
+- [x] Rolling job's rosdep paths now come from `colcon list --base-paths src --paths-only --packages-up-to <the build step's list>`, in the same form as the Jazzy job. `marine_ais_msgs` is in that closure through `marine_web_view`, as the local `colcon list` confirms. The step fails on an empty list. CI commit `0caf126` — `.github/workflows/ros-base-docker.yml:122`
+- [x] The test-step comment now says a missing *workspace* `test_depend` fails there, and notes that `/opt/ros` packages are on every package's path. I judged this one change with the item above (both are Rolling job dependency wording and scoping), so it is in the same CI commit `0caf126` — `.github/workflows/ros-base-docker.yml:143`
+- [x] The test now passes the corners maximum first, so `Bounds(p1, p2)`'s sorting is exercised; the expected string is unchanged. Test only. Commit `d57b864` — `marine_autonomy/test/test_gz4d_geo_bounds.cpp:39`
+
+### Verification
+- `./build.sh --packages-up-to <the eight>`: `Summary: 9 packages finished`.
+- `./test.sh --packages-select <the eight>`: `Summary: 808 tests, 0 errors, 0 failures, 37 skipped`. `test.sh` sources `env.sh`: `/opt/ros/rolling`, the hosted Rolling underlay and core installs, and this worktree's install.
+- Clean environment (`env -i`, only `/opt/ros/rolling/setup.bash` sourced, as in CI): `colcon test --packages-select <the eight>` gives `Summary: 808 tests, 0 errors, 0 failures, 37 skipped`.
+- This machine has Boost, pkg-config and GDAL installed, so a local build cannot show a missing system package. Only CI in the ros-core containers shows that, on both distros. Nothing was verified on Jazzy here.
+
+### Not changed
+- ROS packages that are imported but not declared, outside the non-ROS scope of this audit and all present in the ros-core images: `launch`, `launch_ros` and `lifecycle_msgs` in the launch files of `joy_to_helm`, `marine_autonomy` and `helm_manager`; `rcl_interfaces` in `marine_web_view`; `std_msgs` in `helm_manager` sources. They are reported to the host, not fixed.
+- `gz4d_geo.h:1014` `-Wparentheses` warning, left for #420 as instructed.
