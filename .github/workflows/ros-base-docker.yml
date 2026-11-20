@@ -5,16 +5,19 @@
 # Job "jazzy" (always runs) imports the underlay and core layers from the
 # .repos files of the branch it runs on, with this checkout in place of the
 # unh_marine_autonomy entry, then builds and tests this repository's packages
-# on Jazzy, mission_manager and the integration tests among them.
+# on Jazzy, mission_manager, the integration tests and bathymetry_layer among
+# them (Nav2 is released for Jazzy, so rosdep installs it from apt).
 #
 # Job "rolling" builds and tests only the packages already ported to Rolling
-# (#418, Parts 1 and 2). It reads no .repos file: its workspace is this
+# (#418) that need no Nav2. It reads no .repos file: its workspace is this
 # checkout plus marine_ais (for marine_ais_msgs, which marine_web_view needs)
 # and geodesy from a pinned geographic_info clone (for marine_sidescan_mosaic
 # and marine_survey_index), and rosdep is given only the paths of what it
-# builds, so it never asks for navigation2 or for the keys of the packages not
-# yet ported (mission_manager and the integration tests, #419;
-# bathymetry_layer, #418 Part 3). The job is skipped for pull requests to
+# builds, so it never asks for navigation2 or for the keys of the packages it
+# does not build: mission_manager and the integration tests (not yet ported,
+# #419) and bathymetry_layer (ported, but Nav2 has no Rolling release, so it
+# is checked on Rolling by hand against a source-built navigation2; see
+# .agents/README.md). The job is skipped for pull requests to
 # and pushes on jazzy (github.base_ref is the target branch of a pull
 # request; github.ref_name is the pushed branch), so on the jazzy branch this
 # file runs the jazzy job only.
@@ -67,7 +70,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        paths="$(colcon list --base-paths src --paths-only --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index)"
+        paths="$(colcon list --base-paths src --paths-only --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index bathymetry_layer)"
         if [ -z "$paths" ]; then
           echo "colcon list returned no package paths" >&2
           exit 1
@@ -77,10 +80,10 @@ jobs:
         DEBIAN_FRONTEND=noninteractive rosdep install --ignore-src -y --from-paths $paths
     - name: Colcon build
       working-directory: ../jazzy_ws/
-      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index'
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index bathymetry_layer'
     - name: Colcon test
       working-directory: ../jazzy_ws/
-      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --packages-select marine_interfaces marine_autonomy helm_manager joy_to_helm command_bridge mission_manager mission_manager_interfaces marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index --event-handlers console_direct+ --return-code-on-test-failure'
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --packages-select marine_interfaces marine_autonomy helm_manager joy_to_helm command_bridge mission_manager mission_manager_interfaces marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index bathymetry_layer --event-handlers console_direct+ --return-code-on-test-failure'
     - name: Test results
       working-directory: ../jazzy_ws/
       run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test-result --verbose'
