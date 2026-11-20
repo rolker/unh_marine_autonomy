@@ -725,3 +725,17 @@ Outside reviewers: Gemini and Codex ran in rounds 1 and 2 (completed); round 2's
 - (Gemini R2, suggestion) `marine_survey_index/CMakeLists.txt:43` uses the plain `target_link_libraries` signature — the line was plain-signature before this change too (`SQLite::SQLite3` alone, plus `ament_target_dependencies`, itself plain), no keyword call on `_core` follows, and its public headers are linked by the same consumers as before, so no new failure mode.
 - (Gemini R2, suggestion) `ensureGdalRegistered()` as `inline` could duplicate guards across DSOs under static linking with hidden visibility — the library is built shared (ament default, no visibility flags), and round 2 confirmed one `u` (STB_GNU_UNIQUE) symbol in `libmarine_tiled_raster_store.so`.
 - (Gemini R2, suggestion) `Raster::at` in `test_export_geotiff.cpp:187-190` checks only the flattened index — the helper is test-only and its guard targets the empty-`data` case (an output `readRaster` could not read), which it catches; every caller indexes within the raster's own width and height, so the wrapping case cannot be reached by the tests.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 13:17 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: owner
+**After**: merge
+**Decision**: merge
+
+Asked "Merge pull request 424 into `rolling`?" with what merges, CI at `d9f78b2` (Jazzy 23 packages, 2094 tests, 0 failures; Rolling 16 packages, 1966 tests, 0 failures), the three review rounds, the accepted behaviour change (GDAL drivers registered once per process), what is known and left in (the intermittent `ExportCli.InterruptRemovesTheTemporaryFile`, issue 423; `marine_bathymetry_store`'s per-call registration; consumers not rebuilt), and that issue 418 stays open for Part 3. The owner answered: "Merge (Recommended)".
+
+In the same dialog he approved a comment on issue 415 adding cause 12 and Part 2's notes ("Post it (Recommended)"), and the `jazzy` backport pull request right after the merge ("Yes, backport right after (Recommended)"); the backport's own merge is still asked of him.
+
+Before this checkpoint the host ticked the Integrated Review's only box, "No open findings. Ready for the merge decision.", with `review_progress.sh check`: it is a statement, not a finding, and unchecked it routed to the findings checkpoint.
