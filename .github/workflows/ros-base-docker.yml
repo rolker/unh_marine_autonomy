@@ -10,7 +10,7 @@
 # Job "rolling" builds and tests only the packages already ported to Rolling
 # (#418, Part 1). It reads no .repos file: its workspace is this checkout plus
 # marine_ais (for marine_ais_msgs, which marine_web_view needs), and rosdep is
-# given only the ported packages' paths, so it never asks for navigation2 or
+# given only the paths of what it builds, so it never asks for navigation2 or
 # for the keys of the packages not yet ported (mission_manager and the
 # integration tests, #419; the store packages and bathymetry_layer, later
 # parts of #418). The job is skipped for pull requests to and pushes on
@@ -116,23 +116,25 @@ jobs:
     - name: Clone marine_ais (rolling) for marine_ais_msgs
       working-directory: ../ws
       run: git clone --depth 1 -b rolling https://github.com/rolker/marine_ais.git src/marine_ais
-    # Only the ported packages' paths, so rosdep does not ask for navigation2
-    # or for the keys of the packages not yet ported. No -r: a key that does
-    # not install fails the job.
+    # Only the paths of the build step's --packages-up-to closure (the ported
+    # packages, plus marine_ais_msgs, which marine_web_view depends on), taken
+    # from colcon list as in the jazzy job so the list cannot drift from the
+    # build step. rosdep then does not ask for navigation2 or for the keys of
+    # the packages not yet ported. No -r: a key that does not install fails
+    # the job. The list is checked to be non-empty.
     - name: Install ROS dependencies
       working-directory: ../ws
-      run: >
-        DEBIAN_FRONTEND=noninteractive
-        rosdep install --ignore-src -y --from-paths
-        src/unh_marine_autonomy/marine_interfaces
-        src/unh_marine_autonomy/marine_vertical_datum
-        src/unh_marine_autonomy/command_bridge
-        src/unh_marine_autonomy/joy_to_helm
-        src/unh_marine_autonomy/marine_web_view
-        src/unh_marine_autonomy/marine_autonomy
-        src/unh_marine_autonomy/helm_manager
-        src/unh_marine_autonomy/marine_contacts
-        src/marine_ais/marine_ais_msgs
+      shell: bash
+      run: |
+        set -euo pipefail
+        paths="$(colcon list --base-paths src --paths-only --packages-up-to marine_interfaces marine_vertical_datum command_bridge joy_to_helm marine_web_view marine_autonomy helm_manager marine_contacts)"
+        if [ -z "$paths" ]; then
+          echo "colcon list returned no package paths" >&2
+          exit 1
+        fi
+        echo "$paths"
+        # shellcheck disable=SC2086
+        DEBIAN_FRONTEND=noninteractive rosdep install --ignore-src -y --from-paths $paths
     - name: Colcon build
       working-directory: ../ws
       run: >
@@ -141,8 +143,10 @@ jobs:
         marine_interfaces marine_vertical_datum command_bridge joy_to_helm
         marine_web_view marine_autonomy helm_manager marine_contacts'
     # No install/setup.bash, as in the jazzy job: colcon test gives each
-    # package the environment of its declared dependencies only, so a missing
-    # test_depend fails here instead of being hidden by the whole overlay.
+    # package the environment of its declared workspace dependencies only, so
+    # a missing workspace test_depend fails here instead of being hidden by
+    # the whole overlay. (A package from /opt/ros/rolling is on the path for
+    # every package, declared or not.)
     - name: Colcon test
       working-directory: ../ws
       run: >
