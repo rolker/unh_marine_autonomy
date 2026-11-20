@@ -1,3 +1,12 @@
+# CI for unh_marine_autonomy. The same file is carried on the rolling and
+# jazzy branches (jazzy takes rolling's copy whole when a port is
+# backported); pushes and pull requests to either run it.
+#
+# Job "jazzy" (always runs) builds the underlay and core layers from the
+# .repos files of the branch it runs on, with this checkout in place of the
+# unh_marine_autonomy entry, and builds and tests this repository's packages
+# on Jazzy, mission_manager and the integration tests among them.
+
 name: docker-ros-core
 
 on:
@@ -7,7 +16,8 @@ on:
     branches: [ jazzy, rolling ]
 
 jobs:
-  build:
+  jazzy:
+    name: build-and-test (jazzy)
     runs-on: ubuntu-24.04
     permissions:
       contents: read
