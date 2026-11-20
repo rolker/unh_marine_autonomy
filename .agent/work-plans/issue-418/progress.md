@@ -501,3 +501,241 @@ None open.
 Asked "Merge pull request 421 into `rolling`?" with what merges, CI at `666b23b` (Jazzy 16 packages, 936 tests, 0 failures; Rolling 9 packages, 808 tests, 0 failures), the three review rounds with nothing open, the control-path statement (behaviour-neutral by argument and unit tests; no simulation run), what is not covered, and that issue 418 stays open with the `jazzy` backport done by hand. The owner answered: "Merge (Recommended)".
 
 In the same dialog he was shown the comment adding causes 10 and 11 and the Rolling warnings to issue 415 and asked whether to post it; he answered: "Post it (Recommended)".
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 11:18 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the plan holds Part 2 only as an outline, to be settled when the part starts; the owner said "yes" to starting Part 2 after being told this checkpoint would be answered revise)
+**After**: plan
+**Decision**: revise
+
+After the merge of pull request 421 (Part 1, into `rolling` at `38c29d6f`). The issue is still open because two parts remain and the base is not the default branch. Delivered: Part 1. Not delivered: Part 2 (the six store packages) and Part 3 (`bathymetry_layer`). The plan is unchanged since its last review, but it says Parts 2 and 3 are outlines settled when the part starts, and none of Part 2's packages has been compiled on Rolling, so `proceed` is not right. Since that review: Part 1 was backported to `jazzy` by hand (pull request 422, merged at `74b86371`), so both branches now carry the same workflow file; and Part 1 added two causes to issue 415 (10, GCC 15 template bodies in `gz4d_geo.h`; 11, system dependencies used but never declared, which the development machine hides).
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-11-20 11:40 -05:00
+**By**: Claude Code Agent (claude-sonnet-5-5)
+**Plan**: `.agent/work-plans/issue-418/plan.md` at `5b9b80b7`
+
+Revision after Part 1 merged (pull request 421, backported by pull request 422): Part 1 is marked delivered, Part 2 is written in full from a baseline build on `rolling` (only `marine_backscatter` fails at baseline; the downstream causes were found on a scratch copy and verified: 586 tests pass), with the per-package system-dependency audit (one gap, `sqlite3` to `libsqlite3-dev` in `marine_survey_index`), the CI steps including `geodesy` from a pinned clone in the Rolling job, and the control-path statement. Part 3 stays an outline.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-11-20 11:33 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: ready
+
+**Issue**: #418 — Port to ROS 2 Rolling, stage 1: the 15 packages with no unported dependency
+**Plan**: `.agent/work-plans/issue-418/plan.md` at `5b9b80b7`
+**Branch**: `feature/issue-418`
+
+Review of Part 2 (the six store packages), now written out in full. Part 1 is delivered and Part 3 stays an outline by design. The owner's settled rules are not findings: three parts with one pull request each, records carried in the pull request, one fix per commit, code and CI in separate commits, hand backport to `jazzy`, fixes that build on both distros, and no suppression flags.
+
+### Evaluation
+
+| Dimension | Verdict | Notes |
+|---|---|---|
+| Scope | Good | 3 code files in 3 packages, 1 manifest, the workflow, and `.agents/README.md`. About 10 commits. Three packages need no change, and the baseline shows it. |
+| Issue alignment | Good | Serves: "None (the project states no goals); keeping `rolling` the development trunk per `.agents/README.md`. No project design document." That is acceptable for a project with no stated goals. All six Part 2 packages are covered, and all three earlier Plan Review findings were resolved in Part 1. |
+| File targeting | Good | Every line range in steps 1, 3 and 5 matches the CMakeLists at `5b758a40`: backscatter 44-47, 66-68, 78, 85-87; sidescan 43-49, 53-63, 76-87, 93-97, 102-108, 115-119, 125, 133-135, 139, 151, 162-164; survey index 43-47, 49-63, 66-70, 109-110, 120. The tf2 includes are at `sidescan_mosaic_bag.cpp:66-67` and `survey_index_bag_main.cpp:66-67`. One header-comment line range is off by one (finding 3). |
+| Consequences | Good | Outside consumers (`cube_bathymetry`, `camp`, `enc_updater`) are named, and so is the new `marine_acoustic_msgs` export. The README table row is updated. `docs/sonar_ecosystem.md` needs no change, because no pipeline behaviour changes. |
+| Principle alignment | Good | The control-path statement is accurate: none of the six is in the helm chain, and the persist-before-evict rule is untouched. Baseline measured, not guessed. Tests are the packages' existing gtests, which is right for a build port. |
+| ADR compliance | Good | Project ADRs are not triggered. Workspace ADR-0013 records are on the branch. |
+| ROS conventions | Good | Exported-target forms and plain vs keyword `target_link_libraries` are kept per target (plain where `ament_add_gtest` or an existing plain call exists, `PUBLIC` on libraries that had no call). The `geodesy` variables form is right: geodesy exports no target, only `geoconv` through `ament_export_libraries`. One wording mismatch with the cited prior art (finding 1). |
+
+### Checked and found sound
+
+- **Jazzy `tf2/*.hpp` (read upstream, `ros2/geometry2` branch `jazzy`)**: `tf2/include/tf2/buffer_core.hpp`, `time.hpp` and `utils.hpp` all exist. On Jazzy, `buffer_core.h` is a shim that just includes `buffer_core.hpp`. Steps 2 and 4 build on Jazzy as written, so the `__has_include` fallback is not needed.
+- **`find_package(GDAL CONFIG)` on noble (read the Ubuntu noble `libgdal-dev` file list)**: it ships `/usr/lib/x86_64-linux-gnu/cmake/gdal/GDALConfig.cmake`, `GDALConfigVersion.cmake` and `GDAL-targets*.cmake`. The call resolves in the Jazzy job.
+- **Rolling CI platform**: the Rolling job of run 44765477864 (Part 1 merge) runs on Ubuntu resolute with `packages.ros.org/ros2-testing`, the same apt source as this machine. So the local `apt-cache` results stand for CI: `ros-rolling-geodesy` has no candidate, and `geographic-msgs`, `marine-acoustic-msgs`, `angles`, `unique-identifier-msgs`, `ament-cmake-gtest`, `rosbag2-storage-mcap`/`-sqlite3`, `tf2-msgs`, `python3-pyproj`, `python3-catkin-pkg` and `libsqlite3-dev` all have candidates.
+- **Step 9 against the workflow file**: the clone and `COLCON_IGNORE` step is the same as `marine_ais/.github/workflows/ci.yml:72-83`. The geodesy path comes from the source tree: `marine_sidescan_mosaic` and `marine_survey_index` depend on `geodesy`, so `colcon list --packages-up-to` puts `src/geographic_info/geodesy` in rosdep's paths. With the two `COLCON_IGNORE` files, `geographic_msgs` is not in the closure, and rosdep without `-r` resolves it to apt. That apt package is 1.0.7, and its `export_geographic_msgsExport.cmake` defines the `geographic_msgs::validation` target that geodesy's `geoconv` links. Every geodesy key has a candidate (above). Unlike marine_ais, the plan builds geodesy with `BUILD_TESTING` on. Its three gtests compile on Rolling: the underlay's `build/geodesy` has `geodesy_{ecef,geodesics,utm}_test` with `BUILD_TESTING:BOOL=ON`. One local-versus-CI difference remains: the underlay built geodesy against `geographic_msgs` from source, while CI builds it against the apt one. That is the same version, so the risk is small, and CI shows it.
+- **Step 8 (Jazzy job)**: `config/repos/underlay.repos` imports `geographic_info` at `ros2`, so `geodesy` comes from source and `--ignore-src` skips it. `marine_acoustic_msgs` and the rosbag2 storage plugins resolve on noble (`rosdep resolve --os ubuntu:noble --rosdistro jazzy`).
+- **Step 6, `sqlite3` key**: `rosdep resolve sqlite3` gives `sqlite3` on noble and resolute (the CLI), and `libsqlite3-dev` gives `libsqlite3-dev` on both. `ros-rolling-rosbag2-storage-sqlite3` depends on `libsqlite3-dev`, so CI cannot show the gap, as the plan says.
+- **System-dependency audit, rechecked independently**: I listed every `#include` top directory and non-ROS header in the six packages. The only non-ROS ones are GDAL/CPL and `nlohmann` (tiled_raster_store), plus `openssl` (bathymetry_store), `sqlite3.h` (survey_index) and libc/POSIX. No Boost, Eigen, PROJ, yaml-cpp or curl include appears in the four packages without GDAL. The subprocess tests run only the packages' own binaries through `/bin/sh` or `posix_spawn`. `marine_mbes_backscatter_store` and `marine_backscatter` use GDAL only through `marine_tiled_raster_store`. The audit table is right, and the one gap is `sqlite3`.
+- **Link closure of the dropped names**: `marine_survey_index_core` drops `geographic_msgs`, but it still gets it, because `marine_autonomy` links `${geographic_msgs_TARGETS}` `PUBLIC` (`marine_autonomy/CMakeLists.txt:32-39`). `survey_index_bag` uses `geodesics.h` only, which is header-only (`static` functions), and through `marine_sidescan_mosaic` it also needs `geoconv`. That library arrives through the `PUBLIC` link.
+
+### Findings
+
+1. **[ROS conventions]** (minor) — Step 3 says to use geodesy's variables "as `ais_layer` does". But `ais_layer` keeps `geoconv` (`${geodesy_LIBRARIES}`) out of its exported link interface on purpose (`ais_layer/CMakeLists.txt:37-44`). The plan makes it `PUBLIC` on the exported shared library `marine_sidescan_mosaic`. `PUBLIC` is defensible: it reproduces what the plain-signature `ament_target_dependencies` did, so it is behaviour-preserving. It is also needed by `test_projection`, which calls the non-inline `geodesy::fromMsg` (`ecef.h:123`, defined in `geoconv`), and by consumers that use `ecef.h`. Its cost is that the absolute path of `libgeoconv.a` is written into the exported targets file, and every consumer links its own copy. Resolution: keep `PUBLIC`, drop "as `ais_layer` does" for the link part, and add a one-line CMake comment saying why it is `PUBLIC`, unlike `ais_layer`.
+2. **[Issue alignment]** (minor) — Two open questions left to CI are now settled by reading upstream (see "Checked and found sound"). Jazzy's tf2 has `buffer_core.hpp` and `time.hpp`, and noble's `libgdal-dev` ships `GDALConfig.cmake`. Update the last two Open Questions and the notes in step 2 and the audit row for `marine_tiled_raster_store` to say so, with the sources. Drop the `__has_include` contingency.
+3. **[File targeting]** (nit) — Step 9 says the workflow header comment for the Rolling job is "lines 9 to 18". It is lines 10 to 19 (line 9 is the blank `#`).
+
+### Summary
+
+Part 2 is accurate where I could check it against source, upstream and apt: line ranges, link closures, the dependency audit, the sqlite key, and the geodesy clone in the Rolling job with its rosdep paths. The two Jazzy questions the plan left to CI resolve favourably by reading upstream. The findings are wording and record items. The plan is ready for implementation.
+
+### Recommended Actions
+
+- [ ] Reword step 3's `geodesy` sentence and add a CMake comment for the `PUBLIC` `geoconv` link (finding 1).
+- [ ] Mark the tf2 `.hpp` and `GDALConfig.cmake` Jazzy questions as settled, with their sources (finding 2).
+- [ ] Correct the header-comment line range in step 9 (finding 3).
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 11:34 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the Plan Review's verdict is ready; its three findings are two minor and one nit, each with its resolution stated, and none changes scope)
+**After**: plan
+**Decision**: proceed
+
+Read: `plan.md` at `5b9b80b7` and the Plan Review of it (verdict ready). Part 2 only is implemented now. The three findings go to the implementer as corrections: F1 in step 3 keep `geodesy`'s library `PUBLIC` on `marine_sidescan_mosaic`, do not say "as `ais_layer` does" for the link part, and add a one-line CMake comment saying why it is `PUBLIC`; F2 Jazzy's tf2 has `buffer_core.hpp` and `time.hpp`, and noble's `libgdal-dev` ships `GDALConfig.cmake`, so no `__has_include` fallback; F3 the Rolling job's header comment in the workflow is lines 10 to 19.
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-20 11:44 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Branch**: feature/issue-418 at `ba3dac9b`
+
+Part 2 (plan steps 1 to 10, with the Plan Review's F1 to F3 applied):
+- `marine_backscatter`: `ament_target_dependencies` to exported targets (cause 1), `47a2aaed`.
+- `marine_sidescan_mosaic`: `tf2/buffer_core.hpp`, `tf2/time.hpp` (cause 2), `c4c88f8e`; exported targets and geodesy's variables, `geoconv` `PUBLIC` with a comment saying why (causes 1 and 8, F1), `92ceb776`.
+- `marine_survey_index`: tf2 `.hpp` names (cause 2), `46e11984`; exported targets and geodesy's variables, geodesy `PRIVATE` to `survey_index_bag` (causes 1 and 8), `5e839eaf`; `sqlite3` key to `libsqlite3-dev` (cause 11), `fcbef84d`.
+- Step 7: no new cause found by the build and test runs.
+- CI: Jazzy job lists widened, `5bf4bed7`; Rolling job lists widened plus the pinned `geographic_info` clone at `f70b81a` with `COLCON_IGNORE`, header comment (lines 10 to 19, F3) updated, `c9db2b70`.
+- Docs: `.agents/README.md` table row and a geodesy note, `ba3dac9b`.
+
+Verification (Rolling only; Jazzy is CI's): clean `./build.sh --packages-up-to <six>` built 9 packages; `./test.sh --packages-select <six>`: `Summary: 1154 tests, 0 errors, 0 failures, 128 skipped`. Same 1154/0/0 with `env -i`, sourcing `/opt/ros/rolling/setup.bash` plus the underlay's `geographic_msgs` and `geodesy` package `local_setup.bash` only. A scratch copy of the Rolling job's workspace (this checkout, `marine_ais` at `rolling`, geographic_info at `f70b81a` with the two `COLCON_IGNORE` files) under `env -i` and `/opt/ros/rolling` only: build of 16 packages rc 0, `colcon test` of the 14 rc 0, `Summary: 1962 tests, 0 errors, 0 failures, 165 skipped`. `rosdep install --simulate --reinstall --ignore-src --rosdistro rolling` over that job's closure resolved every key (rc 0).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-11-20 11:53 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-418 at `a0e46a78`
+**Base**: origin/rolling
+**Depth**: Deep (reason: CI workflow change plus CMake link interfaces of six exported packages, 10 files, ~480 lines)
+**Must-fix**: 1 | **Suggestions**: 1
+**Round**: 1 | **Ship**: continue — round 1: 1 must-fix; first round always re-reviews after fixes
+
+Scope: Part 2 only (six store packages, CI widening for both jobs, docs). Code matches plan steps 1 to 10 with no drift. Local Rolling rebuild of the six: built; `./test.sh --packages-select <the six>`: `Summary: 1087 tests, 1 error, 1 failure, 128 skipped`, both from `marine_tiled_raster_store` `test_export_geotiff` (heap corruption, see finding 1); the other five packages 0 failures. Jazzy not verified locally (no install); `tf2/buffer_core.hpp`, `tf2/time.hpp` and the `rosbag2_cpp`, `rosbag2_storage`, `tf2`, `tf2_ros` exported targets were confirmed in upstream jazzy sources. Manifests checked against sources: no undeclared system dependency; `libsqlite3-dev` fix confirmed (no `sqlite3` CLI use). Rolling CI geodesy steps checked: git installed, clone precedes COLCON_IGNORE and `colcon list`, both ignored folders exist at `f70b81a`, every geodesy key resolves on resolute, released `ros-rolling-geographic-msgs` 1.0.7 exports `geographic_msgs::validation` that geoconv links. Gemini and Codex: completed, suggestions only, none kept (pre-existing behaviour or checked and not a problem). yamllint not installed here; the workflow parses as YAML; xmllint clean.
+
+### Findings
+- [x] (must-fix) `ExportOutput.ConcurrentExportsToOneOutputDoNotCollide` crashes intermittently (`free(): unaligned chunk detected in tcache 2` / SIGSEGV; 2 of 10 isolated runs, and in the full test.sh run), and this branch now adds `marine_tiled_raster_store`'s tests to both CI jobs, so CI will flake; package unchanged by this branch, so pre-existing heap corruption in concurrent `exportGeoTiff` (four threads, one output). Needs an owner decision: root-cause and fix in its own commit, or a separate issue plus a stated CI plan, before push — `marine_tiled_raster_store/test/test_export_geotiff.cpp:1542`
+- [x] (suggestion) Workflow comment says geodesy's tests are built because "BUILD_TESTING is not per package"; marine_ais's CI does it per package with a separate `colcon build --packages-select geodesy --cmake-args -DBUILD_TESTING=OFF` step. Reword the comment, or use that two-step build — `.github/workflows/ros-base-docker.yml:125-127`
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-20 12:35 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+
+**Branch**: feature/issue-418 at `ac273079`
+**Addressed**: Local Review (Pre-Push) at `a0e46a78` (2026-11-20 11:53 -05:00)
+**Commits**: `775f8b62` (code), `574b6cd9` (CI), `cc6510cc` (test), `ac273079` (test)
+
+Owner decision on finding 1, asked "Fix this crash inside Part 2, as its own commit that is also backported to `jazzy`?": "Fix in Part 2 (Recommended)".
+
+### Actions
+- [x] (must-fix) Concurrent export crash — `marine_tiled_raster_store/src/{tile_io,export_geotiff}.cpp`, new `src/gdal_registration.hpp`. Cause confirmed: the store called `GDALAllRegister()` on every export and tile load/save/band count, and with GDAL 3.12.2 concurrent calls race in `GDALDriverManager::AutoLoadDrivers` (a new cause for tracking issue #415). The four calls now go through `ensureGdalRegistered()`, a function-local static that runs `GDALAllRegister()` once per process, thread-safely; one `u` symbol shared by both translation units (checked with `nm`). No CMake or public header change. Behaviour change, documented in the helper and the package README's Dependencies: drivers are registered once per process, so a host that calls `GDALDestroyDriverManager()` must call `GDALAllRegister()` itself before using the store again. This store is not in the helm chain. Evidence: `--gtest_filter=ExportOutput.ConcurrentExportsToOneOutputDoNotCollide` as 200 separate processes, 17 of 200 failed on the unfixed build (aborts and segfaults), 0 of 200 after the fix and 0 of 200 again at `ac273079`. ThreadSanitizer builds in the scratchpad: unfixed source reported races in `AutoLoadDrivers` in 8 of 10 runs; fixed, 0 of 20 runs of that test, and the whole `test_export_geotiff` binary (68 tests) reported only the test handler's errno warning, fixed in `ac273079`, after which it is clean. ASan not run by me. Other `GDALAllRegister` per-call sites: `marine_bathymetry_store` `src/geotiff_import.cpp:88`, `src/s102/catalog.cpp:144`, `src/s102/convert.cpp:87`, `src/import_geotiff_main.cpp:194` (CLI `main`); that package documents itself as single-threaded (`tile_io.hpp:172`) and promises no concurrent use, so not the same defect and left unchanged. Test-file calls run on the main thread outside the concurrent windows.
+- [x] (suggestion) geodesy tests comment — `.github/workflows/ros-base-docker.yml:125-129`. Reworded rather than switched to marine_ais's two-step build: keeps one build step (no second `colcon build` and `--packages-skip`) for a few seconds of geodesy test compilation; the comment now says the one step's BUILD_TESTING covers every package in it and points at marine_ais's alternative.
+- [x] (robustness, from the diagnosis) `Raster::at` in `test_export_geotiff.cpp` now uses bounds-checked `.at()`, so an output `readRaster` could not read fails the test with `std::out_of_range` instead of segfaulting; covers every caller, not only line 1571. Test-only.
+- [x] (robustness) `onTestHup` saves and restores `errno`. TSan "signal handler spoils errno" in `SignalDuringTheRenameReportsTheOutputReplaced`: 20 of 20 runs before, 0 of 20 after. Test-only.
+- [x] (robustness, not done) `Store`'s fixed `TempDir()/mtrs_export_<name>` path lets two concurrent processes clobber each other. Reported only: the same pattern is in `test_tile_io.cpp:47` and `test_coverage_manifest.cpp:55`, so a fix is a convention change across fixtures, not one line; CI runs each binary once.
+
+Verification (Rolling only; Jazzy is CI's): `./build.sh --packages-up-to <six>`: `Summary: 9 packages finished`; `./test.sh --packages-select <six>`: `Summary: 1158 tests, 0 errors, 0 failures, 129 skipped` (was 1154 / 128: the new header adds cpplint, uncrustify, copyright and a skipped cppcheck case, as every file here). Jazzy (GCC 13, GDAL 3.8) not verified; the forms used (C++11 function-local static, `<gdal.h>`'s `GDALAllRegister`, `std::vector::at`, `<cerrno>`) are long-standing. The four commits are independent for the backport.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-11-20 12:51 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: changes-requested
+**Dispatch**: resumed (agent ad745993e02d7ebf9, resume 1 of 3)
+
+**Branch**: feature/issue-418 at `7a63128e`
+**Base**: origin/rolling
+**Depth**: Deep (reason: whole-diff classification as round 1, CI workflow plus exported link interfaces, now 15 files; fix-round rule, not lowered)
+**Must-fix**: 1 | **Suggestions**: 0
+**Round**: 2 | **Ship**: continue — round 2: 1 must-fix include a design/correctness concern (not mechanical)
+
+Round 1 findings: both resolved. (1) Concurrent export crash: `775f8b62` is sound. `ensureGdalRegistered()` is an `inline` function with external linkage, so its local static is one object across TUs by the standard ([dcl.inline]); `nm` on both objects and on `libmarine_tiled_raster_store.so` shows one `u` (STB_GNU_UNIQUE) `registered` and one guard, the same ABI on GCC 13. Nothing in the repository calls `GDALDestroyDriverManager`; the remaining `GDALAllRegister()` calls in `test_export_geotiff.cpp` (195, 949, 994, 1410) run on the main thread outside the concurrent test. README sentence is accurate (once per process; a host that destroys the driver manager must re-register). My count: `ExportOutput.ConcurrentExportsToOneOutputDoNotCollide` 0 of 200 separate processes failed (round 1: 2 of 10). (2) geodesy comment reworded truthfully (`574b6cd9`). `cc6510cc` and `ac273079` are test-only and correct. Known and left by the owner: `marine_bathymetry_store`'s own per-operation `GDALAllRegister()` calls can still race with the store's one call in a multi-threaded host that uses both (Codex raised it as must-fix; not kept, the owner-accepted scope and that package's single-threaded contract). `./test.sh --packages-select <six>`: `Summary: 1158 tests, 0 errors, 0 failures, 129 skipped`. Gemini and Codex completed; nothing else kept.
+
+### Findings
+- [x] (must-fix) The CLI's signal guarantees assume a single-threaded process, but `TerminationSignalsBlocked` blocks with `pthread_sigmask`, which is per thread, and the `export_geotiff` process has about 20 threads created at library load by GDAL's dependency chain (strace: `clone3` before `main`'s work; linked `libgomp`, `libblosc`, HDF5, netCDF). A process-directed SIGINT/SIGTERM is delivered to an unblocked worker, which runs `onTerminationSignal` inside the "blocked" windows: traced failure shows `openat(...export.tif.tmp.CMOAw9, O_CREAT|O_EXCL)` in the main thread, `kill(SIGINT)`, handler run on worker thread 975845 before registration, so the temporary file is left behind. The same mechanism breaks the rename window (a signal between `rename` and `g_outputs_replaced` reports "nothing written" over a replaced output, and can stop before stale sidecars are removed). Pre-existing, not caused by the fix commits, but this branch adds the package's tests to both CI jobs: `ExportCli.InterruptRemovesTheTemporaryFile` failed 1 of 100 and 1 of 300 isolated runs here (and 1 of 10, 1 of 30 full-binary runs). Needs an owner decision as in round 1: fix in Part 2 (e.g. block the three signals process-wide before any thread exists, or handle them on a dedicated `sigwait` thread), or a separate issue plus a stated CI plan — `marine_tiled_raster_store/src/export_geotiff.cpp:274`, `:1273` (deferred: owner, 2026-11-20: "Separate issue, test stays on (Recommended)"; fixed under its own issue, the test keeps running in CI)
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-20 12:56 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent a2e724d2a1fba334c, resume 1 of 3)
+
+**Branch**: feature/issue-418 at `7a63128e`
+**Addressed**: Local Review (Pre-Push) at `7a63128e` (2026-11-20 12:51 -05:00)
+**Commits**: `e25f0205` (records only: the deferral)
+
+Owner decision on the one must-fix, asked "Where should the signal-handling defect be fixed?": "Separate issue, test stays on (Recommended)". The host drafts that issue for his approval.
+
+### Actions
+- [x] (must-fix) `export_geotiff` CLI signal handling assumes a single-threaded process (`TerminationSignalsBlocked` uses per-thread `pthread_sigmask` while GDAL's dependencies start worker threads) — `marine_tiled_raster_store/src/export_geotiff.cpp:274`, `:1273` (deferred: owner, 2026-11-20: "Separate issue, test stays on (Recommended)"; fixed under its own issue, the test keeps running in CI)
+
+No code, test or CI changed in this pass: the fix is a design change to the signal handling, it predates this branch, and the owner moved it to its own issue. The test is not skipped, disabled, retried or excluded anywhere. The pull request must state the known intermittent failure of `ExportCli.InterruptRemovesTheTemporaryFile`: about 1 run in 100 on Ubuntu 26.04 (reviewer: 1 of 100 and 1 of 300 isolated runs); the rate in CI's containers and on Jazzy is unknown; a re-run clears it. Code head unchanged at `ac273079`, so the round-2 build and test results stand (`Summary: 1158 tests, 0 errors, 0 failures, 129 skipped`); nothing was rebuilt.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-11-20 12:56 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: approved
+**Dispatch**: resumed (agent ad745993e02d7ebf9, resume 2 of 3)
+
+**Branch**: feature/issue-418 at `8593bb2e`
+**Base**: origin/rolling
+**Depth**: Deep (reason: round 3 convergence check per handoff)
+**Must-fix**: 0 | **Suggestions**: 0
+**Round**: 3 | **Ship**: recommended — no must-fix findings; remaining suggestions can be applied or tracked
+
+Convergence check on round 2's one finding and the diff since `7a63128e`. Cross-model: skipped (round-3 convergence check, per handoff). `git diff --stat 7a63128e..HEAD`: only `.agent/work-plans/issue-418/progress.md` (`e25f0205`, `8593bb2e`); no code, test or CI change since `ac273079`, so round 2's build and test results stand (`Summary: 1158 tests, 0 errors, 0 failures, 129 skipped`). `ExportCli.InterruptRemovesTheTemporaryFile` (`marine_tiled_raster_store/test/test_export_geotiff.cpp:2132`) is not skipped, disabled or excluded: no `DISABLED_`/`GTEST_SKIP` in the file, no filter in its CMakeLists, and the workflow's `colcon test` selects the package with no exclusion. Round 2's must-fix (CLI signal handling assumes a single-threaded process, `export_geotiff.cpp:274`, `:1273`) was deferred by the owner to its own issue ("Separate issue, test stays on (Recommended)"; the host is drafting that issue, not yet numbered): settled for this pull request, which must state the known intermittent failure (about 1 run in 100 here; CI and Jazzy rates unknown; a re-run clears it). Round 1's findings stay resolved. Nothing else is open.
+
+### Findings
+- [ ] No issues found. LGTM.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 12:58 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the round 3 pre-push review approved with nothing open; the one finding left was deferred by the owner to its own issue; Jazzy can only be checked by CI on the pushed branch)
+**After**: publish
+**Decision**: publish
+
+Read: the Local Review (Pre-Push) at `8593bb2e`, round 3, verdict approved, ship recommended, no finding. Round 2's must-fix (the `export_geotiff` CLI's signal handling assumes a single-threaded process) was deferred by the owner ("Separate issue, test stays on (Recommended)") and is now rolker/unh_marine_autonomy#423, opened on his "Open it (Recommended)". The pull request says `Part of #418` and states the known intermittent failure of `ExportCli.InterruptRemovesTheTemporaryFile`. This is a project issue, so the host runs no full pre-commit pass.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-11-20 13:10 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+
+**PR**: #424 at `d9f78b2`
+**Sources**: 6 (Local Review (Pre-Push) R1 @ `a0e46a78`, R2 @ `7a63128e`, R3 @ `8593bb2e` (covers `d9f78b2` via bookkeeping); Gemini and Codex via the R2 pre-push review @ `7a63128e`; CI rollup @ `d9f78b2`. GitHub: 0 reviews, 0 inline comments, 0 conversation comments, no Copilot review)
+**Cross-source confirmations**: 0
+**CI**: all-pass
+
+Scope: Part 2 only (pull request 424); entries up to Part 1's merge checkpoint belong to pull request 421. `review_progress.sh sources` at `d9f78b2`: no open local findings, no dropped entries, no GitHub comments, no candidates. Round 1's must-fix (concurrent-export crash, fixed in `775f8b62`) and suggestion (geodesy comment, `574b6cd9`) are closed; round 2's must-fix (`export_geotiff` CLI signal handling assumes a single-threaded process, `marine_tiled_raster_store/src/export_geotiff.cpp:274`, `:1273`) was deferred by the owner to rolker/unh_marine_autonomy#423 with the test left running; round 3 approved with nothing open. Code unchanged since `ac273079`; `git diff 8593bb2e..d9f78b2` touches only this issue's progress.md.
+
+CI, run 44788371968, both jobs at `d9f78b2`: `build-and-test (jazzy)` pass in 9m22s (build `Summary: 23 packages finished [5min 8s]`; `colcon test-result`: `Summary: 2094 tests, 0 errors, 0 failures, 176 skipped`); `build-and-test (rolling)` pass in 5m43s (build `Summary: 16 packages finished [2min 23s]`; `Summary: 1966 tests, 0 errors, 0 failures, 176 skipped`). First Jazzy check of the six store packages and first CI run of their tests on either distro. `ExportCli.InterruptRemovesTheTemporaryFile` ran and passed on both (299 ms Jazzy, 191 ms Rolling); its intermittent failure stays tracked in #423.
+
+Outside reviewers: Gemini and Codex ran in rounds 1 and 2 (completed); round 2's reviewer kept none of their findings, and the rulings are recorded below. Round 3 skipped them (convergence check). Copilot: no review and no check-run on the pull request.
+
+### Findings
+- [x] No open findings. Ready for the merge decision.
+
+### False positives
+- (Codex R2, must-fix) `marine_bathymetry_store`'s direct `GDALAllRegister()` (`src/geotiff_import.cpp:88`) can race with the raster store's one-time registration in a host that uses both concurrently — not a defect of this pull request: `marine_bathymetry_store` documents itself as single-threaded (`tile_io.hpp:172`), no node in the repository runs both libraries concurrently, and the round 2 pre-push review records this as known and left by the owner's accepted scope.
+- (Codex R2, suggestion) A host that calls `GDALDestroyDriverManager()` no longer gets drivers re-registered — nothing in the repository calls `GDALDestroyDriverManager` (checked in round 2), and the README's Dependencies section states the host's obligation; a documented contract change with no caller that can hit it.
+- (Codex R2, suggestion) CI runs tests as root, so permission-failure tests skip — a coverage note, not a defect in the change: those tests run and pass in the non-root local runs (`./test.sh` round 2: 1158 tests, 0 failures), and running the CI test step unprivileged is a workflow change outside this port's scope.
+- (Gemini R2, suggestion) `marine_sidescan_mosaic/CMakeLists.txt:47-51` puts `${geodesy_INCLUDE_DIRS}` / `${geodesy_LIBRARIES}` on a `PUBLIC` exported target, baking absolute paths — this reproduces what `ament_target_dependencies` exported before (the CMake comment says so), geodesy exports no target to use instead, and released builds resolve it under `/opt/ros`, where the path is the install path itself; the workspace-clone path exists only in the Rolling CI container, which is never relocated.
+- (Gemini R2, suggestion) `marine_survey_index/CMakeLists.txt:43` uses the plain `target_link_libraries` signature — the line was plain-signature before this change too (`SQLite::SQLite3` alone, plus `ament_target_dependencies`, itself plain), no keyword call on `_core` follows, and its public headers are linked by the same consumers as before, so no new failure mode.
+- (Gemini R2, suggestion) `ensureGdalRegistered()` as `inline` could duplicate guards across DSOs under static linking with hidden visibility — the library is built shared (ament default, no visibility flags), and round 2 confirmed one `u` (STB_GNU_UNIQUE) symbol in `libmarine_tiled_raster_store.so`.
+- (Gemini R2, suggestion) `Raster::at` in `test_export_geotiff.cpp:187-190` checks only the flattened index — the helper is test-only and its guard targets the empty-`data` case (an output `readRaster` could not read), which it catches; every caller indexes within the raster's own width and height, so the wrapping case cannot be reached by the tests.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 13:17 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: owner
+**After**: merge
+**Decision**: merge
+
+Asked "Merge pull request 424 into `rolling`?" with what merges, CI at `d9f78b2` (Jazzy 23 packages, 2094 tests, 0 failures; Rolling 16 packages, 1966 tests, 0 failures), the three review rounds, the accepted behaviour change (GDAL drivers registered once per process), what is known and left in (the intermittent `ExportCli.InterruptRemovesTheTemporaryFile`, issue 423; `marine_bathymetry_store`'s per-call registration; consumers not rebuilt), and that issue 418 stays open for Part 3. The owner answered: "Merge (Recommended)".
+
+In the same dialog he approved a comment on issue 415 adding cause 12 and Part 2's notes ("Post it (Recommended)"), and the `jazzy` backport pull request right after the merge ("Yes, backport right after (Recommended)"); the backport's own merge is still asked of him.
+
+Before this checkpoint the host ticked the Integrated Review's only box, "No open findings. Ready for the merge decision.", with `review_progress.sh check`: it is a statement, not a finding, and unchecked it routed to the findings checkpoint.

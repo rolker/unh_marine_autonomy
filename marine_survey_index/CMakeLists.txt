@@ -40,34 +40,30 @@ target_include_directories(${PROJECT_NAME}_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(${PROJECT_NAME}_core SQLite::SQLite3)
-ament_target_dependencies(${PROJECT_NAME}_core
-  marine_autonomy
-  geographic_msgs
-)
+target_link_libraries(${PROJECT_NAME}_core SQLite::SQLite3 marine_autonomy::marine_autonomy)
 
 add_executable(survey_index_bag src/survey_index_bag_main.cpp)
-target_link_libraries(survey_index_bag ${PROJECT_NAME}_core)
-ament_target_dependencies(survey_index_bag
-  rclcpp
-  marine_acoustic_msgs
-  sensor_msgs
-  geodesy
-  tf2
-  tf2_msgs
-  geometry_msgs
-  builtin_interfaces
-  marine_sidescan_mosaic
-  rosbag2_cpp
-  rosbag2_storage
+# geodesy exports no CMake target, so use its variables; only this
+# executable's source includes it.
+target_include_directories(survey_index_bag PRIVATE ${geodesy_INCLUDE_DIRS})
+target_link_libraries(survey_index_bag
+  ${PROJECT_NAME}_core
+  rclcpp::rclcpp
+  ${geographic_msgs_TARGETS}
+  ${marine_acoustic_msgs_TARGETS}
+  ${sensor_msgs_TARGETS}
+  ${geodesy_LIBRARIES}
+  tf2::tf2
+  ${tf2_msgs_TARGETS}
+  ${geometry_msgs_TARGETS}
+  ${builtin_interfaces_TARGETS}
+  marine_sidescan_mosaic::marine_sidescan_mosaic
+  rosbag2_cpp::rosbag2_cpp
+  rosbag2_storage::rosbag2_storage
 )
 
 add_executable(survey_index_query src/survey_index_query_main.cpp)
 target_link_libraries(survey_index_query ${PROJECT_NAME}_core)
-ament_target_dependencies(survey_index_query
-  marine_autonomy
-  geographic_msgs
-)
 
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS ${PROJECT_NAME}_core
@@ -106,8 +102,11 @@ if(BUILD_TESTING)
   # Runs the real indexer binary: its exit-status contract lives in main(),
   # where no library call can reach it.
   ament_add_gtest(test_indexer_exit_status test/test_indexer_exit_status.cpp)
-  target_link_libraries(test_indexer_exit_status ${PROJECT_NAME}_core)
-  ament_target_dependencies(test_indexer_exit_status rosbag2_cpp rosbag2_storage)
+  target_link_libraries(test_indexer_exit_status
+    ${PROJECT_NAME}_core
+    rosbag2_cpp::rosbag2_cpp
+    rosbag2_storage::rosbag2_storage
+  )
   target_compile_definitions(test_indexer_exit_status PRIVATE
     SURVEY_INDEX_BAG_EXE=\"$<TARGET_FILE:survey_index_bag>\")
   # $<TARGET_FILE:> expands to a path, not a dependency: without this the test

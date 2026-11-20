@@ -41,9 +41,9 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>"
 )
-ament_target_dependencies(${PROJECT_NAME}
-  marine_autonomy
-  marine_tiled_raster_store
+target_link_libraries(${PROJECT_NAME} PUBLIC
+  marine_autonomy::marine_autonomy
+  marine_tiled_raster_store::marine_tiled_raster_store
 )
 
 install(DIRECTORY include/ DESTINATION include)
@@ -63,9 +63,7 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
 
   ament_add_gtest(test_processed_accumulator test/test_processed_accumulator.cpp)
-  target_link_libraries(test_processed_accumulator ${PROJECT_NAME})
-  ament_target_dependencies(test_processed_accumulator
-    geographic_msgs marine_autonomy marine_tiled_raster_store)
+  target_link_libraries(test_processed_accumulator ${PROJECT_NAME} ${geographic_msgs_TARGETS})
 
   ament_add_gtest(test_quality test/test_quality.cpp)
   target_link_libraries(test_quality ${PROJECT_NAME})
@@ -75,16 +73,13 @@ if(BUILD_TESTING)
   # module's own metres-per-degree helper.
   ament_add_gtest(test_seabed_geometry test/test_seabed_geometry.cpp)
   target_link_libraries(test_seabed_geometry ${PROJECT_NAME})
-  ament_target_dependencies(test_seabed_geometry marine_autonomy)
 
   # DEM reader over synthetic bathy value tiles (#297, moved here in #304).
   # Fixtures are written with marine_tiled_raster_store::saveTile<double> — NOT
   # marine_bathymetry_store's writer, which would add a test-only package
   # dependency cutting against ADR-0006 D9's decoupling.
   ament_add_gtest(test_bathy_dem test/test_bathy_dem.cpp)
-  target_link_libraries(test_bathy_dem ${PROJECT_NAME})
-  ament_target_dependencies(test_bathy_dem
-    geographic_msgs marine_autonomy marine_tiled_raster_store)
+  target_link_libraries(test_bathy_dem ${PROJECT_NAME} ${geographic_msgs_TARGETS})
 endif()
 
 ament_package()

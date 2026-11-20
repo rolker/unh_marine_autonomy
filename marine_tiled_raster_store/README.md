@@ -321,6 +321,10 @@ square box needs far less, e.g. about 130 MB per band plus the fixed part for
 
 - `marine_autonomy` — the GGGS spatial index (`gggs::Level` / `GridIndex`).
 - GDAL — GeoTIFF persistence and the export writer (private; in `tile_io.cpp`
-  and `export_geotiff.cpp` only).
+  and `export_geotiff.cpp` only). The store registers GDAL's drivers once per
+  process (`src/gdal_registration.hpp`), since `GDALAllRegister()` is not safe
+  to call from several threads at once; a host that calls
+  `GDALDestroyDriverManager()` must call `GDALAllRegister()` itself, from one
+  thread, before it uses the store again.
 - `nlohmann_json` — the coverage manifest and the export's registry read
   (private; in `coverage_manifest.cpp` and `export_geotiff.cpp` only).
