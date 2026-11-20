@@ -831,3 +831,23 @@ Part 3 (`bathymetry_layer`), plan steps 1 to 3 and 7 to 9 with the Plan Review's
 Plan correction (F1), measured: with the helper temporarily declaring the bare name, `test_bathymetry_layer` failed 3 of 34 cases: the two new ones and, indirectly, the existing `MapTideZReadFromMapFrameNotGlobalFrame` (the undeclared `enabled` read fails, `enabled_` stays at Nav2 `Layer`'s default `false`, so `updateBounds` does nothing). So no existing case checks that an override is read; one fails on a name mismatch only by that accident. Restored: 34 of 34 passed.
 
 Verification (Rolling, this machine, by hand; navigation2 `dcffa939` in the Rolling underlay): after `rm -rf core_ws/build core_ws/install core_ws/log`, `./build.sh --packages-up-to bathymetry_layer`: `Summary: 6 packages finished`; `./test.sh --packages-select bathymetry_layer`: `Summary: 57 tests, 0 errors, 0 failures, 4 skipped`. Only warning from this package: `BUFFER_HEADER_DEPRECATION` (test, left). `env -i`, sourcing `/opt/ros/rolling` and the underlay only, `colcon test --packages-select bathymetry_layer`: 57 / 0 / 0 / 4. Separate-process runs at `55e2b0f5`: `test_bathymetry_layer` 100 of 100, `test_plugin_loading` 100 of 100 (and 100 / 100 each before the CI and docs commits). `rosdep install --simulate --reinstall --ignore-src --rosdistro jazzy --os ubuntu:noble` over the Jazzy job's widened closure (24 packages, rolling pins applied): rc 0, every key resolved (`ros-jazzy-nav2-costmap-2d`, `ros-jazzy-nav2-util` among them). Jazzy not built or tested here (not installed); CI is the only Jazzy check. Part 1 and Part 2 packages not re-run: nothing they depend on changed. No simulation was run.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-11-20 14:04 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: approved
+
+**Branch**: feature/issue-418 at `16d55076`
+**Base**: origin/rolling
+**Depth**: Standard (reason: CI workflow and .repos changes plus a safety-relevant costmap layer; 8 files, +351 -127 including work-plan records)
+**Must-fix**: 0 | **Suggestions**: 3
+**Round**: 1 | **Ship**: recommended — no must-fix findings; remaining suggestions can be applied or tracked
+
+Parameter check: all 13 parameters (enabled, store_path, minimum_depth, maximum_caution_depth, confidence_gate, max_uncertainty, unsurveyed_is_lethal, map_tide_frame, map_frame, buffer_fraction, tide_invalidate_threshold, update_timeout, ready_radius) keep the same name, default, type and read-back: the declare/get_parameter call sites are byte-identical to origin/rolling; only the local helper was added. The helper matches Jazzy's Layer::declareParameter (layer.cpp@jazzy:76-87: has_parameter then declare_parameter on getFullName) except the local_params_ insert, which nothing in navigation2 jazzy reads.
+Verified: build clean; ./test.sh --packages-select bathymetry_layer: 57 tests, 0 errors, 0 failures, 4 skipped; test_bathymetry_layer 150/150 and test_plugin_loading 150/150 separate runs pass; the two new cases 300/300 with --gtest_repeat. Jazzy not verifiable locally (sources read only; CI not yet run). Cross-model: Gemini and Codex completed; Gemini's null-node must-fix dropped (Layer::initialize@jazzy dereferences the locked node before onInitialize), its two .repos/CI notes dropped (Rolling job already clones marine_ais at rolling; jazzy job builds only marine_ais_msgs, which differs from jazzy only in tag order). Copilot CLI not dispatched (dropped as a reviewer, #344).
+
+### Findings
+- [ ] (suggestion) Override test checks the read-back of only 5 of 13 parameters (the other 8 only as declared names), so a mistyped `get_parameter(name_ + ".x")` for e.g. map_frame, ready_radius or store_path would go unnoticed; all tests also use the one layer name `bathymetry_layer`, so a hard-coded prefix would pass — override all 13 with non-default values under a different layer name — `bathymetry_layer/test/test_bathymetry_layer.cpp:974`
+- [ ] (suggestion) State the geodesy floor that `geodesy/ecef.h` needs, as ais_layer does (`<depend version_gte="1.0.7">` and `find_package(geodesy 1.0.7 REQUIRED)`); Jazzy's apt geodesy 1.0.6 lacks the header, so a plain Jazzy install fails with a missing-header error instead of a version message — `bathymetry_layer/package.xml:17`
+- [ ] (suggestion) The Rolling hand-check paragraph names a source-built navigation2 as the prerequisite but not geodesy (no Rolling apt package, needs ecef.h) — `.agents/README.md:148`
