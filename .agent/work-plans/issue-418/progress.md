@@ -757,3 +757,42 @@ After the merge of pull request 424 (Part 2, into `rolling` at `1b4ccb3b`). The 
 **Plan**: `.agent/work-plans/issue-418/plan.md` at `1fa59ae6`
 
 Revision: Parts 1 and 2 marked delivered (pull requests 421 and 424, backports 422 and 425); Part 3 (`bathymetry_layer`) written out from a baseline build on `rolling` at `1b4ccb3b`. Baseline: fails at `ament_target_dependencies` (cause 1); a scratch copy then showed `declareParameter` (cause 6) and a test include of `nav2_util/lifecycle_node.hpp` (new, proposed cause 13), and then 55 tests passing, 300 and 200 repeat runs without failure. Cause 7 does not apply (no subscription), a `test_initialize` is not needed (existing tests call `initialize()`), no undeclared system dependency, no GDAL registration or threading change needed. Steps: CMake (causes 1 and 8), helper (cause 6), test header, Jazzy CI, docs, `core.repos` pins (not backported). Pull request body: `Part of #418`.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-11-20 13:48 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: needs-work
+
+**Issue**: #418 — Port to ROS 2 Rolling, stage 1: the 15 packages with no unported dependency
+**Plan**: `.agent/work-plans/issue-418/plan.md` at `1fa59ae6`
+**Branch**: `feature/issue-418`
+
+Scope of this review: Part 3 (`bathymetry_layer`, the `core.repos` pins, the Jazzy job, the docs). Parts 1 and 2 are delivered and were not re-reviewed. The owner's settled rules (one pull request per part, hand backport, Nav2 checked on Rolling by hand only, no suppression flags) are not findings. Jazzy facts below were read from navigation2 `jazzy` on GitHub (tarball of the branch) and rosdistro `jazzy/distribution.yaml`; nothing was built on Jazzy. The baseline build was not re-run.
+
+### Evaluation
+
+| Dimension | Verdict | Notes |
+|---|---|---|
+| Scope | Good | One package, 3 code commits, CI, docs, pins; fits one pull request. |
+| Issue alignment | Needs work | `Serves`: "None (the project states no goals); keeping `rolling` the development trunk per `.agents/README.md`. No project design document." Accepted (project states no goals). The issue (line 33) and #415 ask for a test of `initialize()` as `ais_layer` has; the plan declines it, and the part it drops is the one that checks the new helper (finding 1). |
+| File targeting | Good | The six files are the right ones; `package.xml` rightly unchanged. If finding 1 is taken, the test goes into the existing `test/test_bathymetry_layer.cpp`, no new file. |
+| Consequences | Good | Pins' effect on the Jazzy job checked (claim 7 below); backport list excludes the pins; docs wording for the backport handled. |
+| Principle alignment | Needs work | "Test what breaks": step 2 rewrites how all 13 parameters are declared on the planning path, and no test fails if the helper declares under the wrong name (finding 1). |
+| ADR compliance | Good | No project ADR triggered; ADR-0013 records carried. |
+| ROS conventions | Good | Parameter names `<layer>.<param>` and declare-if-absent unchanged; `__has_include` alias correct on both distros; keyword `target_link_libraries` form correct. |
+
+### Findings
+
+1. **[Principle alignment / Issue alignment]** (should fix before implementation) — The plan's step 4 says `TideFrameTest` covers the parameter path the new helper replaces, and the control-path paragraph says a name mismatch "would show" in those tests because they pre-declare `bathymetry_layer.*` names. That is only half true. `TideFrameTest` (`test/test_bathymetry_layer.cpp:810-940`) does run `initialize()` and does exercise the `has_parameter`-true branch (without the guard, re-declaring a pre-declared name would throw). But it never checks the declare branch: no test passes a value through `parameter_overrides` (the YAML path, applied at declare time), and none asserts `node->has_parameter("bathymetry_layer.<name>")` after `initialize()`. Because the pre-declared names are read back with `node->get_parameter(name_ + ".x", var)`, which returns false and leaves the member default on an undeclared name, a helper that declared `param` instead of `getFullName(param)` would pass all 32 cases while every operator override of `minimum_depth`, `maximum_caution_depth`, `unsurveyed_is_lethal`, `store_path`, ... was silently ignored on the boat. That is exactly the case `ais_layer/test/test_initialize.cpp` `ReadsParameterOverrides` covers (`options.parameter_overrides(...)`, `EXPECT_TRUE(node->has_parameter("ais.max_age_class_b"))`), and the case the issue's line 33 points at. Resolution: add one or two `TEST_F(TideFrameTest, ...)` cases to the existing file (no new file, no isolated gtest needed since there is no graph check): build the `TestLifecycleNode` with `rclcpp::NodeOptions().parameter_overrides({{"bathymetry_layer.confidence_gate", 1.25}, ...})` and no pre-declare, call `initialize()`, assert the layer read the override (`getConfidenceGate()` already exists) and that all 13 `bathymetry_layer.*` names are declared on the node. It runs on Rolling locally and on Jazzy in CI. Commit it before step 2 (it passes on Jazzy's `Layer::declareParameter`) or with it, and correct the control-path sentence about what the existing tests would show.
+2. **[Consequences]** (minor) — The threading paragraph is right for this layer and its store (per-instance `std::unique_ptr<BathymetryStore> store_`; the only statics reachable are immutable `static const`/`constexpr` values and `ensureGdalRegistered()`'s function-local static), but "no open question arises" holds only within this repository's code. The once-per-process guard covers callers that go through it; another plugin loaded into the same costmap process that calls `GDALAllRegister()` itself on another thread would still race it (the guard's own comment in `marine_tiled_raster_store/src/gdal_registration.hpp` says so). In this workspace `s57_layer` does not (it reaches charts over services; `marine_charts::S57Catalog`'s `GDALAllRegister()` is not loaded into the costmap), so nothing to fix now; say in the pull request that the guarantee is per process and assumes no co-loaded plugin registers GDAL directly.
+
+### Summary
+
+Six of the seven load-bearing claims check out (helper equivalent to Jazzy's `declareParameter`; cause 7 not applicable; `__has_include` alias right on both distros; CMake form sound; pins sound on the Jazzy job; GDAL/threading sound within the repo). The plan is not ready only because it declines the `initialize()` test on the grounds that existing tests cover the helper, and they do not cover the one failure that matters on the planning path; one added test case fixes that.
+
+### Recommended Actions
+
+- [ ] Add a `parameter_overrides` / `has_parameter` test case to `TideFrameTest` (finding 1) and list it in step 4 and in Files to Change.
+- [ ] Correct the control-path sentence about what the existing tests would catch (finding 1).
+- [ ] Add one sentence to the pull request body on the per-process scope of the GDAL guard (finding 2).
