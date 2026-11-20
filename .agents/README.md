@@ -143,7 +143,12 @@ step with the workflow's package lists.
 | `marine_interfaces`, `marine_vertical_datum`, `command_bridge`, `joy_to_helm`, `marine_web_view`, `marine_autonomy`, `helm_manager`, `marine_contacts` | built and tested | built and tested | |
 | `mission_manager`, `mission_manager_interfaces`, `marine_autonomy_integration_tests` | built and tested | not built | Rolling port blocked on `unh_marine_navigation` (#419) |
 | `marine_tiled_raster_store`, `marine_backscatter`, `marine_sidescan_mosaic`, `marine_bathymetry_store`, `marine_mbes_backscatter_store`, `marine_survey_index` | built and tested | built and tested | |
-| `bathymetry_layer` | not built | not built | by hand only; Rolling port is #418 Part 3 (Nav2 has no Rolling release, so Rolling stays by hand) |
+| `bathymetry_layer` | built and tested | not built | checked on Rolling by hand only, with navigation2 built from source in the Rolling underlay (Nav2 has no Rolling release) |
+
+The Rolling hand check of `bathymetry_layer`, from the package worktree on a
+machine whose Rolling underlay has navigation2 built from source:
+`./build.sh --packages-up-to bathymetry_layer` and
+`./test.sh --packages-select bathymetry_layer`.
 
 `geodesy` (used by `marine_sidescan_mosaic` and `marine_survey_index`) has no
 installable Rolling apt package, so the Rolling job builds it from a
