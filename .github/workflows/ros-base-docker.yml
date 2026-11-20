@@ -8,15 +8,16 @@
 # on Jazzy, mission_manager and the integration tests among them.
 #
 # Job "rolling" builds and tests only the packages already ported to Rolling
-# (#418, Part 1). It reads no .repos file: its workspace is this checkout plus
-# marine_ais (for marine_ais_msgs, which marine_web_view needs), and rosdep is
-# given only the paths of what it builds, so it never asks for navigation2 or
-# for the keys of the packages not yet ported (mission_manager and the
-# integration tests, #419; the store packages and bathymetry_layer, later
-# parts of #418). The job is skipped for pull requests to and pushes on
-# jazzy (github.base_ref is the target branch of a pull request;
-# github.ref_name is the pushed branch), so on the jazzy branch this file
-# runs the jazzy job only.
+# (#418, Parts 1 and 2). It reads no .repos file: its workspace is this
+# checkout plus marine_ais (for marine_ais_msgs, which marine_web_view needs)
+# and geodesy from a pinned geographic_info clone (for marine_sidescan_mosaic
+# and marine_survey_index), and rosdep is given only the paths of what it
+# builds, so it never asks for navigation2 or for the keys of the packages not
+# yet ported (mission_manager and the integration tests, #419;
+# bathymetry_layer, #418 Part 3). The job is skipped for pull requests to
+# and pushes on jazzy (github.base_ref is the target branch of a pull
+# request; github.ref_name is the pushed branch), so on the jazzy branch this
+# file runs the jazzy job only.
 
 name: docker-ros-core
 
@@ -66,7 +67,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        paths="$(colcon list --base-paths src --paths-only --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum)"
+        paths="$(colcon list --base-paths src --paths-only --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index)"
         if [ -z "$paths" ]; then
           echo "colcon list returned no package paths" >&2
           exit 1
@@ -76,10 +77,10 @@ jobs:
         DEBIAN_FRONTEND=noninteractive rosdep install --ignore-src -y --from-paths $paths
     - name: Colcon build
       working-directory: ../jazzy_ws/
-      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum'
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index'
     - name: Colcon test
       working-directory: ../jazzy_ws/
-      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --packages-select marine_interfaces marine_autonomy helm_manager joy_to_helm command_bridge mission_manager mission_manager_interfaces marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum --event-handlers console_direct+ --return-code-on-test-failure'
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --packages-select marine_interfaces marine_autonomy helm_manager joy_to_helm command_bridge mission_manager mission_manager_interfaces marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index --event-handlers console_direct+ --return-code-on-test-failure'
     - name: Test results
       working-directory: ../jazzy_ws/
       run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test-result --verbose'
@@ -116,18 +117,40 @@ jobs:
     - name: Clone marine_ais (rolling) for marine_ais_msgs
       working-directory: ../ws
       run: git clone --depth 1 -b rolling https://github.com/rolker/marine_ais.git src/marine_ais
+    # geodesy has no installable ros-rolling-geodesy apt package, Jazzy's
+    # released 1.0.6 lacks geodesy/ecef.h, and the 1.0.7 tag does not compile;
+    # f70b81a is that tag plus the <iomanip> fix (as in marine_ais's CI).
+    # COLCON_IGNORE leaves only geodesy visible to colcon and rosdep, so the
+    # released geographic_msgs is used. Drop this clone once a geographic_info
+    # release newer than 1.0.7 reaches Rolling's apt. geodesy's own tests are
+    # built, since the one build step's BUILD_TESTING covers every package in
+    # it (marine_ais's CI avoids that with a separate geodesy build step; one
+    # step is kept here for simplicity), but not run: the test step selects
+    # only this repository's packages.
+    - name: Clone geographic_info at f70b81a for geodesy
+      working-directory: ../ws
+      run: |
+        git init src/geographic_info
+        cd src/geographic_info
+        git remote add origin https://github.com/ros-geographic-info/geographic_info.git
+        git fetch --depth 1 origin f70b81a438172cd7a066dc1b18314d70e0eb6389
+        git checkout FETCH_HEAD
+    - name: Build only geodesy from the geographic_info clone
+      working-directory: ../ws/src/geographic_info
+      run: touch geographic_msgs/COLCON_IGNORE geographic_info/COLCON_IGNORE
     # Only the paths of the build step's --packages-up-to closure (the ported
-    # packages, plus marine_ais_msgs, which marine_web_view depends on), taken
-    # from colcon list as in the jazzy job so the list cannot drift from the
-    # build step. rosdep then does not ask for navigation2 or for the keys of
-    # the packages not yet ported. No -r: a key that does not install fails
-    # the job. The list is checked to be non-empty.
+    # packages, plus marine_ais_msgs, which marine_web_view depends on, and
+    # geodesy, which marine_sidescan_mosaic and marine_survey_index depend
+    # on), taken from colcon list as in the jazzy job so the list cannot drift
+    # from the build step. rosdep then does not ask for navigation2 or for the
+    # keys of the packages not yet ported. No -r: a key that does not install
+    # fails the job. The list is checked to be non-empty.
     - name: Install ROS dependencies
       working-directory: ../ws
       shell: bash
       run: |
         set -euo pipefail
-        paths="$(colcon list --base-paths src --paths-only --packages-up-to marine_interfaces marine_vertical_datum command_bridge joy_to_helm marine_web_view marine_autonomy helm_manager marine_contacts)"
+        paths="$(colcon list --base-paths src --paths-only --packages-up-to marine_interfaces marine_vertical_datum command_bridge joy_to_helm marine_web_view marine_autonomy helm_manager marine_contacts marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index)"
         if [ -z "$paths" ]; then
           echo "colcon list returned no package paths" >&2
           exit 1
@@ -141,7 +164,10 @@ jobs:
         bash -c 'source /opt/ros/rolling/setup.bash &&
         colcon build --packages-up-to
         marine_interfaces marine_vertical_datum command_bridge joy_to_helm
-        marine_web_view marine_autonomy helm_manager marine_contacts'
+        marine_web_view marine_autonomy helm_manager marine_contacts
+        marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic
+        marine_bathymetry_store marine_mbes_backscatter_store
+        marine_survey_index'
     # No install/setup.bash, as in the jazzy job: colcon test gives each
     # package the environment of its declared workspace dependencies only, so
     # a missing workspace test_depend fails here instead of being hidden by
@@ -154,6 +180,9 @@ jobs:
         colcon test --packages-select
         marine_interfaces marine_vertical_datum command_bridge joy_to_helm
         marine_web_view marine_autonomy helm_manager marine_contacts
+        marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic
+        marine_bathymetry_store marine_mbes_backscatter_store
+        marine_survey_index
         --event-handlers console_direct+ --return-code-on-test-failure'
     - name: Test results
       working-directory: ../ws

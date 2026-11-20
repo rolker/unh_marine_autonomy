@@ -65,6 +65,7 @@
 #include "marine_tiled_raster_store/coverage_manifest.hpp"
 #include "marine_tiled_raster_store/tile_io.hpp"
 #include "marine_tiled_raster_store/tiled_raster_tile.hpp"
+#include "gdal_registration.hpp"
 
 namespace marine_tiled_raster_store
 {
@@ -1156,7 +1157,7 @@ ExportResult exportGeoTiff(
   }
 
   // ---- Required dtype probe of every selected tile (headers only). ----
-  GDALAllRegister();
+  ensureGdalRegistered();
   std::optional<Probe> first;
   std::string first_path;
   bool any_float64 = false;
