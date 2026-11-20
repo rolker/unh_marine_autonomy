@@ -146,7 +146,8 @@ step with the workflow's package lists.
 | `bathymetry_layer` | built and tested | not built | checked on Rolling by hand only, with navigation2 built from source in the Rolling underlay (Nav2 has no Rolling release) |
 
 The Rolling hand check of `bathymetry_layer`, from the package worktree on a
-machine whose Rolling underlay has navigation2 built from source:
+machine whose Rolling underlay has navigation2 and geographic_info (`geodesy`,
+at `f70b81a` or later) built from source:
 `./build.sh --packages-up-to bathymetry_layer` and
 `./test.sh --packages-select bathymetry_layer`.
 
