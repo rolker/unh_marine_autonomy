@@ -739,3 +739,13 @@ Asked "Merge pull request 424 into `rolling`?" with what merges, CI at `d9f78b2`
 In the same dialog he approved a comment on issue 415 adding cause 12 and Part 2's notes ("Post it (Recommended)"), and the `jazzy` backport pull request right after the merge ("Yes, backport right after (Recommended)"); the backport's own merge is still asked of him.
 
 Before this checkpoint the host ticked the Integrated Review's only box, "No open findings. Ready for the merge decision.", with `review_progress.sh check`: it is a statement, not a finding, and unchecked it routed to the findings checkpoint.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 13:31 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the plan holds Part 3 only as an outline, to be settled when the part starts; the owner answered "Yes, start Part 3 (Recommended)" after being told this checkpoint would be answered revise)
+**After**: plan
+**Decision**: revise
+
+After the merge of pull request 424 (Part 2, into `rolling` at `1b4ccb3b`). The issue is still open because Part 3 remains and the base is not the default branch. Delivered: Parts 1 and 2. Not delivered: Part 3 (`bathymetry_layer`). The plan is unchanged since its last review, but Part 3 is an outline there and the package has never been compiled on Rolling, so `proceed` is not right. Since that review: Part 2 was backported to `jazzy` by hand (pull request 425, merged at `2fcbe865`); issue 415 gained cause 12 (GDAL 3.12, concurrent `GDALAllRegister`); issue 423 tracks the `export_geotiff` signal-handling defect.
