@@ -56,9 +56,24 @@ jobs:
       run: |
         rm -rf ../jazzy_ws/src/unh_marine_autonomy
         ln -s $GITHUB_WORKSPACE ../jazzy_ws/src/unh_marine_autonomy
+    # rosdep is given only the paths of what the build step builds (its
+    # --packages-up-to closure), not every imported repository, so a new key
+    # in a repository the job never builds cannot fail it. No -r: a key that
+    # does not install fails the job. The list is checked to be non-empty so
+    # a failed colcon list cannot leave rosdep with no paths.
     - name: Install ROS dependencies
       working-directory: ../jazzy_ws/
-      run: DEBIAN_FRONTEND=noninteractive rosdep install --from-paths src --ignore-src -y
+      shell: bash
+      run: |
+        set -euo pipefail
+        paths="$(colcon list --base-paths src --paths-only --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum)"
+        if [ -z "$paths" ]; then
+          echo "colcon list returned no package paths" >&2
+          exit 1
+        fi
+        echo "$paths"
+        # shellcheck disable=SC2086
+        DEBIAN_FRONTEND=noninteractive rosdep install --ignore-src -y --from-paths $paths
     - name: Colcon build
       working-directory: ../jazzy_ws/
       run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum'
