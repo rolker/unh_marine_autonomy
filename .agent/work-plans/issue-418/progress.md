@@ -325,9 +325,9 @@ Read: the Local Review (Pre-Push) at `d66bec96`, verdict approved, ship recommen
 No GitHub reviews, inline comments, conversation comments or Copilot check-run on the pull request. Gemini and Codex were inputs to the pre-push review, not independent GitHub sources, so their overlap with it is not counted as cross-source confirmation. Both CI jobs (`build-and-test (jazzy)`, `build-and-test (rolling)`) were still pending at 09:31; the first Jazzy result decides finding 1 directly (the plan's own rule: if an unresolved key surfaces, restore `-r` and record why).
 
 ### Findings
-- [ ] (suggestion, Local Review @ `d66bec9` + Gemini + Codex) Jazzy `rosdep install --from-paths src --ignore-src -y` has no `-r` and scans every imported repo, most never built by the job and on moving branches; a new key in any of them fails the Jazzy job. Fix: scope `--from-paths` to the build closure, e.g. `$(colcon list --packages-up-to <the build list> --paths-only)`, keeping no-`-r` — `.github/workflows/ros-base-docker.yml:61`
-- [ ] (suggestion, Local Review @ `d66bec9` + Gemini, Gemini rated must-fix) Rolling job sources `install/setup.bash` before `colcon test`; the Jazzy job does not. The full overlay can hide a missing `test_depend`. Fix: drop `source install/setup.bash &&` for parity, and add any `package.xml` dependency CI then shows missing — `.github/workflows/ros-base-docker.yml:132`
-- [ ] (suggestion, Local Review @ `d66bec9` + Gemini) No test instantiates the fixed `Bounds<T>` `operator<<`. Fix: one gtest in `marine_autonomy/test/` streaming a `Bounds` into a `std::ostringstream` and checking it contains `min:` and `max:` — `marine_autonomy/include/marine_autonomy/gz4d_geo.h:1369`
+- [x] (suggestion, Local Review @ `d66bec9` + Gemini + Codex) Jazzy `rosdep install --from-paths src --ignore-src -y` has no `-r` and scans every imported repo, most never built by the job and on moving branches; a new key in any of them fails the Jazzy job. Fix: scope `--from-paths` to the build closure, e.g. `$(colcon list --packages-up-to <the build list> --paths-only)`, keeping no-`-r` — `.github/workflows/ros-base-docker.yml:61`
+- [x] (suggestion, Local Review @ `d66bec9` + Gemini, Gemini rated must-fix) Rolling job sources `install/setup.bash` before `colcon test`; the Jazzy job does not. The full overlay can hide a missing `test_depend`. Fix: drop `source install/setup.bash &&` for parity, and add any `package.xml` dependency CI then shows missing — `.github/workflows/ros-base-docker.yml:132`
+- [x] (suggestion, Local Review @ `d66bec9` + Gemini) No test instantiates the fixed `Bounds<T>` `operator<<`. Fix: one gtest in `marine_autonomy/test/` streaming a `Bounds` into a `std::ostringstream` and checking it contains `min:` and `max:` — `marine_autonomy/include/marine_autonomy/gz4d_geo.h:1369`
 
 ### False positives
 - (Gemini #3) Renaming the job changes the status-check name and may break branch-protection rules requiring `build` — `rolling` has no branch protection (API 404) and the only ruleset, `require_pr`, has deletion, non-fast-forward and pull-request rules but no required status checks, so no rule names `build`.
@@ -345,3 +345,26 @@ No GitHub reviews, inline comments, conversation comments or Copilot check-run o
 **Decision**: address
 
 Read: the Integrated Review of pull request 421 at `2a3670d`: three valid suggestions, five false positives, CI pending. All three are addressed: (1) `.github/workflows/ros-base-docker.yml:61`, limit the Jazzy job's `rosdep install` `--from-paths` to what the job builds, keeping no `-r`; (2) `:132`, drop `source install/setup.bash` before `colcon test` in the Rolling job and add any dependency that then proves missing; (3) `gz4d_geo.h:1369`, one gtest in `marine_autonomy/test/` that streams a `Bounds`. The first CI run on this pull request had not finished when this was decided; its result goes to the fix pass if it arrives in time, and CI on the fix push is the check either way.
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-20 09:35 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+
+**PR**: #421 at `95fd221`
+**Addressed**: Integrated Review at `2a3670d` (2026-11-20 09:31 -05:00)
+**Commits**: `ca49655`, `a3432e0`, `95fd221`
+
+### Actions
+- [x] Jazzy job's rosdep scoped to the build step's `--packages-up-to` closure (paths from `colcon list --base-paths src --paths-only --packages-up-to <same list as the build step>`), still without `-r`. The step fails if the list is empty. Checked locally: `colcon list` returns the closure, including through a symlinked repository as in the CI workspace (checked in a scratch workspace). CI commit `ca49655` — `.github/workflows/ros-base-docker.yml:61`
+- [x] Rolling job no longer sources `install/setup.bash` before `colcon test`. No `package.xml` was missing a dependency, so there is no code commit: in a clean environment (`env -i`, only `/opt/ros/rolling/setup.bash` sourced, as in the CI step after the change), `colcon test --packages-select <the eight>` passed, 808 tests, 0 errors, 0 failures, 37 skipped. That matches `test.sh`, which sources `env.sh` (`/opt/ros/rolling`, the hosted Rolling underlay and core installs, then this worktree's `core_ws/install`) before `colcon test`. `marine_web_view`'s `test_ais_renderer.py` and `test_node_upload_wiring.py` import `marine_ais_msgs`. Both ran and passed, because the package declares `<depend>marine_ais_msgs</depend>`. CI commit `a3432e0` — `.github/workflows/ros-base-docker.yml:132`
+- [x] New gtest `GZ4DGeoBounds.StreamsMinimumAndMaximum` streams a `BoundsDegrees` into a `std::ostringstream` and checks the exact text (`min: lat: 43 lon: -70.5 max: lat: 44 lon: -70`). It is registered like `test_gggs`: `ament_add_gtest` plus `target_link_libraries(... ${PROJECT_NAME})`, inside `BUILD_TESTING`. This commit adds a test only; no non-test code in `marine_autonomy` changes. Passed locally. Code commit `95fd221` — `marine_autonomy/include/marine_autonomy/gz4d_geo.h:1369`
+
+### Verification
+- `./build.sh --packages-up-to marine_interfaces marine_vertical_datum command_bridge joy_to_helm marine_web_view marine_autonomy helm_manager marine_contacts`: `Summary: 9 packages finished`, with warnings from `marine_autonomy`.
+- `./test.sh --packages-select <the same eight>`: `Summary: 808 tests, 0 errors, 0 failures, 37 skipped`.
+- Rolling only. Jazzy is not installed here, so the Jazzy job on the pushed branch is the only Jazzy check: the scoped rosdep step, and building the new test with GCC 13.
+- First CI run on `2a3670d`: both jobs were still pending when this pass started (checked once with `gh pr checks 421`), so there was no result to use.
+
+### Note
+- The new test brings in one new compiler warning, `gz4d_geo.h:1014` (`-Wparentheses`, `&&` inside `||` in `Angle` `operator<`), reached through `Bounds::Bounds(p1, p2)`, then `expand`, then `min(Angle)`. Precedence already gives the intended `(A && B) || C`, so behaviour is correct. The header is not changed because this commit has to stay test-only. Proposed: add the parentheses under #420, which already tracks the `Angle` operators at lines 979-982 (those warnings were already there before this pass).
