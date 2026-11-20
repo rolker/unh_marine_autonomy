@@ -171,3 +171,70 @@ Host addition for the planner, from a survey of the `camp` repository made on 20
 **Plan**: `.agent/work-plans/issue-418/plan.md` at `75a5bd77`
 
 Revision after the plan review (needs-work) and the owner's revise decision: the warn rename now carries its eight test edits in one commit, the workflow file is taken whole from rolling on backport, helm_manager and marine_contacts link forms are spelled out, the Rolling geodesy gap, validation statement, open questions and the xmllint settlement are recorded, and a gz4d_geo.h GCC 15 fix (reproduced here: getMin/getMax on Bounds, missing memory include) is a Part 1 step.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-11-20 08:22 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: ready
+
+**Issue**: #418 — Port to ROS 2 Rolling, stage 1: the 15 packages with no unported dependency
+**Plan**: `.agent/work-plans/issue-418/plan.md` at `75a5bd77`
+**Branch**: `feature/issue-418`
+
+Review of the revised plan, after the owner's `revise` decision. The checkpoint decisions (three parts, the CI shape, records in the pull requests, hand backport, `jazzy` taking `rolling`'s workflow file whole) are taken as fixed.
+
+### Earlier findings (Plan Review at `cac9f3c5`)
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | `warn` fakes and monkey-patches in `marine_web_view` tests | Resolved. Step 7 lists all four fakes (`test_render_pass.py:60`, `test_colour.py:64`, `test_local_output.py:53`, `test_tile_ingest.py:58`) and four patches (`test_ais_renderer.py:311,327,655,670`), line numbers correct, one commit with the source. Searched all Python in the repository for `\bwarn\b`: nothing else in scope. |
+| 2 | Workflow cherry-pick conflict on `jazzy` | Resolved. `jazzy` takes `rolling`'s file whole. Checked: `origin/jazzy` and `origin/rolling` differ in the workflow only in `name:` and the two `branches:` lines, and in `core.repos` only in the `unh_marine_autonomy` line, which the job replaces with the checkout. |
+| 3 | `helm_manager` / `marine_contacts` targets and signatures | Resolved. Six calls at lines 26, 36, 57, 69, 80, 94 match `helm_manager/CMakeLists.txt`. `lifecycle_msgs` gets a `test_depend`; `marine_contacts` is `PUBLIC` with `ament_export_dependencies` kept; `rqt_sonar_waterfall` is named as not rebuilt. |
+| 4 | Rolling has no `geodesy` apt package | Resolved in the Part 2 outline. |
+| 5 | Validation statement for the `jazzy` backport | Resolved, and extended to the `gz4d_geo.h` fix (see new finding 2 for a gap in its scope). |
+| 6 | Settle the xmllint step | Resolved; recorded as settled with no step. |
+| 7 | Open questions, `__has_include`, unpinned clone | Resolved. |
+
+### Evaluation
+
+| Dimension | Verdict | Notes |
+|---|---|---|
+| Scope | Good | Part 1 adds one header fix (two edits) to what was there. Parts 2 and 3 stay outlines, as decided. |
+| Issue alignment | Good | Serves: "None (the project states no goals); keeping `rolling` the development trunk per `.agents/README.md`. No project design document." Acceptable for a project with no stated goals. The host's `gz4d_geo.h` report is turned into a step, reproduced, with exact diagnostics. |
+| File targeting | Good | Every file of Part 1 is listed with line numbers that match the source. |
+| Consequences | Good | Backport rule stated. `gz4d_geo.h` consumers outside the repository are not mentioned (new finding 3, minor). |
+| Principle alignment | Good | Validation statement is accurate for the changes it names. Its re-examination trigger covers only `gz4d_geo.h` (new finding 2, minor). |
+| ADR compliance | Good | Project ADRs not triggered by Part 1; workspace ADR-0013 records on the branch. |
+| ROS conventions | Good | Exported-target forms; plain vs keyword `target_link_libraries` handled per target; `find_package(lifecycle_msgs REQUIRED)` (line 64) is inside `BUILD_TESTING` and before all three tests that need it. |
+
+### Checked and found sound
+
+- **`gz4d_geo.h`, reproduced with g++ 15.2.0**: the three `[-Wtemplate-body]` errors at 1368:39, 1368:70 and 1711:30 appear exactly as the plan says. With the two edits on a scratch copy the header is clean under `-std=c++17` and `-std=c++20` with no suppression flag.
+- **`minimum()`/`maximum()` is the author's intent**: `Bounds<T>` stores `min_`/`max_` and exposes them only as `minimum()`/`maximum()` (lines 1327 to 1335). `getMin`/`getMax` are the accessors of the unrelated `Box<T>` (line 393), so the line was copied from `Box`. A scratch program that streams a `BoundsDegrees` built from two positions now compiles and prints `min: lat: 43 lon: -71 max: lat: 44 lon: -70`, and an empty one prints NaNs. `Position`'s own `operator<<` (line 1285) supplies the parts.
+- **Behaviour-neutral**: the friend `operator<<` is defined inside a class template, so it is instantiated only when called. Any call would have been a hard error on every compiler, GCC 13 included, because `Bounds<T>` has no `getMin`. So no code that has ever compiled calls it. Nothing in this repository streams a `Bounds`. Adding `<memory>` only declares what line 1711 already used through a transitive include.
+- **Consumers**: `gz4d_geo.h` is included by `marine_autonomy/utils.h`, two `marine_backscatter` tests, and outside the repository by `camp` (four files) and `cube_bathymetry` (fourteen files). By the argument above none can call the operator, and the fix only removes their GCC 15 failure.
+- **`warning` rename**: with `warn` gone from the fakes, each fake still records or ignores calls as before (the aliases point at `warning`), and the code under test calls `warning`, so every test exercises what it did. The four patches make the asserts at 331, 660 and 673 meaningful again. The plan's revert check confirms this. No other in-scope Python package (`command_bridge`, `joy_to_helm`, `marine_autonomy`'s `test_nav.py`) fakes or patches `warn`. `mission_manager` calls `get_logger().warn(` and asserts `warn.assert_called()` (`test_mission_manager.py:313,428`), but it is out of scope (#419).
+- **`helm_manager`**: the executable's plain `target_link_libraries(helm_manager helm_manager_lib)` (line 34) inherits the lib's `PUBLIC` targets, so deleting its `ament_target_dependencies` is right. `ament_add_gtest` links gtest with the plain signature, so the test targets must stay plain, as planned. `test_curvature_regulation` has no call and is untouched.
+- **Workflow on `jazzy`**: with `if: (github.base_ref || github.ref_name) != 'jazzy'`, a pull request to `jazzy` (`base_ref` `jazzy`) and a push to `jazzy` (`base_ref` empty, `ref_name` `jazzy`) both skip the `rolling` job. The backport pull request carries the Part 1 code with the file, so the widened Jazzy lists have the code they build. The widened lists cover all eight Part 1 packages, and `mission_manager` and `marine_autonomy_integration_tests` stay. `python3-pytest` is a `test_depend` of all three Python packages, so the Rolling job's restricted `rosdep` installs it.
+
+### Findings
+
+1. **[File targeting]** (minor) — Section B's "first action is to confirm whether `ais_renderer` imports it at test time" can be settled now. `ais_renderer.py:81-82` imports `marine_ais_msgs.msg` at module level, and `test_ais_renderer.py:55` and `test_node_upload_wiring.py:207` import it too. Local `marine_web_view` tests need `marine_ais_msgs` built in the overlay. State that as known.
+2. **[Principle alignment]** (minor) — The validation statement says the `helm_manager` and `marine_autonomy` changes are behaviour-neutral. Its re-examination trigger covers only the `gz4d_geo.h` fix growing. Steps 3 and 8 can still add more commits to these two control-path packages, and the claim must be checked against those too. Make the trigger "any further commit to `helm_manager` or `marine_autonomy`".
+3. **[Consequences]** (minor) — Add a row for `gz4d_geo.h`'s consumers outside the repository (`camp`, `cube_bathymetry`). They gain the GCC 15 fix and cannot be affected otherwise. The same two defects also live in a separate copy, `unh_marine_navigation/marine_nav_utilities/include/marine_nav_utilities/gz4d/geo.hpp:291` (`bounds.getMin()`/`getMax()` on `Bounds`) and `gz4d/box.hpp:32` (the self-calling `Box::operator==`). Mention that copy in the #415 comment for the new cause so it is not lost; it is not this issue's to fix.
+
+### On `Box<T>::operator==` (line 388)
+
+It calls itself, so any call would recurse until the stack overflows. Nothing calls it: no `Box2d`/`Box3d`/`Box<` use exists in this repository outside the header, nor in any repository under `/home/roland/project11/rolling/*/src` except `marine_nav_utilities`' own copy (`geo.hpp:399-403` builds a `Box2d` and does not compare). Leaving it out of this port is right. A separate issue should fix it as `return !(*this != other);` in both copies, with a test. The same issue can cover the `Angle` operators at lines 979-982 (`! *this==o`, `!*this>o`, `!*this<o`, which GCC flags as `-Wlogical-not-parentheses`), which have the same precedence bug.
+
+### Summary
+
+The revision resolves all seven earlier findings, and the `gz4d_geo.h` step is correct: `minimum()`/`maximum()` is the intended accessor pair, the change cannot alter any code that has compiled, and the fixed operator works when called. The three new findings are minor wording and record items. The plan is ready for implementation.
+
+### Recommended Actions
+
+- [ ] Record in Section B that `marine_web_view` imports `marine_ais_msgs` at test time (finding 1).
+- [ ] Widen the validation statement's re-examination trigger to any further control-path commit (finding 2).
+- [ ] Add the outside consumers of `gz4d_geo.h` and the `marine_nav_utilities` copy to Consequences or the #415 comment (finding 3).
+- [ ] Host: open a separate issue for `Box<T>::operator==` and the `Angle` operators, covering both copies.
