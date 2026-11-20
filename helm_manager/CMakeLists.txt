@@ -23,23 +23,15 @@ target_include_directories(${PROJECT_NAME}_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
 )
 
-ament_target_dependencies(${PROJECT_NAME}_lib
-  geometry_msgs
-  marine_interfaces
-  rclcpp
-  rclcpp_lifecycle
+target_link_libraries(${PROJECT_NAME}_lib PUBLIC
+  ${geometry_msgs_TARGETS}
+  ${marine_interfaces_TARGETS}
+  rclcpp::rclcpp
+  rclcpp_lifecycle::rclcpp_lifecycle
 )
 
 add_executable(${PROJECT_NAME} src/helm_manager_node.cpp)
 target_link_libraries(${PROJECT_NAME} ${PROJECT_NAME}_lib)
-
-ament_target_dependencies(${PROJECT_NAME}
-  geometry_msgs
-  marine_interfaces
-  rclcpp
-  rclcpp_lifecycle
-)
-
 
 install(TARGETS ${PROJECT_NAME}
   DESTINATION lib/${PROJECT_NAME}
@@ -54,50 +46,29 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
 
   ament_add_gtest(test_placeholder test/test_placeholder.cpp)
-  ament_target_dependencies(test_placeholder
-    geometry_msgs
-    marine_interfaces
-    rclcpp
-    rclcpp_lifecycle
+  target_link_libraries(test_placeholder
+    ${geometry_msgs_TARGETS}
+    ${marine_interfaces_TARGETS}
+    rclcpp::rclcpp
+    rclcpp_lifecycle::rclcpp_lifecycle
   )
 
   find_package(lifecycle_msgs REQUIRED)
 
   # Piloting mode tests
   ament_add_gtest(test_piloting_mode test/test_piloting_mode.cpp)
-  target_link_libraries(test_piloting_mode ${PROJECT_NAME}_lib)
-  ament_target_dependencies(test_piloting_mode
-    geometry_msgs
-    lifecycle_msgs
-    marine_interfaces
-    rclcpp
-    rclcpp_lifecycle
-  )
+  target_link_libraries(test_piloting_mode ${PROJECT_NAME}_lib ${lifecycle_msgs_TARGETS})
 
   # Helm manager integration tests (lifecycle, mode switching, command arbitration)
   ament_add_gtest(test_helm_manager test/test_helm_manager.cpp)
-  target_link_libraries(test_helm_manager ${PROJECT_NAME}_lib)
-  ament_target_dependencies(test_helm_manager
-    geometry_msgs
-    lifecycle_msgs
-    marine_interfaces
-    rclcpp
-    rclcpp_lifecycle
-  )
+  target_link_libraries(test_helm_manager ${PROJECT_NAME}_lib ${lifecycle_msgs_TARGETS})
 
   # Curvature-preserving speed regulation pure-logic tests (ADR-0012, #292)
   ament_add_gtest(test_curvature_regulation test/test_curvature_regulation.cpp)
 
   # Command conversion and clamping tests
   ament_add_gtest(test_command_conversion test/test_command_conversion.cpp)
-  target_link_libraries(test_command_conversion ${PROJECT_NAME}_lib)
-  ament_target_dependencies(test_command_conversion
-    geometry_msgs
-    lifecycle_msgs
-    marine_interfaces
-    rclcpp
-    rclcpp_lifecycle
-  )
+  target_link_libraries(test_command_conversion ${PROJECT_NAME}_lib ${lifecycle_msgs_TARGETS})
 endif()
 
 ament_package()
