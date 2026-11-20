@@ -40,26 +40,27 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>"
 )
-ament_target_dependencies(${PROJECT_NAME}
-  marine_acoustic_msgs
-  geographic_msgs
-  geodesy
-  marine_autonomy
-  marine_tiled_raster_store
+# geodesy exports no CMake target, only include directories and the static
+# geoconv library, so use its variables. geoconv is PUBLIC here (unlike
+# ais_layer): it reproduces what ament_target_dependencies did, and
+# test_projection and consumers using geodesy/ecef.h need geodesy::fromMsg.
+target_include_directories(${PROJECT_NAME} PUBLIC ${geodesy_INCLUDE_DIRS})
+target_link_libraries(${PROJECT_NAME} PUBLIC
+  ${marine_acoustic_msgs_TARGETS}
+  ${geographic_msgs_TARGETS}
+  ${geodesy_LIBRARIES}
+  marine_autonomy::marine_autonomy
+  marine_tiled_raster_store::marine_tiled_raster_store
 )
 
 # Node executable.
 add_executable(sidescan_mosaic_node src/mosaic_node.cpp)
-target_link_libraries(sidescan_mosaic_node ${PROJECT_NAME})
-ament_target_dependencies(sidescan_mosaic_node
-  rclcpp
-  marine_acoustic_msgs
-  sensor_msgs
-  tf2
-  tf2_ros
-  geographic_msgs
-  marine_autonomy
-  marine_tiled_raster_store
+target_link_libraries(sidescan_mosaic_node
+  ${PROJECT_NAME}
+  rclcpp::rclcpp
+  ${sensor_msgs_TARGETS}
+  tf2::tf2
+  tf2_ros::tf2_ros
 )
 
 install(DIRECTORY include/ DESTINATION include)
@@ -73,38 +74,29 @@ install(TARGETS sidescan_mosaic_node DESTINATION lib/${PROJECT_NAME})
 
 # Offline bag importer -> Tier-1 (issue #184).
 add_executable(sidescan_mosaic_bag src/sidescan_mosaic_bag.cpp)
-target_link_libraries(sidescan_mosaic_bag ${PROJECT_NAME})
-ament_target_dependencies(sidescan_mosaic_bag
-  rclcpp
-  rosbag2_cpp
-  rosbag2_storage
-  marine_acoustic_msgs
-  sensor_msgs
-  geometry_msgs
-  builtin_interfaces
-  tf2
-  tf2_msgs
+target_link_libraries(sidescan_mosaic_bag
+  ${PROJECT_NAME}
+  rclcpp::rclcpp
+  rosbag2_cpp::rosbag2_cpp
+  rosbag2_storage::rosbag2_storage
+  ${sensor_msgs_TARGETS}
+  ${geometry_msgs_TARGETS}
+  ${builtin_interfaces_TARGETS}
+  tf2::tf2
+  ${tf2_msgs_TARGETS}
 )
 install(TARGETS sidescan_mosaic_bag DESTINATION lib/${PROJECT_NAME})
 
 # Flat-bottom Tier-2 projector: Tier-1 -> GGGS tiles (issue #184).
 add_executable(sidescan_tier2_flat src/sidescan_tier2_flat.cpp)
 target_link_libraries(sidescan_tier2_flat ${PROJECT_NAME})
-ament_target_dependencies(sidescan_tier2_flat
-  geographic_msgs
-  marine_autonomy
-  marine_tiled_raster_store
-)
 install(TARGETS sidescan_tier2_flat DESTINATION lib/${PROJECT_NAME})
 
 # Durable processed Tier-2: best-source composite -> 3-band tiles + registry (#184).
 add_executable(sidescan_tier2_processed src/sidescan_tier2_processed.cpp)
-target_link_libraries(sidescan_tier2_processed ${PROJECT_NAME})
-ament_target_dependencies(sidescan_tier2_processed
-  geographic_msgs
-  marine_autonomy
-  marine_tiled_raster_store
-  marine_backscatter
+target_link_libraries(sidescan_tier2_processed
+  ${PROJECT_NAME}
+  marine_backscatter::marine_backscatter
 )
 install(TARGETS sidescan_tier2_processed DESTINATION lib/${PROJECT_NAME})
 
@@ -112,17 +104,12 @@ install(TARGETS sidescan_tier2_processed DESTINATION lib/${PROJECT_NAME})
 # Thin CLI over the library's overview_pyramid production path.
 add_executable(build_sidescan_overviews src/build_sidescan_overviews.cpp)
 target_link_libraries(build_sidescan_overviews ${PROJECT_NAME})
-ament_target_dependencies(build_sidescan_overviews
-  geographic_msgs
-  marine_autonomy
-  marine_tiled_raster_store
-)
 install(TARGETS build_sidescan_overviews DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(geographic_msgs geodesy marine_autonomy marine_tiled_raster_store)
+ament_export_dependencies(marine_acoustic_msgs geographic_msgs geodesy marine_autonomy marine_tiled_raster_store)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -130,13 +117,10 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
 
   ament_add_gtest(test_projection test/test_projection.cpp)
-  target_link_libraries(test_projection ${PROJECT_NAME})
-  ament_target_dependencies(test_projection
-    geographic_msgs geodesy marine_autonomy marine_backscatter)
+  target_link_libraries(test_projection ${PROJECT_NAME} marine_backscatter::marine_backscatter)
 
   ament_add_gtest(test_accumulator test/test_accumulator.cpp)
   target_link_libraries(test_accumulator ${PROJECT_NAME})
-  ament_target_dependencies(test_accumulator marine_autonomy marine_tiled_raster_store)
 
   ament_add_gtest(test_normalizer test/test_normalizer.cpp)
   target_link_libraries(test_normalizer ${PROJECT_NAME})
@@ -148,7 +132,6 @@ if(BUILD_TESTING)
   # (grid reconstruction, per-level fold, level loop, arg parsing) — #188.
   ament_add_gtest(test_overview_pyramid test/test_overview_pyramid.cpp)
   target_link_libraries(test_overview_pyramid ${PROJECT_NAME})
-  ament_target_dependencies(test_overview_pyramid marine_autonomy marine_tiled_raster_store)
 
   # End-to-end subprocess test of the built sidescan_tier2_processed binary over a
   # synthetic .sst1 + synthetic bathy store (#297): DEM placement vs flat, the
@@ -159,9 +142,7 @@ if(BUILD_TESTING)
   # marine_backscatter::BathyDem::kBands (BathyDem moved there in #304; its own
   # unit test, test_bathy_dem, moved with it).
   ament_add_gtest(test_tier2_processed_dem test/test_tier2_processed_dem.cpp)
-  target_link_libraries(test_tier2_processed_dem ${PROJECT_NAME})
-  ament_target_dependencies(test_tier2_processed_dem
-    geographic_msgs geodesy marine_autonomy marine_tiled_raster_store marine_backscatter)
+  target_link_libraries(test_tier2_processed_dem ${PROJECT_NAME} marine_backscatter::marine_backscatter)
   target_compile_definitions(test_tier2_processed_dem PRIVATE
     SIDESCAN_TIER2_PROCESSED_BINARY="$<TARGET_FILE:sidescan_tier2_processed>")
   add_dependencies(test_tier2_processed_dem sidescan_tier2_processed)
