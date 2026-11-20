@@ -669,3 +669,21 @@ Owner decision on the one must-fix, asked "Where should the signal-handling defe
 - [x] (must-fix) `export_geotiff` CLI signal handling assumes a single-threaded process (`TerminationSignalsBlocked` uses per-thread `pthread_sigmask` while GDAL's dependencies start worker threads) — `marine_tiled_raster_store/src/export_geotiff.cpp:274`, `:1273` (deferred: owner, 2026-11-20: "Separate issue, test stays on (Recommended)"; fixed under its own issue, the test keeps running in CI)
 
 No code, test or CI changed in this pass: the fix is a design change to the signal handling, it predates this branch, and the owner moved it to its own issue. The test is not skipped, disabled, retried or excluded anywhere. The pull request must state the known intermittent failure of `ExportCli.InterruptRemovesTheTemporaryFile`: about 1 run in 100 on Ubuntu 26.04 (reviewer: 1 of 100 and 1 of 300 isolated runs); the rate in CI's containers and on Jazzy is unknown; a re-run clears it. Code head unchanged at `ac273079`, so the round-2 build and test results stand (`Summary: 1158 tests, 0 errors, 0 failures, 129 skipped`); nothing was rebuilt.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-11-20 12:56 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: approved
+**Dispatch**: resumed (agent ad745993e02d7ebf9, resume 2 of 3)
+
+**Branch**: feature/issue-418 at `8593bb2e`
+**Base**: origin/rolling
+**Depth**: Deep (reason: round 3 convergence check per handoff)
+**Must-fix**: 0 | **Suggestions**: 0
+**Round**: 3 | **Ship**: recommended — no must-fix findings; remaining suggestions can be applied or tracked
+
+Convergence check on round 2's one finding and the diff since `7a63128e`. Cross-model: skipped (round-3 convergence check, per handoff). `git diff --stat 7a63128e..HEAD`: only `.agent/work-plans/issue-418/progress.md` (`e25f0205`, `8593bb2e`); no code, test or CI change since `ac273079`, so round 2's build and test results stand (`Summary: 1158 tests, 0 errors, 0 failures, 129 skipped`). `ExportCli.InterruptRemovesTheTemporaryFile` (`marine_tiled_raster_store/test/test_export_geotiff.cpp:2132`) is not skipped, disabled or excluded: no `DISABLED_`/`GTEST_SKIP` in the file, no filter in its CMakeLists, and the workflow's `colcon test` selects the package with no exclusion. Round 2's must-fix (CLI signal handling assumes a single-threaded process, `export_geotiff.cpp:274`, `:1273`) was deferred by the owner to its own issue ("Separate issue, test stays on (Recommended)"; the host is drafting that issue, not yet numbered): settled for this pull request, which must state the known intermittent failure (about 1 run in 100 here; CI and Jazzy rates unknown; a re-run clears it). Round 1's findings stay resolved. Nothing else is open.
+
+### Findings
+- [ ] No issues found. LGTM.
