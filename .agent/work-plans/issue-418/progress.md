@@ -749,3 +749,11 @@ Before this checkpoint the host ticked the Integrated Review's only box, "No ope
 **Decision**: revise
 
 After the merge of pull request 424 (Part 2, into `rolling` at `1b4ccb3b`). The issue is still open because Part 3 remains and the base is not the default branch. Delivered: Parts 1 and 2. Not delivered: Part 3 (`bathymetry_layer`). The plan is unchanged since its last review, but Part 3 is an outline there and the package has never been compiled on Rolling, so `proceed` is not right. Since that review: Part 2 was backported to `jazzy` by hand (pull request 425, merged at `2fcbe865`); issue 415 gained cause 12 (GDAL 3.12, concurrent `GDALAllRegister`); issue 423 tracks the `export_geotiff` signal-handling defect.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-11-20 14:05 -05:00
+**By**: Claude Code Agent (claude-sonnet-5-5)
+**Plan**: `.agent/work-plans/issue-418/plan.md` at `1fa59ae6`
+
+Revision: Parts 1 and 2 marked delivered (pull requests 421 and 424, backports 422 and 425); Part 3 (`bathymetry_layer`) written out from a baseline build on `rolling` at `1b4ccb3b`. Baseline: fails at `ament_target_dependencies` (cause 1); a scratch copy then showed `declareParameter` (cause 6) and a test include of `nav2_util/lifecycle_node.hpp` (new, proposed cause 13), and then 55 tests passing, 300 and 200 repeat runs without failure. Cause 7 does not apply (no subscription), a `test_initialize` is not needed (existing tests call `initialize()`), no undeclared system dependency, no GDAL registration or threading change needed. Steps: CMake (causes 1 and 8), helper (cause 6), test header, Jazzy CI, docs, `core.repos` pins (not backported). Pull request body: `Part of #418`.
