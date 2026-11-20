@@ -1,13 +1,34 @@
-name: docker-jazzy-ros-core
+# CI for unh_marine_autonomy. The same file is carried on the rolling and
+# jazzy branches (jazzy takes rolling's copy whole when a port is
+# backported); pushes and pull requests to either run it.
+#
+# Job "jazzy" (always runs) imports the underlay and core layers from the
+# .repos files of the branch it runs on, with this checkout in place of the
+# unh_marine_autonomy entry, then builds and tests this repository's packages
+# on Jazzy, mission_manager and the integration tests among them.
+#
+# Job "rolling" builds and tests only the packages already ported to Rolling
+# (#418, Part 1). It reads no .repos file: its workspace is this checkout plus
+# marine_ais (for marine_ais_msgs, which marine_web_view needs), and rosdep is
+# given only the paths of what it builds, so it never asks for navigation2 or
+# for the keys of the packages not yet ported (mission_manager and the
+# integration tests, #419; the store packages and bathymetry_layer, later
+# parts of #418). The job is skipped for pull requests to and pushes on
+# jazzy (github.base_ref is the target branch of a pull request;
+# github.ref_name is the pushed branch), so on the jazzy branch this file
+# runs the jazzy job only.
+
+name: docker-ros-core
 
 on:
   push:
-    branches: [ jazzy ]
+    branches: [ jazzy, rolling ]
   pull_request:
-    branches: [ jazzy ]
+    branches: [ jazzy, rolling ]
 
 jobs:
-  build:
+  jazzy:
+    name: build-and-test (jazzy)
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -35,16 +56,106 @@ jobs:
       run: |
         rm -rf ../jazzy_ws/src/unh_marine_autonomy
         ln -s $GITHUB_WORKSPACE ../jazzy_ws/src/unh_marine_autonomy
+    # rosdep is given only the paths of what the build step builds (its
+    # --packages-up-to closure), not every imported repository, so a new key
+    # in a repository the job never builds cannot fail it. No -r: a key that
+    # does not install fails the job. The list is checked to be non-empty so
+    # a failed colcon list cannot leave rosdep with no paths.
     - name: Install ROS dependencies
       working-directory: ../jazzy_ws/
-      run: DEBIAN_FRONTEND=noninteractive rosdep install --from-paths src --ignore-src -r -y
+      shell: bash
+      run: |
+        set -euo pipefail
+        paths="$(colcon list --base-paths src --paths-only --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum)"
+        if [ -z "$paths" ]; then
+          echo "colcon list returned no package paths" >&2
+          exit 1
+        fi
+        echo "$paths"
+        # shellcheck disable=SC2086
+        DEBIAN_FRONTEND=noninteractive rosdep install --ignore-src -y --from-paths $paths
     - name: Colcon build
       working-directory: ../jazzy_ws/
-      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests'
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum'
     - name: Colcon test
       working-directory: ../jazzy_ws/
-      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --packages-select marine_interfaces marine_autonomy helm_manager joy_to_helm command_bridge mission_manager mission_manager_interfaces marine_autonomy_integration_tests --event-handlers console_direct+ --return-code-on-test-failure'
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --packages-select marine_interfaces marine_autonomy helm_manager joy_to_helm command_bridge mission_manager mission_manager_interfaces marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum --event-handlers console_direct+ --return-code-on-test-failure'
     - name: Test results
       working-directory: ../jazzy_ws/
       run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test-result --verbose'
+      if: always()
+
+  rolling:
+    name: build-and-test (rolling)
+    if: (github.base_ref || github.ref_name) != 'jazzy'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    container:
+      image: ros:rolling-ros-core
+
+    steps:
+    - name: Update apt
+      run: apt-get update
+    - name: Install ros dev tools
+      run: DEBIAN_FRONTEND=noninteractive apt-get -y install ros-dev-tools git
+    - name: Checkout
+      uses: actions/checkout@v6
+    - name: Init rosdep
+      run: |
+        if [ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]; then
+          rosdep init
+        fi
+    - name: Update rosdep
+      run: rosdep update
+    - name: Create workspace
+      run: mkdir -p ../ws/src && ln -s "$GITHUB_WORKSPACE" ../ws/src/unh_marine_autonomy
+    # marine_ais_msgs is not a rosdep key; it comes from source. This is the
+    # rolling branch, not a pinned commit: accepted, as with the branches
+    # config/repos/core.repos pins.
+    - name: Clone marine_ais (rolling) for marine_ais_msgs
+      working-directory: ../ws
+      run: git clone --depth 1 -b rolling https://github.com/rolker/marine_ais.git src/marine_ais
+    # Only the paths of the build step's --packages-up-to closure (the ported
+    # packages, plus marine_ais_msgs, which marine_web_view depends on), taken
+    # from colcon list as in the jazzy job so the list cannot drift from the
+    # build step. rosdep then does not ask for navigation2 or for the keys of
+    # the packages not yet ported. No -r: a key that does not install fails
+    # the job. The list is checked to be non-empty.
+    - name: Install ROS dependencies
+      working-directory: ../ws
+      shell: bash
+      run: |
+        set -euo pipefail
+        paths="$(colcon list --base-paths src --paths-only --packages-up-to marine_interfaces marine_vertical_datum command_bridge joy_to_helm marine_web_view marine_autonomy helm_manager marine_contacts)"
+        if [ -z "$paths" ]; then
+          echo "colcon list returned no package paths" >&2
+          exit 1
+        fi
+        echo "$paths"
+        # shellcheck disable=SC2086
+        DEBIAN_FRONTEND=noninteractive rosdep install --ignore-src -y --from-paths $paths
+    - name: Colcon build
+      working-directory: ../ws
+      run: >
+        bash -c 'source /opt/ros/rolling/setup.bash &&
+        colcon build --packages-up-to
+        marine_interfaces marine_vertical_datum command_bridge joy_to_helm
+        marine_web_view marine_autonomy helm_manager marine_contacts'
+    # No install/setup.bash, as in the jazzy job: colcon test gives each
+    # package the environment of its declared workspace dependencies only, so
+    # a missing workspace test_depend fails here instead of being hidden by
+    # the whole overlay. (A package from /opt/ros/rolling is on the path for
+    # every package, declared or not.)
+    - name: Colcon test
+      working-directory: ../ws
+      run: >
+        bash -c 'source /opt/ros/rolling/setup.bash &&
+        colcon test --packages-select
+        marine_interfaces marine_vertical_datum command_bridge joy_to_helm
+        marine_web_view marine_autonomy helm_manager marine_contacts
+        --event-handlers console_direct+ --return-code-on-test-failure'
+    - name: Test results
+      working-directory: ../ws
+      run: bash -c 'source /opt/ros/rolling/setup.bash && colcon test-result --verbose'
       if: always()
