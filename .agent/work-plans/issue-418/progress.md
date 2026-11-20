@@ -368,3 +368,35 @@ Read: the Integrated Review of pull request 421 at `2a3670d`: three valid sugges
 
 ### Note
 - The new test brings in one new compiler warning, `gz4d_geo.h:1014` (`-Wparentheses`, `&&` inside `||` in `Angle` `operator<`), reached through `Bounds::Bounds(p1, p2)`, then `expand`, then `min(Angle)`. Precedence already gives the intended `(A && B) || C`, so behaviour is correct. The header is not changed because this commit has to stay test-only. Proposed: add the parentheses under #420, which already tracks the `Angle` operators at lines 979-982 (those warnings were already there before this pass).
+
+## Local Review
+**Status**: complete
+**When**: 2026-11-20 09:44 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: changes-requested
+
+**PR**: #421 at `18913fd`
+**Depth**: Deep (reason: whole PR diff 22 files, +769 -102, CI workflow changed; fix-round re-review keeps the whole-diff tier)
+**Must-fix**: 1 | **Suggestions**: 3
+
+CI: all three completed build jobs that ran the Part 1 code past ca49655, or on Rolling at all, fail at `Colcon build` on one error. Rolling job 136349101857 (run 44754070285, `2a3670d`), Rolling job 136352157045 and Jazzy job 136352156557 (run 44754964542, `18913fd`), verbatim from each:
+
+```
+.../marine_autonomy/include/marine_autonomy/gz4d_geo.h:38:10: fatal error: boost/math/quaternion.hpp: No such file or directory
+   38 | #include <boost/math/quaternion.hpp>
+Failed   <<< marine_autonomy [2.76s, exited with code 2]
+  1 package failed: marine_autonomy
+  2 packages aborted: helm_manager marine_contacts
+```
+
+Jazzy job 136349102570 on `2a3670d` (before ca49655, rosdep over every imported repository) passed: 16 packages built, `Summary: 932 tests, 0 errors, 0 failures, 36 skipped`; its rosdep step ran `executing command [apt-get install -y libboost-all-dev]`. Established: `marine_autonomy` includes Boost in a public header (`gz4d_geo.h:38`, unchanged from `rolling`) but its `package.xml` and `CMakeLists.txt` declare no Boost dependency. The ros-core images ship no Boost; locally it is installed from elsewhere. On Jazzy, some package outside the build closure declared the `boost` key, so the unscoped rosdep installed it; ca49655 scoped rosdep to the closure and so exposed the missing declaration, which is what it was meant to do (keep ca49655). Which out-of-closure package declares `boost` is not identified (guess: one of the underlay/core repositories). Both keys `boost` (libboost-all-dev) and `libboost-math-dev` resolve on `ubuntu:noble`/jazzy and `ubuntu:resolute`/rolling.
+
+The new `-Wparentheses` at `gz4d_geo.h:1014` is cosmetic: precedence already gives the intended `(A && B) || C`. Leaving the header unchanged in a test-only commit is right; add the parentheses under #420. Not a finding.
+
+Outside reviewers: Gemini and Codex ran (cross_model_review.sh, both EXIT=0); their repeats of points already ruled false positives in the Integrated Review (job rename, `rclcpp` PUBLIC, `persist-credentials`, `.warn(` calls) stay dismissed. Gemini's claim that a misspelled name in `colcon list --packages-up-to` exits 0 is wrong: colcon_package_selection `dependencies.py:88-119` calls `sys.exit` for a name not found, which fails the step under `set -euo pipefail`. Codex's pin for `marine_ais` is the accepted unpinned-branch choice recorded in the plan. No Copilot review or GitHub comments on the pull request.
+
+### Findings
+- [ ] (must-fix) CI fails at `Colcon build` on Rolling and on Jazzy (after ca49655) with `gz4d_geo.h:38:10: fatal error: boost/math/quaternion.hpp: No such file or directory`: `marine_autonomy` uses Boost in a public header and declares no Boost dependency. Fix, holding on both distros: add `<depend>boost</depend>` (or the narrower header-only `<depend>libboost-math-dev</depend>`; both keys resolve on noble and resolute) to `marine_autonomy/package.xml`, as its own code commit and backported to `jazzy` by hand; `<depend>` also covers build_export for helm_manager and marine_contacts — `marine_autonomy/package.xml:12`
+- [ ] (suggestion) The Rolling job's rosdep lists nine `--from-paths` by hand while the Jazzy job now derives its closure with `colcon list --paths-only --packages-up-to`; use the same derivation (plus `marine_ais_msgs`' path) so the list cannot drift from the build step as Parts 2 and 3 add packages (raised by Gemini) — `.github/workflows/ros-base-docker.yml:122`
+- [ ] (suggestion) The new comment says a missing `test_depend` "fails here"; that holds only for workspace packages, since `/opt/ros/<distro>/setup.bash` still provides everything in ros-core (e.g. `marine_web_view`'s undeclared `launch`, `launch_ros` in `test/test_web_view_launch.py:51-56` and `rcl_interfaces` in `ais_renderer.py:92` pass unnoticed); reword to "a missing workspace test_depend" — `.github/workflows/ros-base-docker.yml:143`
+- [ ] (suggestion) The gtest passes the corners already ordered, so `Bounds(p1, p2)`'s min/max sorting is never exercised; pass them in reverse (the expected string is the same, checked with g++ 15.2) — `marine_autonomy/test/test_gz4d_geo_bounds.cpp:39`
