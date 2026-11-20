@@ -489,3 +489,15 @@ None open.
 - (Codex #1 @ `18913fd`) `.agents/README.md:143` should say that a green Rolling check leaves robot bring-up unverified, because `robot_core_launch.py` needs `mission_manager`. The table already shows `mission_manager` as "not built" on Rolling (blocked on #419), and it defines "built and tested" as building a package and running its tests. Neither job runs the robot launch, on Jazzy either, so the table claims no launch coverage that a note would need to correct.
 - (Gemini #3 @ `18913fd`) The Jazzy `colcon list`/`colcon build` omit `marine_interfaces` and `mission_manager_interfaces`. Both are dependencies of the listed packages, so `--packages-up-to` includes them. The Jazzy run on `666b23b` built 16 packages and tested them. The second half of the finding, that a misspelled name exits 0, was already shown wrong in the Local Review at `18913fd`: `sys.exit` runs under `set -euo pipefail`.
 - (Gemini #4 @ `18913fd`) Use `mapfile` instead of unquoted `$paths` (SC2086). The words are colcon package paths under `src/`, made of repository names fixed by the `.repos` files and the clone step plus package directory names. None of them contains whitespace or glob characters. SC2086 is disabled on purpose, with a comment, and a path that did split would make rosdep fail loudly, not silently.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 10:39 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: owner
+**After**: merge
+**Decision**: merge
+
+Asked "Merge pull request 421 into `rolling`?" with what merges, CI at `666b23b` (Jazzy 16 packages, 936 tests, 0 failures; Rolling 9 packages, 808 tests, 0 failures), the three review rounds with nothing open, the control-path statement (behaviour-neutral by argument and unit tests; no simulation run), what is not covered, and that issue 418 stays open with the `jazzy` backport done by hand. The owner answered: "Merge (Recommended)".
+
+In the same dialog he was shown the comment adding causes 10 and 11 and the Rolling warnings to issue 415 and asked whether to post it; he answered: "Post it (Recommended)".
