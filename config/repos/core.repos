@@ -6,11 +6,11 @@ repositories:
   marine_ais:
     type: git
     url: https://github.com/rolker/marine_ais.git
-    version: jazzy
+    version: rolling
   marine_control:
     type: git
     url: https://github.com/rolker/marine_control.git
-    version: jazzy
+    version: rolling
   udp_bridge:
     type: git
     url: https://github.com/rolker/udp_bridge.git
