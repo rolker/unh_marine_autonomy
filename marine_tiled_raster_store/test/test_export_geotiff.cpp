@@ -180,9 +180,12 @@ struct Raster
   std::map<std::string, std::string> md;
   std::string crs_auth;
 
+  // Bounds-checked: on a Raster readRaster() could not fill (data empty), a
+  // read throws std::out_of_range, which fails the test, instead of crashing
+  // the test process.
   float at(int b, int x, int y) const
   {
-    return data[b][static_cast<std::size_t>(y) * width + x];
+    return data.at(static_cast<std::size_t>(b)).at(static_cast<std::size_t>(y) * width + x);
   }
 };
 
