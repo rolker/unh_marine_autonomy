@@ -26,20 +26,27 @@ add_library(${PROJECT_NAME} SHARED
 )
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
-ament_target_dependencies(${PROJECT_NAME}
-  geodesy
-)
+# geodesy exports no CMake target, only include directories and the static
+# geoconv library, so use its variables. Its headers are included only from
+# src/bathymetry_layer.cpp, not from the header, hence PRIVATE.
+target_include_directories(${PROJECT_NAME} PRIVATE ${geodesy_INCLUDE_DIRS})
 
+# PUBLIC: every library this target linked before, so the exported interface
+# does not change. PRIVATE: geoconv, a static archive linked into the plugin,
+# which stays out of the exported target's link interface.
 target_link_libraries(${PROJECT_NAME}
-  ${geographic_msgs_TARGETS}
-  ${geometry_msgs_TARGETS}
-  marine_bathymetry_store::marine_bathymetry_store
-  nav2_costmap_2d::nav2_costmap_2d_core
-  pluginlib::pluginlib
-  rclcpp::rclcpp
-  tf2::tf2
-  tf2_geometry_msgs::tf2_geometry_msgs
-  tf2_ros::tf2_ros
+  PUBLIC
+    ${geographic_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    marine_bathymetry_store::marine_bathymetry_store
+    nav2_costmap_2d::nav2_costmap_2d_core
+    pluginlib::pluginlib
+    rclcpp::rclcpp
+    tf2::tf2
+    tf2_geometry_msgs::tf2_geometry_msgs
+    tf2_ros::tf2_ros
+  PRIVATE
+    ${geodesy_LIBRARIES}
 )
 
 install(
