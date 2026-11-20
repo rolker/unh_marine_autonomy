@@ -252,3 +252,15 @@ Asked "Implement Part 1, with F1 to F3 handed to the implementer as corrections?
 In the same dialog the owner was asked what should happen with defects found in `marine_autonomy/include/marine_autonomy/gz4d_geo.h` that are not Rolling problems (the self-calling `Box<T>::operator==`, the precedence bug in three `Angle` comparison operators, and the copy of this code in `unh_marine_navigation`), and answered: "Open an issue, check D2's use now (Recommended)". That is done outside this issue's loop.
 
 To resume: `/run-issue rolker/unh_marine_autonomy#418 --resume` asks this plan checkpoint again. The three minor findings of the second Plan Review are still to be handed to the implementer as corrections or folded into the plan.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 09:15 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the owner started the drive again with `/agent-workspace:orchestrator 418`; the plan is unchanged since its second Plan Review, whose verdict was ready)
+**After**: plan
+**Decision**: proceed
+
+Resumed from the `stop` of 2026-11-20 08:27. In the session the owner was shown where the port stood (plan ready, three minor findings open, nothing implemented) and asked whether to resume Part 1 as planned or change the plan; his answer was the command `/agent-workspace:orchestrator 418`, with no other words. The host read that as the go-ahead for the drive and answered this checkpoint itself, as `/orchestrator`'s table allows at `plan`.
+
+Read: `plan.md` at `75a5bd77` (unchanged since the Plan Review of 08:22, verdict ready). Part 1 only is implemented now. The three minor findings of that review go to the implementer as corrections: F1 `marine_web_view` imports `marine_ais_msgs` at test time (known, not to be discovered); F2 the behaviour-neutral statement is re-examined on any further commit to `helm_manager` or `marine_autonomy`; F3 the outside consumers of `gz4d_geo.h` (`camp`, `cube_bathymetry`) and the second copy in `unh_marine_navigation` are named in the pull request and in the #415 comment text the implementer drafts.
