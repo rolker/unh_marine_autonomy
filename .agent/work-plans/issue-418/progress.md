@@ -915,3 +915,24 @@ Read: the Integrated Review of pull request 426 at `f2021b01`: three valid sugge
 - `./test.sh --packages-select bathymetry_layer`: `Summary: 57 tests, 0 errors, 0 failures, 4 skipped`
 - `test_bathymetry_layer` as 100 separate processes: 100 passed, 0 failed
 - Not verified here: Jazzy (not installed; CI on the pushed branch is the only Jazzy check). The Rolling CI job does not build this package.
+
+## Local Review
+**Status**: complete
+**When**: 2026-11-20 14:29 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent a95e0796cc3310f2b, resume 1 of 3)
+**Verdict**: changes-requested
+
+**PR**: #426 at `d47392da`
+**Depth**: Standard (reason: narrow fix-round check of the three round-1 suggestions and the fix diff `f2021b01..d47392da`, per handoff; no cross-model reviewers per the owner's standing rule after a round with no must-fix)
+**Must-fix**: 1 | **Suggestions**: 0
+
+Round-1 suggestions: geodesy floor (`package.xml:17`, `CMakeLists.txt:13`) and README prerequisites (`.agents/README.md:148`) resolved as written. The override test is resolved for 12 of 13 parameters, but not for `enabled` (finding below). `git diff f2021b01..d47392da --stat` confirms the test commit touches no non-test code.
+Replaced case: no test now reads an override under the default name `bathymetry_layer`, which does not matter. The layer builds every name from `name_` (helper `getFullName` and `name_ + "."`), so the `bathy` case is strictly stronger: it also catches a prefix hard-coded to the default. The default-name declarations stay covered by `DeclaresEveryParameterUnderTheLayerName`, and default-name reads of pre-declared values by the TideFrameTest cases.
+Frame check: sound. The only transform is test_ellipsoid -> test_tide_surface. With only one override applied, the lookup is map -> test_tide_surface or test_ellipsoid -> map_tide; neither exists, so the gate stays closed. The z = +12.5 assertion also catches the two frames being swapped (the swap reads -12.5).
+Teeth check (mine, in the worktree source, rebuilt, then restored with `git checkout`; full suite 34/34 passed after restore): a misnamed `get_parameter` for `map_tide_frame` FAILED the new case, as did one for `store_path`. A misnamed one for `enabled` PASSED both new cases.
+CI on `d47392da` (run 44801349087): `build-and-test (jazzy)` pass 6m53s: `Summary: 24 packages finished [3min 51s]`, `Finished <<< bathymetry_layer [14.2s]` (geodesy built from geographic_info `ros2` source, so the `find_package(geodesy 1.0.7 REQUIRED)` floor is met), `[       OK ] TideFrameTest.ReadsParameterOverridesWithoutPreDeclare (5 ms)`, `[       OK ] TideFrameTest.DeclaresEveryParameterUnderTheLayerName (4 ms)`, `1/7 Test #1: test_bathymetry_layer ............   Passed    0.95 sec`, `Summary: 2151 tests, 0 errors, 0 failures, 180 skipped`. `build-and-test (rolling)` pass 5m46s: `Summary: 16 packages finished [2min 19s]`, `Summary: 1966 tests, 0 errors, 0 failures, 176 skipped`. `ExportCli.InterruptRemovesTheTemporaryFile` (#423) passed in both jobs.
+Local (Rolling): build clean; `./test.sh --packages-select bathymetry_layer`: 57 tests, 0 errors, 0 failures, 4 skipped; `test_bathymetry_layer` 100/100 and `test_plugin_loading` 100/100 as separate processes; both parameter cases passed 300/300 with `--gtest_repeat`.
+
+### Findings
+- [ ] (must-fix) The `enabled` read-back does not test anything: Nav2's `Layer()` sets `enabled_(false)` (layer.cpp:44 on Jazzy and Rolling), and the override is `false`, so a misnamed `get_parameter(name_ + ".enabled")` still passes `EXPECT_FALSE(layer.isEnabled())`. I confirmed this with a mutation, which passed both new cases. A misread `enabled` silently switches off the safety layer. The test comment at :984 claims the opposite. Fix: add `EXPECT_TRUE(layer.isEnabled());` to `DeclaresEveryParameterUnderTheLayerName` beside :1088, where the parameter default `true` differs from the member's `false`, or override `bathy.enabled` to `true` in the override case — `bathymetry_layer/test/test_bathymetry_layer.cpp:1000`
