@@ -983,3 +983,24 @@ CI on `4d02c86f` (run 44803274495):
 
 ### Findings
 - [ ] No issues found. LGTM.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-11-20 14:43 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent a3da6bac3d96362d2, resume 1 of 3)
+
+**PR**: #426 at `4d02c86f`
+**Sources**: 3 (Local Review @ `d47392da` (changes-requested, 1 must-fix), Local Review @ `4d02c86f` (approved, 0 open); GitHub: 0 reviews, 0 inline, 0 conversation comments, no Copilot check-run; CI rollup run 44803274495)
+**Cross-source confirmations**: 0
+**CI**: all-pass
+
+Since the Integrated Review at `f2021b01`: its three suggestions were fixed in `1245f373` (all 13 overrides under layer name `bathy`), `4673869a` (geodesy 1.0.7 floor as `ais_layer`), `7fbc5b0c` (geographic_info named in the Rolling hand check); the Local Review at `d47392da` found them resolved except the `enabled` read-back, which proved nothing (constructor default `false` equals the override), as one must-fix; `8dfdaa98` (test only) moved that proof to `DeclaresEveryParameterUnderTheLayerName` (`EXPECT_TRUE(layer.isEnabled())`); the Local Review at `4d02c86f` approved it with a mutation check and nothing open. `review_progress.sh sources` at this head returns no open local findings; the Pre-Push review at `16d55076` is stale (code changed) and its three suggestions are closed by the fixes above. No GitHub reviewers, so nothing to integrate from that side.
+
+CI at `4d02c86f`: `build-and-test (jazzy)` pass (7m30s): `Finished <<< bathymetry_layer [14.8s]`, `Summary: 24 packages finished [3min 56s]`, `1/7 Test #1: test_bathymetry_layer ............   Passed    1.00 sec`, `Summary: 2151 tests, 0 errors, 0 failures, 180 skipped`. `build-and-test (rolling)` pass (8m5s): `Summary: 16 packages finished [3min 41s]`, `Summary: 1966 tests, 0 errors, 0 failures, 176 skipped` (does not build `bathymetry_layer`, by design).
+
+### Findings
+- [x] No open findings at `4d02c86f`: the three suggestions from the Integrated Review at `f2021b01` and the must-fix from the Local Review at `d47392da` are fixed and verified.
+
+### False positives
+- None new this round. The three Gemini pre-push false positives were ruled on in the Integrated Review at `f2021b01`.
