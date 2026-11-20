@@ -238,3 +238,17 @@ The revision resolves all seven earlier findings, and the `gz4d_geo.h` step is c
 - [ ] Widen the validation statement's re-examination trigger to any further control-path commit (finding 2).
 - [ ] Add the outside consumers of `gz4d_geo.h` and the `marine_nav_utilities` copy to Consequences or the #415 comment (finding 3).
 - [ ] Host: open a separate issue for `Box<T>::operator==` and the `Angle` operators, covering both copies.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 08:27 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: owner
+**After**: plan
+**Decision**: stop
+
+Asked "Implement Part 1, with F1 to F3 handed to the implementer as corrections?" with the revised plan (75a5bd77) summarised, the second Plan Review's verdict (ready) and its three minor findings quoted. The owner answered: "Stop". No reason was given. Nothing is implemented; the plan and its review stand as they are.
+
+In the same dialog the owner was asked what should happen with defects found in `marine_autonomy/include/marine_autonomy/gz4d_geo.h` that are not Rolling problems (the self-calling `Box<T>::operator==`, the precedence bug in three `Angle` comparison operators, and the copy of this code in `unh_marine_navigation`), and answered: "Open an issue, check D2's use now (Recommended)". That is done outside this issue's loop.
+
+To resume: `/run-issue rolker/unh_marine_autonomy#418 --resume` asks this plan checkpoint again. The three minor findings of the second Plan Review are still to be handed to the implementer as corrections or folded into the plan.
