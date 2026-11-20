@@ -935,4 +935,29 @@ CI on `d47392da` (run 44801349087): `build-and-test (jazzy)` pass 6m53s: `Summar
 Local (Rolling): build clean; `./test.sh --packages-select bathymetry_layer`: 57 tests, 0 errors, 0 failures, 4 skipped; `test_bathymetry_layer` 100/100 and `test_plugin_loading` 100/100 as separate processes; both parameter cases passed 300/300 with `--gtest_repeat`.
 
 ### Findings
-- [ ] (must-fix) The `enabled` read-back does not test anything: Nav2's `Layer()` sets `enabled_(false)` (layer.cpp:44 on Jazzy and Rolling), and the override is `false`, so a misnamed `get_parameter(name_ + ".enabled")` still passes `EXPECT_FALSE(layer.isEnabled())`. I confirmed this with a mutation, which passed both new cases. A misread `enabled` silently switches off the safety layer. The test comment at :984 claims the opposite. Fix: add `EXPECT_TRUE(layer.isEnabled());` to `DeclaresEveryParameterUnderTheLayerName` beside :1088, where the parameter default `true` differs from the member's `false`, or override `bathy.enabled` to `true` in the override case — `bathymetry_layer/test/test_bathymetry_layer.cpp:1000`
+- [x] (must-fix) The `enabled` read-back does not test anything: Nav2's `Layer()` sets `enabled_(false)` (layer.cpp:44 on Jazzy and Rolling), and the override is `false`, so a misnamed `get_parameter(name_ + ".enabled")` still passes `EXPECT_FALSE(layer.isEnabled())`. I confirmed this with a mutation, which passed both new cases. A misread `enabled` silently switches off the safety layer. The test comment at :984 claims the opposite. Fix: add `EXPECT_TRUE(layer.isEnabled());` to `DeclaresEveryParameterUnderTheLayerName` beside :1088, where the parameter default `true` differs from the member's `false`, or override `bathy.enabled` to `true` in the override case — `bathymetry_layer/test/test_bathymetry_layer.cpp:1000`
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-20 14:34 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent a4b790c728d85fbd1, resume 1 of 3)
+
+**PR**: #426 at `8dfdaa98`
+**Addressed**: Local Review at `d47392da` (2026-11-20 14:29 -05:00)
+**Commits**: `8dfdaa98`
+
+### Actions
+- [x] (must-fix) The `enabled` read-back proved nothing: Nav2's `Layer()` constructor sets `enabled_` to false, and the override was false. I dropped `EXPECT_FALSE(layer.isEnabled())` from the override case. The comment there now says this case cannot prove the read and names the case that does. `DeclaresEveryParameterUnderTheLayerName` now asserts `EXPECT_TRUE(layer.isEnabled())`, where the declared default (true) differs from the constructor's false. Test-only commit: `bathymetry_layer/src/` is untouched. I asked the same question of every other read-back assertion: could it pass with the read misnamed because the member's initial value equals the asserted value? None could. minimum_depth 1.0 vs 2.0, maximum_caution_depth 2.5 vs 4.0, confidence_gate 0.5 vs 1.25, the max_uncertainty latch false vs true, unsurveyed_is_lethal false vs true, store_path empty vs non-empty (`hasStore`), map_frame and map_tide_frame `map`/`map_tide` vs the overridden frames (gate closed vs open, z 0 vs 12.5). The default-name case's getter assertions equal the member defaults, and the test does not claim them as proof of a read — `bathymetry_layer/test/test_bathymetry_layer.cpp:1000`
+
+### Teeth check (scratch copy of the layer source, scratch library confirmed loaded with `ldd`, one `get_parameter` misnamed at a time; columns: override case / default-name case)
+- enabled: pass / FAIL, read back
+- store_path, minimum_depth, maximum_caution_depth, confidence_gate, max_uncertainty, unsurveyed_is_lethal, map_tide_frame, map_frame: each FAIL / pass, read back
+- buffer_fraction, tide_invalidate_threshold, update_timeout, ready_radius: each pass / pass, declared only, as the test says
+- baseline and restored: pass / pass. The scratch copy is removed and the repository source is untouched.
+
+### Verification (Rolling, hand check, incremental build)
+- `./build.sh --packages-up-to bathymetry_layer`: `Summary: 6 packages finished`
+- `./test.sh --packages-select bathymetry_layer`: `Summary: 57 tests, 0 errors, 0 failures, 4 skipped`
+- `test_bathymetry_layer` as 100 separate processes: 100 passed, 0 failed
+- Jazzy not verified here (not installed). CI is the only Jazzy check.
