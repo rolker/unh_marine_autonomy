@@ -25,12 +25,21 @@
 #include "marine_bathymetry_store/tile_io.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
 #include "nav2_costmap_2d/layered_costmap.hpp"
-#include "nav2_util/lifecycle_node.hpp"
 #include "tf2_ros/buffer.h"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 #include "bathymetry_layer.hpp"
+
+// Nav2's lifecycle node moved from nav2_util (Jazzy) to nav2_ros_common
+// (Rolling); Layer::initialize takes a weak pointer to whichever one exists.
+#if __has_include("nav2_ros_common/lifecycle_node.hpp")
+#include "nav2_ros_common/lifecycle_node.hpp"
+using TestLifecycleNode = nav2::LifecycleNode;
+#else
+#include "nav2_util/lifecycle_node.hpp"
+using TestLifecycleNode = nav2_util::LifecycleNode;
+#endif
 
 using bathymetry_layer::BathymetryLayer;
 using marine_bathymetry_store::BathyCell;
@@ -63,6 +72,9 @@ public:
   // (σ ≤ gate ⇒ keepout-eligible), not a reject-filter.
   void setConfidenceGate(double v) {confidence_gate_ = v;}
   double getConfidenceGate() const {return confidence_gate_;}
+  double getMinimumDepth() const {return minimum_depth_;}
+  double getMaximumCautionDepth() const {return maximum_caution_depth_;}
+  bool getUnsurveyedIsLethal() const {return unsurveyed_is_lethal_;}
   void setUnsurveyedIsLethal(bool v) {unsurveyed_is_lethal_ = v;}
   // #276 deprecation guard: whether onInitialize saw a config still setting the
   // removed `max_uncertainty` key (and fired the one-shot migration WARN).
@@ -72,6 +84,8 @@ public:
   // enabled_ is set from the "enabled" param in onInitialize(); the blit tests
   // skip initialize(), so set it directly.
   void setEnabled(bool v) {enabled_ = v;}
+  // Whether openStore built a store (it does only for a non-empty store_path).
+  bool hasStore() const {return store_ != nullptr;}
 
   using BathymetryLayer::computeCost;
   using BathymetryLayer::evaluateCell;
@@ -819,7 +833,7 @@ protected:
 // map_tide (≈ +48.88 m), not from a global-frame self-lookup (which would be 0).
 TEST_F(TideFrameTest, MapTideZReadFromMapFrameNotGlobalFrame)
 {
-  auto node = std::make_shared<nav2_util::LifecycleNode>("test_tide_frame");
+  auto node = std::make_shared<TestLifecycleNode>("test_tide_frame");
   node->declare_parameter("bathymetry_layer.map_frame", std::string("map"));
   node->declare_parameter("bathymetry_layer.map_tide_frame", std::string("map_tide"));
 
@@ -854,7 +868,7 @@ TEST_F(TideFrameTest, MapTideZReadFromMapFrameNotGlobalFrame)
 // (reject-filter → trust-threshold), so silent drift would carry the wrong model.
 TEST_F(TideFrameTest, DeprecatedMaxUncertaintyKeyIsDetected)
 {
-  auto node = std::make_shared<nav2_util::LifecycleNode>("test_deprecated_key");
+  auto node = std::make_shared<TestLifecycleNode>("test_deprecated_key");
   node->declare_parameter("bathymetry_layer.map_frame", std::string("map"));
   node->declare_parameter("bathymetry_layer.map_tide_frame", std::string("map_tide"));
   // A stale config still carrying the removed key (from YAML overrides).
@@ -881,7 +895,7 @@ TEST_F(TideFrameTest, DeprecatedMaxUncertaintyKeyIsDetected)
 TEST_F(TideFrameTest, InvalidConfidenceGateResetsToDefault)
 {
   auto make_node = [](const std::string & name, double gate) {
-      auto node = std::make_shared<nav2_util::LifecycleNode>(name);
+      auto node = std::make_shared<TestLifecycleNode>(name);
       node->declare_parameter("bathymetry_layer.map_frame", std::string("map"));
       node->declare_parameter("bathymetry_layer.map_tide_frame", std::string("map_tide"));
       node->declare_parameter("bathymetry_layer.confidence_gate", gate);
@@ -926,7 +940,7 @@ TEST_F(TideFrameTest, InvalidConfidenceGateResetsToDefault)
 // LETHAL flood is written — fail loud, do not paper over it.
 TEST_F(TideFrameTest, DegenerateTideFrameConfigRejected)
 {
-  auto node = std::make_shared<nav2_util::LifecycleNode>("test_tide_frame_degenerate");
+  auto node = std::make_shared<TestLifecycleNode>("test_tide_frame_degenerate");
   node->declare_parameter("bathymetry_layer.map_frame", std::string("map_tide"));
   node->declare_parameter("bathymetry_layer.map_tide_frame", std::string("map_tide"));
 
@@ -944,6 +958,147 @@ TEST_F(TideFrameTest, DegenerateTideFrameConfigRejected)
   EXPECT_FALSE(layer.isMapTideValid())
     << "map_frame == map_tide_frame is a degenerate identity lookup and must be "
        "rejected as an invalid tide";
+}
+
+// Every parameter onInitialize declares, as the operator writes it under the
+// layer's name in the costmap YAML.
+const char * const kLayerParameters[] = {
+  "enabled", "store_path", "minimum_depth", "maximum_caution_depth", "confidence_gate",
+  "max_uncertainty", "unsurveyed_is_lethal", "map_tide_frame", "map_frame",
+  "buffer_fraction", "tide_invalidate_threshold", "update_timeout", "ready_radius"};
+
+// The YAML path: an operator's values reach the node as parameter overrides and
+// are applied when the layer declares "<layer name>.<param>". Nothing is
+// declared before initialize(), so the layer's own declaration is what picks
+// each override up. A declaration under any other name would leave the layer
+// on its defaults and silently ignore the boat's configuration (the case the
+// pre-declared TideFrameTest cases above cannot see).
+//
+// The layer is named "bathy", not "bathymetry_layer", so a prefix hard-coded
+// to the package name cannot pass, and every one of the 13 parameters gets a
+// value other than its declared default. A read-back below proves the read
+// only where the asserted value also differs from the member's own initial
+// value (what a misnamed get_parameter leaves behind). What the test reads back:
+//   - minimum_depth, maximum_caution_depth, confidence_gate,
+//     unsurveyed_is_lethal: the protected members, through the getters above.
+//   - max_uncertainty: the #276 deprecation latch.
+//   - enabled: NOT read back here. Nav2's Layer() constructor sets enabled_ to
+//     false, so the override false cannot be told from a misnamed read; it is
+//     overridden only so that every parameter is. The read is proved by
+//     DeclaresEveryParameterUnderTheLayerName, where the default true differs
+//     from the constructor's false.
+//   - store_path: the store is built only for a non-empty path (openStore),
+//     and the default is empty.
+//   - map_frame, map_tide_frame: updateBounds opens the tide gate only from a
+//     transform between the two overridden frames; none involving the
+//     defaults "map" / "map_tide" exists.
+//   - buffer_fraction, tide_invalidate_threshold, update_timeout, ready_radius:
+//     private to the layer, with no cheap observable effect, so they are
+//     checked as declared under the layer's name with the override applied,
+//     not as read back by the layer.
+TEST_F(TideFrameTest, ReadsParameterOverridesWithoutPreDeclare)
+{
+  const std::string store_path = "/nonexistent/bathymetry_layer_test_store";
+  rclcpp::NodeOptions options;
+  options.parameter_overrides(
+  {
+    rclcpp::Parameter("bathy.enabled", false),
+    rclcpp::Parameter("bathy.store_path", store_path),
+    rclcpp::Parameter("bathy.minimum_depth", 2.0),
+    rclcpp::Parameter("bathy.maximum_caution_depth", 4.0),
+    rclcpp::Parameter("bathy.confidence_gate", 1.25),
+    rclcpp::Parameter("bathy.max_uncertainty", 0.5),
+    rclcpp::Parameter("bathy.unsurveyed_is_lethal", true),
+    rclcpp::Parameter("bathy.map_tide_frame", std::string("test_tide_surface")),
+    rclcpp::Parameter("bathy.map_frame", std::string("test_ellipsoid")),
+    rclcpp::Parameter("bathy.buffer_fraction", 0.2),
+    rclcpp::Parameter("bathy.tide_invalidate_threshold", 0.3),
+    rclcpp::Parameter("bathy.update_timeout", 0.25),
+    rclcpp::Parameter("bathy.ready_radius", 50.0),
+  });
+  auto node = std::make_shared<TestLifecycleNode>(
+    "test_parameter_overrides_" + std::to_string(getpid()), "", options);
+
+  auto tf_buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
+  geometry_msgs::msg::TransformStamped tide;
+  tide.header.stamp = rclcpp::Time(1);
+  tide.header.frame_id = "test_ellipsoid";
+  tide.child_frame_id = "test_tide_surface";
+  tide.transform.translation.z = 12.5;
+  tide.transform.rotation.w = 1.0;
+  tf_buffer->setTransform(tide, "test_authority", false);
+
+  nav2_costmap_2d::LayeredCostmap layered_costmap("test_tide_surface", false, false);
+  layered_costmap.resizeMap(10, 10, 1.0, 0.0, 0.0);
+
+  BathymetryLayerForTest layer;
+  layer.initialize(&layered_costmap, "bathy", tf_buffer.get(), node, nullptr);
+
+  for (const char * param : kLayerParameters) {
+    EXPECT_TRUE(node->has_parameter(std::string("bathy.") + param))
+      << "bathy." << param << " must be declared under the layer's name";
+    EXPECT_FALSE(node->has_parameter(std::string("bathymetry_layer.") + param))
+      << "bathymetry_layer." << param << " must not be declared: the layer is named bathy";
+    EXPECT_FALSE(node->has_parameter(param))
+      << param << " must not be declared without the layer's name";
+  }
+
+  EXPECT_DOUBLE_EQ(layer.getMinimumDepth(), 2.0);
+  EXPECT_DOUBLE_EQ(layer.getMaximumCautionDepth(), 4.0);
+  EXPECT_DOUBLE_EQ(layer.getConfidenceGate(), 1.25);
+  EXPECT_TRUE(layer.deprecatedMaxUncertaintySeen())
+    << "a max_uncertainty override must trip the #276 deprecation guard";
+  EXPECT_TRUE(layer.getUnsurveyedIsLethal());
+  EXPECT_TRUE(layer.hasStore())
+    << "a store_path override must reach the layer (it builds a store only for a "
+       "non-empty path)";
+
+  // Declared-only: the node holds the overrides under the layer's name.
+  EXPECT_DOUBLE_EQ(node->get_parameter("bathy.buffer_fraction").as_double(), 0.2);
+  EXPECT_DOUBLE_EQ(node->get_parameter("bathy.tide_invalidate_threshold").as_double(), 0.3);
+  EXPECT_DOUBLE_EQ(node->get_parameter("bathy.update_timeout").as_double(), 0.25);
+  EXPECT_DOUBLE_EQ(node->get_parameter("bathy.ready_radius").as_double(), 50.0);
+
+  // updateBounds returns at once while disabled; enable it to read the tide.
+  layer.setEnabled(true);
+  double minx = 1e30, miny = 1e30, maxx = -1e30, maxy = -1e30;
+  layer.updateBounds(0.0, 0.0, 0.0, &minx, &miny, &maxx, &maxy);
+  EXPECT_TRUE(layer.isMapTideValid())
+    << "map_frame and map_tide_frame overrides must reach the layer: the only "
+       "transform published is test_ellipsoid -> test_tide_surface";
+  EXPECT_NEAR(layer.getMapTideZ(), 12.5, 1e-6);
+}
+
+// With no overrides and nothing pre-declared, every parameter is declared under
+// the layer's name with the layer's default, and the layer keeps its defaults.
+TEST_F(TideFrameTest, DeclaresEveryParameterUnderTheLayerName)
+{
+  auto node = std::make_shared<TestLifecycleNode>(
+    "test_parameter_defaults_" + std::to_string(getpid()));
+
+  auto tf_buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
+  nav2_costmap_2d::LayeredCostmap layered_costmap("map_tide", false, false);
+  layered_costmap.resizeMap(10, 10, 1.0, 0.0, 0.0);
+
+  BathymetryLayerForTest layer;
+  layer.initialize(&layered_costmap, "bathymetry_layer", tf_buffer.get(), node, nullptr);
+
+  for (const char * param : kLayerParameters) {
+    EXPECT_TRUE(node->has_parameter(std::string("bathymetry_layer.") + param))
+      << "bathymetry_layer." << param << " must be declared under the layer's name";
+    EXPECT_FALSE(node->has_parameter(param))
+      << param << " must not be declared without the layer's name";
+  }
+  EXPECT_TRUE(node->get_parameter("bathymetry_layer.enabled").as_bool());
+  // Nav2's Layer() constructor sets enabled_ to false, so only a read of the
+  // declared default (true) under the layer's name makes this true.
+  EXPECT_TRUE(layer.isEnabled());
+  EXPECT_DOUBLE_EQ(node->get_parameter("bathymetry_layer.confidence_gate").as_double(), 0.5);
+  EXPECT_DOUBLE_EQ(layer.getConfidenceGate(), 0.5);
+  EXPECT_DOUBLE_EQ(layer.getMinimumDepth(), 1.0);
+  EXPECT_DOUBLE_EQ(layer.getMaximumCautionDepth(), 2.5);
+  EXPECT_FALSE(layer.getUnsurveyedIsLethal());
+  EXPECT_FALSE(layer.deprecatedMaxUncertaintySeen());
 }
 
 // ---------------------------------------------------------------------------

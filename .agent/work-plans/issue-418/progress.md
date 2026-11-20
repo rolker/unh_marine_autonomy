@@ -739,3 +739,280 @@ Asked "Merge pull request 424 into `rolling`?" with what merges, CI at `d9f78b2`
 In the same dialog he approved a comment on issue 415 adding cause 12 and Part 2's notes ("Post it (Recommended)"), and the `jazzy` backport pull request right after the merge ("Yes, backport right after (Recommended)"); the backport's own merge is still asked of him.
 
 Before this checkpoint the host ticked the Integrated Review's only box, "No open findings. Ready for the merge decision.", with `review_progress.sh check`: it is a statement, not a finding, and unchecked it routed to the findings checkpoint.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 13:31 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the plan holds Part 3 only as an outline, to be settled when the part starts; the owner answered "Yes, start Part 3 (Recommended)" after being told this checkpoint would be answered revise)
+**After**: plan
+**Decision**: revise
+
+After the merge of pull request 424 (Part 2, into `rolling` at `1b4ccb3b`). The issue is still open because Part 3 remains and the base is not the default branch. Delivered: Parts 1 and 2. Not delivered: Part 3 (`bathymetry_layer`). The plan is unchanged since its last review, but Part 3 is an outline there and the package has never been compiled on Rolling, so `proceed` is not right. Since that review: Part 2 was backported to `jazzy` by hand (pull request 425, merged at `2fcbe865`); issue 415 gained cause 12 (GDAL 3.12, concurrent `GDALAllRegister`); issue 423 tracks the `export_geotiff` signal-handling defect.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-11-20 14:05 -05:00
+**By**: Claude Code Agent (claude-sonnet-5-5)
+**Plan**: `.agent/work-plans/issue-418/plan.md` at `1fa59ae6`
+
+Revision: Parts 1 and 2 marked delivered (pull requests 421 and 424, backports 422 and 425); Part 3 (`bathymetry_layer`) written out from a baseline build on `rolling` at `1b4ccb3b`. Baseline: fails at `ament_target_dependencies` (cause 1); a scratch copy then showed `declareParameter` (cause 6) and a test include of `nav2_util/lifecycle_node.hpp` (new, proposed cause 13), and then 55 tests passing, 300 and 200 repeat runs without failure. Cause 7 does not apply (no subscription), a `test_initialize` is not needed (existing tests call `initialize()`), no undeclared system dependency, no GDAL registration or threading change needed. Steps: CMake (causes 1 and 8), helper (cause 6), test header, Jazzy CI, docs, `core.repos` pins (not backported). Pull request body: `Part of #418`.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-11-20 13:48 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: needs-work
+
+**Issue**: #418 — Port to ROS 2 Rolling, stage 1: the 15 packages with no unported dependency
+**Plan**: `.agent/work-plans/issue-418/plan.md` at `1fa59ae6`
+**Branch**: `feature/issue-418`
+
+Scope of this review: Part 3 (`bathymetry_layer`, the `core.repos` pins, the Jazzy job, the docs). Parts 1 and 2 are delivered and were not re-reviewed. The owner's settled rules (one pull request per part, hand backport, Nav2 checked on Rolling by hand only, no suppression flags) are not findings. Jazzy facts below were read from navigation2 `jazzy` on GitHub (tarball of the branch) and rosdistro `jazzy/distribution.yaml`; nothing was built on Jazzy. The baseline build was not re-run.
+
+### Evaluation
+
+| Dimension | Verdict | Notes |
+|---|---|---|
+| Scope | Good | One package, 3 code commits, CI, docs, pins; fits one pull request. |
+| Issue alignment | Needs work | `Serves`: "None (the project states no goals); keeping `rolling` the development trunk per `.agents/README.md`. No project design document." Accepted (project states no goals). The issue (line 33) and #415 ask for a test of `initialize()` as `ais_layer` has; the plan declines it, and the part it drops is the one that checks the new helper (finding 1). |
+| File targeting | Good | The six files are the right ones; `package.xml` rightly unchanged. If finding 1 is taken, the test goes into the existing `test/test_bathymetry_layer.cpp`, no new file. |
+| Consequences | Good | Pins' effect on the Jazzy job checked (claim 7 below); backport list excludes the pins; docs wording for the backport handled. |
+| Principle alignment | Needs work | "Test what breaks": step 2 rewrites how all 13 parameters are declared on the planning path, and no test fails if the helper declares under the wrong name (finding 1). |
+| ADR compliance | Good | No project ADR triggered; ADR-0013 records carried. |
+| ROS conventions | Good | Parameter names `<layer>.<param>` and declare-if-absent unchanged; `__has_include` alias correct on both distros; keyword `target_link_libraries` form correct. |
+
+### Findings
+
+1. **[Principle alignment / Issue alignment]** (should fix before implementation) — The plan's step 4 says `TideFrameTest` covers the parameter path the new helper replaces, and the control-path paragraph says a name mismatch "would show" in those tests because they pre-declare `bathymetry_layer.*` names. That is only half true. `TideFrameTest` (`test/test_bathymetry_layer.cpp:810-940`) does run `initialize()` and does exercise the `has_parameter`-true branch (without the guard, re-declaring a pre-declared name would throw). But it never checks the declare branch: no test passes a value through `parameter_overrides` (the YAML path, applied at declare time), and none asserts `node->has_parameter("bathymetry_layer.<name>")` after `initialize()`. Because the pre-declared names are read back with `node->get_parameter(name_ + ".x", var)`, which returns false and leaves the member default on an undeclared name, a helper that declared `param` instead of `getFullName(param)` would pass all 32 cases while every operator override of `minimum_depth`, `maximum_caution_depth`, `unsurveyed_is_lethal`, `store_path`, ... was silently ignored on the boat. That is exactly the case `ais_layer/test/test_initialize.cpp` `ReadsParameterOverrides` covers (`options.parameter_overrides(...)`, `EXPECT_TRUE(node->has_parameter("ais.max_age_class_b"))`), and the case the issue's line 33 points at. Resolution: add one or two `TEST_F(TideFrameTest, ...)` cases to the existing file (no new file, no isolated gtest needed since there is no graph check): build the `TestLifecycleNode` with `rclcpp::NodeOptions().parameter_overrides({{"bathymetry_layer.confidence_gate", 1.25}, ...})` and no pre-declare, call `initialize()`, assert the layer read the override (`getConfidenceGate()` already exists) and that all 13 `bathymetry_layer.*` names are declared on the node. It runs on Rolling locally and on Jazzy in CI. Commit it before step 2 (it passes on Jazzy's `Layer::declareParameter`) or with it, and correct the control-path sentence about what the existing tests would show.
+2. **[Consequences]** (minor) — The threading paragraph is right for this layer and its store (per-instance `std::unique_ptr<BathymetryStore> store_`; the only statics reachable are immutable `static const`/`constexpr` values and `ensureGdalRegistered()`'s function-local static), but "no open question arises" holds only within this repository's code. The once-per-process guard covers callers that go through it; another plugin loaded into the same costmap process that calls `GDALAllRegister()` itself on another thread would still race it (the guard's own comment in `marine_tiled_raster_store/src/gdal_registration.hpp` says so). In this workspace `s57_layer` does not (it reaches charts over services; `marine_charts::S57Catalog`'s `GDALAllRegister()` is not loaded into the costmap), so nothing to fix now; say in the pull request that the guarantee is per process and assumes no co-loaded plugin registers GDAL directly.
+
+### Summary
+
+Six of the seven load-bearing claims check out (helper equivalent to Jazzy's `declareParameter`; cause 7 not applicable; `__has_include` alias right on both distros; CMake form sound; pins sound on the Jazzy job; GDAL/threading sound within the repo). The plan is not ready only because it declines the `initialize()` test on the grounds that existing tests cover the helper, and they do not cover the one failure that matters on the planning path; one added test case fixes that.
+
+### Recommended Actions
+
+- [ ] Add a `parameter_overrides` / `has_parameter` test case to `TideFrameTest` (finding 1) and list it in step 4 and in Files to Change.
+- [ ] Correct the control-path sentence about what the existing tests would catch (finding 1).
+- [ ] Add one sentence to the pull request body on the per-process scope of the GDAL guard (finding 2).
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 13:49 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the Plan Review's verdict is needs-work on one point whose resolution it states exactly, a test to add; handing that to the implementer as a binding correction gives the same result as a plan revision without another plan and review round)
+**After**: plan
+**Decision**: proceed
+
+Read: `plan.md` at `1fa59ae6` and the Plan Review of it (verdict needs-work; two findings; the seven claims the host asked about: six confirmed, one wrong in part). Part 3 only is implemented now, with both findings as corrections that override the plan where they differ:
+
+- F1 (should fix before implementation): step 4's "no test is added" is wrong. `TideFrameTest` exercises only the already-declared branch; nothing passes a value through `parameter_overrides` or asserts `has_parameter("bathymetry_layer.<name>")` after `initialize()`, so a helper declaring the wrong name would pass every case while operator overrides were ignored. Add one or two `TEST_F(TideFrameTest, ...)` cases to the existing test file: a node built with `parameter_overrides` and no pre-declare, `initialize()`, then assert the layer read the override and that all 13 `bathymetry_layer.*` names are declared. Commit it before the helper commit (it passes on Jazzy's `Layer::declareParameter`), and correct the control-path sentence about what the existing tests would show.
+- F2 (minor): the pull request says the once-per-process GDAL registration is a per-process guarantee that assumes no co-loaded plugin registers GDAL directly.
+
+This is the host's first answer at this plan checkpoint after the review; the earlier `revise` started the part.
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-20 13:59 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Branch**: feature/issue-418 at `55e2b0f5`
+
+Part 3 (`bathymetry_layer`), plan steps 1 to 3 and 7 to 9 with the Plan Review's F1 and F2 applied. Commits, in order:
+- `3968c5e5` CMake: `ament_target_dependencies` replaced, geodesy include dirs `PRIVATE`, keyword `target_link_libraries` with every existing item `PUBLIC` and `${geodesy_LIBRARIES}` `PRIVATE` (causes 1 and 8). Behaviour: the plugin links the same libraries and includes the same headers; no source changes.
+- `ade5e896` test: Nav2 lifecycle node header via `__has_include`, `TestLifecycleNode` alias (new #415 cause, 13). Behaviour: test code only, the library does not include the header.
+- `7b074049` test (F1): `TideFrameTest.ReadsParameterOverridesWithoutPreDeclare` (5 values passed as `parameter_overrides`, nothing pre-declared, layer reads them, all 13 `bathymetry_layer.*` declared) and `DeclaresEveryParameterUnderTheLayerName` (no overrides: 13 names declared, no bare name, defaults); 3 read-only getters on the test subclass. Committed before the helper. Behaviour: test code only.
+- `048f5209` helper: local `declareParameter` lambda, `has_parameter` then `declare_parameter(getFullName(param), value)` (cause 6). Behaviour: exactly what Jazzy's `Layer::declareParameter` does (its `local_params_` insert is read by nothing); call sites, defaults, read-back and validation unchanged.
+- `610f54fe` CI: `bathymetry_layer` added to the Jazzy job's rosdep closure, build and test lists; header comment says the Rolling job does not build it (Nav2 has no Rolling release). Not added to the Rolling job.
+- `c8ff47d0` docs: `.agents/README.md` table row, hand-check commands, pin rule worded true on both branches.
+- `55e2b0f5` `config/repos/core.repos`: `marine_ais`, `marine_control` at `rolling` (rolling only; not for the backport).
+- Step 6: no cause found beyond 13. Step 5 audit stands: `package.xml` declares what the code uses (no system library).
+
+Plan correction (F1), measured: with the helper temporarily declaring the bare name, `test_bathymetry_layer` failed 3 of 34 cases: the two new ones and, indirectly, the existing `MapTideZReadFromMapFrameNotGlobalFrame` (the undeclared `enabled` read fails, `enabled_` stays at Nav2 `Layer`'s default `false`, so `updateBounds` does nothing). So no existing case checks that an override is read; one fails on a name mismatch only by that accident. Restored: 34 of 34 passed.
+
+Verification (Rolling, this machine, by hand; navigation2 `dcffa939` in the Rolling underlay): after `rm -rf core_ws/build core_ws/install core_ws/log`, `./build.sh --packages-up-to bathymetry_layer`: `Summary: 6 packages finished`; `./test.sh --packages-select bathymetry_layer`: `Summary: 57 tests, 0 errors, 0 failures, 4 skipped`. Only warning from this package: `BUFFER_HEADER_DEPRECATION` (test, left). `env -i`, sourcing `/opt/ros/rolling` and the underlay only, `colcon test --packages-select bathymetry_layer`: 57 / 0 / 0 / 4. Separate-process runs at `55e2b0f5`: `test_bathymetry_layer` 100 of 100, `test_plugin_loading` 100 of 100 (and 100 / 100 each before the CI and docs commits). `rosdep install --simulate --reinstall --ignore-src --rosdistro jazzy --os ubuntu:noble` over the Jazzy job's widened closure (24 packages, rolling pins applied): rc 0, every key resolved (`ros-jazzy-nav2-costmap-2d`, `ros-jazzy-nav2-util` among them). Jazzy not built or tested here (not installed); CI is the only Jazzy check. Part 1 and Part 2 packages not re-run: nothing they depend on changed. No simulation was run.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-11-20 14:04 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: approved
+
+**Branch**: feature/issue-418 at `16d55076`
+**Base**: origin/rolling
+**Depth**: Standard (reason: CI workflow and .repos changes plus a safety-relevant costmap layer; 8 files, +351 -127 including work-plan records)
+**Must-fix**: 0 | **Suggestions**: 3
+**Round**: 1 | **Ship**: recommended — no must-fix findings; remaining suggestions can be applied or tracked
+
+Parameter check: all 13 parameters (enabled, store_path, minimum_depth, maximum_caution_depth, confidence_gate, max_uncertainty, unsurveyed_is_lethal, map_tide_frame, map_frame, buffer_fraction, tide_invalidate_threshold, update_timeout, ready_radius) keep the same name, default, type and read-back: the declare/get_parameter call sites are byte-identical to origin/rolling; only the local helper was added. The helper matches Jazzy's Layer::declareParameter (layer.cpp@jazzy:76-87: has_parameter then declare_parameter on getFullName) except the local_params_ insert, which nothing in navigation2 jazzy reads.
+Verified: build clean; ./test.sh --packages-select bathymetry_layer: 57 tests, 0 errors, 0 failures, 4 skipped; test_bathymetry_layer 150/150 and test_plugin_loading 150/150 separate runs pass; the two new cases 300/300 with --gtest_repeat. Jazzy not verifiable locally (sources read only; CI not yet run). Cross-model: Gemini and Codex completed; Gemini's null-node must-fix dropped (Layer::initialize@jazzy dereferences the locked node before onInitialize), its two .repos/CI notes dropped (Rolling job already clones marine_ais at rolling; jazzy job builds only marine_ais_msgs, which differs from jazzy only in tag order). Copilot CLI not dispatched (dropped as a reviewer, #344).
+
+### Findings
+- [ ] (suggestion) Override test checks the read-back of only 5 of 13 parameters (the other 8 only as declared names), so a mistyped `get_parameter(name_ + ".x")` for e.g. map_frame, ready_radius or store_path would go unnoticed; all tests also use the one layer name `bathymetry_layer`, so a hard-coded prefix would pass — override all 13 with non-default values under a different layer name — `bathymetry_layer/test/test_bathymetry_layer.cpp:974`
+- [ ] (suggestion) State the geodesy floor that `geodesy/ecef.h` needs, as ais_layer does (`<depend version_gte="1.0.7">` and `find_package(geodesy 1.0.7 REQUIRED)`); Jazzy's apt geodesy 1.0.6 lacks the header, so a plain Jazzy install fails with a missing-header error instead of a version message — `bathymetry_layer/package.xml:17`
+- [ ] (suggestion) The Rolling hand-check paragraph names a source-built navigation2 as the prerequisite but not geodesy (no Rolling apt package, needs ecef.h) — `.agents/README.md:148`
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 14:05 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the pre-push review approved round 1 with no must-fix; Jazzy can only be checked by CI on the pushed branch, and this is the package's first Jazzy build in CI)
+**After**: publish
+**Decision**: publish
+
+Read: the Local Review (Pre-Push) at `16d55076`, verdict approved, ship recommended, three suggestions open: the override test reads back only 5 of 13 parameters and every test uses the one layer name (`bathymetry_layer/test/test_bathymetry_layer.cpp:974`); the `geodesy` version floor that `geodesy/ecef.h` needs is not stated (`bathymetry_layer/package.xml:17`); the Rolling hand-check paragraph does not name `geodesy` as a prerequisite (`.agents/README.md:148`). They stay open and go through triage after publish, as in Part 1, so CI's Jazzy run starts now. This is a project issue, so the host runs no full pre-commit pass. The pull request says `Part of #418`.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-11-20 14:13 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+
+**PR**: #426 at `f2021b01`
+**Sources**: 3 (Local Review (Pre-Push) @ `16d55076` (covers `f2021b01` via bookkeeping), with its Gemini and Codex cross-model findings; GitHub: 0 reviews, 0 inline, 0 conversation comments, no Copilot check-run; CI rollup)
+**Cross-source confirmations**: 0 (Codex raised the same points as local suggestions 1 and 3 inside the same pre-push round; one review round, not independent GitHub sources)
+**CI**: all-pass
+
+CI at `f2021b01`: `build-and-test (jazzy)` pass (7m13s): build `Summary: 24 packages finished [4min 3s]`, `Finished <<< bathymetry_layer [16.9s]`; test `Summary: 2151 tests, 0 errors, 0 failures, 180 skipped`; `1/7 Test #1: test_bathymetry_layer ............   Passed    0.98 sec`, with `[       OK ] TideFrameTest.ReadsParameterOverridesWithoutPreDeclare` and `[       OK ] TideFrameTest.DeclaresEveryParameterUnderTheLayerName` against Jazzy's own `Layer::declareParameter`. `build-and-test (rolling)` pass (5m42s): build `Summary: 16 packages finished [2min 22s]`, test `Summary: 1966 tests, 0 errors, 0 failures, 176 skipped`; it does not build `bathymetry_layer` (by design; checked on Rolling by hand).
+
+Geodesy floor (finding 2) established: the source-built geodesy reports 1.0.7 (`geographic_info` at `f70b81a` = `1.0.7-1-gf70b81a`, `package.xml` `<version>1.0.7</version>`), and its installed `geodesyConfig-version.cmake` (ament template) accepts any requested version <= 1.0.7, so `find_package(geodesy 1.0.7 REQUIRED)` passes. The Jazzy job imports `underlay.repos` with `geographic_info` at `ros2`, whose head is `f70b81a` (1.0.7), so it passes there too; rosdep resolves keys only and does not evaluate `version_gte`, and colcon does not enforce it, so neither form can break the Jazzy job or an underlay build. Only an apt Jazzy geodesy 1.0.6 fails, now with a version message instead of a missing `ecef.h`, which is the intent. `ais_layer` (marine_ais `rolling`) words it as `<depend version_gte="1.0.7">geodesy</depend>` plus `find_package(geodesy 1.0.7 REQUIRED)` under a comment: "1.0.7 first has geodesy/ecef.h. The floor is necessary, not sufficient: the 1.0.7 tag itself needs upstream #64 (f70b81a, still versioned 1.0.7) to compile, which no version check can tell apart."
+
+### Findings
+- [x] (suggestion, Local Review @ `16d55076` + Codex in that round) The override test reads back only 5 of 13 parameters and every test initialises the layer as `bathymetry_layer`, so a mistyped `get_parameter(name_ + ".x")` for e.g. `map_frame`, `ready_radius`, `store_path` or a hard-coded prefix would pass. Fix: in `ReadsParameterOverridesWithoutPreDeclare`, initialise under another name (e.g. `"bathy"`), override all 13 with non-default values under that prefix, assert each is read back (add getters to `BathymetryLayerForTest` where missing), and assert `has_parameter("bathy.<p>")` and not `"bathymetry_layer.<p>"` — `bathymetry_layer/test/test_bathymetry_layer.cpp:974`
+- [x] (suggestion, Local Review @ `16d55076`) The geodesy floor that `geodesy/ecef.h` needs is not stated. Fix, as `ais_layer`: `<depend version_gte="1.0.7">geodesy</depend>` in `package.xml` and `find_package(geodesy 1.0.7 REQUIRED)` with `ais_layer`'s comment (floor necessary, not sufficient: the 1.0.7 tag needs upstream #64, `f70b81a`) in `CMakeLists.txt:13`; verified safe for the Jazzy job and the underlay build (above) — `bathymetry_layer/package.xml:17`
+- [x] (suggestion, Local Review @ `16d55076` + Codex in that round) The Rolling hand-check paragraph names a source-built navigation2 but not geodesy, which has no installable Rolling apt package and must include `ecef.h` (geographic_info at `f70b81a` or later; the project underlay already builds it from source). Fix: "a machine whose Rolling underlay has navigation2 and geographic_info (geodesy, at `f70b81a` or later) built from source" — `.agents/README.md:148`
+
+### False positives
+- (Gemini, pre-push round, must-fix) `onInitialize()` dereferences `node_.lock()` without a null check after the Jazzy `declareParameter` guard was removed — `Layer::initialize` (navigation2 `jazzy` and Rolling `dcffa939`, `nav2_costmap_2d/src/layer.cpp`) itself locks `node_` and calls `get_logger()` on it before calling `onInitialize()`, so an expired node fails there first; the lambda never sees a null node on that path.
+- (Gemini, pre-push round) The Rolling job may still clone `marine_ais` at `jazzy` — it clones `-b rolling` (`.github/workflows/ros-base-docker.yml:122`).
+- (Gemini, pre-push round) Pinning `marine_ais` and `marine_control` at `rolling` makes the Jazzy job build those branches on Jazzy — owner-settled pin (rolling only, not backported); the `rolling` branches are kept Jazzy-compatible, and the Jazzy job at this head built and tested its whole closure (24 packages, 0 failures).
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 14:14 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (three valid suggestions are open and each has a small, named fix; merging past open findings is the owner's answer only)
+**After**: findings
+**Decision**: address
+
+Read: the Integrated Review of pull request 426 at `f2021b01`: three valid suggestions, three false positives, CI all-pass (Jazzy 24 packages, 2151 tests, 0 failures, `bathymetry_layer` built and its two new parameter tests passing against Jazzy's own `Layer::declareParameter`; Rolling 16 packages, 1966 tests, 0 failures). All three are addressed: (1) `bathymetry_layer/test/test_bathymetry_layer.cpp:974`, initialise under another layer name, override all 13 parameters with non-default values, assert each is read back and that the names are declared under that name and not under `bathymetry_layer`; (2) `bathymetry_layer/package.xml:17` and `CMakeLists.txt:13`, state the `geodesy` 1.0.7 floor exactly as `ais_layer` does; (3) `.agents/README.md:148`, name `geodesy` from source as a prerequisite of the Rolling hand check.
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-20 14:21 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+
+**PR**: #426 at `7fbc5b0c`
+**Addressed**: Integrated Review at `f2021b01` (2026-11-20 14:13 -05:00)
+**Commits**: `1245f373`, `4673869a`, `7fbc5b0c`
+
+### Actions
+- [x] Override test now initialises the layer as `bathy`, overrides all 13 parameters with non-default values, and asserts `bathy.<p>` declared, `bathymetry_layer.<p>` and bare `<p>` not declared. Read back from the layer: `minimum_depth`, `maximum_caution_depth`, `confidence_gate`, `unsurveyed_is_lethal` (getters), `max_uncertainty` (deprecation latch), `enabled` (`Layer::isEnabled()`), `store_path` (new test-subclass `hasStore()`: a store is built only for a non-empty path), `map_frame` and `map_tide_frame` (tide gate opens only from the one transform published between the two overridden frames). Declared only (node holds the override under `bathy.`): `buffer_fraction`, `tide_invalidate_threshold`, `update_timeout`, `ready_radius`, which are private to the layer with no cheap observable effect. Test-only commit: `bathymetry_layer/src/` (the package has no `include/`) is untouched. Teeth check in a scratch build of a copy of the layer source, with the scratch library first on `LD_LIBRARY_PATH` (without that the installed library shadows it and every case passes vacuously; first attempt discarded for that reason): helper declaring the bare name, FAILED (13x not declared under `bathy.`, 13x bare name declared, 6 read-backs, then an exception); `get_parameter(name_ + ".mapframe")`, FAILED (tide gate closed, z 0 vs 12.5); hard-coded `"bathymetry_layer."` prefix on the helper and all 14 `get_parameter` calls, FAILED (13x not under `bathy.`, 13x declared under `bathymetry_layer.`, 7 read-backs); restored, PASSED. Scratch copy removed; nothing in the repository touched — `bathymetry_layer/test/test_bathymetry_layer.cpp:974`
+- [x] `geodesy` floor stated as `ais_layer` does: `<depend version_gte="1.0.7">geodesy</depend>` and `find_package(geodesy 1.0.7 REQUIRED)` with its necessary-not-sufficient comment. Clean local build resolves geodesy 1.0.7 from the Rolling underlay (`geographic_info` at `f70b81a`); a scratch `find_package(geodesy 1.0.8)` is refused by the installed version file, so the floor is enforced by CMake — `bathymetry_layer/package.xml:17`, `bathymetry_layer/CMakeLists.txt:13`
+- [x] Rolling hand-check paragraph now names navigation2 and geographic_info (`geodesy`, at `f70b81a` or later) built from source in the Rolling underlay — `.agents/README.md:148`
+
+### Verification (Rolling, hand check)
+- `rm -rf core_ws/build core_ws/install core_ws/log`, `./build.sh --packages-up-to bathymetry_layer`: `Summary: 6 packages finished` (stderr is pre-existing: CMake < 3.10 deprecation in four packages, `tf2_ros/buffer.h` deprecation `#warning` in the test include)
+- `./test.sh --packages-select bathymetry_layer`: `Summary: 57 tests, 0 errors, 0 failures, 4 skipped`
+- `test_bathymetry_layer` as 100 separate processes: 100 passed, 0 failed
+- Not verified here: Jazzy (not installed; CI on the pushed branch is the only Jazzy check). The Rolling CI job does not build this package.
+
+## Local Review
+**Status**: complete
+**When**: 2026-11-20 14:29 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent a95e0796cc3310f2b, resume 1 of 3)
+**Verdict**: changes-requested
+
+**PR**: #426 at `d47392da`
+**Depth**: Standard (reason: narrow fix-round check of the three round-1 suggestions and the fix diff `f2021b01..d47392da`, per handoff; no cross-model reviewers per the owner's standing rule after a round with no must-fix)
+**Must-fix**: 1 | **Suggestions**: 0
+
+Round-1 suggestions: geodesy floor (`package.xml:17`, `CMakeLists.txt:13`) and README prerequisites (`.agents/README.md:148`) resolved as written. The override test is resolved for 12 of 13 parameters, but not for `enabled` (finding below). `git diff f2021b01..d47392da --stat` confirms the test commit touches no non-test code.
+Replaced case: no test now reads an override under the default name `bathymetry_layer`, which does not matter. The layer builds every name from `name_` (helper `getFullName` and `name_ + "."`), so the `bathy` case is strictly stronger: it also catches a prefix hard-coded to the default. The default-name declarations stay covered by `DeclaresEveryParameterUnderTheLayerName`, and default-name reads of pre-declared values by the TideFrameTest cases.
+Frame check: sound. The only transform is test_ellipsoid -> test_tide_surface. With only one override applied, the lookup is map -> test_tide_surface or test_ellipsoid -> map_tide; neither exists, so the gate stays closed. The z = +12.5 assertion also catches the two frames being swapped (the swap reads -12.5).
+Teeth check (mine, in the worktree source, rebuilt, then restored with `git checkout`; full suite 34/34 passed after restore): a misnamed `get_parameter` for `map_tide_frame` FAILED the new case, as did one for `store_path`. A misnamed one for `enabled` PASSED both new cases.
+CI on `d47392da` (run 44801349087): `build-and-test (jazzy)` pass 6m53s: `Summary: 24 packages finished [3min 51s]`, `Finished <<< bathymetry_layer [14.2s]` (geodesy built from geographic_info `ros2` source, so the `find_package(geodesy 1.0.7 REQUIRED)` floor is met), `[       OK ] TideFrameTest.ReadsParameterOverridesWithoutPreDeclare (5 ms)`, `[       OK ] TideFrameTest.DeclaresEveryParameterUnderTheLayerName (4 ms)`, `1/7 Test #1: test_bathymetry_layer ............   Passed    0.95 sec`, `Summary: 2151 tests, 0 errors, 0 failures, 180 skipped`. `build-and-test (rolling)` pass 5m46s: `Summary: 16 packages finished [2min 19s]`, `Summary: 1966 tests, 0 errors, 0 failures, 176 skipped`. `ExportCli.InterruptRemovesTheTemporaryFile` (#423) passed in both jobs.
+Local (Rolling): build clean; `./test.sh --packages-select bathymetry_layer`: 57 tests, 0 errors, 0 failures, 4 skipped; `test_bathymetry_layer` 100/100 and `test_plugin_loading` 100/100 as separate processes; both parameter cases passed 300/300 with `--gtest_repeat`.
+
+### Findings
+- [x] (must-fix) The `enabled` read-back does not test anything: Nav2's `Layer()` sets `enabled_(false)` (layer.cpp:44 on Jazzy and Rolling), and the override is `false`, so a misnamed `get_parameter(name_ + ".enabled")` still passes `EXPECT_FALSE(layer.isEnabled())`. I confirmed this with a mutation, which passed both new cases. A misread `enabled` silently switches off the safety layer. The test comment at :984 claims the opposite. Fix: add `EXPECT_TRUE(layer.isEnabled());` to `DeclaresEveryParameterUnderTheLayerName` beside :1088, where the parameter default `true` differs from the member's `false`, or override `bathy.enabled` to `true` in the override case — `bathymetry_layer/test/test_bathymetry_layer.cpp:1000`
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-20 14:34 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent a4b790c728d85fbd1, resume 1 of 3)
+
+**PR**: #426 at `8dfdaa98`
+**Addressed**: Local Review at `d47392da` (2026-11-20 14:29 -05:00)
+**Commits**: `8dfdaa98`
+
+### Actions
+- [x] (must-fix) The `enabled` read-back proved nothing: Nav2's `Layer()` constructor sets `enabled_` to false, and the override was false. I dropped `EXPECT_FALSE(layer.isEnabled())` from the override case. The comment there now says this case cannot prove the read and names the case that does. `DeclaresEveryParameterUnderTheLayerName` now asserts `EXPECT_TRUE(layer.isEnabled())`, where the declared default (true) differs from the constructor's false. Test-only commit: `bathymetry_layer/src/` is untouched. I asked the same question of every other read-back assertion: could it pass with the read misnamed because the member's initial value equals the asserted value? None could. minimum_depth 1.0 vs 2.0, maximum_caution_depth 2.5 vs 4.0, confidence_gate 0.5 vs 1.25, the max_uncertainty latch false vs true, unsurveyed_is_lethal false vs true, store_path empty vs non-empty (`hasStore`), map_frame and map_tide_frame `map`/`map_tide` vs the overridden frames (gate closed vs open, z 0 vs 12.5). The default-name case's getter assertions equal the member defaults, and the test does not claim them as proof of a read — `bathymetry_layer/test/test_bathymetry_layer.cpp:1000`
+
+### Teeth check (scratch copy of the layer source, scratch library confirmed loaded with `ldd`, one `get_parameter` misnamed at a time; columns: override case / default-name case)
+- enabled: pass / FAIL, read back
+- store_path, minimum_depth, maximum_caution_depth, confidence_gate, max_uncertainty, unsurveyed_is_lethal, map_tide_frame, map_frame: each FAIL / pass, read back
+- buffer_fraction, tide_invalidate_threshold, update_timeout, ready_radius: each pass / pass, declared only, as the test says
+- baseline and restored: pass / pass. The scratch copy is removed and the repository source is untouched.
+
+### Verification (Rolling, hand check, incremental build)
+- `./build.sh --packages-up-to bathymetry_layer`: `Summary: 6 packages finished`
+- `./test.sh --packages-select bathymetry_layer`: `Summary: 57 tests, 0 errors, 0 failures, 4 skipped`
+- `test_bathymetry_layer` as 100 separate processes: 100 passed, 0 failed
+- Jazzy not verified here (not installed). CI is the only Jazzy check.
+
+## Local Review
+**Status**: complete
+**When**: 2026-11-20 14:42 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent a95e0796cc3310f2b, resume 2 of 3)
+**Verdict**: approved
+
+**PR**: #426 at `4d02c86f`
+**Depth**: Standard (reason: round 3 convergence check per handoff: the previous round's one must-fix and the fix diff `d47392da..4d02c86f`)
+**Must-fix**: 0 | **Suggestions**: 0
+
+Previous must-fix (the `enabled` read-back proved nothing): resolved. `git diff d47392da..4d02c86f --stat` shows only `bathymetry_layer/test/test_bathymetry_layer.cpp` and `.agent/`. The commit removes the non-discriminating `EXPECT_FALSE(layer.isEnabled())`, corrects the comment, and adds `EXPECT_TRUE(layer.isEnabled())` to `DeclaresEveryParameterUnderTheLayerName`, where the declared default `true` differs from the constructor's `false`.
+Mutations, mine: each was a misnamed `get_parameter` in the worktree source, rebuilt and installed; ldd showed the test binary linking the rebuilt installed library. `enabled` FAILED `DeclaresEveryParameterUnderTheLayerName`. `minimum_depth` FAILED `ReadsParameterOverridesWithoutPreDeclare`. Both were restored with `git checkout`; the tree is clean and rebuilt.
+Local (Rolling): `./test.sh --packages-select bathymetry_layer`: 57 tests, 0 errors, 0 failures, 4 skipped; `test_bathymetry_layer` 100/100 and `test_plugin_loading` 100/100 as separate processes; both parameter cases 300/300 with `--gtest_repeat`.
+CI on `4d02c86f` (run 44803274495):
+- `build-and-test (jazzy)` passed in 7m30s: `Finished <<< bathymetry_layer [14.8s]`, `Summary: 24 packages finished [3min 56s]`, `[       OK ] TideFrameTest.ReadsParameterOverridesWithoutPreDeclare (5 ms)`, `[       OK ] TideFrameTest.DeclaresEveryParameterUnderTheLayerName (4 ms)`, `1/7 Test #1: test_bathymetry_layer ............   Passed    1.00 sec`, `Summary: 2151 tests, 0 errors, 0 failures, 180 skipped`.
+- `build-and-test (rolling)` passed in 8m5s: `Summary: 16 packages finished [3min 41s]`, `Summary: 1966 tests, 0 errors, 0 failures, 176 skipped`.
+- `ExportCli.InterruptRemovesTheTemporaryFile` (#423) passed in both jobs.
+
+### Findings
+- [ ] No issues found. LGTM.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-11-20 14:43 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent a3da6bac3d96362d2, resume 1 of 3)
+
+**PR**: #426 at `4d02c86f`
+**Sources**: 3 (Local Review @ `d47392da` (changes-requested, 1 must-fix), Local Review @ `4d02c86f` (approved, 0 open); GitHub: 0 reviews, 0 inline, 0 conversation comments, no Copilot check-run; CI rollup run 44803274495)
+**Cross-source confirmations**: 0
+**CI**: all-pass
+
+Since the Integrated Review at `f2021b01`: its three suggestions were fixed in `1245f373` (all 13 overrides under layer name `bathy`), `4673869a` (geodesy 1.0.7 floor as `ais_layer`), `7fbc5b0c` (geographic_info named in the Rolling hand check); the Local Review at `d47392da` found them resolved except the `enabled` read-back, which proved nothing (constructor default `false` equals the override), as one must-fix; `8dfdaa98` (test only) moved that proof to `DeclaresEveryParameterUnderTheLayerName` (`EXPECT_TRUE(layer.isEnabled())`); the Local Review at `4d02c86f` approved it with a mutation check and nothing open. `review_progress.sh sources` at this head returns no open local findings; the Pre-Push review at `16d55076` is stale (code changed) and its three suggestions are closed by the fixes above. No GitHub reviewers, so nothing to integrate from that side.
+
+CI at `4d02c86f`: `build-and-test (jazzy)` pass (7m30s): `Finished <<< bathymetry_layer [14.8s]`, `Summary: 24 packages finished [3min 56s]`, `1/7 Test #1: test_bathymetry_layer ............   Passed    1.00 sec`, `Summary: 2151 tests, 0 errors, 0 failures, 180 skipped`. `build-and-test (rolling)` pass (8m5s): `Summary: 16 packages finished [3min 41s]`, `Summary: 1966 tests, 0 errors, 0 failures, 176 skipped` (does not build `bathymetry_layer`, by design).
+
+### Findings
+- [x] No open findings at `4d02c86f`: the three suggestions from the Integrated Review at `f2021b01` and the must-fix from the Local Review at `d47392da` are fixed and verified.
+
+### False positives
+- None new this round. The three Gemini pre-push false positives were ruled on in the Integrated Review at `f2021b01`.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 14:57 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: owner
+**After**: merge
+**Decision**: merge
+
+Asked "Merge pull request 426 into `rolling`?" with what merges (one change to non-test code, the local parameter helper), CI at `4d02c86f` (Jazzy 24 packages including `bathymetry_layer`, 2151 tests, 0 failures, the parameter tests passing against Jazzy's own helper; Rolling 16 packages, 1966 tests, 0 failures), the hand check on Rolling (57 tests, 0 failures), the parameter evidence (13 lines byte-identical; nine reads proved by mutation; four with no read-back check, named), the review history, and that no simulation was run and one is owed before any Rolling deployment. The owner answered: "Merge (Recommended)".
+
+In the same dialog he approved a comment on issue 415 adding cause 13 and Part 3's notes ("Post it (Recommended)"), and the `jazzy` backport pull request right after the merge ("Yes, backport right after (Recommended)"); the backport's own merge and the closing of issue 418 are still asked of him.
