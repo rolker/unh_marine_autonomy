@@ -501,3 +501,13 @@ None open.
 Asked "Merge pull request 421 into `rolling`?" with what merges, CI at `666b23b` (Jazzy 16 packages, 936 tests, 0 failures; Rolling 9 packages, 808 tests, 0 failures), the three review rounds with nothing open, the control-path statement (behaviour-neutral by argument and unit tests; no simulation run), what is not covered, and that issue 418 stays open with the `jazzy` backport done by hand. The owner answered: "Merge (Recommended)".
 
 In the same dialog he was shown the comment adding causes 10 and 11 and the Rolling warnings to issue 415 and asked whether to post it; he answered: "Post it (Recommended)".
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 11:18 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the plan holds Part 2 only as an outline, to be settled when the part starts; the owner said "yes" to starting Part 2 after being told this checkpoint would be answered revise)
+**After**: plan
+**Decision**: revise
+
+After the merge of pull request 421 (Part 1, into `rolling` at `38c29d6f`). The issue is still open because two parts remain and the base is not the default branch. Delivered: Part 1. Not delivered: Part 2 (the six store packages) and Part 3 (`bathymetry_layer`). The plan is unchanged since its last review, but it says Parts 2 and 3 are outlines settled when the part starts, and none of Part 2's packages has been compiled on Rolling, so `proceed` is not right. Since that review: Part 1 was backported to `jazzy` by hand (pull request 422, merged at `74b86371`), so both branches now carry the same workflow file; and Part 1 added two causes to issue 415 (10, GCC 15 template bodies in `gz4d_geo.h`; 11, system dependencies used but never declared, which the development machine hides).
