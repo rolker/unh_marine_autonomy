@@ -851,3 +851,13 @@ Verified: build clean; ./test.sh --packages-select bathymetry_layer: 57 tests, 0
 - [ ] (suggestion) Override test checks the read-back of only 5 of 13 parameters (the other 8 only as declared names), so a mistyped `get_parameter(name_ + ".x")` for e.g. map_frame, ready_radius or store_path would go unnoticed; all tests also use the one layer name `bathymetry_layer`, so a hard-coded prefix would pass — override all 13 with non-default values under a different layer name — `bathymetry_layer/test/test_bathymetry_layer.cpp:974`
 - [ ] (suggestion) State the geodesy floor that `geodesy/ecef.h` needs, as ais_layer does (`<depend version_gte="1.0.7">` and `find_package(geodesy 1.0.7 REQUIRED)`); Jazzy's apt geodesy 1.0.6 lacks the header, so a plain Jazzy install fails with a missing-header error instead of a version message — `bathymetry_layer/package.xml:17`
 - [ ] (suggestion) The Rolling hand-check paragraph names a source-built navigation2 as the prerequisite but not geodesy (no Rolling apt package, needs ecef.h) — `.agents/README.md:148`
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 14:05 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the pre-push review approved round 1 with no must-fix; Jazzy can only be checked by CI on the pushed branch, and this is the package's first Jazzy build in CI)
+**After**: publish
+**Decision**: publish
+
+Read: the Local Review (Pre-Push) at `16d55076`, verdict approved, ship recommended, three suggestions open: the override test reads back only 5 of 13 parameters and every test uses the one layer name (`bathymetry_layer/test/test_bathymetry_layer.cpp:974`); the `geodesy` version floor that `geodesy/ecef.h` needs is not stated (`bathymetry_layer/package.xml:17`); the Rolling hand-check paragraph does not name `geodesy` as a prerequisite (`.agents/README.md:148`). They stay open and go through triage after publish, as in Part 1, so CI's Jazzy run starts now. This is a project issue, so the host runs no full pre-commit pass. The pull request says `Part of #418`.
