@@ -74,6 +74,8 @@ if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_gtest(test_gggs test/test_gggs.cpp)
   target_link_libraries(test_gggs ${PROJECT_NAME})
+  ament_add_gtest(test_gz4d_geo_bounds test/test_gz4d_geo_bounds.cpp)
+  target_link_libraries(test_gz4d_geo_bounds ${PROJECT_NAME})
 
   ament_add_pytest_test(test_nav test/test_nav.py)
 endif()

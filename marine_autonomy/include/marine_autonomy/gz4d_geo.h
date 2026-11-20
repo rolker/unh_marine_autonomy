@@ -31,6 +31,7 @@
 
 
 #include <cstring>
+#include <memory>
 #include <utility>
 #include <string>
 #include <limits>
@@ -1365,7 +1366,7 @@ namespace gz4d
 
         friend std::ostream& operator<< (std::ostream& stream, const Bounds<T>& bounds)
         {
-          stream << "min: " << bounds.getMin() << " max: " << bounds.getMax();
+          stream << "min: " << bounds.minimum() << " max: " << bounds.maximum();
           return stream;
         }
       private:
