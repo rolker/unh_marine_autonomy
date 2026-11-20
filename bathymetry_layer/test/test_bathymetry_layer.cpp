@@ -25,12 +25,21 @@
 #include "marine_bathymetry_store/tile_io.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
 #include "nav2_costmap_2d/layered_costmap.hpp"
-#include "nav2_util/lifecycle_node.hpp"
 #include "tf2_ros/buffer.h"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 #include "bathymetry_layer.hpp"
+
+// Nav2's lifecycle node moved from nav2_util (Jazzy) to nav2_ros_common
+// (Rolling); Layer::initialize takes a weak pointer to whichever one exists.
+#if __has_include("nav2_ros_common/lifecycle_node.hpp")
+#include "nav2_ros_common/lifecycle_node.hpp"
+using TestLifecycleNode = nav2::LifecycleNode;
+#else
+#include "nav2_util/lifecycle_node.hpp"
+using TestLifecycleNode = nav2_util::LifecycleNode;
+#endif
 
 using bathymetry_layer::BathymetryLayer;
 using marine_bathymetry_store::BathyCell;
@@ -819,7 +828,7 @@ protected:
 // map_tide (≈ +48.88 m), not from a global-frame self-lookup (which would be 0).
 TEST_F(TideFrameTest, MapTideZReadFromMapFrameNotGlobalFrame)
 {
-  auto node = std::make_shared<nav2_util::LifecycleNode>("test_tide_frame");
+  auto node = std::make_shared<TestLifecycleNode>("test_tide_frame");
   node->declare_parameter("bathymetry_layer.map_frame", std::string("map"));
   node->declare_parameter("bathymetry_layer.map_tide_frame", std::string("map_tide"));
 
@@ -854,7 +863,7 @@ TEST_F(TideFrameTest, MapTideZReadFromMapFrameNotGlobalFrame)
 // (reject-filter → trust-threshold), so silent drift would carry the wrong model.
 TEST_F(TideFrameTest, DeprecatedMaxUncertaintyKeyIsDetected)
 {
-  auto node = std::make_shared<nav2_util::LifecycleNode>("test_deprecated_key");
+  auto node = std::make_shared<TestLifecycleNode>("test_deprecated_key");
   node->declare_parameter("bathymetry_layer.map_frame", std::string("map"));
   node->declare_parameter("bathymetry_layer.map_tide_frame", std::string("map_tide"));
   // A stale config still carrying the removed key (from YAML overrides).
@@ -881,7 +890,7 @@ TEST_F(TideFrameTest, DeprecatedMaxUncertaintyKeyIsDetected)
 TEST_F(TideFrameTest, InvalidConfidenceGateResetsToDefault)
 {
   auto make_node = [](const std::string & name, double gate) {
-      auto node = std::make_shared<nav2_util::LifecycleNode>(name);
+      auto node = std::make_shared<TestLifecycleNode>(name);
       node->declare_parameter("bathymetry_layer.map_frame", std::string("map"));
       node->declare_parameter("bathymetry_layer.map_tide_frame", std::string("map_tide"));
       node->declare_parameter("bathymetry_layer.confidence_gate", gate);
@@ -926,7 +935,7 @@ TEST_F(TideFrameTest, InvalidConfidenceGateResetsToDefault)
 // LETHAL flood is written — fail loud, do not paper over it.
 TEST_F(TideFrameTest, DegenerateTideFrameConfigRejected)
 {
-  auto node = std::make_shared<nav2_util::LifecycleNode>("test_tide_frame_degenerate");
+  auto node = std::make_shared<TestLifecycleNode>("test_tide_frame_degenerate");
   node->declare_parameter("bathymetry_layer.map_frame", std::string("map_tide"));
   node->declare_parameter("bathymetry_layer.map_tide_frame", std::string("map_tide"));
 
