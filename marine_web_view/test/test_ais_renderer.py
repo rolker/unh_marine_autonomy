@@ -308,7 +308,7 @@ def test_the_held_contact_set_has_a_ceiling(node):
     one heard inside the timeout is another feature in an object every viewer
     downloads.
     """
-    node.get_logger().warn = lambda message, **kwargs: None
+    node.get_logger().warning = lambda message, **kwargs: None
     node.max_contacts = 3
     for mmsi, stamp in ((1, 950.0), (2, 960.0), (3, 970.0)):
         node._on_contact(_contact(mmsi=mmsi, stamp=stamp))
@@ -324,7 +324,7 @@ def test_the_held_contact_set_has_a_ceiling(node):
 def test_a_truncated_artifact_says_so(node):
     """A page quietly showing some of the traffic is the bad failure."""
     warnings = []
-    node.get_logger().warn = lambda message, **kwargs: warnings.append(message)
+    node.get_logger().warning = lambda message, **kwargs: warnings.append(message)
     node.max_contacts = 1
     node._on_contact(_contact(mmsi=1, stamp=1000.0))
     node._on_contact(_contact(mmsi=2, stamp=1000.0))
@@ -652,7 +652,7 @@ def test_a_replay_against_the_wrong_clock_announces_itself(node):
     live receiver, so it is worth a word.
     """
     warnings = []
-    node.get_logger().warn = lambda message, **kwargs: warnings.append(message)
+    node.get_logger().warning = lambda message, **kwargs: warnings.append(message)
     # _now() is pinned at 1000.0; a stamp from a bag recorded yesterday.
     for _ in range(5):
         node._on_contact(_contact(mmsi=1, stamp=1000.0 - 86400.0))
@@ -667,7 +667,7 @@ def test_a_replay_against_the_wrong_clock_announces_itself(node):
 def test_a_live_contact_is_not_mistaken_for_a_clock_problem(node):
     """The warning must not fire on the ordinary case."""
     warnings = []
-    node.get_logger().warn = lambda message, **kwargs: warnings.append(message)
+    node.get_logger().warning = lambda message, **kwargs: warnings.append(message)
     node._on_contact(_contact(mmsi=1, stamp=1000.0))
     node._on_contact(_contact(mmsi=2, stamp=1000.0 - 599.0))   # inside timeout
     assert warnings == []

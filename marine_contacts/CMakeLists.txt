@@ -32,7 +32,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 # marine_interfaces is the public (header) dependency; rclcpp is used only inside
 # ContactStore::save/load for the CDR round-trip. Both are exported below: this is a
 # static library, so CMake propagates even the implementation-only link to consumers.
-ament_target_dependencies(${PROJECT_NAME} marine_interfaces rclcpp)
+target_link_libraries(${PROJECT_NAME} PUBLIC ${marine_interfaces_TARGETS} rclcpp::rclcpp)
 
 # Headers are laid out as include/${PROJECT_NAME}/*.hpp, so install the include/ tree
 # to `include` (matching the $<INSTALL_INTERFACE:include> above).

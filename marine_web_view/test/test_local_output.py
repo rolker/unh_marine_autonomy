@@ -50,13 +50,13 @@ class _Logger:
     def __init__(self):
         self.lines = []
 
-    def warn(self, message, **kwargs):
+    def warning(self, message, **kwargs):
         """Record a line."""
         self.lines.append(message)
 
-    info = warn
-    debug = warn
-    error = warn
+    info = warning
+    debug = warning
+    error = warning
 
 
 class _Writer:
