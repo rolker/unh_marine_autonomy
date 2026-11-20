@@ -163,3 +163,11 @@ Two questions were asked with the Plan Review's verdict (needs-work) and its sev
 - Q2 "How should the backport resolve the workflow file on `jazzy`?" (finding 2): "Same file on both branches (Recommended)". When Part 1 is backported, `jazzy` takes `rolling`'s workflow file whole: the distro-neutral name, triggers listing both branches, the Rolling job skipped on `jazzy`. From then on the two branches carry the same workflow file and CI commits cherry-pick cleanly.
 
 Host addition for the planner, from a survey of the `camp` repository made on 2026-11-19 (a syntax check of camp's sources against this repository's headers, GCC 15): `marine_autonomy/include/marine_autonomy/gz4d_geo.h` around line 1368 (the `friend` functions of `Bounds<T>`) is rejected by GCC 15 unless `-Wno-template-body` is given. The baseline build here did not reach it because `marine_autonomy` stopped at `tf2/utils.h` first. Not reproduced by the host. Part 1 should expect it in `marine_autonomy` or in whatever first includes that header, and fix it in its own commit.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-11-20 08:19 -05:00
+**By**: Claude Code Agent (claude-sonnet-5-5)
+**Plan**: `.agent/work-plans/issue-418/plan.md` at `75a5bd77`
+
+Revision after the plan review (needs-work) and the owner's revise decision: the warn rename now carries its eight test edits in one commit, the workflow file is taken whole from rolling on backport, helm_manager and marine_contacts link forms are spelled out, the Rolling geodesy gap, validation statement, open questions and the xmllint settlement are recorded, and a gz4d_geo.h GCC 15 fix (reproduced here: getMin/getMax on Bounds, missing memory include) is a Part 1 step.
