@@ -72,6 +72,9 @@ public:
   // (σ ≤ gate ⇒ keepout-eligible), not a reject-filter.
   void setConfidenceGate(double v) {confidence_gate_ = v;}
   double getConfidenceGate() const {return confidence_gate_;}
+  double getMinimumDepth() const {return minimum_depth_;}
+  double getMaximumCautionDepth() const {return maximum_caution_depth_;}
+  bool getUnsurveyedIsLethal() const {return unsurveyed_is_lethal_;}
   void setUnsurveyedIsLethal(bool v) {unsurveyed_is_lethal_ = v;}
   // #276 deprecation guard: whether onInitialize saw a config still setting the
   // removed `max_uncertainty` key (and fired the one-shot migration WARN).
@@ -953,6 +956,81 @@ TEST_F(TideFrameTest, DegenerateTideFrameConfigRejected)
   EXPECT_FALSE(layer.isMapTideValid())
     << "map_frame == map_tide_frame is a degenerate identity lookup and must be "
        "rejected as an invalid tide";
+}
+
+// Every parameter onInitialize declares, as the operator writes it under the
+// layer's name in the costmap YAML.
+const char * const kLayerParameters[] = {
+  "enabled", "store_path", "minimum_depth", "maximum_caution_depth", "confidence_gate",
+  "max_uncertainty", "unsurveyed_is_lethal", "map_tide_frame", "map_frame",
+  "buffer_fraction", "tide_invalidate_threshold", "update_timeout", "ready_radius"};
+
+// The YAML path: an operator's values reach the node as parameter overrides and
+// are applied when the layer declares "<layer name>.<param>". Nothing is
+// declared before initialize(), so the layer's own declaration is what picks
+// each override up. A declaration under any other name would leave the layer
+// on its defaults and silently ignore the boat's configuration (the case the
+// pre-declared TideFrameTest cases above cannot see).
+TEST_F(TideFrameTest, ReadsParameterOverridesWithoutPreDeclare)
+{
+  rclcpp::NodeOptions options;
+  options.parameter_overrides(
+  {
+    rclcpp::Parameter("bathymetry_layer.confidence_gate", 1.25),
+    rclcpp::Parameter("bathymetry_layer.minimum_depth", 2.0),
+    rclcpp::Parameter("bathymetry_layer.maximum_caution_depth", 4.0),
+    rclcpp::Parameter("bathymetry_layer.unsurveyed_is_lethal", true),
+    rclcpp::Parameter("bathymetry_layer.max_uncertainty", 0.5),
+  });
+  auto node = std::make_shared<TestLifecycleNode>(
+    "test_parameter_overrides_" + std::to_string(getpid()), "", options);
+
+  auto tf_buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
+  nav2_costmap_2d::LayeredCostmap layered_costmap("map_tide", false, false);
+  layered_costmap.resizeMap(10, 10, 1.0, 0.0, 0.0);
+
+  BathymetryLayerForTest layer;
+  layer.initialize(&layered_costmap, "bathymetry_layer", tf_buffer.get(), node, nullptr);
+
+  EXPECT_DOUBLE_EQ(layer.getConfidenceGate(), 1.25);
+  EXPECT_DOUBLE_EQ(layer.getMinimumDepth(), 2.0);
+  EXPECT_DOUBLE_EQ(layer.getMaximumCautionDepth(), 4.0);
+  EXPECT_TRUE(layer.getUnsurveyedIsLethal());
+  EXPECT_TRUE(layer.deprecatedMaxUncertaintySeen())
+    << "a max_uncertainty override must trip the #276 deprecation guard";
+  for (const char * param : kLayerParameters) {
+    EXPECT_TRUE(node->has_parameter(std::string("bathymetry_layer.") + param))
+      << "bathymetry_layer." << param << " must be declared under the layer's name";
+  }
+}
+
+// With no overrides and nothing pre-declared, every parameter is declared under
+// the layer's name with the layer's default, and the layer keeps its defaults.
+TEST_F(TideFrameTest, DeclaresEveryParameterUnderTheLayerName)
+{
+  auto node = std::make_shared<TestLifecycleNode>(
+    "test_parameter_defaults_" + std::to_string(getpid()));
+
+  auto tf_buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
+  nav2_costmap_2d::LayeredCostmap layered_costmap("map_tide", false, false);
+  layered_costmap.resizeMap(10, 10, 1.0, 0.0, 0.0);
+
+  BathymetryLayerForTest layer;
+  layer.initialize(&layered_costmap, "bathymetry_layer", tf_buffer.get(), node, nullptr);
+
+  for (const char * param : kLayerParameters) {
+    EXPECT_TRUE(node->has_parameter(std::string("bathymetry_layer.") + param))
+      << "bathymetry_layer." << param << " must be declared under the layer's name";
+    EXPECT_FALSE(node->has_parameter(param))
+      << param << " must not be declared without the layer's name";
+  }
+  EXPECT_TRUE(node->get_parameter("bathymetry_layer.enabled").as_bool());
+  EXPECT_DOUBLE_EQ(node->get_parameter("bathymetry_layer.confidence_gate").as_double(), 0.5);
+  EXPECT_DOUBLE_EQ(layer.getConfidenceGate(), 0.5);
+  EXPECT_DOUBLE_EQ(layer.getMinimumDepth(), 1.0);
+  EXPECT_DOUBLE_EQ(layer.getMaximumCautionDepth(), 2.5);
+  EXPECT_FALSE(layer.getUnsurveyedIsLethal());
+  EXPECT_FALSE(layer.deprecatedMaxUncertaintySeen());
 }
 
 // ---------------------------------------------------------------------------
