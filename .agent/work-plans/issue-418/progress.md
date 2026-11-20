@@ -148,3 +148,18 @@ Part 1's approach is sound and the Rolling job design keeps Nav2 and the unporte
 - [ ] Record in the Part 2 outline that Rolling has no `geodesy` apt package (finding 4).
 - [ ] Extend the control-path statement for the `jazzy` backport (finding 5).
 - [ ] Settle A6, update Open Questions, drop the `__has_include` fallback (findings 6 and 7).
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 08:17 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: owner
+**After**: plan
+**Decision**: revise
+
+Two questions were asked with the Plan Review's verdict (needs-work) and its seven findings quoted or summarised. The owner's answers, verbatim:
+
+- Q1 "How should the plan go forward?": "Revise (Recommended)". The plan is rewritten to resolve findings 1 to 7.
+- Q2 "How should the backport resolve the workflow file on `jazzy`?" (finding 2): "Same file on both branches (Recommended)". When Part 1 is backported, `jazzy` takes `rolling`'s workflow file whole: the distro-neutral name, triggers listing both branches, the Rolling job skipped on `jazzy`. From then on the two branches carry the same workflow file and CI commits cherry-pick cleanly.
+
+Host addition for the planner, from a survey of the `camp` repository made on 2026-11-19 (a syntax check of camp's sources against this repository's headers, GCC 15): `marine_autonomy/include/marine_autonomy/gz4d_geo.h` around line 1368 (the `friend` functions of `Bounds<T>`) is rejected by GCC 15 unless `-Wno-template-body` is given. The baseline build here did not reach it because `marine_autonomy` stopped at `tf2/utils.h` first. Not reproduced by the host. Part 1 should expect it in `marine_autonomy` or in whatever first includes that header, and fix it in its own commit.
