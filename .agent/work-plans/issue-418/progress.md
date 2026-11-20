@@ -885,3 +885,13 @@ Geodesy floor (finding 2) established: the source-built geodesy reports 1.0.7 (`
 - (Gemini, pre-push round, must-fix) `onInitialize()` dereferences `node_.lock()` without a null check after the Jazzy `declareParameter` guard was removed — `Layer::initialize` (navigation2 `jazzy` and Rolling `dcffa939`, `nav2_costmap_2d/src/layer.cpp`) itself locks `node_` and calls `get_logger()` on it before calling `onInitialize()`, so an expired node fails there first; the lambda never sees a null node on that path.
 - (Gemini, pre-push round) The Rolling job may still clone `marine_ais` at `jazzy` — it clones `-b rolling` (`.github/workflows/ros-base-docker.yml:122`).
 - (Gemini, pre-push round) Pinning `marine_ais` and `marine_control` at `rolling` makes the Jazzy job build those branches on Jazzy — owner-settled pin (rolling only, not backported); the `rolling` branches are kept Jazzy-compatible, and the Jazzy job at this head built and tested its whole closure (24 packages, 0 failures).
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 14:14 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (three valid suggestions are open and each has a small, named fix; merging past open findings is the owner's answer only)
+**After**: findings
+**Decision**: address
+
+Read: the Integrated Review of pull request 426 at `f2021b01`: three valid suggestions, three false positives, CI all-pass (Jazzy 24 packages, 2151 tests, 0 failures, `bathymetry_layer` built and its two new parameter tests passing against Jazzy's own `Layer::declareParameter`; Rolling 16 packages, 1966 tests, 0 failures). All three are addressed: (1) `bathymetry_layer/test/test_bathymetry_layer.cpp:974`, initialise under another layer name, override all 13 parameters with non-default values, assert each is read back and that the names are declared under that name and not under `bathymetry_layer`; (2) `bathymetry_layer/package.xml:17` and `CMakeLists.txt:13`, state the `geodesy` 1.0.7 floor exactly as `ais_layer` does; (3) `.agents/README.md:148`, name `geodesy` from source as a prerequisite of the Rolling hand check.
