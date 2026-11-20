@@ -2,10 +2,21 @@
 # jazzy branches (jazzy takes rolling's copy whole when a port is
 # backported); pushes and pull requests to either run it.
 #
-# Job "jazzy" (always runs) builds the underlay and core layers from the
+# Job "jazzy" (always runs) imports the underlay and core layers from the
 # .repos files of the branch it runs on, with this checkout in place of the
-# unh_marine_autonomy entry, and builds and tests this repository's packages
+# unh_marine_autonomy entry, then builds and tests this repository's packages
 # on Jazzy, mission_manager and the integration tests among them.
+#
+# Job "rolling" builds and tests only the packages already ported to Rolling
+# (#418, Part 1). It reads no .repos file: its workspace is this checkout plus
+# marine_ais (for marine_ais_msgs, which marine_web_view needs), and rosdep is
+# given only the ported packages' paths, so it never asks for navigation2 or
+# for the keys of the packages not yet ported (mission_manager and the
+# integration tests, #419; the store packages and bathymetry_layer, later
+# parts of #418). The job is skipped for pull requests to and pushes on
+# jazzy (github.base_ref is the target branch of a pull request;
+# github.ref_name is the pushed branch), so on the jazzy branch this file
+# runs the jazzy job only.
 
 name: docker-ros-core
 
@@ -57,4 +68,73 @@ jobs:
     - name: Test results
       working-directory: ../jazzy_ws/
       run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test-result --verbose'
+      if: always()
+
+  rolling:
+    name: build-and-test (rolling)
+    if: (github.base_ref || github.ref_name) != 'jazzy'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    container:
+      image: ros:rolling-ros-core
+
+    steps:
+    - name: Update apt
+      run: apt-get update
+    - name: Install ros dev tools
+      run: DEBIAN_FRONTEND=noninteractive apt-get -y install ros-dev-tools git
+    - name: Checkout
+      uses: actions/checkout@v6
+    - name: Init rosdep
+      run: |
+        if [ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]; then
+          rosdep init
+        fi
+    - name: Update rosdep
+      run: rosdep update
+    - name: Create workspace
+      run: mkdir -p ../ws/src && ln -s "$GITHUB_WORKSPACE" ../ws/src/unh_marine_autonomy
+    # marine_ais_msgs is not a rosdep key; it comes from source. This is the
+    # rolling branch, not a pinned commit: accepted, as with the branches
+    # config/repos/core.repos pins.
+    - name: Clone marine_ais (rolling) for marine_ais_msgs
+      working-directory: ../ws
+      run: git clone --depth 1 -b rolling https://github.com/rolker/marine_ais.git src/marine_ais
+    # Only the ported packages' paths, so rosdep does not ask for navigation2
+    # or for the keys of the packages not yet ported. No -r: a key that does
+    # not install fails the job.
+    - name: Install ROS dependencies
+      working-directory: ../ws
+      run: >
+        DEBIAN_FRONTEND=noninteractive
+        rosdep install --ignore-src -y --from-paths
+        src/unh_marine_autonomy/marine_interfaces
+        src/unh_marine_autonomy/marine_vertical_datum
+        src/unh_marine_autonomy/command_bridge
+        src/unh_marine_autonomy/joy_to_helm
+        src/unh_marine_autonomy/marine_web_view
+        src/unh_marine_autonomy/marine_autonomy
+        src/unh_marine_autonomy/helm_manager
+        src/unh_marine_autonomy/marine_contacts
+        src/marine_ais/marine_ais_msgs
+    - name: Colcon build
+      working-directory: ../ws
+      run: >
+        bash -c 'source /opt/ros/rolling/setup.bash &&
+        colcon build --packages-up-to
+        marine_interfaces marine_vertical_datum command_bridge joy_to_helm
+        marine_web_view marine_autonomy helm_manager marine_contacts'
+    - name: Colcon test
+      working-directory: ../ws
+      run: >
+        bash -c 'source /opt/ros/rolling/setup.bash &&
+        source install/setup.bash &&
+        colcon test --packages-select
+        marine_interfaces marine_vertical_datum command_bridge joy_to_helm
+        marine_web_view marine_autonomy helm_manager marine_contacts
+        --event-handlers console_direct+ --return-code-on-test-failure'
+    - name: Test results
+      working-directory: ../ws
+      run: bash -c 'source /opt/ros/rolling/setup.bash && colcon test-result --verbose'
       if: always()
