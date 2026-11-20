@@ -580,3 +580,19 @@ Part 2 is accurate where I could check it against source, upstream and apt: line
 **Decision**: proceed
 
 Read: `plan.md` at `5b9b80b7` and the Plan Review of it (verdict ready). Part 2 only is implemented now. The three findings go to the implementer as corrections: F1 in step 3 keep `geodesy`'s library `PUBLIC` on `marine_sidescan_mosaic`, do not say "as `ais_layer` does" for the link part, and add a one-line CMake comment saying why it is `PUBLIC`; F2 Jazzy's tf2 has `buffer_core.hpp` and `time.hpp`, and noble's `libgdal-dev` ships `GDALConfig.cmake`, so no `__has_include` fallback; F3 the Rolling job's header comment in the workflow is lines 10 to 19.
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-20 11:44 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Branch**: feature/issue-418 at `ba3dac9b`
+
+Part 2 (plan steps 1 to 10, with the Plan Review's F1 to F3 applied):
+- `marine_backscatter`: `ament_target_dependencies` to exported targets (cause 1), `47a2aaed`.
+- `marine_sidescan_mosaic`: `tf2/buffer_core.hpp`, `tf2/time.hpp` (cause 2), `c4c88f8e`; exported targets and geodesy's variables, `geoconv` `PUBLIC` with a comment saying why (causes 1 and 8, F1), `92ceb776`.
+- `marine_survey_index`: tf2 `.hpp` names (cause 2), `46e11984`; exported targets and geodesy's variables, geodesy `PRIVATE` to `survey_index_bag` (causes 1 and 8), `5e839eaf`; `sqlite3` key to `libsqlite3-dev` (cause 11), `fcbef84d`.
+- Step 7: no new cause found by the build and test runs.
+- CI: Jazzy job lists widened, `5bf4bed7`; Rolling job lists widened plus the pinned `geographic_info` clone at `f70b81a` with `COLCON_IGNORE`, header comment (lines 10 to 19, F3) updated, `c9db2b70`.
+- Docs: `.agents/README.md` table row and a geodesy note, `ba3dac9b`.
+
+Verification (Rolling only; Jazzy is CI's): clean `./build.sh --packages-up-to <six>` built 9 packages; `./test.sh --packages-select <six>`: `Summary: 1154 tests, 0 errors, 0 failures, 128 skipped`. Same 1154/0/0 with `env -i`, sourcing `/opt/ros/rolling/setup.bash` plus the underlay's `geographic_msgs` and `geodesy` package `local_setup.bash` only. A scratch copy of the Rolling job's workspace (this checkout, `marine_ais` at `rolling`, geographic_info at `f70b81a` with the two `COLCON_IGNORE` files) under `env -i` and `/opt/ros/rolling` only: build of 16 packages rc 0, `colcon test` of the 14 rc 0, `Summary: 1962 tests, 0 errors, 0 failures, 165 skipped`. `rosdep install --simulate --reinstall --ignore-src --rosdistro rolling` over that job's closure resolved every key (rc 0).
