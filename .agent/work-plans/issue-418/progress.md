@@ -519,3 +519,54 @@ After the merge of pull request 421 (Part 1, into `rolling` at `38c29d6f`). The 
 **Plan**: `.agent/work-plans/issue-418/plan.md` at `5b9b80b7`
 
 Revision after Part 1 merged (pull request 421, backported by pull request 422): Part 1 is marked delivered, Part 2 is written in full from a baseline build on `rolling` (only `marine_backscatter` fails at baseline; the downstream causes were found on a scratch copy and verified: 586 tests pass), with the per-package system-dependency audit (one gap, `sqlite3` to `libsqlite3-dev` in `marine_survey_index`), the CI steps including `geodesy` from a pinned clone in the Rolling job, and the control-path statement. Part 3 stays an outline.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-11-20 11:33 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: ready
+
+**Issue**: #418 — Port to ROS 2 Rolling, stage 1: the 15 packages with no unported dependency
+**Plan**: `.agent/work-plans/issue-418/plan.md` at `5b9b80b7`
+**Branch**: `feature/issue-418`
+
+Review of Part 2 (the six store packages), now written out in full. Part 1 is delivered and Part 3 stays an outline by design. The owner's settled rules are not findings: three parts with one pull request each, records carried in the pull request, one fix per commit, code and CI in separate commits, hand backport to `jazzy`, fixes that build on both distros, and no suppression flags.
+
+### Evaluation
+
+| Dimension | Verdict | Notes |
+|---|---|---|
+| Scope | Good | 3 code files in 3 packages, 1 manifest, the workflow, and `.agents/README.md`. About 10 commits. Three packages need no change, and the baseline shows it. |
+| Issue alignment | Good | Serves: "None (the project states no goals); keeping `rolling` the development trunk per `.agents/README.md`. No project design document." That is acceptable for a project with no stated goals. All six Part 2 packages are covered, and all three earlier Plan Review findings were resolved in Part 1. |
+| File targeting | Good | Every line range in steps 1, 3 and 5 matches the CMakeLists at `5b758a40`: backscatter 44-47, 66-68, 78, 85-87; sidescan 43-49, 53-63, 76-87, 93-97, 102-108, 115-119, 125, 133-135, 139, 151, 162-164; survey index 43-47, 49-63, 66-70, 109-110, 120. The tf2 includes are at `sidescan_mosaic_bag.cpp:66-67` and `survey_index_bag_main.cpp:66-67`. One header-comment line range is off by one (finding 3). |
+| Consequences | Good | Outside consumers (`cube_bathymetry`, `camp`, `enc_updater`) are named, and so is the new `marine_acoustic_msgs` export. The README table row is updated. `docs/sonar_ecosystem.md` needs no change, because no pipeline behaviour changes. |
+| Principle alignment | Good | The control-path statement is accurate: none of the six is in the helm chain, and the persist-before-evict rule is untouched. Baseline measured, not guessed. Tests are the packages' existing gtests, which is right for a build port. |
+| ADR compliance | Good | Project ADRs are not triggered. Workspace ADR-0013 records are on the branch. |
+| ROS conventions | Good | Exported-target forms and plain vs keyword `target_link_libraries` are kept per target (plain where `ament_add_gtest` or an existing plain call exists, `PUBLIC` on libraries that had no call). The `geodesy` variables form is right: geodesy exports no target, only `geoconv` through `ament_export_libraries`. One wording mismatch with the cited prior art (finding 1). |
+
+### Checked and found sound
+
+- **Jazzy `tf2/*.hpp` (read upstream, `ros2/geometry2` branch `jazzy`)**: `tf2/include/tf2/buffer_core.hpp`, `time.hpp` and `utils.hpp` all exist. On Jazzy, `buffer_core.h` is a shim that just includes `buffer_core.hpp`. Steps 2 and 4 build on Jazzy as written, so the `__has_include` fallback is not needed.
+- **`find_package(GDAL CONFIG)` on noble (read the Ubuntu noble `libgdal-dev` file list)**: it ships `/usr/lib/x86_64-linux-gnu/cmake/gdal/GDALConfig.cmake`, `GDALConfigVersion.cmake` and `GDAL-targets*.cmake`. The call resolves in the Jazzy job.
+- **Rolling CI platform**: the Rolling job of run 44765477864 (Part 1 merge) runs on Ubuntu resolute with `packages.ros.org/ros2-testing`, the same apt source as this machine. So the local `apt-cache` results stand for CI: `ros-rolling-geodesy` has no candidate, and `geographic-msgs`, `marine-acoustic-msgs`, `angles`, `unique-identifier-msgs`, `ament-cmake-gtest`, `rosbag2-storage-mcap`/`-sqlite3`, `tf2-msgs`, `python3-pyproj`, `python3-catkin-pkg` and `libsqlite3-dev` all have candidates.
+- **Step 9 against the workflow file**: the clone and `COLCON_IGNORE` step is the same as `marine_ais/.github/workflows/ci.yml:72-83`. The geodesy path comes from the source tree: `marine_sidescan_mosaic` and `marine_survey_index` depend on `geodesy`, so `colcon list --packages-up-to` puts `src/geographic_info/geodesy` in rosdep's paths. With the two `COLCON_IGNORE` files, `geographic_msgs` is not in the closure, and rosdep without `-r` resolves it to apt. That apt package is 1.0.7, and its `export_geographic_msgsExport.cmake` defines the `geographic_msgs::validation` target that geodesy's `geoconv` links. Every geodesy key has a candidate (above). Unlike marine_ais, the plan builds geodesy with `BUILD_TESTING` on. Its three gtests compile on Rolling: the underlay's `build/geodesy` has `geodesy_{ecef,geodesics,utm}_test` with `BUILD_TESTING:BOOL=ON`. One local-versus-CI difference remains: the underlay built geodesy against `geographic_msgs` from source, while CI builds it against the apt one. That is the same version, so the risk is small, and CI shows it.
+- **Step 8 (Jazzy job)**: `config/repos/underlay.repos` imports `geographic_info` at `ros2`, so `geodesy` comes from source and `--ignore-src` skips it. `marine_acoustic_msgs` and the rosbag2 storage plugins resolve on noble (`rosdep resolve --os ubuntu:noble --rosdistro jazzy`).
+- **Step 6, `sqlite3` key**: `rosdep resolve sqlite3` gives `sqlite3` on noble and resolute (the CLI), and `libsqlite3-dev` gives `libsqlite3-dev` on both. `ros-rolling-rosbag2-storage-sqlite3` depends on `libsqlite3-dev`, so CI cannot show the gap, as the plan says.
+- **System-dependency audit, rechecked independently**: I listed every `#include` top directory and non-ROS header in the six packages. The only non-ROS ones are GDAL/CPL and `nlohmann` (tiled_raster_store), plus `openssl` (bathymetry_store), `sqlite3.h` (survey_index) and libc/POSIX. No Boost, Eigen, PROJ, yaml-cpp or curl include appears in the four packages without GDAL. The subprocess tests run only the packages' own binaries through `/bin/sh` or `posix_spawn`. `marine_mbes_backscatter_store` and `marine_backscatter` use GDAL only through `marine_tiled_raster_store`. The audit table is right, and the one gap is `sqlite3`.
+- **Link closure of the dropped names**: `marine_survey_index_core` drops `geographic_msgs`, but it still gets it, because `marine_autonomy` links `${geographic_msgs_TARGETS}` `PUBLIC` (`marine_autonomy/CMakeLists.txt:32-39`). `survey_index_bag` uses `geodesics.h` only, which is header-only (`static` functions), and through `marine_sidescan_mosaic` it also needs `geoconv`. That library arrives through the `PUBLIC` link.
+
+### Findings
+
+1. **[ROS conventions]** (minor) — Step 3 says to use geodesy's variables "as `ais_layer` does". But `ais_layer` keeps `geoconv` (`${geodesy_LIBRARIES}`) out of its exported link interface on purpose (`ais_layer/CMakeLists.txt:37-44`). The plan makes it `PUBLIC` on the exported shared library `marine_sidescan_mosaic`. `PUBLIC` is defensible: it reproduces what the plain-signature `ament_target_dependencies` did, so it is behaviour-preserving. It is also needed by `test_projection`, which calls the non-inline `geodesy::fromMsg` (`ecef.h:123`, defined in `geoconv`), and by consumers that use `ecef.h`. Its cost is that the absolute path of `libgeoconv.a` is written into the exported targets file, and every consumer links its own copy. Resolution: keep `PUBLIC`, drop "as `ais_layer` does" for the link part, and add a one-line CMake comment saying why it is `PUBLIC`, unlike `ais_layer`.
+2. **[Issue alignment]** (minor) — Two open questions left to CI are now settled by reading upstream (see "Checked and found sound"). Jazzy's tf2 has `buffer_core.hpp` and `time.hpp`, and noble's `libgdal-dev` ships `GDALConfig.cmake`. Update the last two Open Questions and the notes in step 2 and the audit row for `marine_tiled_raster_store` to say so, with the sources. Drop the `__has_include` contingency.
+3. **[File targeting]** (nit) — Step 9 says the workflow header comment for the Rolling job is "lines 9 to 18". It is lines 10 to 19 (line 9 is the blank `#`).
+
+### Summary
+
+Part 2 is accurate where I could check it against source, upstream and apt: line ranges, link closures, the dependency audit, the sqlite key, and the geodesy clone in the Rolling job with its rosdep paths. The two Jazzy questions the plan left to CI resolve favourably by reading upstream. The findings are wording and record items. The plan is ready for implementation.
+
+### Recommended Actions
+
+- [ ] Reword step 3's `geodesy` sentence and add a CMake comment for the `PUBLIC` `geoconv` link (finding 1).
+- [ ] Mark the tf2 `.hpp` and `GDALConfig.cmake` Jazzy questions as settled, with their sources (finding 2).
+- [ ] Correct the header-comment line range in step 9 (finding 3).
