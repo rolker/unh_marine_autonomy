@@ -311,3 +311,27 @@ Part 1 only, as planned: 8 packages, CI (Jazzy job renamed and widened, guarded 
 **Decision**: publish
 
 Read: the Local Review (Pre-Push) at `d66bec96`, verdict approved, ship recommended, three suggestions open: the Jazzy job's `rosdep install` without `-r` over every imported repository (`.github/workflows/ros-base-docker.yml:61`; raised by the Claude adversarial reviewer, Gemini and Codex); the Rolling job sourcing `install/setup.bash` before `colcon test` (`:132`); no test instantiates the fixed `Bounds<T>` `operator<<` (`gz4d_geo.h:1369`). They stay open and go through triage after publish, where CI's first Jazzy run is evidence on the first of them. This is a project issue, so the host runs no full pre-commit pass. The pull request says `Part of #418`.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-11-20 09:31 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+
+**PR**: #421 at `2a3670d`
+**Sources**: 3 (Local Review (Pre-Push) @ `d66bec9` (covers `2a3670d` via bookkeeping), Gemini and Codex outside-review findings read from the untracked work-plan files, CI rollup)
+**Cross-source confirmations**: 0
+**CI**: pending
+
+No GitHub reviews, inline comments, conversation comments or Copilot check-run on the pull request. Gemini and Codex were inputs to the pre-push review, not independent GitHub sources, so their overlap with it is not counted as cross-source confirmation. Both CI jobs (`build-and-test (jazzy)`, `build-and-test (rolling)`) were still pending at 09:31; the first Jazzy result decides finding 1 directly (the plan's own rule: if an unresolved key surfaces, restore `-r` and record why).
+
+### Findings
+- [ ] (suggestion, Local Review @ `d66bec9` + Gemini + Codex) Jazzy `rosdep install --from-paths src --ignore-src -y` has no `-r` and scans every imported repo, most never built by the job and on moving branches; a new key in any of them fails the Jazzy job. Fix: scope `--from-paths` to the build closure, e.g. `$(colcon list --packages-up-to <the build list> --paths-only)`, keeping no-`-r` — `.github/workflows/ros-base-docker.yml:61`
+- [ ] (suggestion, Local Review @ `d66bec9` + Gemini, Gemini rated must-fix) Rolling job sources `install/setup.bash` before `colcon test`; the Jazzy job does not. The full overlay can hide a missing `test_depend`. Fix: drop `source install/setup.bash &&` for parity, and add any `package.xml` dependency CI then shows missing — `.github/workflows/ros-base-docker.yml:132`
+- [ ] (suggestion, Local Review @ `d66bec9` + Gemini) No test instantiates the fixed `Bounds<T>` `operator<<`. Fix: one gtest in `marine_autonomy/test/` streaming a `Bounds` into a `std::ostringstream` and checking it contains `min:` and `max:` — `marine_autonomy/include/marine_autonomy/gz4d_geo.h:1369`
+
+### False positives
+- (Gemini #3) Renaming the job changes the status-check name and may break branch-protection rules requiring `build` — `rolling` has no branch protection (API 404) and the only ruleset, `require_pr`, has deletion, non-fast-forward and pull-request rules but no required status checks, so no rule names `build`.
+- (Gemini #4) `Test results` with `if: always()` errors on a missing `../ws` if an earlier step fails — that only happens when the job has already failed at an earlier step; the extra error does not change the job result or hide the first failing step, and the Jazzy job has had the same pattern unchanged.
+- (Gemini #6) Untested `.warn(` calls or `.warn` test fakes may remain — grep of `command_bridge`, `joy_to_helm`, `marine_web_view`, `marine_vertical_datum` finds no `.warn(` call; every test fake defines `warning`, none `warn`.
+- (Gemini #7) `rclcpp::rclcpp` could be `PRIVATE` in `marine_contacts/CMakeLists.txt:35` — not a defect: `PUBLIC` matches the old plain-signature behaviour the plan required to stay neutral, and the comment documents the choice; `PRIVATE` would only stop rclcpp include directories reaching consumers, all of which use rclcpp themselves.
+- (Codex #2) `actions/checkout@v6` persists the job token, which the `marine_ais` build could reuse — the job declares `permissions: contents: read` on a public repository, so that token can do nothing an anonymous client cannot; there is no write scope to leak.
