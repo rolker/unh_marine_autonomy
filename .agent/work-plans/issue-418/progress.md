@@ -687,3 +687,13 @@ Convergence check on round 2's one finding and the diff since `7a63128e`. Cross-
 
 ### Findings
 - [ ] No issues found. LGTM.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 12:58 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the round 3 pre-push review approved with nothing open; the one finding left was deferred by the owner to its own issue; Jazzy can only be checked by CI on the pushed branch)
+**After**: publish
+**Decision**: publish
+
+Read: the Local Review (Pre-Push) at `8593bb2e`, round 3, verdict approved, ship recommended, no finding. Round 2's must-fix (the `export_geotiff` CLI's signal handling assumes a single-threaded process) was deferred by the owner ("Separate issue, test stays on (Recommended)") and is now rolker/unh_marine_autonomy#423, opened on his "Open it (Recommended)". The pull request says `Part of #418` and states the known intermittent failure of `ExportCli.InterruptRemovesTheTemporaryFile`. This is a project issue, so the host runs no full pre-commit pass.
