@@ -811,3 +811,23 @@ Read: `plan.md` at `1fa59ae6` and the Plan Review of it (verdict needs-work; two
 - F2 (minor): the pull request says the once-per-process GDAL registration is a per-process guarantee that assumes no co-loaded plugin registers GDAL directly.
 
 This is the host's first answer at this plan checkpoint after the review; the earlier `revise` started the part.
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-20 13:59 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Branch**: feature/issue-418 at `55e2b0f5`
+
+Part 3 (`bathymetry_layer`), plan steps 1 to 3 and 7 to 9 with the Plan Review's F1 and F2 applied. Commits, in order:
+- `3968c5e5` CMake: `ament_target_dependencies` replaced, geodesy include dirs `PRIVATE`, keyword `target_link_libraries` with every existing item `PUBLIC` and `${geodesy_LIBRARIES}` `PRIVATE` (causes 1 and 8). Behaviour: the plugin links the same libraries and includes the same headers; no source changes.
+- `ade5e896` test: Nav2 lifecycle node header via `__has_include`, `TestLifecycleNode` alias (new #415 cause, 13). Behaviour: test code only, the library does not include the header.
+- `7b074049` test (F1): `TideFrameTest.ReadsParameterOverridesWithoutPreDeclare` (5 values passed as `parameter_overrides`, nothing pre-declared, layer reads them, all 13 `bathymetry_layer.*` declared) and `DeclaresEveryParameterUnderTheLayerName` (no overrides: 13 names declared, no bare name, defaults); 3 read-only getters on the test subclass. Committed before the helper. Behaviour: test code only.
+- `048f5209` helper: local `declareParameter` lambda, `has_parameter` then `declare_parameter(getFullName(param), value)` (cause 6). Behaviour: exactly what Jazzy's `Layer::declareParameter` does (its `local_params_` insert is read by nothing); call sites, defaults, read-back and validation unchanged.
+- `610f54fe` CI: `bathymetry_layer` added to the Jazzy job's rosdep closure, build and test lists; header comment says the Rolling job does not build it (Nav2 has no Rolling release). Not added to the Rolling job.
+- `c8ff47d0` docs: `.agents/README.md` table row, hand-check commands, pin rule worded true on both branches.
+- `55e2b0f5` `config/repos/core.repos`: `marine_ais`, `marine_control` at `rolling` (rolling only; not for the backport).
+- Step 6: no cause found beyond 13. Step 5 audit stands: `package.xml` declares what the code uses (no system library).
+
+Plan correction (F1), measured: with the helper temporarily declaring the bare name, `test_bathymetry_layer` failed 3 of 34 cases: the two new ones and, indirectly, the existing `MapTideZReadFromMapFrameNotGlobalFrame` (the undeclared `enabled` read fails, `enabled_` stays at Nav2 `Layer`'s default `false`, so `updateBounds` does nothing). So no existing case checks that an override is read; one fails on a name mismatch only by that accident. Restored: 34 of 34 passed.
+
+Verification (Rolling, this machine, by hand; navigation2 `dcffa939` in the Rolling underlay): after `rm -rf core_ws/build core_ws/install core_ws/log`, `./build.sh --packages-up-to bathymetry_layer`: `Summary: 6 packages finished`; `./test.sh --packages-select bathymetry_layer`: `Summary: 57 tests, 0 errors, 0 failures, 4 skipped`. Only warning from this package: `BUFFER_HEADER_DEPRECATION` (test, left). `env -i`, sourcing `/opt/ros/rolling` and the underlay only, `colcon test --packages-select bathymetry_layer`: 57 / 0 / 0 / 4. Separate-process runs at `55e2b0f5`: `test_bathymetry_layer` 100 of 100, `test_plugin_loading` 100 of 100 (and 100 / 100 each before the CI and docs commits). `rosdep install --simulate --reinstall --ignore-src --rosdistro jazzy --os ubuntu:noble` over the Jazzy job's widened closure (24 packages, rolling pins applied): rc 0, every key resolved (`ros-jazzy-nav2-costmap-2d`, `ros-jazzy-nav2-util` among them). Jazzy not built or tested here (not installed); CI is the only Jazzy check. Part 1 and Part 2 packages not re-run: nothing they depend on changed. No simulation was run.
