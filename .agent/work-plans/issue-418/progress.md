@@ -264,3 +264,21 @@ To resume: `/run-issue rolker/unh_marine_autonomy#418 --resume` asks this plan c
 Resumed from the `stop` of 2026-11-20 08:27. In the session the owner was shown where the port stood (plan ready, three minor findings open, nothing implemented) and asked whether to resume Part 1 as planned or change the plan; his answer was the command `/agent-workspace:orchestrator 418`, with no other words. The host read that as the go-ahead for the drive and answered this checkpoint itself, as `/orchestrator`'s table allows at `plan`.
 
 Read: `plan.md` at `75a5bd77` (unchanged since the Plan Review of 08:22, verdict ready). Part 1 only is implemented now. The three minor findings of that review go to the implementer as corrections: F1 `marine_web_view` imports `marine_ais_msgs` at test time (known, not to be discovered); F2 the behaviour-neutral statement is re-examined on any further commit to `helm_manager` or `marine_autonomy`; F3 the outside consumers of `gz4d_geo.h` (`camp`, `cube_bathymetry`) and the second copy in `unh_marine_navigation` are named in the pull request and in the #415 comment text the implementer drafts.
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-20 09:22 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Branch**: feature/issue-418 at `ef12600c`
+
+Part 1 only (plan steps 1 to 12, with the host's corrections F1 to F3). Parts 2 and 3 untouched.
+
+- `marine_autonomy`: `tf2/utils.h` to `tf2/utils.hpp` (cause 2, `9b423550`); `gz4d_geo.h` GCC 15 fix, `Bounds` `operator<<` uses `minimum()`/`maximum()` and `<memory>` is included (new cause, `38a40038`). A streamed `BoundsDegrees` now compiles and prints correctly; `Box::operator==` and the `Angle` operators are left for #420; the copy in `unh_marine_navigation` is not touched.
+- `helm_manager`: six `ament_target_dependencies` calls replaced per the plan's table, `lifecycle_msgs` test_depend added (cause 1, `31404e64`). `marine_contacts`: one call, `PUBLIC` exported targets (cause 1, `a843e143`).
+- `command_bridge`, `joy_to_helm`, `marine_web_view`: `tests_require` to `extras_require` (cause 4, `83ceede6`).
+- `marine_web_view`: 29 `warn` calls to `warning` with the four fakes and four monkey-patches in one commit (cause 5, `ec0341f8`), then a separate commit re-aligning one continuation line the rename broke for flake8 E128 (`0512a0da`; an amend was refused, so the two belong together in the backport).
+- CI (`2d288582`, `3e1cc020`, `3ef90825`): existing job renamed `jazzy` / `build-and-test (jazzy)`; new `rolling` job per plan step 10, skipped on `jazzy`; Jazzy lists widened with `marine_contacts`, `marine_web_view`, `marine_vertical_datum`, `-r` dropped. Docs (`ef12600c`): per-distro CI table in `.agents/README.md`.
+- Verified on Rolling locally, clean `core_ws/build`, `install`, `log`, with a scratch clone of `marine_ais` `rolling` (4ded14c, same as GitHub) in `core_ws/src` for `marine_ais_msgs`: `./build.sh --packages-up-to` the eight packages, 9 packages finished; `./test.sh --packages-select` the eight, exit 0, "804 tests, 0 errors, 0 failures, 36 skipped" (the skips are all `ament_cppcheck` skipping itself on Rolling). Python counts non-zero: `command_bridge` 58, `joy_to_helm` 42, `marine_web_view` 303, `marine_autonomy` `test_nav` 8. Revert check: reverting one `warning` in `ais_renderer.py:598` made `test_a_truncated_artifact_says_so` and `test_the_held_contact_set_has_a_ceiling` fail; restored.
+- Not verified: anything on Jazzy (not installed here; CI has not run); the workflow itself (no local runner); `rqt_sonar_waterfall` not rebuilt.
+- F2: the behaviour-neutral claim holds for every commit touching `helm_manager` (`31404e64`: CMake link form and a test_depend, no source change) and `marine_autonomy` (`9b423550`: same tf2 API under its new header name; `38a40038`: an operator no compiled code could call, plus an include). Steps 3 and 8 added no commits to either package.
+- Found, not fixed (warnings, not failures; proposed for #415 in the report to the host): deprecated free `rclcpp::spin_some` in `helm_manager` tests; CMake `cmake_minimum_required` below 3.10 deprecation in six packages; `ament_cppcheck` skips on Rolling. No new failure cause beyond `gz4d_geo.h`; `marine_interfaces` and `marine_vertical_datum` needed no change.
