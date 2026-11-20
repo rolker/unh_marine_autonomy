@@ -961,3 +961,25 @@ Local (Rolling): build clean; `./test.sh --packages-select bathymetry_layer`: 57
 - `./test.sh --packages-select bathymetry_layer`: `Summary: 57 tests, 0 errors, 0 failures, 4 skipped`
 - `test_bathymetry_layer` as 100 separate processes: 100 passed, 0 failed
 - Jazzy not verified here (not installed). CI is the only Jazzy check.
+
+## Local Review
+**Status**: complete
+**When**: 2026-11-20 14:42 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent a95e0796cc3310f2b, resume 2 of 3)
+**Verdict**: approved
+
+**PR**: #426 at `4d02c86f`
+**Depth**: Standard (reason: round 3 convergence check per handoff: the previous round's one must-fix and the fix diff `d47392da..4d02c86f`)
+**Must-fix**: 0 | **Suggestions**: 0
+
+Previous must-fix (the `enabled` read-back proved nothing): resolved. `git diff d47392da..4d02c86f --stat` shows only `bathymetry_layer/test/test_bathymetry_layer.cpp` and `.agent/`. The commit removes the non-discriminating `EXPECT_FALSE(layer.isEnabled())`, corrects the comment, and adds `EXPECT_TRUE(layer.isEnabled())` to `DeclaresEveryParameterUnderTheLayerName`, where the declared default `true` differs from the constructor's `false`.
+Mutations, mine: each was a misnamed `get_parameter` in the worktree source, rebuilt and installed; ldd showed the test binary linking the rebuilt installed library. `enabled` FAILED `DeclaresEveryParameterUnderTheLayerName`. `minimum_depth` FAILED `ReadsParameterOverridesWithoutPreDeclare`. Both were restored with `git checkout`; the tree is clean and rebuilt.
+Local (Rolling): `./test.sh --packages-select bathymetry_layer`: 57 tests, 0 errors, 0 failures, 4 skipped; `test_bathymetry_layer` 100/100 and `test_plugin_loading` 100/100 as separate processes; both parameter cases 300/300 with `--gtest_repeat`.
+CI on `4d02c86f` (run 44803274495):
+- `build-and-test (jazzy)` passed in 7m30s: `Finished <<< bathymetry_layer [14.8s]`, `Summary: 24 packages finished [3min 56s]`, `[       OK ] TideFrameTest.ReadsParameterOverridesWithoutPreDeclare (5 ms)`, `[       OK ] TideFrameTest.DeclaresEveryParameterUnderTheLayerName (4 ms)`, `1/7 Test #1: test_bathymetry_layer ............   Passed    1.00 sec`, `Summary: 2151 tests, 0 errors, 0 failures, 180 skipped`.
+- `build-and-test (rolling)` passed in 8m5s: `Summary: 16 packages finished [3min 41s]`, `Summary: 1966 tests, 0 errors, 0 failures, 176 skipped`.
+- `ExportCli.InterruptRemovesTheTemporaryFile` (#423) passed in both jobs.
+
+### Findings
+- [ ] No issues found. LGTM.
