@@ -31,6 +31,7 @@
 
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -1667,7 +1668,8 @@ TEST(ExportOutput, SidecarSwappedDuringANativeOnlyExportFailsIt)
 
 // A SIGHUP observer for the commit-window test: records, at delivery, how
 // many exports had replaced their output and whether the stale sidecar was
-// still there. Only async-signal-safe calls (atomic stores, access(2)).
+// still there. Only async-signal-safe calls (atomic stores, access(2)), and
+// errno is restored, since access(2) may set it under the interrupted code.
 namespace
 {
 std::atomic<int> g_hup_seen{0};
@@ -1677,9 +1679,11 @@ char g_hup_sidecar[4096];
 extern "C" void onTestHup(int sig)
 {
   (void)sig;
+  const int saved_errno = errno;
   g_hup_replaced.store(mtrs::exportOutputsReplaced());
   g_hup_sidecar_present.store(::access(g_hup_sidecar, F_OK) == 0 ? 1 : 0);
   g_hup_seen.store(1);
+  errno = saved_errno;
 }
 }  // namespace
 
