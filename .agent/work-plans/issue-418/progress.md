@@ -596,3 +596,21 @@ Part 2 (plan steps 1 to 10, with the Plan Review's F1 to F3 applied):
 - Docs: `.agents/README.md` table row and a geodesy note, `ba3dac9b`.
 
 Verification (Rolling only; Jazzy is CI's): clean `./build.sh --packages-up-to <six>` built 9 packages; `./test.sh --packages-select <six>`: `Summary: 1154 tests, 0 errors, 0 failures, 128 skipped`. Same 1154/0/0 with `env -i`, sourcing `/opt/ros/rolling/setup.bash` plus the underlay's `geographic_msgs` and `geodesy` package `local_setup.bash` only. A scratch copy of the Rolling job's workspace (this checkout, `marine_ais` at `rolling`, geographic_info at `f70b81a` with the two `COLCON_IGNORE` files) under `env -i` and `/opt/ros/rolling` only: build of 16 packages rc 0, `colcon test` of the 14 rc 0, `Summary: 1962 tests, 0 errors, 0 failures, 165 skipped`. `rosdep install --simulate --reinstall --ignore-src --rosdistro rolling` over that job's closure resolved every key (rc 0).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-11-20 11:53 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-418 at `a0e46a78`
+**Base**: origin/rolling
+**Depth**: Deep (reason: CI workflow change plus CMake link interfaces of six exported packages, 10 files, ~480 lines)
+**Must-fix**: 1 | **Suggestions**: 1
+**Round**: 1 | **Ship**: continue — round 1: 1 must-fix; first round always re-reviews after fixes
+
+Scope: Part 2 only (six store packages, CI widening for both jobs, docs). Code matches plan steps 1 to 10 with no drift. Local Rolling rebuild of the six: built; `./test.sh --packages-select <the six>`: `Summary: 1087 tests, 1 error, 1 failure, 128 skipped`, both from `marine_tiled_raster_store` `test_export_geotiff` (heap corruption, see finding 1); the other five packages 0 failures. Jazzy not verified locally (no install); `tf2/buffer_core.hpp`, `tf2/time.hpp` and the `rosbag2_cpp`, `rosbag2_storage`, `tf2`, `tf2_ros` exported targets were confirmed in upstream jazzy sources. Manifests checked against sources: no undeclared system dependency; `libsqlite3-dev` fix confirmed (no `sqlite3` CLI use). Rolling CI geodesy steps checked: git installed, clone precedes COLCON_IGNORE and `colcon list`, both ignored folders exist at `f70b81a`, every geodesy key resolves on resolute, released `ros-rolling-geographic-msgs` 1.0.7 exports `geographic_msgs::validation` that geoconv links. Gemini and Codex: completed, suggestions only, none kept (pre-existing behaviour or checked and not a problem). yamllint not installed here; the workflow parses as YAML; xmllint clean.
+
+### Findings
+- [ ] (must-fix) `ExportOutput.ConcurrentExportsToOneOutputDoNotCollide` crashes intermittently (`free(): unaligned chunk detected in tcache 2` / SIGSEGV; 2 of 10 isolated runs, and in the full test.sh run), and this branch now adds `marine_tiled_raster_store`'s tests to both CI jobs, so CI will flake; package unchanged by this branch, so pre-existing heap corruption in concurrent `exportGeoTiff` (four threads, one output). Needs an owner decision: root-cause and fix in its own commit, or a separate issue plus a stated CI plan, before push — `marine_tiled_raster_store/test/test_export_geotiff.cpp:1542`
+- [ ] (suggestion) Workflow comment says geodesy's tests are built because "BUILD_TESTING is not per package"; marine_ais's CI does it per package with a separate `colcon build --packages-select geodesy --cmake-args -DBUILD_TESTING=OFF` step. Reword the comment, or use that two-step build — `.github/workflows/ros-base-docker.yml:125-127`
