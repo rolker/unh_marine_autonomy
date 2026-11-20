@@ -66,7 +66,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        paths="$(colcon list --base-paths src --paths-only --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum)"
+        paths="$(colcon list --base-paths src --paths-only --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index)"
         if [ -z "$paths" ]; then
           echo "colcon list returned no package paths" >&2
           exit 1
@@ -76,10 +76,10 @@ jobs:
         DEBIAN_FRONTEND=noninteractive rosdep install --ignore-src -y --from-paths $paths
     - name: Colcon build
       working-directory: ../jazzy_ws/
-      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum'
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to helm_manager command_bridge mission_manager joy_to_helm marine_autonomy marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index'
     - name: Colcon test
       working-directory: ../jazzy_ws/
-      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --packages-select marine_interfaces marine_autonomy helm_manager joy_to_helm command_bridge mission_manager mission_manager_interfaces marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum --event-handlers console_direct+ --return-code-on-test-failure'
+      run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test --packages-select marine_interfaces marine_autonomy helm_manager joy_to_helm command_bridge mission_manager mission_manager_interfaces marine_autonomy_integration_tests marine_contacts marine_web_view marine_vertical_datum marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index --event-handlers console_direct+ --return-code-on-test-failure'
     - name: Test results
       working-directory: ../jazzy_ws/
       run: bash -c 'source /opt/ros/jazzy/setup.bash && colcon test-result --verbose'
