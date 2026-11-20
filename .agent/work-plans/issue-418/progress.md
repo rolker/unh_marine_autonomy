@@ -697,3 +697,31 @@ Convergence check on round 2's one finding and the diff since `7a63128e`. Cross-
 **Decision**: publish
 
 Read: the Local Review (Pre-Push) at `8593bb2e`, round 3, verdict approved, ship recommended, no finding. Round 2's must-fix (the `export_geotiff` CLI's signal handling assumes a single-threaded process) was deferred by the owner ("Separate issue, test stays on (Recommended)") and is now rolker/unh_marine_autonomy#423, opened on his "Open it (Recommended)". The pull request says `Part of #418` and states the known intermittent failure of `ExportCli.InterruptRemovesTheTemporaryFile`. This is a project issue, so the host runs no full pre-commit pass.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-11-20 13:10 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+
+**PR**: #424 at `d9f78b2`
+**Sources**: 6 (Local Review (Pre-Push) R1 @ `a0e46a78`, R2 @ `7a63128e`, R3 @ `8593bb2e` (covers `d9f78b2` via bookkeeping); Gemini and Codex via the R2 pre-push review @ `7a63128e`; CI rollup @ `d9f78b2`. GitHub: 0 reviews, 0 inline comments, 0 conversation comments, no Copilot review)
+**Cross-source confirmations**: 0
+**CI**: all-pass
+
+Scope: Part 2 only (pull request 424); entries up to Part 1's merge checkpoint belong to pull request 421. `review_progress.sh sources` at `d9f78b2`: no open local findings, no dropped entries, no GitHub comments, no candidates. Round 1's must-fix (concurrent-export crash, fixed in `775f8b62`) and suggestion (geodesy comment, `574b6cd9`) are closed; round 2's must-fix (`export_geotiff` CLI signal handling assumes a single-threaded process, `marine_tiled_raster_store/src/export_geotiff.cpp:274`, `:1273`) was deferred by the owner to rolker/unh_marine_autonomy#423 with the test left running; round 3 approved with nothing open. Code unchanged since `ac273079`; `git diff 8593bb2e..d9f78b2` touches only this issue's progress.md.
+
+CI, run 44788371968, both jobs at `d9f78b2`: `build-and-test (jazzy)` pass in 9m22s (build `Summary: 23 packages finished [5min 8s]`; `colcon test-result`: `Summary: 2094 tests, 0 errors, 0 failures, 176 skipped`); `build-and-test (rolling)` pass in 5m43s (build `Summary: 16 packages finished [2min 23s]`; `Summary: 1966 tests, 0 errors, 0 failures, 176 skipped`). First Jazzy check of the six store packages and first CI run of their tests on either distro. `ExportCli.InterruptRemovesTheTemporaryFile` ran and passed on both (299 ms Jazzy, 191 ms Rolling); its intermittent failure stays tracked in #423.
+
+Outside reviewers: Gemini and Codex ran in rounds 1 and 2 (completed); round 2's reviewer kept none of their findings, and the rulings are recorded below. Round 3 skipped them (convergence check). Copilot: no review and no check-run on the pull request.
+
+### Findings
+- [ ] No open findings. Ready for the merge decision.
+
+### False positives
+- (Codex R2, must-fix) `marine_bathymetry_store`'s direct `GDALAllRegister()` (`src/geotiff_import.cpp:88`) can race with the raster store's one-time registration in a host that uses both concurrently — not a defect of this pull request: `marine_bathymetry_store` documents itself as single-threaded (`tile_io.hpp:172`), no node in the repository runs both libraries concurrently, and the round 2 pre-push review records this as known and left by the owner's accepted scope.
+- (Codex R2, suggestion) A host that calls `GDALDestroyDriverManager()` no longer gets drivers re-registered — nothing in the repository calls `GDALDestroyDriverManager` (checked in round 2), and the README's Dependencies section states the host's obligation; a documented contract change with no caller that can hit it.
+- (Codex R2, suggestion) CI runs tests as root, so permission-failure tests skip — a coverage note, not a defect in the change: those tests run and pass in the non-root local runs (`./test.sh` round 2: 1158 tests, 0 failures), and running the CI test step unprivileged is a workflow change outside this port's scope.
+- (Gemini R2, suggestion) `marine_sidescan_mosaic/CMakeLists.txt:47-51` puts `${geodesy_INCLUDE_DIRS}` / `${geodesy_LIBRARIES}` on a `PUBLIC` exported target, baking absolute paths — this reproduces what `ament_target_dependencies` exported before (the CMake comment says so), geodesy exports no target to use instead, and released builds resolve it under `/opt/ros`, where the path is the install path itself; the workspace-clone path exists only in the Rolling CI container, which is never relocated.
+- (Gemini R2, suggestion) `marine_survey_index/CMakeLists.txt:43` uses the plain `target_link_libraries` signature — the line was plain-signature before this change too (`SQLite::SQLite3` alone, plus `ament_target_dependencies`, itself plain), no keyword call on `_core` follows, and its public headers are linked by the same consumers as before, so no new failure mode.
+- (Gemini R2, suggestion) `ensureGdalRegistered()` as `inline` could duplicate guards across DSOs under static linking with hidden visibility — the library is built shared (ament default, no visibility flags), and round 2 confirmed one `u` (STB_GNU_UNIQUE) symbol in `libmarine_tiled_raster_store.so`.
+- (Gemini R2, suggestion) `Raster::at` in `test_export_geotiff.cpp:187-190` checks only the flattened index — the helper is test-only and its guard targets the empty-`data` case (an output `readRaster` could not read), which it catches; every caller indexes within the raster's own width and height, so the wrapping case cannot be reached by the tests.
