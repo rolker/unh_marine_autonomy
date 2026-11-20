@@ -796,3 +796,18 @@ Six of the seven load-bearing claims check out (helper equivalent to Jazzy's `de
 - [ ] Add a `parameter_overrides` / `has_parameter` test case to `TideFrameTest` (finding 1) and list it in step 4 and in Files to Change.
 - [ ] Correct the control-path sentence about what the existing tests would catch (finding 1).
 - [ ] Add one sentence to the pull request body on the per-process scope of the GDAL guard (finding 2).
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 13:49 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the Plan Review's verdict is needs-work on one point whose resolution it states exactly, a test to add; handing that to the implementer as a binding correction gives the same result as a plan revision without another plan and review round)
+**After**: plan
+**Decision**: proceed
+
+Read: `plan.md` at `1fa59ae6` and the Plan Review of it (verdict needs-work; two findings; the seven claims the host asked about: six confirmed, one wrong in part). Part 3 only is implemented now, with both findings as corrections that override the plan where they differ:
+
+- F1 (should fix before implementation): step 4's "no test is added" is wrong. `TideFrameTest` exercises only the already-declared branch; nothing passes a value through `parameter_overrides` or asserts `has_parameter("bathymetry_layer.<name>")` after `initialize()`, so a helper declaring the wrong name would pass every case while operator overrides were ignored. Add one or two `TEST_F(TideFrameTest, ...)` cases to the existing test file: a node built with `parameter_overrides` and no pre-declare, `initialize()`, then assert the layer read the override and that all 13 `bathymetry_layer.*` names are declared. Commit it before the helper commit (it passes on Jazzy's `Layer::declareParameter`), and correct the control-path sentence about what the existing tests would show.
+- F2 (minor): the pull request says the once-per-process GDAL registration is a per-process guarantee that assumes no co-loaded plugin registers GDAL directly.
+
+This is the host's first answer at this plan checkpoint after the review; the earlier `revise` started the part.
