@@ -9,6 +9,10 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
 
+  <!-- include/marine_autonomy/gz4d_geo.h includes boost/math/quaternion.hpp
+       (header-only), so consumers of this package's headers need it too:
+       depend, not build_depend. libboost-dev is the Boost headers package. -->
+  <depend>libboost-dev</depend>
   <depend>geographic_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>marine_interfaces</depend>
