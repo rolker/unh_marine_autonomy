@@ -425,7 +425,7 @@ class StateRenderer(Node):
             # Safety net only. Trimming the oldest beats unbounded growth; if
             # this fires routinely the bands want widening, not the cap
             # lowering -- the point of the bands is to keep the whole path.
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'track hit the {} point cap; oldest fixes trimmed'.format(
                     self.track_max_points))
             track = track[-self.track_max_points:]
@@ -478,7 +478,7 @@ class StateRenderer(Node):
     def _tick(self):
         """Write the current state if it has changed since the last write."""
         if self._fix is None:
-            self.get_logger().warn('no position yet',
+            self.get_logger().warning('no position yet',
                                    throttle_duration_sec=15.0)
             return
 
@@ -489,7 +489,7 @@ class StateRenderer(Node):
         stamp = self._fix_stamp()
         if stamp == self._sent_stamp(self.key):
             self._skipped += 1
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'position unchanged for {} ticks -- not uploading'.format(
                     self._skipped),
                 throttle_duration_sec=30.0)
@@ -587,7 +587,7 @@ class StateRenderer(Node):
                     'upload worker died before shutdown ({}); anything '
                     'published after that never reached S3'.format(reason))
             else:
-                self.get_logger().warn(
+                self.get_logger().warning(
                     'upload worker still inside a request after {:g} s; '
                     'abandoning it'.format(UPLOAD_STOP_SECONDS))
 

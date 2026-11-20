@@ -472,7 +472,7 @@ class AisRenderer(Node):
         self.ignore_mmsis = _ignore_list(self._param('ignore_mmsis'))
 
         if not interval_ok:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'interval {} is not a usable period; using {:g} s'.format(
                     self._param('interval'), self.interval))
 
@@ -595,7 +595,7 @@ class AisRenderer(Node):
         oldest = min(self._contacts,
                      key=lambda mmsi: self._stamp(self._contacts[mmsi]))
         del self._contacts[oldest]
-        self.get_logger().warn(
+        self.get_logger().warning(
             'at the max_contacts ceiling ({}); dropped MMSI {}, the oldest, '
             'to make room for MMSI {}. The published artifact is now a '
             'truncated picture of the traffic -- raise max_contacts if the '
@@ -623,7 +623,7 @@ class AisRenderer(Node):
         if age <= self.contact_timeout:
             return
         self._clock_warned = True
-        self.get_logger().warn(
+        self.get_logger().warning(
             'MMSI {} arrived already {:g}s old, past contact_timeout ({:g}s), '
             'so it expires on the very next tick. Replaying a bag? Play it '
             'with --clock and run this node with use_sim_time:=true. '
@@ -848,7 +848,7 @@ class AisRenderer(Node):
                     'upload worker died before shutdown ({}); anything '
                     'published after that never reached S3'.format(reason))
             else:
-                self.get_logger().warn(
+                self.get_logger().warning(
                     'upload worker still inside a request after {:g} s; '
                     'abandoning it'.format(UPLOAD_STOP_SECONDS))
 

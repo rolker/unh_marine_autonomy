@@ -351,7 +351,7 @@ class CoverageRenderer(Node):
         self.band_name = self._param('band')
         self.zoom, zoom_ok = sane_zoom(self._param('zoom'))
         if not zoom_ok:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'zoom {} is not a usable slippy level (0-{}); rendering at '
                 '{} instead'.format(self._param('zoom'), MAX_SLIPPY_ZOOM,
                                     self.zoom))
@@ -363,7 +363,7 @@ class CoverageRenderer(Node):
             # discards local_dir entirely, the realpath guard then refuses the
             # write, and every object fails and retries for the life of the
             # node. Refuse at startup instead of failing per tile forever.
-            self.get_logger().warn(
+            self.get_logger().warning(
                 "prefix {!r} is empty after scrubbing; using '{}'".format(
                     self._param('prefix'), DEFAULT_PREFIX))
             self.prefix = DEFAULT_PREFIX
@@ -399,24 +399,24 @@ class CoverageRenderer(Node):
         self.render_interval, render_ok = sane_interval(
             self._param('render_interval'), DEFAULT_RENDER_INTERVAL)
         if not render_ok:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'render_interval {} is not a usable period; using {:g} s'
                 .format(self._param('render_interval'), self.render_interval))
         self.request_interval, request_ok = sane_interval(
             self._param('request_interval'), DEFAULT_REQUEST_INTERVAL)
         if not request_ok:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'request_interval {} is not a usable period; using {:g} s'
                 .format(self._param('request_interval'),
                         self.request_interval))
         render_interval = self.render_interval
         if self.cache_control < 1:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'cache_control {} is not a valid max-age; using {}'.format(
                     self.cache_control, int(max(1.0, render_interval))))
             self.cache_control = int(max(1.0, render_interval))
         elif self.cache_control > render_interval:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'cache_control {} s exceeds render_interval {:g} s: '
                 'viewers will hold a tile past its replacement'.format(
                     self.cache_control, render_interval))
@@ -437,7 +437,7 @@ class CoverageRenderer(Node):
         # copy of this lever.
         if not (self.tide_invalidate_threshold >= 0.0
                 and self.tide_invalidate_threshold < float('inf')):
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'invalid tide_invalidate_threshold {}; using {} m'.format(
                     self.tide_invalidate_threshold,
                     DEFAULT_TIDE_INVALIDATE_THRESHOLD))
@@ -499,7 +499,7 @@ class CoverageRenderer(Node):
                 self._tf_buffer, self, spin_thread=False)
         else:
             self._datum_offset = 0.0
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'chart-datum correction disabled: the depth band will be '
                 'coloured as if it were already referenced to chart datum')
 
@@ -692,7 +692,7 @@ class CoverageRenderer(Node):
     def _tile_is_sane(self, index, msg):
         """Return True if a tile message can be trusted to allocate from."""
         if not is_valid_index(index):
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'ignoring tile with invalid grid index {}'.format(index),
                 throttle_duration_sec=10.0)
             return False
@@ -700,7 +700,7 @@ class CoverageRenderer(Node):
         if (msg.width == 0 or msg.height == 0
                 or msg.width > MAX_TILE_EDGE or msg.height > MAX_TILE_EDGE
                 or cells * 4 > MAX_TILE_BYTES):
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'ignoring tile {} with implausible dimensions {}x{}'.format(
                     index, msg.width, msg.height),
                 throttle_duration_sec=10.0)
@@ -723,7 +723,7 @@ class CoverageRenderer(Node):
             # A malformed patch is the source's problem, not ours: drop it and
             # let the next catalog round re-request the tile in full.
             self._note_failure()
-            self.get_logger().warn('bad tile {}: {}'.format(index, error))
+            self.get_logger().warning('bad tile {}: {}'.format(index, error))
             return
 
         version = tile_util.time_to_nanoseconds(msg.header.stamp)
@@ -761,7 +761,7 @@ class CoverageRenderer(Node):
                 # _applied never advance, so it is re-requested and re-fails),
                 # and a smaller one lands the cells at the wrong offsets and
                 # mis-georeferences silently. Forget the tile and rebuild.
-                self.get_logger().warn(
+                self.get_logger().warning(
                     'tile {} changed geometry {} -> {}; rebuilding'.format(
                         index, held.shape, (msg.height, msg.width)))
                 self._forget(index)
@@ -782,7 +782,7 @@ class CoverageRenderer(Node):
                     held, values, msg.window_row, msg.window_col)
             except ValueError as error:
                 self._note_failure()
-                self.get_logger().warn(
+                self.get_logger().warning(
                     'window does not fit {}: {}'.format(index, error))
                 # A first patch that did not fit leaves an all-NaN entry
                 # behind, which renders as "no coverage here" and blocks the
@@ -853,7 +853,7 @@ class CoverageRenderer(Node):
             self._forget(index)
             evicted += 1
         if evicted:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'cache over its {} MiB budget: evicted {} tile(s), {} left. '
                 'They will be re-requested; raise cache_budget_bytes or '
                 'render at a coarser level if this repeats.'.format(
@@ -874,7 +874,7 @@ class CoverageRenderer(Node):
         for xy in gggs.tiles_covering(self.zoom, south, west, north, east):
             marked.append(xy)
             if len(marked) > MAX_DIRTY_TILES_PER_GRID:
-                self.get_logger().warn(
+                self.get_logger().warning(
                     'grid {} spans more than {} tiles at z{} -- ignoring it; '
                     'the zoom parameter and the source level disagree'.format(
                         index, MAX_DIRTY_TILES_PER_GRID, self.zoom),
@@ -986,7 +986,7 @@ class CoverageRenderer(Node):
             transform = self._tf_buffer.lookup_transform(
                 self.map_frame, self.chart_datum_frame, Time())
         except tf2_ros.TransformException as error:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'no chart-datum offset ({} in {}): {}'.format(
                     self.chart_datum_frame, self.map_frame, error),
                 throttle_duration_sec=10.0)
@@ -1112,7 +1112,7 @@ class CoverageRenderer(Node):
                 # unpublished. That is the honest outcome of a wedged
                 # endpoint, and it costs a warning, not a hang: the worker
                 # is a daemon thread.
-                self.get_logger().warn(
+                self.get_logger().warning(
                     'render thread still inside a request after {:g} s; '
                     'skipping the final flush'.format(WORKER_JOIN_SECONDS))
                 return
@@ -1132,7 +1132,7 @@ class CoverageRenderer(Node):
             # skips `destroy_node()` and `rclpy.shutdown()` entirely -- the
             # cleanup this method exists to make orderly. The worker is a
             # daemon thread; the process is going away regardless.
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'interrupted while stopping; the final flush was skipped')
         except Exception as error:
             self.get_logger().error(
@@ -1281,7 +1281,7 @@ class CoverageRenderer(Node):
             # coverage -- but the tide has moved on and the page has to be
             # able to say so, or a frozen water level reads as ordinary
             # bathymetry.
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'chart-datum offset is {:.0f} s old; colouring against a '
                 'stale tide'.format(age),
                 throttle_duration_sec=30.0)
@@ -1309,7 +1309,7 @@ class CoverageRenderer(Node):
         for position, (x, y) in enumerate(pending):
             if abort():
                 retry.update(pending[position:])
-                self.get_logger().warn(
+                self.get_logger().warning(
                     'render pass stopped with {} tile(s) left'.format(
                         len(pending) - position))
                 break
@@ -1336,7 +1336,7 @@ class CoverageRenderer(Node):
             # that tile again until its GGGS grid changed. Put it back.
             with self._lock:
                 self._dirty.update(retry)
-            self.get_logger().warn(
+            self.get_logger().warning(
                 '{} tile(s) will be retried next pass'.format(len(retry)),
                 throttle_duration_sec=30.0)
 
