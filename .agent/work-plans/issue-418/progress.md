@@ -282,3 +282,22 @@ Part 1 only (plan steps 1 to 12, with the host's corrections F1 to F3). Parts 2 
 - Not verified: anything on Jazzy (not installed here; CI has not run); the workflow itself (no local runner); `rqt_sonar_waterfall` not rebuilt.
 - F2: the behaviour-neutral claim holds for every commit touching `helm_manager` (`31404e64`: CMake link form and a test_depend, no source change) and `marine_autonomy` (`9b423550`: same tf2 API under its new header name; `38a40038`: an operator no compiled code could call, plus an include). Steps 3 and 8 added no commits to either package.
 - Found, not fixed (warnings, not failures; proposed for #415 in the report to the host): deprecated free `rclcpp::spin_some` in `helm_manager` tests; CMake `cmake_minimum_required` below 3.10 deprecation in six packages; `ament_cppcheck` skips on Rolling. No new failure cause beyond `gz4d_geo.h`; `marine_interfaces` and `marine_vertical_datum` needed no change.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-11-20 09:28 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: approved
+
+**Branch**: feature/issue-418 at `d66bec96`
+**Base**: origin/rolling
+**Depth**: Deep (reason: 720 changed lines across 20 files, CI workflow changed)
+**Must-fix**: 0 | **Suggestions**: 3
+**Round**: 1 | **Ship**: recommended — no must-fix findings; remaining suggestions can be applied or tracked
+
+Part 1 only, as planned: 8 packages, CI (Jazzy job renamed and widened, guarded Rolling job), docs table. Behaviour-neutral claim for `helm_manager` and `marine_autonomy` checked against the diff and holds: CMake link form only (the old plain-signature calls on a static library already propagated, `PUBLIC` is equivalent, nothing dropped), the same tf2 API under its `.hpp` name (Jazzy's `utils.h` is a shim including `utils.hpp`), and a `Bounds` `operator<<` no code could instantiate before plus `<memory>`. Jazzy checked by upstream source only: `tf2/utils.hpp` and rclpy `RcutilsLogger.warning` exist on `jazzy`; `rclcpp::rclcpp` and `*_TARGETS` were already used by `marine_autonomy` on Jazzy. Jazzy rosdep for the job's real workspace simulated clean (`--os ubuntu:noble`). No Jazzy compile or test was possible here; CI has not run. Test count: colcon's 804 adds the 37 CTest `Testing/*/Test.xml` wrapper entries (helm_manager 13, marine_vertical_datum 8, marine_contacts 7, marine_autonomy 6, marine_interfaces 3) on top of the per-tool results; 804 - 37 = 767, the implementer's per-package sum. Not a discrepancy.
+
+### Findings
+- [ ] (suggestion) Jazzy job's `rosdep install` now runs without `-r` over every imported repo, most of them never built by the job and pinned to moving branches; scope `--from-paths` to the build closure, as the Rolling job does, or accept the coupling knowingly (raised independently by the Claude adversarial reviewer, Gemini and Codex) — `.github/workflows/ros-base-docker.yml:61`
+- [ ] (suggestion) Rolling job sources `install/setup.bash` before `colcon test` while the Jazzy job does not; the overlay puts every built package on the path for every package's tests and can hide a missing `test_depend`. Drop it for parity unless a test needs it — `.github/workflows/ros-base-docker.yml:132`
+- [ ] (suggestion) The fixed `Bounds<T>` `operator<<` is still instantiated by no test, so the next compiler or edit has nothing to catch a regression; a one-case gtest streaming a `Bounds` would pin it — `marine_autonomy/include/marine_autonomy/gz4d_geo.h:1369`
