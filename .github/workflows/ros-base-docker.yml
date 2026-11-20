@@ -123,8 +123,10 @@ jobs:
     # COLCON_IGNORE leaves only geodesy visible to colcon and rosdep, so the
     # released geographic_msgs is used. Drop this clone once a geographic_info
     # release newer than 1.0.7 reaches Rolling's apt. geodesy's own tests are
-    # built (BUILD_TESTING is not per package) but not run: the test step
-    # selects only this repository's packages.
+    # built, since the one build step's BUILD_TESTING covers every package in
+    # it (marine_ais's CI avoids that with a separate geodesy build step; one
+    # step is kept here for simplicity), but not run: the test step selects
+    # only this repository's packages.
     - name: Clone geographic_info at f70b81a for geodesy
       working-directory: ../ws
       run: |
