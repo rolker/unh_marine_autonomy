@@ -335,3 +335,13 @@ No GitHub reviews, inline comments, conversation comments or Copilot check-run o
 - (Gemini #6) Untested `.warn(` calls or `.warn` test fakes may remain — grep of `command_bridge`, `joy_to_helm`, `marine_web_view`, `marine_vertical_datum` finds no `.warn(` call; every test fake defines `warning`, none `warn`.
 - (Gemini #7) `rclcpp::rclcpp` could be `PRIVATE` in `marine_contacts/CMakeLists.txt:35` — not a defect: `PUBLIC` matches the old plain-signature behaviour the plan required to stay neutral, and the comment documents the choice; `PRIVATE` would only stop rclcpp include directories reaching consumers, all of which use rclcpp themselves.
 - (Codex #2) `actions/checkout@v6` persists the job token, which the `marine_ais` build could reuse — the job declares `permissions: contents: read` on a public repository, so that token can do nothing an anonymous client cannot; there is no write scope to leak.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-20 09:32 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (three valid suggestions are open and each has a small, named fix; merging past open findings is the owner's answer only)
+**After**: findings
+**Decision**: address
+
+Read: the Integrated Review of pull request 421 at `2a3670d`: three valid suggestions, five false positives, CI pending. All three are addressed: (1) `.github/workflows/ros-base-docker.yml:61`, limit the Jazzy job's `rosdep install` `--from-paths` to what the job builds, keeping no `-r`; (2) `:132`, drop `source install/setup.bash` before `colcon test` in the Rolling job and add any dependency that then proves missing; (3) `gz4d_geo.h:1369`, one gtest in `marine_autonomy/test/` that streams a `Bounds`. The first CI run on this pull request had not finished when this was decided; its result goes to the fix pass if it arrives in time, and CI on the fix push is the check either way.
