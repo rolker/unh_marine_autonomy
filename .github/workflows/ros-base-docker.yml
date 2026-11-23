@@ -8,16 +8,19 @@
 # on Jazzy, mission_manager, the integration tests and bathymetry_layer among
 # them (Nav2 is released for Jazzy, so rosdep installs it from apt).
 #
-# Job "rolling" builds and tests only the packages already ported to Rolling
-# (#418) that need no Nav2. It reads no .repos file: its workspace is this
-# checkout plus marine_ais (for marine_ais_msgs, which marine_web_view needs)
-# and geodesy from a pinned geographic_info clone (for marine_sidescan_mosaic
-# and marine_survey_index), and rosdep is given only the paths of what it
-# builds, so it never asks for navigation2 or for the keys of the packages it
-# does not build: mission_manager and the integration tests (not yet ported,
-# #419) and bathymetry_layer (ported, but Nav2 has no Rolling release, so it
-# is checked on Rolling by hand against a source-built navigation2; see
-# .agents/README.md). The job is skipped for pull requests to
+# Job "rolling" builds and tests every package of this repository that needs
+# no Nav2 (#418, #419), that is all but bathymetry_layer (ported, but Nav2 has
+# no Rolling release, so it is checked on Rolling by hand against a
+# source-built navigation2; see .agents/README.md). It reads no .repos file:
+# its workspace is this checkout plus marine_ais (for marine_ais_msgs, which
+# marine_web_view needs), unh_marine_navigation (for marine_nav_interfaces,
+# marine_nav_utilities and marine_nav_tasks, which mission_manager,
+# mission_manager_interfaces and the integration tests need) and geodesy from
+# a pinned geographic_info clone (for marine_sidescan_mosaic and
+# marine_survey_index). rosdep, the build and the test are given only the
+# packages it builds (a package selector), so they never see navigation2,
+# bathymetry_layer or the Nav2 packages of unh_marine_navigation, which are
+# on disk but outside the closure. The job is skipped for pull requests to
 # and pushes on jazzy (github.base_ref is the target branch of a pull
 # request; github.ref_name is the pushed branch), so on the jazzy branch this
 # file runs the jazzy job only.
@@ -120,6 +123,18 @@ jobs:
     - name: Clone marine_ais (rolling) for marine_ais_msgs
       working-directory: ../ws
       run: git clone --depth 1 -b rolling https://github.com/rolker/marine_ais.git src/marine_ais
+    # marine_nav_interfaces, marine_nav_utilities and marine_nav_tasks are not
+    # rosdep keys; they come from source. The rolling branch, not a pinned
+    # commit, as with marine_ais. The clone also holds six Nav2 packages
+    # (marine_nav_behavior_tree, marine_nav_behaviors,
+    # marine_nav_bt_task_navigator, marine_nav_avoidance_controller,
+    # marine_nav_crabbing_path_follower, marine_nav_ca_safety): they are on
+    # disk but outside the package selector's closure below, so rosdep, the
+    # build and the test never see them. If a package built here ever gained
+    # a Nav2 dependency, the strict rosdep install would fail on it.
+    - name: Clone unh_marine_navigation (rolling) for the marine_nav packages
+      working-directory: ../ws
+      run: git clone --depth 1 -b rolling https://github.com/rolker/unh_marine_navigation.git src/unh_marine_navigation
     # geodesy has no installable ros-rolling-geodesy apt package, Jazzy's
     # released 1.0.6 lacks geodesy/ecef.h, and the 1.0.7 tag does not compile;
     # f70b81a is that tag plus the <iomanip> fix (as in marine_ais's CI).
@@ -141,19 +156,23 @@ jobs:
     - name: Build only geodesy from the geographic_info clone
       working-directory: ../ws/src/geographic_info
       run: touch geographic_msgs/COLCON_IGNORE geographic_info/COLCON_IGNORE
-    # Only the paths of the build step's --packages-up-to closure (the ported
-    # packages, plus marine_ais_msgs, which marine_web_view depends on, and
-    # geodesy, which marine_sidescan_mosaic and marine_survey_index depend
-    # on), taken from colcon list as in the jazzy job so the list cannot drift
-    # from the build step. rosdep then does not ask for navigation2 or for the
-    # keys of the packages not yet ported. No -r: a key that does not install
+    # Only the paths of the build step's --packages-up-to closure (this
+    # repository's packages other than bathymetry_layer, plus marine_ais_msgs,
+    # which marine_web_view depends on, marine_nav_interfaces,
+    # marine_nav_utilities and marine_nav_tasks from unh_marine_navigation,
+    # which mission_manager, mission_manager_interfaces and the integration
+    # tests depend on, and geodesy, which marine_sidescan_mosaic and
+    # marine_survey_index depend on), taken from colcon list as in the jazzy
+    # job so the list cannot drift from the build step. rosdep then does not
+    # ask for navigation2, nor for the keys of bathymetry_layer or of the Nav2
+    # packages of unh_marine_navigation. No -r: a key that does not install
     # fails the job. The list is checked to be non-empty.
     - name: Install ROS dependencies
       working-directory: ../ws
       shell: bash
       run: |
         set -euo pipefail
-        paths="$(colcon list --base-paths src --paths-only --packages-up-to marine_interfaces marine_vertical_datum command_bridge joy_to_helm marine_web_view marine_autonomy helm_manager marine_contacts marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index)"
+        paths="$(colcon list --base-paths src --paths-only --packages-up-to marine_interfaces marine_vertical_datum command_bridge joy_to_helm marine_web_view marine_autonomy helm_manager marine_contacts marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic marine_bathymetry_store marine_mbes_backscatter_store marine_survey_index mission_manager_interfaces mission_manager marine_autonomy_integration_tests)"
         if [ -z "$paths" ]; then
           echo "colcon list returned no package paths" >&2
           exit 1
@@ -170,7 +189,8 @@ jobs:
         marine_web_view marine_autonomy helm_manager marine_contacts
         marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic
         marine_bathymetry_store marine_mbes_backscatter_store
-        marine_survey_index'
+        marine_survey_index mission_manager_interfaces mission_manager
+        marine_autonomy_integration_tests'
     # No install/setup.bash, as in the jazzy job: colcon test gives each
     # package the environment of its declared workspace dependencies only, so
     # a missing workspace test_depend fails here instead of being hidden by
@@ -185,7 +205,8 @@ jobs:
         marine_web_view marine_autonomy helm_manager marine_contacts
         marine_tiled_raster_store marine_backscatter marine_sidescan_mosaic
         marine_bathymetry_store marine_mbes_backscatter_store
-        marine_survey_index
+        marine_survey_index mission_manager_interfaces mission_manager
+        marine_autonomy_integration_tests
         --event-handlers console_direct+ --return-code-on-test-failure'
     - name: Test results
       working-directory: ../ws
