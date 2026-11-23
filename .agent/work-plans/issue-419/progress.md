@@ -90,3 +90,11 @@ issue: 419
 **Decision**: proceed
 
 Read: the Issue Review, status complete, one row needing action: the four `logger.warn` call sites (cause 5) are reached by no test, so the fix needs a test per call site, proved by reverting one fix. For the planner: the issue's "Blocked on" section is stale (both blockers are delivered); cause 4 (`tests_require`) is the only failure today and hides the package's 105 tests from colcon; `config/repos/core.repos` pins `unh_marine_navigation` at `rolling` in a rolling-only commit that is not backported, as `55e2b0f5` did for the other repositories; the three packages join the Rolling CI job in a commit apart from the code, with a clone of `unh_marine_navigation` at `rolling`; no Nav2 package and none of the six unported navigation packages is needed, and nothing here adds Nav2 to CI. The undeclared `geographic_msgs` import and the old CMake minimum in the integration tests are the planner's to place (declare in a cause 11 commit, or list for a follow-up issue). The integration tests launch a mock navigator and no simulator, and assert nothing about speed or velocity; the pull request says so.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-11-23 15:16 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Plan**: `.agent/work-plans/issue-419/plan.md` at `d1aef445`
+
+Six commits: cause 4 (extras_require), cause 5 (warn to warning, with spec'd test loggers and one test per call site, revert-checked on a scratch copy), cause 11 (geographic_msgs, the launch-file packages, ament_cmake, launch), the three packages in the Rolling CI job (unh_marine_navigation cloned at rolling, its six Nav2 packages kept out by the package selector; rehearsed in a clean environment: 17 packages, 2095 tests, 0 failures), the docs table, and the rolling-only pin of unh_marine_navigation in core.repos (not backported). Baseline after cause 4 alone: 128 tests, 0 failures; no other cause applies.
