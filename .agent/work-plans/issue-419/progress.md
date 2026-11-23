@@ -98,3 +98,57 @@ Read: the Issue Review, status complete, one row needing action: the four `logge
 **Plan**: `.agent/work-plans/issue-419/plan.md` at `d1aef445`
 
 Six commits: cause 4 (extras_require), cause 5 (warn to warning, with spec'd test loggers and one test per call site, revert-checked on a scratch copy), cause 11 (geographic_msgs, the launch-file packages, ament_cmake, launch), the three packages in the Rolling CI job (unh_marine_navigation cloned at rolling, its six Nav2 packages kept out by the package selector; rehearsed in a clean environment: 17 packages, 2095 tests, 0 failures), the docs table, and the rolling-only pin of unh_marine_navigation in core.repos (not backported). Baseline after cause 4 alone: 128 tests, 0 failures; no other cause applies.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-11-23 15:21 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: ready
+
+**Issue**: #419 — Port to ROS 2 Rolling, stage 2: mission_manager and the integration tests
+**Plan**: `.agent/work-plans/issue-419/plan.md` at `d1aef445`
+**Branch**: `feature/issue-419`
+**Serves**: The owner's goal that the Project11 repositories build and test on ROS 2 Rolling (#415). This project keeps no goals or design document of its own. (Checked: true; no project design section applies.)
+
+### Evaluation
+
+| Dimension | Verdict | Notes |
+|---|---|---|
+| Scope | Good | Three small code commits, one CI, one docs, one rolling-only pin. Each commit is one fix; code, CI and docs are apart; no record in a code commit. |
+| Issue alignment | Good | Covers cause 4, cause 5 with a test per call site (the issue review's action), the CI join, the pin left out of the backport, and the validation statement. It corrects the issue review twice, and both corrections hold: `s57_tools` is still `jazzy` (`core.repos:25`), and the four `.warn(` sites are reached by unit tests through plain `MagicMock` loggers. |
+| File targeting | Good | Right files. One more stale comment in the workflow (finding 2). |
+| Consequences | Needs work | The follow-up list misses a second operator command that crashes the node (`next_task`), and it understates what "raises" means for `prepend_task` (finding 1). |
+| Principle alignment | Good | Test what breaks: I repeated the revert check on a scratch copy with the planned mocks: all fixed, 101 unit tests pass (lint excluded); reverting 191, 199, 319 and 202 fails 10, 1, 5 and 1 (6 at 319 once the new test is added). Only what's needed: defects are listed rather than fixed. Nav2 rule: nothing enters a job (closure checked). |
+| ADR compliance | Good | ADR-0013 only; records go in their own commits. |
+| ROS conventions | Good | Dependency kinds are right (`<depend>` for an imported message package, `exec_depend` for the launch-file packages, `test_depend launch`, `buildtool_depend ament_cmake`). All five new keys resolve on jazzy/noble and rolling/resolute (`rosdep resolve`). |
+
+### Checks made
+
+- **Cause 5.** On Rolling, `RcutilsLogger` has `debug/info/warning/error/fatal` and no `warn` (`rcutils_logger.py:413-429`). Upstream rclpy `jazzy` has the same five, plus a deprecated `warn` (line 349). `on_activate` calls `updateNavigator()` inside `try/except Exception` (lines 101-105), so a navigator slower than 2 s would make activation return FAILURE on Rolling. Line 319 sits after the `if/elif` chain with no `else`, so it runs on every `updateLocalTaskList` call. No client of the `task_manager` service exists in the hosted Rolling workspace (grep for `TaskManagerCmd`/`task_manager`), so in practice the operator path is the command topic. `spec=[...]` is a sound mechanism. It is attribute-level only, so keyword arguments (`throttle_duration_sec`, `once`) still work. The code under test calls no other logger method (no `get_child`, `log` or `set_level`), and the full unit suite passes with the spec in place. A stricter alternative, `create_autospec(RcutilsLogger)`, would also check signatures and would catch the two-positional `info` at line 265, but on Jazzy it would accept `warn`. The hand list is defensible. `test_unknown_command_warns` tests what its name says and does not cement the missing `else`: it asserts nothing about valid commands, and it would still pass if an `else` were added. After that fix it becomes the only test reaching 319 (the five dispatch tests would no longer reach it), so it is the durable pin.
+- **Cause 4.** `joy_to_helm/setup.py:41-45` has the `extras_require={'test': ['pytest']}` form; the plan copies it.
+- **Cause 11.** Each key is backed by an import or a launch-file line. `mission_manager_interfaces/CMakeLists.txt:6` uses `find_package(ament_cmake)` and its manifest declares no `ament_cmake`, so it really was missing. In the integration tests, `import launch` appears in all five tests and is not declared.
+- **CI.** `colcon list --packages-up-to` over this checkout plus the hosted `unh_marine_navigation` (`rolling`, `46b666f`) and `marine_ais` gives the following closures. `mission_manager_interfaces` → `marine_nav_interfaces`. `mission_manager` → also `marine_nav_tasks`, `marine_nav_utilities`, `marine_autonomy`, `marine_interfaces`. Integration tests → also `command_bridge`. The full Rolling list is 21 packages, plus `geodesy` = 22. None of the six Nav2 packages is in any of these. Every `colcon` build, list and test step in both jobs has a selector. `colcon test-result --verbose` has none, but it reads only `build/`. The new clone follows the `marine_ais` clone (branch, not commit). A later change on that repository's `rolling` reaches this job on its next run. A Nav2 dependency added to one of the three would fail the strict `rosdep install` (Nav2 has no Rolling release) rather than enter silently.
+- **Jazzy job on `rolling`.** It runs `vcs import` of `config/repos/underlay.repos` and `core.repos` from the branch it runs on. Today it builds `marine_nav_interfaces/tasks/utilities` from `unh_marine_navigation` `jazzy`. After the pin it builds the same three from `rolling` (that branch's own Jazzy job passes, run 45235844337 at `46b666f`). Its closure, computed here, reaches none of the six Nav2 navigation packages, before or after the pin. It reaches Jazzy's released `nav2_*` only through `bathymetry_layer`, as it does today. `jazzy`'s `core.repos` keeps `unh_marine_navigation: jazzy`, so leaving the pin out of the backport is right (as with `55e2b0f5`).
+- **Integration-test history (Jazzy, last 100 runs).** 94 success, 5 failure, 1 cancelled. Two failures were build failures during #418 part 1. Three were one launch test out of five: 33708775350 (`test_override_task_interruption`: "Timed out waiting for Navigator=done heartbeat during activation settle"), and 34846251766 and 38250124639 (`test_command_bridge_routes_to_mission_manager`: "Expected clear_tasks ..., got: []"). The last two came after #146's discovery gate.
+
+### Findings
+
+1. **[Consequences — mission path] (Medium)** The follow-up list should name two operator commands that terminate `mission_manager` on both distros, and say what happens. (a) `prepend_task`: `camp_interface.py:308` calls `prependTasks`, which calls `self.addOrUpdateMany`, a method `MissionManager` does not have (line 280). (b) `next_task`: `camp_interface.py:233` reads `self.mission_manager.override_task`, but the attribute is `override_task_id`. The plan misses this one. CAMP sends both (`camp/src/camp/mission_manager/mission_manager.cpp:88` and `:121`). The `AttributeError` is raised in a subscription callback and re-raised by the executor (rclpy Rolling `executors.py:1149-1151`, Jazzy `:929-930`), and `main()` catches only `KeyboardInterrupt`/`ExternalShutdownException`. So the process exits; the operator sees mission_manager's heartbeat stop. Whether these are fixed here or in the follow-up is the owner's call. The plan should at least list `next_task` and describe both effects as "terminates the node", not "raises".
+2. **[File targeting] (Low)** Step 4 updates only the header comment (lines 11-20). The rosdep-step comment at lines 144-150 also goes stale ("the ported packages", "the keys of the packages not yet ported"). Update it in the same CI commit, and name the three `unh_marine_navigation` packages there.
+3. **[Principle — tests catch what they claim / CI] (Low)** The integration tests fail intermittently in the Jazzy job (3 of about 95 runs, listed above). The run history shows two mechanisms, and there is a third risk:
+   - `on_activate` waits 2 s of wall-clock for the mock navigator, which is launched after the lifecycle transition. A slow start means no initial goal, so the `Navigator=done` wait times out.
+   - The discovery gate checks `marine/send_command` and the heartbeat, but not the receiver to test-node link on `marine/mission_manager/command`.
+   - `add_launch_test` is not domain-isolated: every package's tests run on domain 0 while colcon runs the other packages in parallel.
+   Adding the tests to the Rolling job doubles the exposure on `rolling` pull requests. Keep the planned 10-run loop, state the known rate in the pull request, and add these mechanisms to the follow-up issue.
+4. **[Issue alignment — wording] (Low)** The plan says "the `AttributeError` would come out of a service callback". The precise effect on Rolling without the fix is that the process exits, as in finding 1. The workspace also has no `task_manager` client today. Put this in the validation statement so the risk is neither overstated nor understated.
+
+### Summary
+
+The plan is accurate. I re-checked its claims: the cause 5 reach and revert counts, Jazzy's logger API, the cause 11 keys and their resolution, the CI closures, and what the pin changes for the Jazzy job. All hold, and nothing in it brings Nav2 into a job. The findings are text and follow-up additions. One of them, two CAMP operator commands that terminate mission_manager on both distros, is a scope question for the owner. Ready for implementation.
+
+### Recommended Actions
+
+- [ ] Add the `next_task` defect (`camp_interface.py:233`, `override_task`) to the follow-up list, and describe both it and `prepend_task` as terminating the node; put the in-scope-or-follow-up choice to the owner.
+- [ ] Update the workflow's rosdep-step comment (lines 144-150) in the CI commit.
+- [ ] Record the integration tests' known intermittent failures and their mechanisms in the pull request and the follow-up issue.
+- [ ] In the validation statement, say the unfixed line 319 would end the process on Rolling, and that nothing in the workspace calls `task_manager` today.
