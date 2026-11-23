@@ -80,3 +80,13 @@ issue: 419
 - [ ] Give cause 5 a test per `.warn(` site (or state that it is left untested), checked by temporarily reverting one fix, since the current suites pass with the broken calls in place.
 - [ ] State in the pull request that these integration tests use a mock navigator and no simulator, assert no speed or velocity, and so do not exercise the known simulator-frame defect; and that the owner's field-server commits (including `joy_to_helm`) are not part of what was built.
 - [ ] Optionally declare `geographic_msgs` as a `<depend>` of `mission_manager` (it is imported directly); verify with `rosdep install` without `-r` on the Rolling job, per cause 11.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-23 15:05 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the issue review found the issue well scoped; its actions are corrections and a test requirement for the planner, and none changes what the work is for or its scope)
+**After**: issue-actions
+**Decision**: proceed
+
+Read: the Issue Review, status complete, one row needing action: the four `logger.warn` call sites (cause 5) are reached by no test, so the fix needs a test per call site, proved by reverting one fix. For the planner: the issue's "Blocked on" section is stale (both blockers are delivered); cause 4 (`tests_require`) is the only failure today and hides the package's 105 tests from colcon; `config/repos/core.repos` pins `unh_marine_navigation` at `rolling` in a rolling-only commit that is not backported, as `55e2b0f5` did for the other repositories; the three packages join the Rolling CI job in a commit apart from the code, with a clone of `unh_marine_navigation` at `rolling`; no Nav2 package and none of the six unported navigation packages is needed, and nothing here adds Nav2 to CI. The undeclared `geographic_msgs` import and the old CMake minimum in the integration tests are the planner's to place (declare in a cause 11 commit, or list for a follow-up issue). The integration tests launch a mock navigator and no simulator, and assert nothing about speed or velocity; the pull request says so.
