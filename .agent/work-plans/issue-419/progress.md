@@ -287,3 +287,13 @@ CI (run 45267070414, workflow `docker-ros-core`, both jobs success at `30c6877`)
 - [x] (suggestion, Local Review (Pre-Push) @ `78a1e8b`) Integration tests' intermittent 60 s timeout: launch_ros chains `activate` off a `StateTransition` on the volatile `/mission_manager/transition_event` topic, so if the launch node's subscription has not matched when configure completes, activate is never requested and mission_manager stays inactive and silent. Valid. Deferred: not this pull request's: pre-existing test-harness flake; stated in the pull request; for a follow-up issue the host drafts for the owner. — `marine_autonomy_integration_tests/test/test_mission_command_flow.py:64`
 
 ### False positives
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-23 16:24 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: owner
+**After**: merge
+**Decision**: merge
+
+The owner's answers, 2026-11-23: "Merge when CI is green (Recommended)" for pull request 432; "Backport right after (Recommended)" for the hand backport to `jazzy` of five commits, without the `core.repos` pin; "Post it (Recommended)" for the comment on #415 recording this stage; "Open it (Recommended)" for the follow-up issue (integration-test flake, test and CI gaps; command handling left out). The host merges only after the CI run on the pushed records passes; if that run hits the known integration-test flake, the failed job is re-run once and the owner told.
