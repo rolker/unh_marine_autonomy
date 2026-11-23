@@ -162,3 +162,78 @@ The plan is accurate. I re-checked its claims: the cause 5 reach and revert coun
 **Decision**: proceed
 
 Read: the Plan Review at `d1aef445`, verdict ready, four findings. (1) Two operator commands end the `mission_manager` process on both distros today: `prepend_task` (`prependTasks` calls `self.addOrUpdateMany`, which `MissionManager` does not have, `mission_manager.py:280`) and `next_task` (`camp_interface.py:233` reads `override_task`; the attribute is `override_task_id`); CAMP sends both; the `AttributeError` leaves a subscription callback and `main()` does not catch it. The host checked both lines against the source. They are **not changed in this port** unless the owner says so (his rule: a port makes no big changes, and what it finds is tracked as an issue); the host drafts an issue for them and asks him. The plan's follow-up list names both and says "terminates the node". (2) The CI commit also updates the rosdep-step comment in the workflow and names the three navigation packages there. (3) The integration tests failed intermittently in the Jazzy job 3 times in about 100 runs (wall-clock wait for the mock navigator, an incomplete discovery gate, no DDS domain isolation); they are not changed here; the pull request states the known rate and the follow-up issue lists the mechanisms; the implementer runs them at least 10 times. (4) The validation statement says precisely what the unfixed `warn` calls do on Rolling. Host decisions: the Nav2 navigation packages are kept out of the Rolling job by the package selector; cause 11 is done for these three packages only; a fix pass ticks review boxes in a records commit of its own.
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-23 15:47 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Branch**: feature/issue-419 at `2776c88d`
+
+The plan's six commits, in its order, applying the checkpoint of 15:22 (findings 2 to 4 applied; finding 1's two commands not changed). No code, CI or docs commit touches `.agent/`.
+
+| # | Commit | Backport |
+|---|---|---|
+| 1 | `c52bcb35` mission_manager: tests_require to extras_require (#415 cause 4) | yes |
+| 2 | `7710d462` mission_manager: logger.warn to logger.warning, with spec'd test loggers (#415 cause 5) | yes |
+| 3 | `4d1331ca` mission_manager, mission_manager_interfaces, marine_autonomy_integration_tests: declare used dependencies (#415 cause 11) | yes |
+| 4 | `416892b7` ci: build and test mission_manager, mission_manager_interfaces and the integration tests in the Rolling job | yes |
+| 5 | `ffecd7a6` docs: record that the Rolling job builds mission_manager and the integration tests | yes |
+| 6 | `2776c88d` core.repos: pin unh_marine_navigation at rolling (rolling only; do not backport) | **no** |
+
+- Commit 2: four `.warn(` to `.warning(` (`mission_manager.py` 191, 199, 319; `multibeam_coverage_adapter.py` 202); `_LOGGER_METHODS = ['debug', 'info', 'warning', 'error', 'fatal']` in both test files, the 8 mock loggers spec'd with it; one `warning.assert_called_once_with(<message>)` per call site, including the new `TestUpdateLocalTaskList.test_unknown_command_warns`.
+- Commit 3: `geographic_msgs` (depend), `launch`, `launch_ros`, `lifecycle_msgs` (exec_depend) in `mission_manager`; `ament_cmake` (buildtool_depend) in `mission_manager_interfaces`; `launch` (test_depend) in the integration tests. All five keys resolve on jazzy/noble and rolling/resolute (`rosdep resolve`); `ament_xmllint`: "No problems found".
+- Commit 4: the `unh_marine_navigation` clone at `rolling`, the three packages in the three lists (identical), the header comment and the rosdep-step comment rewritten (the latter names the three navigation packages; plan review finding 2). The Jazzy job is unchanged.
+- Commit 5: also adds a second sentence under the table naming where the Rolling job takes the three `marine_nav_*` packages from (the plan asked for one sentence).
+
+### Verification (Rolling, this machine)
+
+From the package worktree, clean `core_ws/build install log`, `PYTHONDONTWRITEBYTECODE=1`, `ROS_DOMAIN_ID=211` (checked empty first):
+- `./build.sh --parallel-workers 4 --packages-up-to mission_manager mission_manager_interfaces marine_autonomy_integration_tests`: `Summary: 6 packages finished [26.2s]` (stderr: the CMake < 3.10 deprecation warning in `marine_interfaces`, `marine_autonomy`, `mission_manager_interfaces`, `marine_autonomy_integration_tests`; pre-existing).
+- `./test.sh --parallel-workers 4 --packages-select mission_manager mission_manager_interfaces marine_autonomy_integration_tests` (linters included): `Summary: 129 tests, 0 errors, 0 failures, 0 skipped`; `mission_manager`: `106 passed in 0.46s`.
+
+Revert check, on a scratch copy of the package at the head of commit 2, `PYTHONDONTWRITEBYTECODE=1`, `-p no:cacheprovider`, no `__pycache__` before or after (106 collected). All fixed: 106 passed. Reverting one site at a time to `.warn(`:
+- `mission_manager.py:191`: `10 failed, 96 passed` (`test_server_unavailable_warns` and the 9 task-operation tests that reach `updateNavigator`).
+- `mission_manager.py:199`: `1 failed, 105 passed` (`test_goal_response_none`).
+- `mission_manager.py:319`: `6 failed, 100 passed` (`test_unknown_command_warns` and the 5 dispatch tests).
+- `multibeam_coverage_adapter.py:202`: `1 failed, 105 passed` (`test_unsupported_task_type_aborts`).
+
+Integration tests, 12 separate `colcon test --parallel-workers 1 --packages-select marine_autonomy_integration_tests` runs, `ROS_DOMAIN_ID=211` (`ros2 node list` empty before each run), nothing retried or changed:
+- Runs 1 to 11: `Summary: 18 tests, 0 errors, 0 failures, 0 skipped` (55 to 56 s each).
+- **Run 12 failed**: `Summary: 15 tests, 1 error, 1 failure, 0 skipped`. `test_mission_command_flow.py` `***Timeout  60.05 sec` (ctest's 60 s limit), so launch_testing was killed before it printed assertion messages and the xunit file holds only "The test did not generate a result file." Its three cases each printed `FAIL` about 10 s apart (`test_command_bridge_routes_to_mission_manager`, `test_mission_reaches_navigator_and_heartbeat`, `test_navigator_done_heartbeat`). The other four test files passed. All five processes started and `mock_navigator` logged "MockNavigator ready" at +0.4 s, but `mission_manager` logged nothing at all: no "sending goal" (in passing runs at +0.4 s, after activation) and no "Timeout waiting for navigator action server". So in that run `mission_manager` apparently never reached activation (the launch file's `LifecycleTransition` configure/activate did not take effect, or not in time); from the output alone I cannot say which. This differs from the three mechanisms recorded in the plan review (the 2 s navigator wait would have logged the warning). Machine load at the end was low (load average 0.06). One failure in 12 is consistent with an intermittent fault; it should go to the follow-up issue with the others. Logs: `~/.ros/log/2026-11-23-15-42-23-914905-pickerel-3643126/launch.log`.
+
+Rehearsal of the changed Rolling job (`env -i HOME PATH LANG`, nothing sourced except what each `run:` sources; the job's own clones: `unh_marine_navigation` `rolling` `46b666f`, `marine_ais` `rolling` `4ded14c`, `geographic_info` `f70b81a` with the two `COLCON_IGNORE`s; this repository's tracked files at the CI commit):
+- Clone steps: as written. rosdep step: `colcon list` closure 22 packages, none of the six Nav2 navigation packages, no `bathymetry_layer`; `rosdep keys` 61, all resolve on rolling/resolute; `rosdep check`: "All system dependencies have been satisfied".
+- Build step (with `--parallel-workers 4` added): `Summary: 22 packages finished [44.7s]`.
+- Test step (with `--parallel-workers 4` and `ROS_DOMAIN_ID=211` added): `Summary: 17 packages finished [1min 1s]`; test-result step: `Summary: 2095 tests, 0 errors, 0 failures, 166 skipped`; `mission_manager` 106, `mission_manager_interfaces` 5, `marine_autonomy_integration_tests` 18, all passing.
+- Not rehearsed: `apt-get update`/`apt-get install`, `rosdep init`, `rosdep update` and `rosdep install -y` (no root, no Docker; the existing rosdep cache was used), `actions/checkout`, and the `ros:rolling-ros-core` container's own state.
+
+### Unverified on Jazzy
+
+Jazzy is not installed here (Ubuntu 26.04, no Docker). Nothing in this branch has run on Jazzy. The pull request's Jazzy job is the first evidence: it builds `marine_nav_interfaces`, `marine_nav_utilities` and `marine_nav_tasks` from `unh_marine_navigation`'s `rolling` branch for the first time in this repository's CI (after commit 6), expects 106 `mission_manager` tests, and is the first check of the spec'd test loggers under Jazzy's rclpy and of the cause 11 keys under the Jazzy image. Upstream rclpy `jazzy` has `warning` (its `warn` is a deprecated alias), per the plan; not run here.
+
+### Validation statement (for the pull request)
+
+`mission_manager` turns operator commands into task lists and `RunTasks` goals for the navigator. This change alters no behaviour beyond the names of four log calls (`warn` to `warning`), which on Jazzy call the same function. The rest is packaging metadata, test code, CI and a manifest pin.
+
+What the unfixed calls would have done on Rolling (`RcutilsLogger` there has no `warn`, so each call raises `AttributeError`), from the source:
+- `mission_manager.py:191` (navigator action server not up within `wait_for_server(timeout_sec=2.0)`): in `on_activate` the call is inside `try/except Exception`, so activation would return FAILURE instead of warning. Every task operation from CAMP (`clearTasks`, `appendTasks`, `setOverrideTask`, ...) calls `updateNavigator()` too, from a subscription callback; there the exception would leave the callback.
+- `mission_manager.py:319` runs on every `task_manager` service request (no `else` before it), after the requested operation; the exception would leave the service callback.
+- In both cases rclpy Rolling's `SingleThreadedExecutor` re-raises a callback's exception from `spin()` (`executors.py`, `handler.exception()` then `raise exception`), and `main()` catches only `KeyboardInterrupt` and `ExternalShutdownException`, so the process would end with an uncaught exception. No client of `task_manager` exists in the workspace today (plan review).
+- `mission_manager.py:199` (goal response None): runs as a future done-callback task on the same executor; I expect the same outcome but did not trace it end to end.
+- `multibeam_coverage_adapter.py:202` (unsupported task type): rclpy's action server catches an exception from the execute callback, logs "Error raised in execute callback", and aborts the goal, so the node would survive and the goal would end aborted with an empty result instead of `error_code` 1.
+
+The integration tests launch a mock navigator (`mock_navigator.py`), `mission_manager` and, in one test, `command_bridge`. No simulator and no real navigator are run, and no test asserts anything about speed or velocity. A run with the real navigator on Rolling is still owed before a Rolling deployment. The integration tests fail intermittently (about 3 in 100 Jazzy CI runs; 1 in 12 here, above); adding them to the Rolling job doubles their exposure on `rolling` pull requests.
+
+### Found and left alone (pre-existing, same on both distros; for the follow-up issue)
+
+- `mission_manager.py:278-281`: `prependTasks` calls `self.addOrUpdateMany` (line 280), which `MissionManager` does not have; CAMP's `prepend_task` command (`camp_interface.py:308`) **terminates the node on both distros** (`AttributeError` out of a subscription callback; `main()` does not catch it).
+- `camp_interface.py:233`: `next_task` reads `self.mission_manager.override_task`; the attribute is `override_task_id`. The command **terminates the node on both distros**, the same way.
+- `mission_manager.py:306-321`: `updateLocalTaskList` has no `else`, so the "Received unknown command" warning (line 319) is logged after every valid command too.
+- `mission_manager.py:265`: `behaviorFeedbackCallback` passes two positional arguments to `logger.info`; unreachable (its subscription is commented out).
+- `track_patterns.py`: imported by nothing; imports `TaskInformation` from `marine_interfaces.msg` (line 75, no such message) and undeclared `numpy` (line 76).
+- `cmake_minimum_required` below 3.10: `marine_autonomy_integration_tests/CMakeLists.txt:1` (3.5.1) and `mission_manager/mission_manager_interfaces/CMakeLists.txt:1` (3.8); CMake prints a deprecation warning (also `marine_interfaces` and `marine_autonomy`, outside this issue).
+- `test_camp_interface*` still use plain `MagicMock` loggers, so an rclpy API removal there is caught only where a mock is spec'd.
+- The Rolling job has no guard against a Python package that runs 0 tests.
+- The integration tests' intermittent failures: the 2 s wall-clock navigator wait in `on_activate`, the discovery gate not covering the receiver to test-node link on `marine/mission_manager/command`, no domain isolation for `add_launch_test`, and (run 12 above) a run in which `mission_manager` logged nothing and never appeared to activate.
+
+Housekeeping: removed the two git-ignored `__pycache__` folders under `mission_manager/mission_manager/` and a git-ignored `log/` (colcon list logs of 15:18) from the source tree. Nothing pushed.
