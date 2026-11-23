@@ -152,3 +152,13 @@ The plan is accurate. I re-checked its claims: the cause 5 reach and revert coun
 - [ ] Update the workflow's rosdep-step comment (lines 144-150) in the CI commit.
 - [ ] Record the integration tests' known intermittent failures and their mechanisms in the pull request and the follow-up issue.
 - [ ] In the validation statement, say the unfixed line 319 would end the process on Rolling, and that nothing in the workspace calls `task_manager` today.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-23 15:22 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the plan review's verdict is ready; findings 2 to 4 are wording and comment corrections the implementer applies; finding 1's question, whether two pre-existing crashing commands are fixed here, is put to the owner and does not change the six planned commits)
+**After**: plan
+**Decision**: proceed
+
+Read: the Plan Review at `d1aef445`, verdict ready, four findings. (1) Two operator commands end the `mission_manager` process on both distros today: `prepend_task` (`prependTasks` calls `self.addOrUpdateMany`, which `MissionManager` does not have, `mission_manager.py:280`) and `next_task` (`camp_interface.py:233` reads `override_task`; the attribute is `override_task_id`); CAMP sends both; the `AttributeError` leaves a subscription callback and `main()` does not catch it. The host checked both lines against the source. They are **not changed in this port** unless the owner says so (his rule: a port makes no big changes, and what it finds is tracked as an issue); the host drafts an issue for them and asks him. The plan's follow-up list names both and says "terminates the node". (2) The CI commit also updates the rosdep-step comment in the workflow and names the three navigation packages there. (3) The integration tests failed intermittently in the Jazzy job 3 times in about 100 runs (wall-clock wait for the mock navigator, an incomplete discovery gate, no DDS domain isolation); they are not changed here; the pull request states the known rate and the follow-up issue lists the mechanisms; the implementer runs them at least 10 times. (4) The validation statement says precisely what the unfixed `warn` calls do on Rolling. Host decisions: the Nav2 navigation packages are kept out of the Rolling job by the package selector; cause 11 is done for these three packages only; a fix pass ticks review boxes in a records commit of its own.
