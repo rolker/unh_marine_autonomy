@@ -237,3 +237,23 @@ The integration tests launch a mock navigator (`mock_navigator.py`), `mission_ma
 - The integration tests' intermittent failures: the 2 s wall-clock navigator wait in `on_activate`, the discovery gate not covering the receiver to test-node link on `marine/mission_manager/command`, no domain isolation for `add_launch_test`, and (run 12 above) a run in which `mission_manager` logged nothing and never appeared to activate.
 
 Housekeeping: removed the two git-ignored `__pycache__` folders under `mission_manager/mission_manager/` and a git-ignored `log/` (colcon list logs of 15:18) from the source tree. Nothing pushed.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-11-23 16:10 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: approved
+
+**Branch**: feature/issue-419 at `78a1e8b6`
+**Base**: origin/rolling
+**Depth**: Standard (reason: CI workflow and three package manifests changed, ~60 non-record lines over 11 files)
+**Must-fix**: 0 | **Suggestions**: 1
+**Round**: 1 | **Ship**: recommended — no must-fix findings; remaining suggestions can be applied or tracked
+
+### Findings
+- [ ] (suggestion) Integration tests' flake mechanism: mission_manager's activate is chained by launch_ros `LifecycleTransition` off a `StateTransition` event that arrives only on the volatile `/mission_manager/transition_event` topic; if the launch node's subscription has not matched the publisher when configure completes, activate is never requested, mission_manager stays inactive and logs nothing, and the test runs into ctest's 60 s limit with no diagnostic (fits the 15:42 log exactly; same code on Jazzy's launch_ros). Pre-existing, not changed by this branch. For the host to weigh against no-big-changes: drive configure/activate from the test node by service call, or at least fail fast in `setUp` with mission_manager's `get_state`. State the rate in the pull request (see Notes). — `marine_autonomy_integration_tests/test/test_mission_command_flow.py:64`
+
+### Notes (not findings)
+- Claims checked: revert check reproduced (10, 1, 6, 1 failures; 102 passed over the four unit-test files with all fixed); `test_unknown_command_warns` passes with or without the missing `else` and no new test asserts a deferred broken behaviour; cause 11 keys each backed by an import/launch line/find_package, manifests validate against format 2/3 XSD and catkin_pkg, keys resolve on jazzy/noble and rolling; setup.py matches `joy_to_helm` on rolling; Rolling closure is 22 packages and the Jazzy job's closure on rolling takes only marine_nav_interfaces/utilities/tasks from `unh_marine_navigation` rolling 46b666f (identical to jazzy for those three), neither reaches the six Nav2 packages; the five code/CI/docs commits cherry-pick cleanly onto origin/jazzy and no code commit touches `.agent/`.
+- Integration tests: 80 local launch-test runs (16 full sets, ROS_DOMAIN_ID 173), 0 failures. Combined with the implementer's 1 in 12 and Jazzy CI's ~3 in 100, expect roughly 1–4% per job run, so a `rolling` pull request (two jobs) has about 2–8% odds of one red integration-test job not caused by the change; re-run the failed job.
+- Dropped by the silence filter: missing `else` / dispatch tests not asserting no warning (owner deferred); launch_ros test_depend (already declared); cross-package DDS cross-talk (no shared names among the job's parallel tests; ctest runs a package's launch tests sequentially); unspec'd logger mocks in camp_interface tests and `upstream.repos`/`dependencies.repos` still at jazzy (outside this port's scope; the plan kept the latter deliberately).
