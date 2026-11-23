@@ -267,3 +267,23 @@ Housekeeping: removed the two git-ignored `__pycache__` folders under `mission_m
 **Decision**: publish
 
 Read: the Local Review (Pre-Push) at `78a1e8b6`, verdict approved, ship recommended, one suggestion open: the integration tests' intermittent failure has a likely mechanism (launch chains `activate` off a message on the volatile `transition_event` topic; if it is lost the node stays inactive and the test runs into ctest's 60 s limit), pre-existing and not changed by this branch (`marine_autonomy_integration_tests/test/test_mission_command_flow.py:64`). It stays open and goes through triage after publish with what the first CI run shows. Also recorded here, the owner's answer of 2026-11-23 on the command-handling defects the port found (two operator commands that end the process, `mission_manager.py:280` and `camp_interface.py:233`, and the smaller ones), asked whether to fix them here or open an issue: "The full set of commands from camp to the mission manager have not all been properly ported some a redesign years ago. This all needs a review at some point so don't worry to much about it nowr". So they are not fixed here, no issue is opened for them now, and the pull request lists them as known gaps with that reason. The pull request says `Part of #419`.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-11-23 16:20 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+
+**PR**: #432 at `30c6877`
+**Sources**: 2 (Local Review (Pre-Push) @ `78a1e8b` (covers `30c6877` via bookkeeping), CI rollup run 45267070414); no GitHub reviews, inline comments, conversation comments or Copilot check-run on the pull request
+**Cross-source confirmations**: 0
+**CI**: all-pass
+
+CI (run 45267070414, workflow `docker-ros-core`, both jobs success at `30c6877`):
+- `build-and-test (rolling)`: 6m22s (last `rolling` run before this branch, 44807007698: 5m45s; +37s, under the estimated 2 min). Bare-container path held: `git clone --depth 1 -b rolling .../unh_marine_navigation.git` succeeded, strict `rosdep install` printed `#All required rosdeps installed successfully`, build `Summary: 22 packages finished [2min 51s]`, test `Summary: 17 packages finished [1min 25s]`, `Summary: 2095 tests, 0 errors, 0 failures, 176 skipped`. `mission_manager`: `106 passed in 1.23s`. Integration tests `100% tests passed, 0 tests failed out of 5` (command_flow 11.01 s, navigation_flow 15.84 s, failure 8.91 s, rejection 10.14 s, override 21.89 s).
+- `build-and-test (jazzy)`: 7m38s (baseline 6m59s; +39s). First Jazzy run of these changes; `unh_marine_navigation` imported via `core.repos` and `marine_nav_interfaces`, `marine_nav_utilities`, `marine_nav_tasks` built from its `rolling` branch. Build `Summary: 24 packages finished [4min 9s]`, test `Summary: 18 packages finished [1min 20s]`, `Summary: 2152 tests, 0 errors, 0 failures, 180 skipped`. `mission_manager`: `106 passed in 1.43s` (the `spec`-limited logger mocks hold under Jazzy's rclpy). Integration tests 5/5 passed (9.76, 13.28, 5.36, 9.63, 21.38 s).
+- The known launch-test flake did not show on either job in this run; nothing changes the picture below.
+
+### Findings
+- [x] (suggestion, Local Review (Pre-Push) @ `78a1e8b`) Integration tests' intermittent 60 s timeout: launch_ros chains `activate` off a `StateTransition` on the volatile `/mission_manager/transition_event` topic, so if the launch node's subscription has not matched when configure completes, activate is never requested and mission_manager stays inactive and silent. Valid. Deferred: not this pull request's: pre-existing test-harness flake; stated in the pull request; for a follow-up issue the host drafts for the owner. — `marine_autonomy_integration_tests/test/test_mission_command_flow.py:64`
+
+### False positives
