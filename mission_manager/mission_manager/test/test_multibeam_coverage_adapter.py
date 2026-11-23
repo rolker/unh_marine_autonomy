@@ -37,6 +37,10 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+# The rclpy logger methods both Jazzy and Rolling have. A mock logger with
+# this spec raises AttributeError on .warn, as Rolling's logger does.
+_LOGGER_METHODS = ['debug', 'info', 'warning', 'error', 'fatal']
+
 # ---------------------------------------------------------------------------
 # Mock ROS / external modules
 # ---------------------------------------------------------------------------
@@ -79,7 +83,8 @@ class TestExecuteCallback(unittest.TestCase):
     def setUp(self):
         """Create adapter with mocked dependencies."""
         self.adapter = MultibeamCoverageAdapter('test_adapter')
-        self.adapter.get_logger = MagicMock(return_value=MagicMock())
+        self.adapter.get_logger = MagicMock(
+            return_value=MagicMock(spec=_LOGGER_METHODS))
         self.adapter.coverage_client = MagicMock()
         self.adapter.coverage_path_publisher = MagicMock()
         self.adapter.coverage_path_geo_publisher = MagicMock()
@@ -123,6 +128,8 @@ class TestExecuteCallback(unittest.TestCase):
 
         goal_handle.abort.assert_called_once()
         self.assertEqual(result.error_code, 1)
+        self.adapter.get_logger().warning.assert_called_once_with(
+            'Unsupported task type: goto')
 
     def test_no_tasks_aborts(self):
         """An empty task list should result in an abort."""
@@ -293,7 +300,8 @@ class TestCoverageFeedbackCallback(unittest.TestCase):
     def setUp(self):
         """Create adapter."""
         self.adapter = MultibeamCoverageAdapter('test_adapter')
-        self.adapter.get_logger = MagicMock(return_value=MagicMock())
+        self.adapter.get_logger = MagicMock(
+            return_value=MagicMock(spec=_LOGGER_METHODS))
         self.adapter.coverage_path_publisher = MagicMock()
 
     def test_none_feedback(self):
