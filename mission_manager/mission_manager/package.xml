@@ -7,6 +7,7 @@
   <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
   <license>BSD-3-Clause</license>
 
+  <depend>geographic_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>marine_nav_interfaces</depend>
   <depend>marine_nav_tasks</depend>
@@ -16,6 +17,9 @@
   <depend>marine_interfaces</depend>
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>lifecycle_msgs</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
