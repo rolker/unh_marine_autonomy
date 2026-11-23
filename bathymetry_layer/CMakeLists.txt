@@ -10,7 +10,10 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
-find_package(geodesy REQUIRED)
+# 1.0.7 first has geodesy/ecef.h. The floor is necessary, not sufficient:
+# the 1.0.7 tag itself needs upstream #64 (f70b81a, still versioned 1.0.7)
+# to compile, which no version check can tell apart.
+find_package(geodesy 1.0.7 REQUIRED)
 find_package(geographic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(marine_bathymetry_store REQUIRED)
@@ -26,20 +29,27 @@ add_library(${PROJECT_NAME} SHARED
 )
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
-ament_target_dependencies(${PROJECT_NAME}
-  geodesy
-)
+# geodesy exports no CMake target, only include directories and the static
+# geoconv library, so use its variables. Its headers are included only from
+# src/bathymetry_layer.cpp, not from the header, hence PRIVATE.
+target_include_directories(${PROJECT_NAME} PRIVATE ${geodesy_INCLUDE_DIRS})
 
+# PUBLIC: every library this target linked before, so the exported interface
+# does not change. PRIVATE: geoconv, a static archive linked into the plugin,
+# which stays out of the exported target's link interface.
 target_link_libraries(${PROJECT_NAME}
-  ${geographic_msgs_TARGETS}
-  ${geometry_msgs_TARGETS}
-  marine_bathymetry_store::marine_bathymetry_store
-  nav2_costmap_2d::nav2_costmap_2d_core
-  pluginlib::pluginlib
-  rclcpp::rclcpp
-  tf2::tf2
-  tf2_geometry_msgs::tf2_geometry_msgs
-  tf2_ros::tf2_ros
+  PUBLIC
+    ${geographic_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    marine_bathymetry_store::marine_bathymetry_store
+    nav2_costmap_2d::nav2_costmap_2d_core
+    pluginlib::pluginlib
+    rclcpp::rclcpp
+    tf2::tf2
+    tf2_geometry_msgs::tf2_geometry_msgs
+    tf2_ros::tf2_ros
+  PRIVATE
+    ${geodesy_LIBRARIES}
 )
 
 install(
