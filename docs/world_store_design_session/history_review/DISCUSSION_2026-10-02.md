@@ -368,3 +368,7 @@ shown as a draft and written on his yes.
   recordings goes to the pipeline section. Agent's guess for there, untested: a shared part (finding bags, corrections,
   time, position across bag boundaries) and a part per sensor system (decoding).
 - Still to put to Roland with section 5: a writer never saves over a tile it could not load (proposed 2026-10-12).
+- Section 5 WRITTEN 2026-11-24: new section "Writing tiles and building from recordings" (three write rules, six build
+  entries). Roland's three answers: write it in, "yes"; the proposed entry "a writer never saves over a tile it could not
+  load", "not sure" — NOT written as a rule, listed under Open questions; source tracking and same-recording tiles from
+  different hosts go under Open questions, "yes".

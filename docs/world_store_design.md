@@ -185,6 +185,40 @@ pipeline.
   it could not read out of those it tried, so that one damaged tile and a damaged store can
   be told apart. Neither ever looks like an empty store.
 
+## Writing tiles and building from recordings
+
+*Serves goals 1, 2 and 4.*
+
+**Writing tiles**
+
+- **A write never replaces a tile with a partial one.** A write either rebuilds the tile
+  from all its recorded inputs, or merges into what is there.
+- **A half-written tile is never in use.** A tile is written beside the old one and then
+  renamed into place. Building a whole store beside the old one and swapping it in is
+  optional; the user decides, knowing it needs room for two copies for a while.
+- **Adding to a tile without all its earlier inputs is possible**, and the tile is marked as
+  not the same as a rebuild from scratch. A boat can add its own data to a tile it received,
+  and when a newer version of that tile arrives, build again from the newer one plus its own
+  data that is not yet in it.
+
+**Building from recordings**
+
+- **Corrections are records, applied at build.** A recording is never rewritten. A
+  correction names what it corrects, over which recordings or time window, and why.
+  Examples: a sensor's clock offset over a stated window; the frame a position source was
+  really in; a value the recorder did not capture.
+- **Excluding a recording is also a record**: the recording, the reason, and who decided. It
+  can apply to one data type only.
+- **Recordings carry tags.** Tags are free-form and optional and can be edited later. A
+  project is a selection of recordings by tag, not a label fixed at recording time.
+- **Each tile's record says what it was built from**: which recordings, which corrections
+  and exclusions, which edition of each support item, and which version of the code.
+- **A build reports an outcome for every recording it looked at**, per data type: used,
+  excluded, nothing to process, or incomplete. Counts of pings used and dropped, and why, go
+  with it.
+- **A build checks what it can.** It compares sensor clocks against each other and flags a
+  recording whose offset is outside a threshold.
+
 ## Open questions
 
 - **How much weight manual cleaning gets.** Nobody wants to clean by hand, but target
@@ -194,6 +228,12 @@ pipeline.
   can be replaced.
 - **Whether live data survives in a rebuilt tile's holes**, or the rebuild replaces the live
   tile outright.
+- **What a writer does when the existing tile cannot be read.** Proposed: it reports the
+  tile and never saves over it. Not decided.
+- **Source tracking.** Whether a build first checks that its source recordings are present,
+  and how a host knows where they are.
+- **Tiles of the same recording built on different hosts.** Proposed: their accumulations
+  are never added together, and the answer is a rebuild. Not decided.
 
 ## About this document
 
@@ -722,6 +762,13 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **"Writing tiles and building from recordings" added, from the history
+  review** (Roland). Write rules (details 5 and 7); corrections, exclusions and tags as
+  records (details 4, 9 and 14, finding 5); the tile's record and the build's per-recording
+  outcome (details 4, 12 and 14, contradiction 1); the build-time clock check (detail 9).
+  Three open questions added: a writer and an unreadable tile (Roland: "not sure"), source
+  tracking, and tiles of the same recording built on different hosts.
 
 - 2026-11-24 — **"How tools read the store" added, from the history review** (Roland). One
   shared reader (finding 2), two levels and consumer-owned order (detail 2), mixed levels
