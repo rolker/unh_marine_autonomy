@@ -417,3 +417,7 @@ the direction note in RESUME_HERE.md section 2 (2026-10-01).
   Also written: scope paragraph dropped, the non-goals gain "publishing in hydrographic formats ... is interoperability, not
   a requirement"; the 2026-09-16 vision list dropped (covered by goals 1-3), its named uses kept as a short "Named uses"
   section; the invariant moved beside the governing principle without "and provably so".
+- Block 4 (rev 3 section 1, where the design stands) DONE 2026-11-24, Roland "yes": section removed from the design document
+  (a summary of Appendix C Part 2, framed by the build-from-existing-tools attempt); a dated note added at the top of
+  Appendix C Part 2 saying it describes rev 3 and has not been redone; one sentence pointing to Appendix C added to
+  "Established practice as the default". Later rev 3 sections keep their numbers.
