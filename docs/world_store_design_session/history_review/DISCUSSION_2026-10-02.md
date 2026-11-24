@@ -256,3 +256,13 @@ depth formula and limits (R13, uma#386); what "supported resolution" means for s
 - Roland 2026-11-24: "standing yes to push" — session-record commits on this branch are pushed as they are made. It does not
   cover edits to the design document, which still need their own yes.
 - NEXT: detail 12 (support data has one home per host).
+
+### Detail 12 — support data has one home per host
+Presented 2026-11-24. uma#288 OPEN (canonical updater-managed home for support data), uma#310 CLOSED (store root moved to
+~/data/world). Rev 3 puts this material in sources/; the agreed-not-written list already has the scope statement from
+finding 4 (the store includes the data needed to support collecting and processing). Left to decide: provisioning. Proposed
+cut. World-store design: (1) support data lives under the store root in one known place, the same on every host; (2) a
+build records which edition of each support item it used, so an updated datum grid or chart is a reason to rebuild.
+Deployment, not design: the updater (uma#288, eb#491 on hold).
+- Detail 12 RESULT (Roland 2026-11-24): "yes, looks right". PARKED with the two statements; add to the agreed-not-written list.
+- NEXT: detail 13 (whole-area GeoTIFF export).
