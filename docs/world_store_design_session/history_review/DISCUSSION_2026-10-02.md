@@ -317,3 +317,18 @@ confidence, so 1 sigma and 95 % are never confused (safety side: navigation surf
 (3) the shared reader exposes bands by meaning, not by position. Per type: which bands a type has and how each is computed.
 - Detail 16 RESULT (Roland 2026-11-24): "That sounds right". Add the three statements to the agreed-not-written list.
 - DETAIL FINDINGS 1 TO 16 COMPLETE. NEXT: "purposes the goals leave out".
+
+### Purposes stated earlier that are not in the goals (the review's last part)
+Presented 2026-11-24 as one table of five, with a proposal per row. sim#85 OPEN (on hold); uma#345 OPEN and uma#166 OPEN
+(web view; marine_web_view already renders live coverage).
+1. NOAA National Bathymetric Source testing ground (Roland 2026-09-21): not a goal; kept as a named use under goal 3.
+2. Simulator replay: not a goal; a test method for goals 1 and 2, goes to the roadmap. Needs only the store root as a
+   setting (already in rev 3).
+3. Public web view as a second live consumer: not a goal; covered by goal 2 and the two-level reader API. One line: live
+   view tiles may have more than one consumer.
+4. Retention and a verified second copy of the raw data: ADD one line under goal 4 — raw recordings are kept and a second
+   copy is verified. The mechanism stays in the queued source-tracking discussion.
+5. The explorer tuning loop as first deliverable (2026-10-01): not a goal; a first-build choice for the roadmap discussion
+   (Roland later leaned towards pyramids first; not settled).
+- RESULT (Roland 2026-11-24): "Yes" to all five proposals. Rows 3 and 4 add to the agreed-not-written list.
+- HISTORY REVIEW COMPLETE (goal-level findings, contradictions, the RTK tension, details 1-16, left-out purposes).
