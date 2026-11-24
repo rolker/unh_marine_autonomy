@@ -240,9 +240,10 @@ posted design-session trial notes on agent_workspace#370 (follow-up on how it wo
   history_review/DISCUSSION_2026-10-02.md. Then: pipeline section, parts, shared-library discussion, roadmap, rev 4 and PR 399.
 - Check progress 2026-11-24: blocks 1 (About this document), 2 (Direction note), 3 (Purpose), 4 (rev 3 section 1,
   removed) 5 (categories, replaced by "What the store holds") 6 (source identity, now
-  "Identifying recordings and other sources") and 7 (reference frame, now "The store's frame") DONE. The NOAA
+  "Identifying recordings and other sources") 7 (reference frame, now "The store's frame") and 8 (states, now "Labels
+  every product carries", PROVISIONAL: Roland wants to think about the labels more) DONE. The NOAA
   testing-ground purpose is dropped; "established practice as the default" replaces it. Roadmap input now lives in
-  docs/world_store_roadmap_notes.md. Next: block 8 (rev 3 section 5, axes, states and views). Store frame: ITRF2020 at 2020.0 stands as a revisable working choice. The order of
+  docs/world_store_roadmap_notes.md. Next: block 9 (rev 3 section 6, observations). Store frame: ITRF2020 at 2020.0 stands as a revisable working choice. The order of
   the seven sections is at the end of history_review/DISCUSSION_2026-10-02.md.
 - Background for that step: writing the agreed changes into the design document (one section at a time, each with Roland's yes). The list is
   the "in agreed list" rows of SIDE_THOUGHTS_QUEUE.md plus "Agreed but NOT YET WRITTEN" and the later RESULT lines in

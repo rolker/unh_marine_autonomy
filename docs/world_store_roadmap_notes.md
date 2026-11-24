@@ -155,3 +155,49 @@ publishes. The season's RTK positions were NAD83(2011) labelled WGS84 (+1.19 m i
 here); the store's Massabesic tiles also carry a +0.626 m EGM96 round-trip bias from bags
 before 2026-08-21 — both are datum records in `revisions/`, applied at link, fixed by
 regeneration.
+
+## Moved from the design document (rev 3 section 5, "Axes, states and views")
+
+Moved unedited on 2026-11-24. In the design document the three states below are replaced by
+the labels "built from", an optional "reviewed" and "origin" ("Labels every product
+carries"), which Roland agreed with more thought owed. The directory layout below is rev 3's
+and is not decided; the stores on disk today use a third naming (`draft`, `processed`,
+`reference`, `chart`). The default order for the navigation surface belongs in that
+library's own design.
+
+The provenance ladder of rev 1–2 mixed two axes. Every Item now records two fields:
+
+- **`state`** ∈ `draft | reviewed | published` — how far *our* processing has gone: produced
+  by a pipeline with nobody looking; a person applied marks and corrections and accepted it;
+  a version handed out, frozen. (Not "curated": that word means arranged for display.)
+- **`origin`** ∈ `surveyed | imported` — our own surveys, or material received from outside.
+
+A release is a **state change on a reviewed product**, never a second copy (the rev-2
+double-storage defect). The old rung names survive only as labels for the common cells:
+*processed* = reviewed/surveyed, *draft* = draft/surveyed, *published* = published,
+*reference* = reviewed/imported. NBS's buckets map onto the same cells (qualified →
+reviewed, unqualified → draft, precompiled → imported/published).
+
+**The store owns no preference order.** Different consumers combine the same products
+differently — CAMP's layer order, the survey explorer's exploration order, a future GeoZui4D
+store view with CAMP-like layer control, the costmap with its own default and parameter
+overrides. Ordering, including between two products in the same cell, is the consumer's; the
+order it used is an input to the fingerprint of whatever it builds. Two consumers may show
+different data for the same tile, by design.
+
+**Views** are the named, documented rule sets consumers adopt: selection, ordering, the
+statistic read from an overview, the output datum. The first is the **navigation-surface
+view** — lineage Smith's navigation surface (UNH 2003, NBS's named ancestor) and CCOM's Chart
+of the Future — with NBS's compile hierarchy as its default ordering (decayed quality score,
+then finest resolution, then least depth, then source name; Appendix C) and safety-of-
+navigation semantics; it is how bathymetry reaches the costmap and the chart display.
+Geology and bottom-classification views apply other rules over the same store. Bathymetry
+aligns with NBS where practical; the model separates what is bathymetry-specific (least
+depth, the quality-score ingredients, decay by time and locality, chart-datum publishing)
+from what generalises (identity, revisions, states, per-cell contributor, views, deferred
+pose).
+
+Directory layout: `<quantity>/<state>/<origin>/` (e.g. `depths/reviewed/surveyed/`,
+`depths/published/imported/`). Origin must be a directory, not only an Item field: consumers
+order by origin, and the per-cell provenance carries no source (R8), so two origins cannot
+share one tile tree. Trajectories and observations have only `surveyed/`.

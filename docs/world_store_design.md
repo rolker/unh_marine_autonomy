@@ -162,6 +162,22 @@ own.
   correcting for plate motion, about 12 cm in New Hampshire for 2026 data; and expecting
   NATRF2022 to be close to this frame is a bet until NOAA publishes.
 
+## Labels every product carries
+
+*To be thought about further (Roland, 2026-11-24); see the open questions.*
+
+- **Built from**: the live stream, or the recordings ("Live tiles and rebuilt tiles").
+- **Reviewed**: whether a person has accepted it, and who. Optional: a store works with
+  nothing reviewed.
+- **Origin**: surveyed by us, or received from outside.
+
+The three kinds of data the operator sees apart (goal 2) follow from these labels and a
+project's tags: being gathered now is built from the live stream; gathered so far in the
+project is rebuilt, ours and within the project's recordings; reference is everything else.
+
+There is no "published" label. A frozen version handed to someone is a copy made by export,
+with its build record.
+
 ## Live tiles and rebuilt tiles
 
 *Serves goals 1 and 2.*
@@ -348,6 +364,8 @@ technology will change.
   tile outright.
 - **Whether decision records (ADRs) are cut from this document**, or the document and its
   change log are the record.
+- **The labels a product carries.** "Built from", an optional "reviewed" and "origin" replace
+  rev 3's three states; agreed on 2026-11-24 with more thought owed.
 - **Whether intermediate results are stored**: the boat's position against time, and sensor
   samples before a position is applied. Set aside on 2026-10-01 in favour of reading the
   recordings directly; to revisit if rebuilds prove too slow.
@@ -393,7 +411,7 @@ what waits and what is on hold is in
 
 **What stays.** The six spine decisions: source identity (§3, checked 2026-11-24 and now
 "Identifying recordings and other sources" above), the reference frame (§4, checked 2026-11-24 and now "The store's frame" above),
-the state and origin axes (§5), what an observation may bake (§6), the overview bands (§7)
+the state and origin axes (§5, checked 2026-11-24 and now "Labels every product carries" above), what an observation may bake (§6), the overview bands (§7)
 and features (§8).
 Each of the six is checked against the goals in turn; until then it stands as written
 below.
@@ -401,45 +419,6 @@ below.
 ---
 
 # Part 1 — The store model
-
-## 5. Axes, states and views — *decided* (spine 3, 2026-09-21)
-
-The provenance ladder of rev 1–2 mixed two axes. Every Item now records two fields:
-
-- **`state`** ∈ `draft | reviewed | published` — how far *our* processing has gone: produced
-  by a pipeline with nobody looking; a person applied marks and corrections and accepted it;
-  a version handed out, frozen. (Not "curated": that word means arranged for display.)
-- **`origin`** ∈ `surveyed | imported` — our own surveys, or material received from outside.
-
-A release is a **state change on a reviewed product**, never a second copy (the rev-2
-double-storage defect). The old rung names survive only as labels for the common cells:
-*processed* = reviewed/surveyed, *draft* = draft/surveyed, *published* = published,
-*reference* = reviewed/imported. NBS's buckets map onto the same cells (qualified →
-reviewed, unqualified → draft, precompiled → imported/published).
-
-**The store owns no preference order.** Different consumers combine the same products
-differently — CAMP's layer order, the survey explorer's exploration order, a future GeoZui4D
-store view with CAMP-like layer control, the costmap with its own default and parameter
-overrides. Ordering, including between two products in the same cell, is the consumer's; the
-order it used is an input to the fingerprint of whatever it builds. Two consumers may show
-different data for the same tile, by design.
-
-**Views** are the named, documented rule sets consumers adopt: selection, ordering, the
-statistic read from an overview, the output datum. The first is the **navigation-surface
-view** — lineage Smith's navigation surface (UNH 2003, NBS's named ancestor) and CCOM's Chart
-of the Future — with NBS's compile hierarchy as its default ordering (decayed quality score,
-then finest resolution, then least depth, then source name; Appendix C) and safety-of-
-navigation semantics; it is how bathymetry reaches the costmap and the chart display.
-Geology and bottom-classification views apply other rules over the same store. Bathymetry
-aligns with NBS where practical; the model separates what is bathymetry-specific (least
-depth, the quality-score ingredients, decay by time and locality, chart-datum publishing)
-from what generalises (identity, revisions, states, per-cell contributor, views, deferred
-pose).
-
-Directory layout: `<quantity>/<state>/<origin>/` (e.g. `depths/reviewed/surveyed/`,
-`depths/published/imported/`). Origin must be a directory, not only an Item field: consumers
-order by origin, and the per-cell provenance carries no source (R8), so two origins cannot
-share one tile tree. Trajectories and observations have only `surveyed/`.
 
 ## 6. Observations and what they may bake — *decided* (spine 4, 2026-09-21)
 
@@ -725,6 +704,15 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **rev 3 section 5, "Axes, states and views", replaced by "Labels every
+  product carries"** (Roland), block 8 of the check and the third structural decision.
+  Rev 3's states `draft | reviewed | published` become "built from" (already in "Live tiles
+  and rebuilt tiles") and an optional "reviewed"; "published" is dropped as a state, since
+  cleaning as a workflow and hydrographic deliverables are non-goals. Origin is kept. "The
+  store owns no preference order" and views are already current ("the consumer owns the
+  order", the domain level). The directory layout moved to `world_store_roadmap_notes.md`.
+  Roland agreed and asked to think about it more; it is listed under the open questions.
 
 - 2026-11-24 — **rev 3 section 4, "Reference frame", replaced by "The store's frame"**
   (Roland), block 7 of the check and the second structural decision. The frame stands as a

@@ -438,3 +438,9 @@ the direction note in RESUME_HERE.md section 2 (2026-10-01).
   declaration is written and the two 2026 offsets (1.19 m, 0.626 m) moved unedited to world_store_roadmap_notes.md, with the
   caution that the prototype's EGM96 correction rule is wrong.
 - 2026-11-24: a status request from Roland's home session on deadpool was answered by cross-session message (read-only).
+- Block 8 (rev 3 section 5, axes, states and views) DONE 2026-11-24, PROVISIONALLY. Roland: "yes, and we should think about
+  more after we sleep on it. Next". Written as the current section "Labels every product carries": built from (live stream
+  or recordings), an optional reviewed (who accepted it), origin (surveyed or received); "published" dropped as a state
+  (the agent's recommendation, from the non-goals on cleaning workflows and hydrographic deliverables). Marked in the
+  document as to be thought about further and listed under Open questions. Rev 3's text and directory layout moved
+  unedited to world_store_roadmap_notes.md. REVISIT WITH ROLAND: the labels.
