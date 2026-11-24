@@ -37,6 +37,10 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+# The rclpy logger methods both Jazzy and Rolling have. A mock logger with
+# this spec raises AttributeError on .warn, as Rolling's logger does.
+_LOGGER_METHODS = ['debug', 'info', 'warning', 'error', 'fatal']
+
 # ---------------------------------------------------------------------------
 # Mock ROS / external modules before importing mission_manager.
 # conftest.py also does this; setdefault makes duplicate calls harmless.
@@ -99,7 +103,8 @@ class TestTaskOperations(unittest.TestCase):
         self.mm.done_task_information.type = 'hover'
         self.mm.done_task_information.id = 'done_hover'
         # Mock logger
-        self.mm.get_logger = MagicMock(return_value=MagicMock())
+        self.mm.get_logger = MagicMock(
+            return_value=MagicMock(spec=_LOGGER_METHODS))
 
     def test_replaceTasks_clears_and_adds(self):
         """Clear all tasks then add new ones."""
@@ -149,7 +154,8 @@ class TestOverrideTask(unittest.TestCase):
         self.mm.navigator_client = MagicMock()
         self.mm.navigator_client.wait_for_server.return_value = False
         self.mm.override_task_id = None
-        self.mm.get_logger = MagicMock(return_value=MagicMock())
+        self.mm.get_logger = MagicMock(
+            return_value=MagicMock(spec=_LOGGER_METHODS))
 
     def test_set_override_task(self):
         """Setting an override task should add it and store the id."""
@@ -193,7 +199,8 @@ class TestUpdateLocalTaskList(unittest.TestCase):
         self.mm.navigator_client = MagicMock()
         self.mm.navigator_client.wait_for_server.return_value = False
         self.mm.done_task_information = MagicMock()
-        self.mm.get_logger = MagicMock(return_value=MagicMock())
+        self.mm.get_logger = MagicMock(
+            return_value=MagicMock(spec=_LOGGER_METHODS))
 
     def test_replace_tasks_command(self):
         """'replace_tasks' command should call replaceTasks."""
@@ -229,6 +236,13 @@ class TestUpdateLocalTaskList(unittest.TestCase):
             self.mm.updateLocalTaskList('prepend_tasks', tasks)
             mock.assert_called_once_with(tasks)
 
+    def test_unknown_command_warns(self):
+        """An unknown command should log a warning naming it."""
+        self.mm.updateLocalTaskList('no_such_command', [])
+        self.mm.get_logger().warning.assert_called_once_with(
+            'mission_manager: Received unknown command on '
+            'task_manager service: no_such_command')
+
 
 class TestTaskManagerCallback(unittest.TestCase):
     """Tests for the ROS service callback."""
@@ -244,7 +258,8 @@ class TestTaskManagerCallback(unittest.TestCase):
         self.mm.navigator_client = MagicMock()
         self.mm.navigator_client.wait_for_server.return_value = False
         self.mm.done_task_information = MagicMock()
-        self.mm.get_logger = MagicMock(return_value=MagicMock())
+        self.mm.get_logger = MagicMock(
+            return_value=MagicMock(spec=_LOGGER_METHODS))
 
     def test_callback_dispatches_command(self):
         """The service callback should dispatch via updateLocalTaskList."""
@@ -274,7 +289,8 @@ class TestNavigatorCallbacks(unittest.TestCase):
         self.mm.navigator_client = MagicMock()
         self.mm.navigator_client.wait_for_server.return_value = False
         self.mm.camp = MagicMock()
-        self.mm.get_logger = MagicMock(return_value=MagicMock())
+        self.mm.get_logger = MagicMock(
+            return_value=MagicMock(spec=_LOGGER_METHODS))
         self.mm.override_task_id = None
 
     def test_goal_response_accepted(self):
@@ -310,7 +326,8 @@ class TestNavigatorCallbacks(unittest.TestCase):
         self.mm.navigator_goal_response_callback(future)
 
         self.assertIsNone(self.mm.goal_handle)
-        self.mm.get_logger().warn.assert_called()
+        self.mm.get_logger().warning.assert_called_once_with(
+            'Goal response is None')
 
     def test_navigator_done_callback(self):
         """Navigator done should call camp.navigatorDone and clear state."""
@@ -394,7 +411,8 @@ class TestUpdateNavigator(unittest.TestCase):
         self.mm = MissionManager('test_mm')
         self.mm.tasks = MagicMock()
         self.mm.navigator_client = MagicMock()
-        self.mm.get_logger = MagicMock(return_value=MagicMock())
+        self.mm.get_logger = MagicMock(
+            return_value=MagicMock(spec=_LOGGER_METHODS))
 
     def test_server_available_sends_goal(self):
         """When server is available, a goal should be sent."""
@@ -425,7 +443,8 @@ class TestUpdateNavigator(unittest.TestCase):
             mock_rt.Goal.return_value = MagicMock(tasks=[])
             self.mm.updateNavigator()
 
-        self.mm.get_logger().warn.assert_called()
+        self.mm.get_logger().warning.assert_called_once_with(
+            'Timeout waiting for navigator action server')
 
 
 if __name__ == '__main__':

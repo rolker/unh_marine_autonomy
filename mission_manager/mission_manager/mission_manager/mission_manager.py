@@ -188,7 +188,7 @@ class MissionManager(Node):
                 self.navigator_goal_response_callback)
 
         else:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'Timeout waiting for navigator action server')
 
     def navigator_goal_response_callback(self, future: Future):
@@ -196,7 +196,7 @@ class MissionManager(Node):
         self.goal_handle = future.result()
         self.goal_future = None
         if self.goal_handle is None:
-            self.get_logger().warn('Goal response is None')
+            self.get_logger().warning('Goal response is None')
             return
         if not self.goal_handle.accepted:
             self.get_logger().info('Goal rejected :(')
@@ -316,7 +316,7 @@ class MissionManager(Node):
         elif command == 'update':
             self.updateTasks(new_tasks)
 
-        self.get_logger().warn(
+        self.get_logger().warning(
             'mission_manager: Received unknown command on '
             'task_manager service: ' + command)
 

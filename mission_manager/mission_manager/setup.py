@@ -47,7 +47,11 @@ setup(
          glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
     ],
     install_requires=['setuptools'],
-    tests_require=['pytest'],
+    extras_require={
+        'test': [
+            'pytest',
+        ],
+    },
     zip_safe=True,
     maintainer='Roland Arsenault',
     maintainer_email='roland@ccom.unh.edu',

@@ -135,15 +135,20 @@ Known build requirements:
 (every push and pull request) and `build-and-test (rolling)` (skipped on
 `jazzy`). "Built and tested" means the job builds the package and runs its
 tests; anything else is checked only by hand on a development machine, or not
-at all. The Rolling port (#418) widens this table part by part; keep it in
-step with the workflow's package lists.
+at all. The Rolling port (#418, #419) widens this table; keep it in step
+with the workflow's package lists.
 
 | Package | Jazzy CI | Rolling CI | Otherwise |
 |---|---|---|---|
 | `marine_interfaces`, `marine_vertical_datum`, `command_bridge`, `joy_to_helm`, `marine_web_view`, `marine_autonomy`, `helm_manager`, `marine_contacts` | built and tested | built and tested | |
-| `mission_manager`, `mission_manager_interfaces`, `marine_autonomy_integration_tests` | built and tested | not built | Rolling port blocked on `unh_marine_navigation` (#419) |
+| `mission_manager`, `mission_manager_interfaces`, `marine_autonomy_integration_tests` | built and tested | built and tested | |
 | `marine_tiled_raster_store`, `marine_backscatter`, `marine_sidescan_mosaic`, `marine_bathymetry_store`, `marine_mbes_backscatter_store`, `marine_survey_index` | built and tested | built and tested | |
 | `bathymetry_layer` | built and tested | not built | checked on Rolling by hand only, with navigation2 built from source in the Rolling underlay (Nav2 has no Rolling release) |
+
+On Rolling, CI builds and tests every package of this repository except
+`bathymetry_layer`, which is checked by hand as described next. The Rolling
+job takes `marine_nav_interfaces`, `marine_nav_utilities` and
+`marine_nav_tasks` from a clone of `unh_marine_navigation` at `rolling`.
 
 The Rolling hand check of `bathymetry_layer`, from the package worktree on a
 machine whose Rolling underlay has navigation2 and geographic_info (`geodesy`,

@@ -199,7 +199,7 @@ class MultibeamCoverageAdapter(Node):
                     run_tasks_goal_handle.abort()
                     return result
             else:
-                self.get_logger().warn(f'Unsupported task type: {task.type}')
+                self.get_logger().warning(f'Unsupported task type: {task.type}')
         if run_tasks_goal_handle.is_active:
             run_tasks_goal_handle.abort()
         result = RunTasks.Result()
