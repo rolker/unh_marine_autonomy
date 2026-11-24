@@ -266,3 +266,15 @@ build records which edition of each support item it used, so an updated datum gr
 Deployment, not design: the updater (uma#288, eb#491 on hold).
 - Detail 12 RESULT (Roland 2026-11-24): "yes, looks right". PARKED with the two statements; add to the agreed-not-written list.
 - NEXT: detail 13 (whole-area GeoTIFF export).
+
+### Detail 13 — whole-area GeoTIFF export
+Presented 2026-11-24. State changed since the review: uma#370 CLOSED 2026-10-30 (export_geotiff built in
+marine_tiled_raster_store, PR #412); uma#423 OPEN (its signal handling in a multi-threaded process). The tool exists; only
+the design's wording is missing. Goal 4 frames export as recordings to GSF/XTF in three forms; the non-goals exclude
+hydrographic deliverables; rev 3's "publish" (BAG, S-102) is unplaced, consistent with the non-goal. Proposed: (1) two kinds
+of export named apart — export of recordings (goal 4), and export of a store product as one file for sharing or viewing in
+other software, available for every gridded type through the shared library; (2) a shared-file export is not a
+hydrographic deliverable: it carries what the store holds with its frame and build record, and claims nothing more.
+Nothing per type.
+- Detail 13 RESULT (Roland 2026-11-24): "That looks right". Add both to the agreed-not-written list.
+- NEXT: detail 14 (known-bad bags recorded as excluded).
