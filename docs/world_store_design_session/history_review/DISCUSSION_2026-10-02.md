@@ -428,3 +428,7 @@ the direction note in RESUME_HERE.md section 2 (2026-10-01).
   and rebuilt tiles"; the rev 3 table with its directory names and formats moved unedited to world_store_roadmap_notes.md.
   Stored trajectories and observations STAY SET ASIDE; listed under Open questions, to revisit if rebuilds prove too slow.
   This largely settles block 9 (what an observation may bake).
+- Block 6 (rev 3 section 3, source identity) DONE 2026-11-24, Roland "yes": five statements written as the current section
+  "Identifying recordings and other sources" (after "What the store holds"); the formula and the metadata.yaml note moved
+  unedited to world_store_roadmap_notes.md; "the exact form of a source's identity" added under Open questions; the NBS
+  remark dropped; the survey index's path+size+mtime key noted in the roadmap notes as work to do.

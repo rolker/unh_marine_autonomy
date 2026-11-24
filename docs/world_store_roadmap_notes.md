@@ -95,3 +95,34 @@ category's container is process-derived.
 
 The store root is a **parameter**, defaulting to `~/data/world` and never a literal in code;
 the prototype builds under a different root so that any hard-coded path fails.
+
+## Moved from the design document (rev 3 section 3, "Source identity")
+
+Moved unedited on 2026-11-24. The principle is now in the design document ("Identifying
+recordings and other sources"); the formula below is the starting point for the
+implementation and is not fixed (Roland, 2026-10-05: not set in stone, leaning to a plain
+sha256 in place of the git-annex key). The note that `metadata.yaml` is left out was
+verified in the prototype. Known mismatch, work to do: the existing survey index identifies
+a bag by path, size and modification time, not by content.
+
+Bags are never rewritten, not even to fix writer bugs (the 2026-07-02 in-place rewrites of
+the June M3 bags — which duplicated detections and left no originals — are the lesson). A
+bag-writer bug fix is not done until it ships with a *decode revision* the pipeline applies
+to the identified faulty bags. Identity therefore need not survive a rewrite: a rewrite is a
+new source.
+
+- **Content identity, not declared.** A bag's id is `sha256` over the sorted
+  `<split filename>\t<file key>` lines of its `.mcap` files, where the file key is the
+  git-annex `SHA256E` key. Filenames are included (split order is meaningful and rosbag2
+  names them deterministically). `metadata.yaml` is **excluded** — `ros2 bag reindex`
+  regenerates only the yaml and leaves every `.mcap` byte-identical (verified), so a
+  reindex is a legitimate repair, and a truncated bag needs no special case. Other files in
+  the directory are excluded ("sensor data files only").
+- A single-file source (a cast, a prior grid, an operator bag's single split) is its file key.
+- Platform, recorder, start time and producer versions are **lookup metadata** in the STAC
+  Item, never the identity. Bags must record producer/driver versions (a requirement the
+  season did not meet; fallback is inference from date and deployment log).
+- Reprocessing never changes a source id; it changes the **fingerprint** of what is built
+  from it (§9). Identity and provenance are separate axes.
+- NBS's acquire step already does this — it compares a hash of the bathymetry before
+  re-downloading a survey.

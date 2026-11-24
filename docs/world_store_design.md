@@ -135,6 +135,19 @@ related sensors.
 The store's location is a setting, never fixed in code, so a test or a simulator uses its
 own.
 
+## Identifying recordings and other sources
+
+- **A source is identified by its content**, never by its name, its location or a label. Two
+  copies on different machines are the same source. A rewritten bag is a different source.
+- **What helps find a recording is not its identity**: the platform, the recorder and the
+  start time are for looking it up.
+- **Reprocessing never changes a source's identity.** It changes the record of what was
+  built from it.
+- **A recorder fix is not finished until a correction exists** for the recordings made
+  before it.
+- **A recording says which software wrote it**, with versions. The 2026 recordings do not,
+  and that is supplied as a record.
+
 ## Live tiles and rebuilt tiles
 
 *Serves goals 1 and 2.*
@@ -324,6 +337,8 @@ technology will change.
 - **Whether intermediate results are stored**: the boat's position against time, and sensor
   samples before a position is applied. Set aside on 2026-10-01 in favour of reading the
   recordings directly; to revisit if rebuilds prove too slow.
+- **The exact form of a source's identity.** A hash of its content; which files and which
+  hash are not fixed. Rev 3's formula is in the roadmap notes.
 - **Source tracking.** Whether a build first checks that its source recordings are present,
   and how a host knows where they are.
 - **Tiles of the same recording built on different hosts.** Proposed: their accumulations
@@ -362,7 +377,8 @@ day and the sections above replace most of that note. What it said about the ord
 what waits and what is on hold is in
 [`world_store_roadmap_notes.md`](world_store_roadmap_notes.md), as input for the roadmap.
 
-**What stays.** The six spine decisions: source identity (§3), the reference frame (§4),
+**What stays.** The six spine decisions: source identity (§3, checked 2026-11-24 and now
+"Identifying recordings and other sources" above), the reference frame (§4),
 the state and origin axes (§5), what an observation may bake (§6), the overview bands (§7)
 and features (§8).
 Each of the six is checked against the goals in turn; until then it stands as written
@@ -371,30 +387,6 @@ below.
 ---
 
 # Part 1 — The store model
-
-## 3. Source identity — *decided* (spine 1, 2026-09-21)
-
-Bags are never rewritten, not even to fix writer bugs (the 2026-07-02 in-place rewrites of
-the June M3 bags — which duplicated detections and left no originals — are the lesson). A
-bag-writer bug fix is not done until it ships with a *decode revision* the pipeline applies
-to the identified faulty bags. Identity therefore need not survive a rewrite: a rewrite is a
-new source.
-
-- **Content identity, not declared.** A bag's id is `sha256` over the sorted
-  `<split filename>\t<file key>` lines of its `.mcap` files, where the file key is the
-  git-annex `SHA256E` key. Filenames are included (split order is meaningful and rosbag2
-  names them deterministically). `metadata.yaml` is **excluded** — `ros2 bag reindex`
-  regenerates only the yaml and leaves every `.mcap` byte-identical (verified), so a
-  reindex is a legitimate repair, and a truncated bag needs no special case. Other files in
-  the directory are excluded ("sensor data files only").
-- A single-file source (a cast, a prior grid, an operator bag's single split) is its file key.
-- Platform, recorder, start time and producer versions are **lookup metadata** in the STAC
-  Item, never the identity. Bags must record producer/driver versions (a requirement the
-  season did not meet; fallback is inference from date and deployment log).
-- Reprocessing never changes a source id; it changes the **fingerprint** of what is built
-  from it (§9). Identity and provenance are separate axes.
-- NBS's acquire step already does this — it compares a hash of the bathymetry before
-  re-downloading a survey.
 
 ## 4. Reference frame — *decided* (spine 0, 2026-09-18)
 
@@ -740,6 +732,14 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **rev 3 section 3, "Source identity", replaced by "Identifying recordings
+  and other sources"** (Roland), block 6 of the check and the first of the six structural
+  decisions. The principle stays: identity from content, lookup details apart from
+  identity, reprocessing never changes identity, a recorder fix ships with a correction, a
+  recording names the software that wrote it. The formula moved to
+  `world_store_roadmap_notes.md` and its exact form is an open question (Roland,
+  2026-10-05: "not set in stone", leaning to a plain sha256).
 
 - 2026-11-24 — **rev 3 section 2, "Categories", replaced by "What the store holds"**
   (Roland), block 5 of the check. The new section lists kinds of thing, without directory
