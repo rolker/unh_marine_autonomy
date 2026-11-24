@@ -228,7 +228,8 @@ posted design-session trial notes on agent_workspace#370 (follow-up on how it wo
 - Detail 12 PARKED (2026-11-24) with two statements (one place under the store root; a build records support-data editions).
 - Detail 13 DONE (2026-11-24): two kinds of export named apart; product export is general and not a deliverable.
 - Detail 14 DONE (2026-11-24): exclusions as records; a per-recording outcome in every build.
-- Resume at detail 15. Remaining 15-16 (14 was known-bad bags): known-bad bags recorded
-  as excluded, cancellable non-blocking reads, per-band metadata. Then "purposes the goals leave out".
+- Detail 15 DONE (2026-11-24): three requirements on the shared reader (cancellable, bounded by the request, off the
+  display thread); display of jobs left to each tool.
+- Resume at detail 16 (per-band metadata), the last detail. Then "purposes the goals leave out".
 - Tooling: workspace issue rolker/agent_workspace#596 (design-discussion stops for a multi-repository project) and a comment on
   rolker/agent_workspace#370 (keep design progress in tracked files, not on GitHub).

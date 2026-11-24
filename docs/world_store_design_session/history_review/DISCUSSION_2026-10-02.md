@@ -291,3 +291,16 @@ used, excluded, nothing to process, or incomplete. Same distinction as finding 1
 (detail 4) describe a recording, exclusions and outcomes say what a build did with it.
 - Detail 14 RESULT (Roland 2026-11-24): "sounds good". Add both to the agreed-not-written list.
 - NEXT: detail 15 (cancellable, non-blocking reads).
+
+### Detail 15 — cancellable, non-blocking reads
+Presented 2026-11-24. mpt#44 CLOSED (window close blocked on workers with no cancellation); camp#187 OPEN (warm load on the
+display thread); camp#224 OPEN (reconcile does file reads, deletes and large copies on the display thread); camp#52 OPEN
+(diagnostics for intermittent hangs, root cause unconfirmed). Evidence: map freezes that grow with cache size; a window
+close that blocked 20+ minutes; one status line for several jobs. The design says nothing directly; agreed items beside it:
+one shared reader, bounded memory and message size, coarse value plus coverage until better data loads (detail 3).
+Proposed cut. World-store design, "how tools read the store": (1) the shared reader's reads can be cancelled and report
+progress; (2) a read is bounded by what was asked for (a box and a level), never by the size of the store; (3) the reader
+can be called off the display thread and never makes the caller wait for a whole result before showing anything. Each
+tool's own: how it shows several jobs, where its threads sit (the open CAMP issues).
+- Detail 15 RESULT (Roland 2026-11-24): "Yes, sounds good". Add the three requirements to the agreed-not-written list.
+- NEXT: detail 16 (per-band metadata), the last; then "purposes the goals leave out".
