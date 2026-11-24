@@ -201,3 +201,40 @@ Directory layout: `<quantity>/<state>/<origin>/` (e.g. `depths/reviewed/surveyed
 `depths/published/imported/`). Origin must be a directory, not only an Item field: consumers
 order by origin, and the per-cell provenance carries no source (R8), so two origins cannot
 share one tile tree. Trajectories and observations have only `surveyed/`.
+
+## Moved from the design document (rev 3 section 6, "Observations and what they may bake")
+
+Moved unedited on 2026-11-24. **Main input for the pipeline section.** Stored observations
+are set aside, so this is no longer a rule about a stored file; read the two columns of the
+table as the order of work in turning a recording into tiles: the left column is decoded
+per sensor system from the recording alone, the right column is applied afterwards from
+corrections, position and other stores. Three facts to carry into the pipeline section:
+
+- A sounding is identified by its source, its raw receive time and its beam. The raw time
+  stays raw; that identity is what a cleaning mark attaches to.
+- Sound speed comes from the water measurements, never from the value a driver reports (the
+  sidescan driver reports a placeholder of 1500 m/s).
+- The prototype verified the split: a geometry correction reproduced the 13.5 cm M3 offset
+  without touching the bag.
+
+The Kluster schema below belongs to the build-from-existing-tools attempt.
+
+**An observation bakes only what is a pure function of the source bytes and a versioned
+decoder.** Anything that depends on a revision record, a trajectory, or another store is
+applied at **link**.
+
+| baked (in the observation) | applied at link |
+|---|---|
+| bottom detection, per-beam range and angle, amplitude/phase flag, ping counter; sidescan samples as recorded with **per-ping** sample rate, `sample0` and sample count (they change with range scale); the sonar's own nadir depth (a measurement); backscatter decode as a decode revision | timing offsets (the raw receive time stays raw: `(source_id, receive_time_ns, beam)` is a sounding's identity); attitude, position, heave; lever arms and mounting angles (`xyzrph`-by-timestamp, the geometry revision's on-disk form); datum; cleaning marks and gate results; sound speed — a link input from `water/`, never the driver's reported value (the sidescan driver reports a placeholder 1500 m/s; the M3 transducer series is used); sidescan slant-to-ground range with the held nadir |
+
+**Cache clause**: expensive link-stage results (sound-speed correction, sidescan ground
+range) may be stored beside the raw variables, tagged with the fingerprint of their inputs,
+never replacing them; the fingerprint decides whether a cache is valid. CUBE's per-sounding
+hypotheses are post-association link outputs, not observations. Verified for bathymetry
+(components 6–9: a geometry revision reproduced the 13.5 cm M3 offset at link without
+touching the bag; sounding-level marks survive a 1.1 m relink exactly) and for sidescan
+(the rule held with no exception). Schema: Kluster's variable names, sensor-frame-first
+layering, `_*_complete` state attributes renamed to our stages — so a Kluster-literate
+hydrographer reads our observations without a glossary. Kluster itself is in maintenance
+mode (M3 support requested, never built), so the builder is ours; an mcap reader and a
+revisions concept are the later upstream contribution.

@@ -411,7 +411,8 @@ what waits and what is on hold is in
 
 **What stays.** The six spine decisions: source identity (§3, checked 2026-11-24 and now
 "Identifying recordings and other sources" above), the reference frame (§4, checked 2026-11-24 and now "The store's frame" above),
-the state and origin axes (§5, checked 2026-11-24 and now "Labels every product carries" above), what an observation may bake (§6), the overview bands (§7)
+the state and origin axes (§5, checked 2026-11-24 and now "Labels every product carries" above), what an observation may bake (§6, checked 2026-11-24: set aside with stored observations, its content
+carried to the pipeline section through the roadmap notes), the overview bands (§7)
 and features (§8).
 Each of the six is checked against the goals in turn; until then it stands as written
 below.
@@ -419,28 +420,6 @@ below.
 ---
 
 # Part 1 — The store model
-
-## 6. Observations and what they may bake — *decided* (spine 4, 2026-09-21)
-
-**An observation bakes only what is a pure function of the source bytes and a versioned
-decoder.** Anything that depends on a revision record, a trajectory, or another store is
-applied at **link**.
-
-| baked (in the observation) | applied at link |
-|---|---|
-| bottom detection, per-beam range and angle, amplitude/phase flag, ping counter; sidescan samples as recorded with **per-ping** sample rate, `sample0` and sample count (they change with range scale); the sonar's own nadir depth (a measurement); backscatter decode as a decode revision | timing offsets (the raw receive time stays raw: `(source_id, receive_time_ns, beam)` is a sounding's identity); attitude, position, heave; lever arms and mounting angles (`xyzrph`-by-timestamp, the geometry revision's on-disk form); datum; cleaning marks and gate results; sound speed — a link input from `water/`, never the driver's reported value (the sidescan driver reports a placeholder 1500 m/s; the M3 transducer series is used); sidescan slant-to-ground range with the held nadir |
-
-**Cache clause**: expensive link-stage results (sound-speed correction, sidescan ground
-range) may be stored beside the raw variables, tagged with the fingerprint of their inputs,
-never replacing them; the fingerprint decides whether a cache is valid. CUBE's per-sounding
-hypotheses are post-association link outputs, not observations. Verified for bathymetry
-(components 6–9: a geometry revision reproduced the 13.5 cm M3 offset at link without
-touching the bag; sounding-level marks survive a 1.1 m relink exactly) and for sidescan
-(the rule held with no exception). Schema: Kluster's variable names, sensor-frame-first
-layering, `_*_complete` state attributes renamed to our stages — so a Kluster-literate
-hydrographer reads our observations without a glossary. Kluster itself is in maintenance
-mode (M3 support requested, never built), so the builder is ours; an mcap reader and a
-revisions concept are the later upstream contribution.
 
 ## 7. Field quantity stores: tiles, levels, contents
 
@@ -704,6 +683,12 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **rev 3 section 6, "Observations and what they may bake", moved out**
+  (Roland), block 9 of the check and the fourth structural decision. Stored observations
+  are set aside, so the rule has no subject for now. Its two lists (what is decoded from a
+  recording alone; what is applied afterwards from corrections, position and other stores)
+  are the main input for the pipeline section and are in `world_store_roadmap_notes.md`.
 
 - 2026-11-24 — **rev 3 section 5, "Axes, states and views", replaced by "Labels every
   product carries"** (Roland), block 8 of the check and the third structural decision.

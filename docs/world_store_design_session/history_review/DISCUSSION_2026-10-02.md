@@ -444,3 +444,7 @@ the direction note in RESUME_HERE.md section 2 (2026-10-01).
   (the agent's recommendation, from the non-goals on cleaning workflows and hydrographic deliverables). Marked in the
   document as to be thought about further and listed under Open questions. Rev 3's text and directory layout moved
   unedited to world_store_roadmap_notes.md. REVISIT WITH ROLAND: the labels.
+- Block 9 (rev 3 section 6, observations) DONE 2026-11-24, Roland "yes": the whole block moved unedited to
+  world_store_roadmap_notes.md, marked as the main input for the pipeline section, with three facts called out (a
+  sounding's identity; sound speed from water measurements, never the driver's value; the prototype's verification).
+  Nothing from it written into the current sections.
