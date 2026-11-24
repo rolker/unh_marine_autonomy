@@ -372,3 +372,10 @@ shown as a draft and written on his yes.
   entries). Roland's three answers: write it in, "yes"; the proposed entry "a writer never saves over a tile it could not
   load", "not sure" — NOT written as a rule, listed under Open questions; source tracking and same-recording tiles from
   different hosts go under Open questions, "yes".
+- Writer and an unreadable tile, SETTLED 2026-11-24 (Roland: "yes"): the blunt rule was narrowed — a writer that ADDS to a
+  tile never saves over one it could not read; a rebuild from all the tile's inputs may replace it. Written under "Writing
+  tiles"; the open question removed.
+- Section 6 WRITTEN 2026-11-24 on Roland's "yes": new section "Moving data between machines" (two ways, two shared rules).
+  Zenoh is NOT in the design document. Roland: "Zenoh is a potential implementation detail. Does it belong here? My previous
+  comment about it stemed from you dismissing it for the wrong reason." It stays one row in SIDE_THOUGHTS_QUEUE.md.
+- NEXT: section 7 (field stores), after deciding whether per-type detail is split into parts.

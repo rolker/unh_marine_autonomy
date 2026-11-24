@@ -88,9 +88,7 @@ focus is marine robots; that does not mean it cannot be used in other domains.
   the recordings made before the fix and nothing after.
 - **Vector data.** Robot decisions use objects as well as grids: contacts, shorelines,
   boundaries. Midwater targets fit here too.
-- **Moving data between machines** is described generically. In 2026 full bag files were
-  trickled over a satellite link while the boat was deployed and copied over faster wifi at
-  the dock; that technology will change.
+- **Moving data between machines** is described generically, in its own section below.
 - **Export of recordings has three forms**: the data as recorded; as recorded with filters applied but no
   further corrections; and with corrections applied.
 - **Why export matters.** In 2026 the ROS side recorded on every deployment and the survey
@@ -191,6 +189,8 @@ pipeline.
 
 **Writing tiles**
 
+- **A writer that adds to a tile never saves over one it could not read.** It reports the
+  tile and leaves it. A rebuild from all the tile's inputs may replace it.
 - **A write never replaces a tile with a partial one.** A write either rebuilds the tile
   from all its recorded inputs, or merges into what is there.
 - **A half-written tile is never in use.** A tile is written beside the old one and then
@@ -219,6 +219,30 @@ pipeline.
 - **A build checks what it can.** It compares sensor clocks against each other and flags a
   recording whose offset is outside a threshold.
 
+## Moving data between machines
+
+*Serves goals 1 and 2.*
+
+Stores live on more than one machine, and some links are slow or expensive. Two kinds of
+movement are handled in two ways.
+
+- **Live delivery.** While the boat surveys, it pushes changed live view tiles to the
+  operator, and periodically sends the complete list of what it holds. The receiver asks for
+  what it lacks or holds stale.
+- **Store sync.** Between machines that hold stores, tiles are copied as files with an
+  existing tool, such as rsync or rclone. The store does not provide its own transport.
+
+Two rules hold for both:
+
+- **A tile's record says what it was built from**, so either mechanism can tell which copy
+  is newer or more complete.
+- **A receiver never deletes a tile it did not get from that sender.** A host's own data is
+  safe from another host's list.
+
+How the recordings themselves move is separate. In 2026 full bag files were trickled over a
+satellite link while the boat was deployed and copied over faster wifi at the dock; that
+technology will change.
+
 ## Open questions
 
 - **How much weight manual cleaning gets.** Nobody wants to clean by hand, but target
@@ -228,8 +252,6 @@ pipeline.
   can be replaced.
 - **Whether live data survives in a rebuilt tile's holes**, or the rebuild replaces the live
   tile outright.
-- **What a writer does when the existing tile cannot be read.** Proposed: it reports the
-  tile and never saves over it. Not decided.
 - **Source tracking.** Whether a build first checks that its source recordings are present,
   and how a host knows where they are.
 - **Tiles of the same recording built on different hosts.** Proposed: their accumulations
@@ -762,6 +784,14 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **"Moving data between machines" added** (Roland, detail 8): two ways, live
+  delivery and store sync with an existing tool, and two rules that hold for both. It
+  replaces the entry under "What follows from the goals". No tool is proposed for both jobs:
+  that is an implementation choice below the design (Roland). Also: the open question on a
+  writer and an unreadable tile is settled as a narrower rule, written under "Writing
+  tiles": a writer that adds never saves over a tile it could not read, and a rebuild may
+  replace it.
 
 - 2026-11-24 — **"Writing tiles and building from recordings" added, from the history
   review** (Roland). Write rules (details 5 and 7); corrections, exclusions and tags as
