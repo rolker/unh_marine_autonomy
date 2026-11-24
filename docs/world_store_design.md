@@ -149,6 +149,42 @@ reads the depth store's layers from disk, the draft layer included, but does not
 them as the boat surveys. Live view tiles reach the operator as `SonarVisualizationTile`
 messages.
 
+## How tools read the store
+
+*Serves goals 1, 2 and 3.*
+
+This section is about reading what the store holds. Reading the recordings is part of the
+pipeline.
+
+- **One shared reader.** Every tool reads the store through the same reader, so that each
+  tool does not chase its own version of the same bugs.
+- **Two levels.** The store level gives access to the individual layers, in no order. A
+  domain level, used when a tool chooses to, combines layers for a purpose, such as the
+  navigation surface. A domain level is one common library, so every tool that uses it
+  shares one understanding of it. A tool can show both: the layers, and the combined
+  surface.
+- **The consumer owns the order.** The store does not rank its layers; a tool, or the domain
+  library it uses, decides which layer wins.
+- **Mixed levels.** Tiles are at the resolution their data supports, so the reader handles
+  tiles at different levels side by side, for every gridded type.
+- **Coarse cells.** A cell at a coarse level stands for one pixel of a view at that scale.
+  When only a coarse tile is loaded, a tool shows its value and its coverage until finer
+  data loads: children that have data take the parent's value, and children without stay
+  empty.
+- **Bands by meaning.** A tool asks for a band by what it holds, such as the uncertainty of
+  depth, and not by its position in the file.
+- **Reads are bounded and can be cancelled.** A read is bounded by the box and level asked
+  for, never by the size of the store. It reports progress, can be cancelled, can run off
+  the display thread, and gives usable partial results.
+- **Format version.** A store declares its format version, starting with the baseline ready
+  for the next field season; nothing before that baseline is supported. The reader checks
+  the version and refuses loudly what it cannot read. "Cannot read" is always kept apart
+  from "no data".
+- **Unreadable tiles are reported, never hidden.** A tile that cannot be read is reported as
+  unreadable and the rest of the store stays usable. The reader also reports how many tiles
+  it could not read out of those it tried, so that one damaged tile and a damaged store can
+  be told apart. Neither ever looks like an empty store.
+
 ## Open questions
 
 - **How much weight manual cleaning gets.** Nobody wants to clean by hand, but target
@@ -686,6 +722,15 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **"How tools read the store" added, from the history review** (Roland). One
+  shared reader (finding 2), two levels and consumer-owned order (detail 2), mixed levels
+  (detail 11), coarse cells (detail 3), bands by meaning (detail 16), bounded and
+  cancellable reads (detail 15), format version (detail 6), unreadable tiles reported with
+  their count (proposed 2026-10-12 after cube#135; reworded on 2026-11-24 after Roland
+  asked "What if it's a dozen bad tiles?"). The section covers tiles and features only:
+  pings come from sensor-specific messages, so reading recordings is left to the pipeline
+  section ("tiles a generic, but pings can be system specific", Roland).
 
 - 2026-11-24 — **"Live tiles and rebuilt tiles" revised, from the history review** (Roland).
   A rebuilt tile holds "every ping that could be positioned", not "all", with the counts in

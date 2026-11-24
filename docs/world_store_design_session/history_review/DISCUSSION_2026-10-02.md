@@ -360,3 +360,11 @@ shown as a draft and written on his yes.
   until now; cube#167 CLOSED added the in-memory reset) — written as a bullet.
 - Correction of the agent's 2026-11-24 summary: "a writer never saves over a tile it could not load" was listed as agreed;
   it is a PROPOSED row (details 5+6+7 together, 2026-10-12). To be put to Roland with section 5.
+- Section 4 WRITTEN 2026-11-24 on Roland's "yes": new section "How tools read the store" (nine entries). Two points from him:
+  (a) on the proposed "one bad tile" entry, "What if it's a dozen bad tiles?" — reworded to isolation plus scale: each
+  unreadable tile is reported, and the reader reports how many of those it tried it could not read; the tool or operator
+  decides when to stop trusting the store. (b) on two shared readers, "tiles a generic, but pings can be system specific so
+  I'm not sure" — the agent dropped the second shared reader; the section covers tiles and features only, reading
+  recordings goes to the pipeline section. Agent's guess for there, untested: a shared part (finding bags, corrections,
+  time, position across bag boundaries) and a part per sensor system (decoding).
+- Still to put to Roland with section 5: a writer never saves over a tile it could not load (proposed 2026-10-12).
