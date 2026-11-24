@@ -148,6 +148,20 @@ own.
 - **A recording says which software wrote it**, with versions. The 2026 recordings do not,
   and that is supplied as a record.
 
+## The store's frame
+
+- **Working choice: ITRF2020 at coordinate epoch 2020.0**, with ellipsoidal heights in the
+  same frame (EPSG:9989). It can change; a change is a rebuild, not a migration.
+- **Every source declares its frame and epoch.** For an RTK position that is the correction
+  network's frame, read from the recorded correction stream where possible.
+- **Conversion happens on the way in**, and the tile's record names the transformation used.
+- **A tile states its frame with a specific code**, never an ambiguous label such as
+  "WGS84".
+- **Costs accepted with this choice:** US products and correction networks are NAD83(2011),
+  so a time-dependent transformation is needed in any case; holding a fixed epoch means
+  correcting for plate motion, about 12 cm in New Hampshire for 2026 data; and expecting
+  NATRF2022 to be close to this frame is a bet until NOAA publishes.
+
 ## Live tiles and rebuilt tiles
 
 *Serves goals 1 and 2.*
@@ -378,7 +392,7 @@ what waits and what is on hold is in
 [`world_store_roadmap_notes.md`](world_store_roadmap_notes.md), as input for the roadmap.
 
 **What stays.** The six spine decisions: source identity (§3, checked 2026-11-24 and now
-"Identifying recordings and other sources" above), the reference frame (§4),
+"Identifying recordings and other sources" above), the reference frame (§4, checked 2026-11-24 and now "The store's frame" above),
 the state and origin axes (§5), what an observation may bake (§6), the overview bands (§7)
 and features (§8).
 Each of the six is checked against the goals in turn; until then it stands as written
@@ -387,27 +401,6 @@ below.
 ---
 
 # Part 1 — The store model
-
-## 4. Reference frame — *decided* (spine 0, 2026-09-18)
-
-The collection has **one** horizontal and vertical frame: **ITRF2020 at reference epoch
-2020.0**, ellipsoidal heights in the same frame. Every source carries its frame and epoch
-(derived from recorded RTCM where possible, declared for products); every ingest transforms
-into the store frame and names the transformation in provenance (`mru_transform` for live
-data, importers for products); the declaration is written in STAC with a specific EPSG code
-(never bare 4326), in coverage manifests, the TMS `crs` and the registry. The code is
-**EPSG:9989**, ITRF2020's *geographic 3D* CRS (latitude, longitude, ellipsoidal height) —
-verified against PROJ 9 locally on 2026-09-22; 9988 is the geocentric form and 9990 the 2D
-one, and neither carries the height axis the store stores. Note the "reference epoch 2020.0"
-above is the **coordinate** epoch the collection is held at; ITRF2020's own frame epoch is
-2015.0, as PROJ reports it. Both are written. Consequences
-accepted: US products and CORS are NAD83(2011), so PROJ's time-dependent transformation is
-needed in one direction regardless; a fixed epoch implies plate-motion correction (≈ 12 cm in
-New Hampshire for 2026 observations); NATRF2022 ≈ ITRF2020@2020.0 is a bet until NOAA
-publishes. The season's RTK positions were NAD83(2011) labelled WGS84 (+1.19 m in height
-here); the store's Massabesic tiles also carry a +0.626 m EGM96 round-trip bias from bags
-before 2026-08-21 — both are datum records in `revisions/`, applied at link, fixed by
-regeneration.
 
 ## 5. Axes, states and views — *decided* (spine 3, 2026-09-21)
 
@@ -732,6 +725,14 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **rev 3 section 4, "Reference frame", replaced by "The store's frame"**
+  (Roland), block 7 of the check and the second structural decision. The frame stands as a
+  working choice, open to revision if not using NAD83(2011) proves too costly. Kept: every
+  source declares its frame and epoch, conversion on the way in with the transformation
+  named, a specific code and never an ambiguous label, and the costs accepted. Moved to
+  `world_store_roadmap_notes.md`: the places the declaration is written, and the two
+  offsets found in the 2026 data.
 
 - 2026-11-24 — **rev 3 section 3, "Source identity", replaced by "Identifying recordings
   and other sources"** (Roland), block 6 of the check and the first of the six structural

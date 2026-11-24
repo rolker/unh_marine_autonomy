@@ -126,3 +126,32 @@ new source.
   from it (§9). Identity and provenance are separate axes.
 - NBS's acquire step already does this — it compares a hash of the bathymetry before
   re-downloading a survey.
+
+## Moved from the design document (rev 3 section 4, "Reference frame")
+
+Moved unedited on 2026-11-24. The principle is now in the design document ("The store's
+frame"), where the frame is a working choice. What is left here for the implementation:
+where the frame declaration is written, and the two offsets in the 2026 data, which are
+corrections still to make. Caution from the session record: the correction rule derived in
+the prototype for the 0.626 m EGM96 bias is wrong (it measured the antenna lever arm) and
+must be redone with echo_helm's GPSRAW method. Live data: converting at the source is
+rolker/mru_transform#47, open.
+
+The collection has **one** horizontal and vertical frame: **ITRF2020 at reference epoch
+2020.0**, ellipsoidal heights in the same frame. Every source carries its frame and epoch
+(derived from recorded RTCM where possible, declared for products); every ingest transforms
+into the store frame and names the transformation in provenance (`mru_transform` for live
+data, importers for products); the declaration is written in STAC with a specific EPSG code
+(never bare 4326), in coverage manifests, the TMS `crs` and the registry. The code is
+**EPSG:9989**, ITRF2020's *geographic 3D* CRS (latitude, longitude, ellipsoidal height) —
+verified against PROJ 9 locally on 2026-09-22; 9988 is the geocentric form and 9990 the 2D
+one, and neither carries the height axis the store stores. Note the "reference epoch 2020.0"
+above is the **coordinate** epoch the collection is held at; ITRF2020's own frame epoch is
+2015.0, as PROJ reports it. Both are written. Consequences
+accepted: US products and CORS are NAD83(2011), so PROJ's time-dependent transformation is
+needed in one direction regardless; a fixed epoch implies plate-motion correction (≈ 12 cm in
+New Hampshire for 2026 observations); NATRF2022 ≈ ITRF2020@2020.0 is a bet until NOAA
+publishes. The season's RTK positions were NAD83(2011) labelled WGS84 (+1.19 m in height
+here); the store's Massabesic tiles also carry a +0.626 m EGM96 round-trip bias from bags
+before 2026-08-21 — both are datum records in `revisions/`, applied at link, fixed by
+regeneration.

@@ -432,3 +432,9 @@ the direction note in RESUME_HERE.md section 2 (2026-10-01).
   "Identifying recordings and other sources" (after "What the store holds"); the formula and the metadata.yaml note moved
   unedited to world_store_roadmap_notes.md; "the exact form of a source's identity" added under Open questions; the NBS
   remark dropped; the survey index's path+size+mtime key noted in the roadmap notes as work to do.
+- Block 7 (rev 3 section 4, reference frame) DONE 2026-11-24, Roland "yes": five statements written as the current section
+  "The store's frame" (working choice ITRF2020 at 2020.0; sources declare frame and epoch; conversion on the way in with
+  the transformation named in the tile's record; a specific code, never an ambiguous label; costs accepted). The places the
+  declaration is written and the two 2026 offsets (1.19 m, 0.626 m) moved unedited to world_store_roadmap_notes.md, with the
+  caution that the prototype's EGM96 correction rule is wrong.
+- 2026-11-24: a status request from Roland's home session on deadpool was answered by cross-session message (read-only).
