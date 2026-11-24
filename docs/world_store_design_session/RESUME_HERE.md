@@ -230,6 +230,7 @@ posted design-session trial notes on agent_workspace#370 (follow-up on how it wo
 - Detail 14 DONE (2026-11-24): exclusions as records; a per-recording outcome in every build.
 - Detail 15 DONE (2026-11-24): three requirements on the shared reader (cancellable, bounded by the request, off the
   display thread); display of jobs left to each tool.
-- Resume at detail 16 (per-band metadata), the last detail. Then "purposes the goals leave out".
+- Detail 16 DONE (2026-11-24): self-describing bands. ALL 16 DETAIL FINDINGS DONE.
+- Resume at "purposes the goals leave out" (the history review's last part).
 - Tooling: workspace issue rolker/agent_workspace#596 (design-discussion stops for a multi-repository project) and a comment on
   rolker/agent_workspace#370 (keep design progress in tracked files, not on GitHub).

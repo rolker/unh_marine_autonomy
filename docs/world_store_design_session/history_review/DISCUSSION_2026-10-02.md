@@ -304,3 +304,16 @@ can be called off the display thread and never makes the caller wait for a whole
 tool's own: how it shows several jobs, where its threads sit (the open CAMP issues).
 - Detail 15 RESULT (Roland 2026-11-24): "Yes, sounds good". Add the three requirements to the agreed-not-written list.
 - NEXT: detail 16 (per-band metadata), the last; then "purposes the goals leave out".
+
+### Detail 16 — per-band metadata (each band says what it is)
+Presented 2026-11-24. camp#121 CLOSED (unified band and colormap rendering); camp#145 OPEN (default display for the
+uncertainty band, blocked on band meaning); cube#163 OPEN (document that the grid's uncertainty layer is scaled to 95 %,
+1.96 sigma). Evidence: CAMP cannot tell which band is uncertainty or its scale; a display bug from treating a signed band
+as unsigned. The design says values carry their uncertainty, fixes the overview bands and notes a reader switches band
+layout between native and folded levels; the live transport already has named self-describing bands. Nothing says how a
+store reader learns what a band means. Proposed cut. World-store design: (1) every band declares its name, quantity,
+units and no-data value in the tile itself; (2) an uncertainty band declares what it is the uncertainty of and at what
+confidence, so 1 sigma and 95 % are never confused (safety side: navigation surface and coverage planning use it);
+(3) the shared reader exposes bands by meaning, not by position. Per type: which bands a type has and how each is computed.
+- Detail 16 RESULT (Roland 2026-11-24): "That sounds right". Add the three statements to the agreed-not-written list.
+- DETAIL FINDINGS 1 TO 16 COMPLETE. NEXT: "purposes the goals leave out".
