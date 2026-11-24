@@ -405,3 +405,15 @@ the direction note in RESUME_HERE.md section 2 (2026-10-01).
   unedited to the new docs/world_store_roadmap_notes.md, marked as raw input for the roadmap discussion. Per-tile records
   replace the note's "one build record per site": Roland, "I think so" (tentative; noted in the roadmap notes). The seven
   on-hold issue comments point at this block by name; it still exists and now points to the notes file.
+- Block 3 (Purpose) DONE 2026-11-24. Roland on the NOAA testing-ground purpose (which he had agreed earlier the same day to
+  keep as a named use): "I'm not sure if NOAA's bathy chart part still makes sense. This was, I think, in the context of
+  redesigning this using as many existing tools as possible, but that turned out to get too complicated." Then: it is
+  "still OK to opt to do things the NOAA way when it doesn't matter otherwise in our case." RESULT: the purpose is DROPPED
+  (reverses left-out purpose 1); a default rule replaces it. He chose the general wording, "I like the established practice
+  wording": where a choice makes no difference to the goals it follows established hydrographic practice, NOAA's in
+  particular; where that works against a goal, the goal wins (last clause is the agent's, shown to him). He asked that the
+  rule be stated without a reason that singles out any one source of support. Consequence for blocks 4 and 10: a pattern
+  borrowed from NOAA practice has to not cost a goal; it does not have to be needed by one.
+  Also written: scope paragraph dropped, the non-goals gain "publishing in hydrographic formats ... is interoperability, not
+  a requirement"; the 2026-09-16 vision list dropped (covered by goals 1-3), its named uses kept as a short "Named uses"
+  section; the invariant moved beside the governing principle without "and provably so".

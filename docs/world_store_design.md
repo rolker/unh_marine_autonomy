@@ -51,7 +51,8 @@ focus is marine robots; that does not mean it cannot be used in other domains.
 
 - Replacing the traditional hydrographic processing chain. Processing in the store serves
   robot decisions, quality assessment and exploration; producing hydrographic deliverables
-  stays with the traditional chain, which export feeds.
+  stays with the traditional chain, which export feeds. Publishing in hydrographic formats such
+  as BAG or S-102 is interoperability, not a requirement.
 - Data cleaning as a workflow. Marks made by automatic filters are part of the design, and a
   mark made by a person can be recorded.
 
@@ -67,8 +68,21 @@ revisions-as-records, the consumer contract — change rarely and by a new spine
 container formats — are provisional by default; the store stays usable through their change
 because a changed process is a new fingerprint, never a migration.
 
+**The invariant.** Every product in the store can be built again from the recordings and
+the records kept with them.
+
+## Named uses
+
+Who the design is for, beyond the goals' robot and operator: chart display and the costmap
+(the navigation surface); survey exploration; geology and bottom classification; marine
+archaeology (the Massabesic turret search is already one); and other uses of sonars and
+related sensors.
+
 ## What follows from the goals
 
+- **Established practice as the default.** Where a choice makes no difference to the goals,
+  it follows established hydrographic practice, NOAA's in particular. Where that works
+  against a goal, the goal wins.
 - **Scope.** The store includes the data needed to support collecting and processing data
   for the stores, such as charts, datum grids and earlier surveys. That is the line between
   what goes in and what stays out.
@@ -336,37 +350,6 @@ the state and origin axes (§5), what an observation may bake (§6), the overvie
 and features (§8).
 Each of the six is checked against the goals in turn; until then it stands as written
 below.
-
-## Purpose
-
-*"We are designing a store that can serve as a marine robotics testing ground for some of
-NOAA's NBS efforts but also go beyond to support alternative uses of sonars and related
-sensors including marine archaeology."* (Roland, 2026-09-21)
-
-**Scope.** The stores are an **experiment in robot-centric capabilities**. They are not a
-replacement for the traditional hydrographic pipeline (QINSy → Qimera/CARIS → deliverables),
-which runs in parallel and is sometimes used while the stores are being developed; the QINSy
-records on the operator machine belong to that path, not to the store. Consequently a BAG or
-S-102 publish path is *interoperability*, not a requirement; NOAA alignment means lineage
-and format compatibility with that world, not competing with it; and the robot-centric parts
-— a boat that builds its own draft coverage overnight, pose applied late so a nav reprocess
-is a relink, corrections as reviewed records, fleet replicas by fingerprint — are the
-experiment, and the part nobody has published.
-
-**The vision** (Roland, 2026-09-16), unchanged: one unified place to explore the data we
-collect and to work with it to develop better ways of using it; no replication of data across
-projects or purposes; raw data turned into products users can explore; different datasets
-fused or at least seen in context; a source of navigation information for robots; a quadtree
-layout so parts can be updated or visualised without paying for the whole; and — new then —
-combining kinds of data and previous passes to constrain products better than any single
-dataset can. Named uses now: chart display and the costmap (the navigation-surface view),
-survey exploration, geology and bottom classification, marine archaeology (the Massabesic
-turret search is already one), and the NOAA testing ground above.
-
-**The invariant** everything else serves: every product in the store is derivable from
-source material and is therefore a cache with a recorded key — *regenerable from sources,
-and provably so*. Rev 3 differs from rev 1 in one respect above all: this is now
-demonstrated by the prototype (Appendix B) rather than asserted.
 
 ---
 
@@ -770,6 +753,15 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **"Purpose" replaced** (Roland), block 3 of the check. The 2026-09-21
+  purpose of a testing ground for NOAA's National Bathymetric Source efforts is dropped: it
+  came with the attempt to build from as many existing tools as possible, which proved too
+  complicated. In its place, "established practice as the default" under "What follows from
+  the goals". The scope paragraph is covered by the non-goals, which gain the clause on
+  publishing formats. The 2026-09-16 vision list is covered by goals 1 to 3; its named uses
+  are kept as a short section. The invariant moves beside the governing principle, without
+  "and provably so": what proves it waits for the build record's design.
 
 - 2026-11-24 — **"Direction as of 2026-10-01" reduced** (Roland), block 2 of the check. Its
   four "what the store is for" statements are covered by the goals; its order of work, what
