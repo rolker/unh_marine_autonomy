@@ -399,3 +399,9 @@ the direction note in RESUME_HERE.md section 2 (2026-10-01).
   beside the goals as its own section. ADRs: "I'm still undecided about how to handle ADRs" — the text now says it is
   undecided, and it is listed under Open questions. (His 2026-11-23 remark in another project, that rigid ADRs add friction
   and decisions can be revised, was raised by the agent; he did not extend it here.)
+- Block 2 (Direction as of 2026-10-01) DONE 2026-11-24, Roland "yes" to six verdicts: the four "what the store is for"
+  statements dropped from the document (covered by the goals; they remain in docs/world_store_roadmap_notes.md and here);
+  "what stays" kept until blocks 6 to 11 are checked; "what changes", "what waits", "on hold" and "not known yet" moved
+  unedited to the new docs/world_store_roadmap_notes.md, marked as raw input for the roadmap discussion. Per-tile records
+  replace the note's "one build record per site": Roland, "I think so" (tentative; noted in the roadmap notes). The seven
+  on-hold issue comments point at this block by name; it still exists and now points to the notes file.

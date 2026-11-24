@@ -237,7 +237,9 @@ posted design-session trial notes on agent_workspace#370 (follow-up on how it wo
   between machines) and 7 (new: what every gridded type has) WRITTEN. The agreed list is in the document, except marking
   the reference frame (rev 3 section 4) as a working choice. Next (Roland 2026-11-24, "start it"): check the older text
   ("About this document" and below) against the goals, block by block; the list of 15 blocks and progress are at the end of
-  history_review/DISCUSSION_2026-10-02.md. Then: pipeline section, parts, shared-library discussion, roadmap, rev 4 and PR 399. Store frame: ITRF2020 at 2020.0 stands as a revisable working choice. The order of
+  history_review/DISCUSSION_2026-10-02.md. Then: pipeline section, parts, shared-library discussion, roadmap, rev 4 and PR 399.
+- Check progress 2026-11-24: blocks 1 (About this document) and 2 (Direction note) DONE. Roadmap input now lives in
+  docs/world_store_roadmap_notes.md. Next: block 3 (Purpose). Store frame: ITRF2020 at 2020.0 stands as a revisable working choice. The order of
   the seven sections is at the end of history_review/DISCUSSION_2026-10-02.md.
 - Background for that step: writing the agreed changes into the design document (one section at a time, each with Roland's yes). The list is
   the "in agreed list" rows of SIDE_THOUGHTS_QUEUE.md plus "Agreed but NOT YET WRITTEN" and the later RESULT lines in

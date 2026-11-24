@@ -323,63 +323,19 @@ pointer here. Whether new decision records are cut from this document is undecid
 [C — prior art](world_store_prior_art.md) (Part 1: tools; Part 2: convergence with the
 industry and NOAA).
 
-## Direction as of 2026-10-01 — read this before the rest
+## Direction as of 2026-10-01
 
-Rev 3 below is still the model. On 2026-10-01 the whole effort was reviewed (Roland, with
-an agent), and what changed is the order of work and how much bookkeeping surrounds it.
-Until this draft is revised, this section applies where it disagrees with the text below.
-
-**What the store is for** (Roland, 2026-10-01):
-
-- "a structured, predictable way to apply corrections to field gathered data without
-  rewriting the bag files";
-- "carefully designed pyramids to support LOD in tools", built consistently for all the data;
-- tools that use the data "without rewriting that functionality for each tool";
-- "working with related but different data types together efficiently", vector as well as
-  raster, with "a design that is flexible enough that we can course correct".
+On 2026-10-01 the whole effort was reviewed (Roland, with an agent), and what changed is the
+order of work and how much bookkeeping surrounds it. The goals above were written the next
+day and the sections above replace most of that note. What it said about the order of work,
+what waits and what is on hold is in
+[`world_store_roadmap_notes.md`](world_store_roadmap_notes.md), as input for the roadmap.
 
 **What stays.** The six spine decisions: source identity (§3), the reference frame (§4),
 the state and origin axes (§5), what an observation may bake (§6), the overview bands (§7)
 and features (§8).
-
-**What changes.**
-
-- Fewer parts. One store library for every gridded type, where a type is a band description
-  and a fold rule. One reader that every tool uses, for tiles and for pings read from the
-  bags. The pipeline (bags plus corrections in, tiles out) is kept separate from the store.
-  One index across tiles, features and raw pings. Per-ping data stays in the bags and is
-  reached through the index.
-- The first thing to build is the explorer loop, for depths with sound speed: select a
-  small box, get its pings, run the real estimator with its parameters, view the result,
-  save the parameters as a record, and let a batch run apply them over the site with the
-  same code. What gets tuned is the algorithm's parameters, never the data.
-- Rebuild by site.
-
-**What waits**, with what stands in for it meanwhile:
-
-| Waits | Stand-in |
-|---|---|
-| A STAC Item per tile (§9, contract line 1) | one index |
-| A fingerprint per tile (§9) | one build record per site |
-| The Snakemake regenerate | a rebuild script |
-| Stored observations and trajectories (§2, §6) | bags read by reference |
-| Replica rules and git-annex (§9) | none; host sync can wait |
-
-**On hold as a result.** The rev 3 implementation (#397, its pull request is parked as a
-draft), and the issues written against it: CAMP as a world-store consumer (rolker/camp#238),
-the costmap as a consumer (#398), the survey explorer as a consumer
-(rolker/marine_perception_tools#60), the simulator replay (rolker/unh_marine_simulation#85),
-the deployment document (rolker/unh_echoboats_project11#491) and retiring the platform
-rebuild script (rolker/unh_echoboats_project11#490). The backscatter overview builder (#390)
-and the stale depth pyramids (#389) should wait for the shared library discussion, so that
-they are not built once per data type.
-
-**Not known yet.** The shape of the shared library, which is the next discussion. And
-whether a site rebuild can reach 30 to 60 minutes on the operator machine and the boat. On
-the dev machine, measured 2026-10-01, one depth import process handles about 106,000 pings
-a minute from the NAS, four independent processes ran 3.0 times faster than one, and about
-80% of the time is CUBE insertion. No parallel importer exists yet. If a site rebuild cannot
-get there, tracking each tile has a job again.
+Each of the six is checked against the goals in turn; until then it stands as written
+below.
 
 ## Purpose
 
@@ -814,6 +770,13 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **"Direction as of 2026-10-01" reduced** (Roland), block 2 of the check. Its
+  four "what the store is for" statements are covered by the goals; its order of work, what
+  waits, the on-hold issues and the unknowns moved unedited to
+  `world_store_roadmap_notes.md`. The list of the six structural decisions that stay is
+  kept until each has been checked. Per-tile records replace the note's "one build record
+  per site" (Roland: "I think so").
 
 - 2026-11-24 — **"About this document" rewritten** (Roland), block 1 of the check of the
   older text against the goals. It now says which sections are current. The governing
