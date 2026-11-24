@@ -512,6 +512,13 @@ institution and deserves an hour.
 
 # Part 2 — Convergence check against the industry and NOAA (2026-09-21)
 
+> **Note, 2026-11-24.** This part compares rev 3 of the design, as of 2026-09-21, with
+> existing systems. It has not been redone against the current design
+> ([`world_store_design.md`](world_store_design.md), the sections from the goals to the open
+> questions). Since it was written, the purpose of a NOAA testing ground was dropped in
+> favour of "established practice as the default", stored observations were set aside, and
+> the replica rule was replaced by two ways of moving data.
+
 Written after spine decisions 0, 1 and 3 (frame; content identity; `draft | reviewed |
 published` × `surveyed | imported`, store owns no preference order, `revisions/`). The
 question asked: *now that the design has evolved, is it converging on something that

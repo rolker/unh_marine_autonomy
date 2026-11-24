@@ -82,7 +82,8 @@ related sensors.
 
 - **Established practice as the default.** Where a choice makes no difference to the goals,
   it follows established hydrographic practice, NOAA's in particular. Where that works
-  against a goal, the goal wins.
+  against a goal, the goal wins. How the design compares with existing systems is in
+  [Appendix C](world_store_prior_art.md).
 - **Scope.** The store includes the data needed to support collecting and processing data
   for the stores, such as charts, datum grids and earlier surveys. That is the line between
   what goes in and what stays out.
@@ -354,18 +355,6 @@ below.
 ---
 
 # Part 1 — The store model
-
-## 1. Where the design stands against what exists
-
-The evolved design is three known shapes stacked, none of which combines them
-(Appendix C Part 2): the **Qimera/CARIS project principle** — raw never edited, settings
-reapplied, edits as flags on an intermediate, surfaces rebuilt; **NBS**'s qualified /
-unqualified split and per-cell contributor tiles; and **Kluster**'s sensor-frame-first
-observations. It diverges from each in three places, each backed by a cited complaint: open
-intermediates instead of QPD/HDCS/CSAR (NOAA's own Kluster rationale — data "locked within
-the software"); one world-wide store instead of per-project silos; and layer ordering owned
-by the consumer, not the store. The novel part is the combination with a boat-side consumer
-and a replica rule, and each novel piece traces to a stated need above.
 
 ## 2. Categories
 
@@ -753,6 +742,13 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **rev 3 section 1, "Where the design stands against what exists", removed**
+  (Roland), block 4 of the check. It summarised Appendix C Part 2, which holds the longer
+  comparison; three of its statements are in current sections (raw never edited, one store,
+  the consumer owns the order), two are not settled (stored observations; the qualified
+  split and per-cell contributors), and its "replica rule" is replaced by "Moving data
+  between machines". The later sections keep their rev 3 numbers.
 
 - 2026-11-24 — **"Purpose" replaced** (Roland), block 3 of the check. The 2026-09-21
   purpose of a testing ground for NOAA's National Bathymetric Source efforts is dropped: it
