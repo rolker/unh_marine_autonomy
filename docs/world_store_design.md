@@ -219,6 +219,33 @@ pipeline.
 - **A build checks what it can.** It compares sensor clocks against each other and flags a
   recording whose offset is outside a threshold.
 
+## What every gridded type has
+
+*Serves goals 1 and 3.*
+
+Depths, backscatter and sidescan are different data, but they are stored the same way. What
+follows holds for every gridded type; what is specific to one type belongs in that type's
+own design.
+
+- **Resolution follows the data.** A tile is written at the resolution its data supports, so
+  a store holds tiles at mixed levels. Each tile states the resolution it was built at and
+  why it could not be finer.
+- **Bands describe themselves.** Every band declares, in the tile, its name, the quantity it
+  holds, its units and its no-data value.
+- **An uncertainty band says what it means**: the uncertainty of which quantity, and at what
+  confidence. One standard deviation and 95% are never left to be guessed.
+- **How passes combine is stated per type.** Depth combines passes statistically.
+  Backscatter and sidescan are not averaged across passes by default, because averaging
+  removes the contacts and shadows that detection needs.
+- **A build combines only what has been made comparable.** For backscatter, that means the
+  angular response is removed first.
+- **Coarser levels are built by a rule that belongs to the type.** The same rule also says
+  how passes combine, so one description of a type covers both.
+
+**Left to each type's own design:** the formula that picks a tile's resolution; which bands
+the type has and how each is computed; whether a tile keeps one best sample or several
+passes side by side; and what a coarse sidescan tile shows.
+
 ## Moving data between machines
 
 *Serves goals 1 and 2.*
@@ -784,6 +811,12 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **"What every gridded type has" added, from the history review** (Roland):
+  resolution follows the data (detail 11), self-describing bands and the meaning of an
+  uncertainty band (detail 16), how passes combine (detail 10), and the type's own rule for
+  coarser levels (the 2026-10-01 direction note's "a band description and a fold rule").
+  Per-type specifics are named and left to each type's own design.
 
 - 2026-11-24 — **"Moving data between machines" added** (Roland, detail 8): two ways, live
   delivery and store sync with an existing tool, and two rules that hold for both. It

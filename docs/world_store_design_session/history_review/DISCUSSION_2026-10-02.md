@@ -379,3 +379,9 @@ shown as a draft and written on his yes.
   Zenoh is NOT in the design document. Roland: "Zenoh is a potential implementation detail. Does it belong here? My previous
   comment about it stemed from you dismissing it for the wrong reason." It stays one row in SIDE_THOUGHTS_QUEUE.md.
 - NEXT: section 7 (field stores), after deciding whether per-type detail is split into parts.
+- Section 7 WRITTEN 2026-11-24 on Roland's "yes, with": new section "What every gridded type has" (six entries and a list of
+  what is left to each type's own design), including the last bullet on the type's own rule for coarser levels. It did not
+  need the parts decision first: everything in it had been sorted as crossing data types.
+- ALL SEVEN SECTIONS WRITTEN. Remaining from the agreed list: mark section 4 of rev 3 (reference frame) as a working choice.
+  The document's top half (goals to open questions) now holds everything agreed; "About this document" and below is still
+  the older text (direction note of 2026-10-01, rev 3), not yet checked against the goals.

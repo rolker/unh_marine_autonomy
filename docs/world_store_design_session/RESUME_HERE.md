@@ -233,8 +233,9 @@ posted design-session trial notes on agent_workspace#370 (follow-up on how it wo
 - Detail 16 DONE (2026-11-24): self-describing bands. ALL 16 DETAIL FINDINGS DONE.
 - Left-out purposes DONE (2026-11-24). THE HISTORY REVIEW IS COMPLETE.
 - Writing started 2026-11-24: sections 1 (goals wording), 2 (what follows from the goals), 3 (live tiles and
-  rebuilt tiles) 4 (new: how tools read the store), 5 (new: writing tiles and building from recordings) and 6 (new: moving data
-  between machines) WRITTEN. Next: section 7 (field stores), after deciding whether per-type detail is split into parts. Store frame: ITRF2020 at 2020.0 stands as a revisable working choice. The order of
+  rebuilt tiles) 4 (new: how tools read the store), 5 (new: writing tiles and building from recordings), 6 (new: moving data
+  between machines) and 7 (new: what every gridded type has) WRITTEN. The agreed list is in the document, except marking
+  the reference frame (rev 3 section 4) as a working choice. Next: choose among the parked items below. Store frame: ITRF2020 at 2020.0 stands as a revisable working choice. The order of
   the seven sections is at the end of history_review/DISCUSSION_2026-10-02.md.
 - Background for that step: writing the agreed changes into the design document (one section at a time, each with Roland's yes). The list is
   the "in agreed list" rows of SIDE_THOUGHTS_QUEUE.md plus "Agreed but NOT YET WRITTEN" and the later RESULT lines in
