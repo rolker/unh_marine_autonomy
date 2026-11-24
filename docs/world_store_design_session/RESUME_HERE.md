@@ -221,7 +221,8 @@ posted design-session trial notes on agent_workspace#370 (follow-up on how it wo
 - Roland (2026-11-24): finish the design before building anything. No store builds or imports until then.
 - Detail 8 DONE: two sync models, two shared rules (history_review/DISCUSSION_2026-10-02.md, entry of 2026-11-24). Zenoh as a
   standalone transport queued for research.
-- Resume at detail 9 (time-sync faults, eb#338). Remaining 10-16: backscatter never averaged across passes, resolution follows
+- Detail 9 DONE (2026-11-24): correction record + build-time clock check inside the store design, live detection outside.
+- Resume at detail 10. Remaining 10-16: backscatter never averaged across passes, resolution follows
   the data, support data one home per host, whole-area GeoTIFF export, known-bad bags recorded as excluded, cancellable
   non-blocking reads, per-band metadata. Then "purposes the goals leave out".
 - Tooling: workspace issue rolker/agent_workspace#596 (design-discussion stops for a multi-repository project) and a comment on

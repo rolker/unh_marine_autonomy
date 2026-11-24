@@ -213,3 +213,14 @@ bounded by the link. Recommended deciding (1) now, rest parked.
   it can be considered as a standalone transport beside ROS. Its replication behaviour is NOT verified; needs a research
   pass before it counts as an option. Queued in SIDE_THOUGHTS_QUEUE.md. Does not reopen the detail 8 result.
 - NEXT: detail 9 (time-sync faults).
+
+### Detail 9 — time-sync faults went undetected for days
+Presented 2026-11-24. eb#338 OPEN (live time-sync diagnostics, last touched 2026-06-27). Evidence: M3 stamps +6.03 s from
+06-24 to 06-26, other clocks within 2 ms, about 9 m along-track smear, found by offline forensics on 06-27, fixed by a
+per-bag rewrite tool (retire, Roland 09-18). A separate "~35 ms M3 stamping offset" was never measured. The design
+document says nothing on it. Proposed split: (1) the fix is a correction record (a time offset for one sensor over a
+stated time window, applied when tiles are built), never a rewritten bag; (2) a build checks sensor clocks against each
+other and flags a recording whose offset is outside a threshold (goal 2, quality assessment); (3) live detection on the
+boat is outside the store and stays with eb#338.
+- Detail 9 RESULT (Roland 2026-11-24): "yes, that split is right." Add (1) and (2) to the agreed-not-written list:
+  corrections section and quality assessment. NEXT: detail 10 (backscatter never averaged across passes).
