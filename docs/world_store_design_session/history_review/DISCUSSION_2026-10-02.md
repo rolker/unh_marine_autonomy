@@ -394,3 +394,8 @@ reference frame; (8) section 5, axes, states and views; (9) section 6, observati
 (11) section 8, features and the shoreline; (12) section 9, fingerprints, regenerate, replicas; (13) Part 2, the consumer
 contract; (14) Part 3, processes; (15) Part 4, provisional and owed. The change log is kept as it is. Input: the audit of
 the direction note in RESUME_HERE.md section 2 (2026-10-01).
+- Block 1 (About this document) DONE 2026-11-24, Roland "yes" to four verdicts: opening note and status rewritten to say
+  which sections are current; the build-against sentence dropped; appendix pointers kept; the governing principle moved up
+  beside the goals as its own section. ADRs: "I'm still undecided about how to handle ADRs" — the text now says it is
+  undecided, and it is listed under Open questions. (His 2026-11-23 remark in another project, that rigid ADRs add friction
+  and decisions can be revised, was raised by the agent; he did not extend it here.)

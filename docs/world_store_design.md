@@ -55,6 +55,18 @@ focus is marine robots; that does not mean it cannot be used in other domains.
 - Data cleaning as a workflow. Marks made by automatic filters are part of the design, and a
   mark made by a person can be recorded.
 
+## Governing principle
+
+(Roland, 2026-09-21) *a lot of the details of how the data should
+be processed are still to be determined as we experiment; decisions that result from
+processes that might change are revisable, and the stores must balance being usable with
+being flexible enough to support research.* Every decision here is therefore one of two
+kinds. **Structural** decisions — identity, the frame, the axes, the categories, views,
+revisions-as-records, the consumer contract — change rarely and by a new spine decision.
+**Process-derived** decisions — readers, schemas, QC rules, statistics, cache methods,
+container formats — are provisional by default; the store stays usable through their change
+because a changed process is a new fingerprint, never a migration.
+
 ## What follows from the goals
 
 - **Scope.** The store includes the data needed to support collecting and processing data
@@ -279,6 +291,8 @@ technology will change.
   can be replaced.
 - **Whether live data survives in a rebuilt tile's holes**, or the rebuild replaces the live
   tile outright.
+- **Whether decision records (ADRs) are cut from this document**, or the document and its
+  change log are the record.
 - **Source tracking.** Whether a build first checks that its source recordings are present,
   and how a host knows where they are.
 - **Tiles of the same recording built on different hosts.** Proposed: their accumulations
@@ -287,38 +301,27 @@ technology will change.
 ## About this document
 
 This document is the live plan while the world store is built, and is meant to become the
-documentation others read to understand it. The goals above were written on 2026-10-02.
-**Everything below this section is older** (the direction note of 2026-10-01 and rev 3 of
-2026-09-21) and has not yet been revised against the goals; where it disagrees with them,
-the goals apply.
+documentation others read to understand it. It is a design draft: it captures the model as
+currently understood, and it is the document agents read *first* on anything world-store.
+Tracked by
+[rolker/unh_marine_autonomy#391](https://github.com/rolker/unh_marine_autonomy/issues/391).
 
-**Status**: Evolving — **rev 3** (2026-09-21), written after the six spine decisions were
-taken and after the prototype exercised every category on season data. A design draft, not
-a decision record: it captures the model as currently understood and is the document agents
-read *first* on anything world-store. ADRs are cut from it only when a section stops
-moving; until then the existing ADRs remain the record of what was decided when, and each
-carries a pointer here. Tracked by
-[rolker/unh_marine_autonomy#391](https://github.com/rolker/unh_marine_autonomy/issues/391);
-document kind per rolker/ros2_agent_workspace#628: *design draft*.
+**What is current.** The sections above this one, from the goals to the open questions, are
+current as of 2026-11-24. **Everything below this section is older**: the direction note of
+2026-10-01 and rev 3 of 2026-09-21, the earlier model. It is being checked against the
+goals block by block; until a block is checked, the sections above apply where it disagrees
+with them.
 
-**How to use it**: *decided* sections are stable enough to build against and are candidates
-for an ADR cut. Everything else follows the governing principle below. The
-[consumer contract](#part-2--the-consumer-contract) is what a reader of the store may rely
-on. The appendices carry the evidence and the history:
+**The record.** Changes are recorded in the change log at the end, and the discussion
+behind them in [`world_store_design_session/`](world_store_design_session/). The existing
+decision records (ADRs) remain the record of what was decided when, and each carries a
+pointer here. Whether new decision records are cut from this document is undecided.
+
+**Evidence and history** are in three appendices:
 [A — decision register, safety review, open questions](world_store_register.md),
 [B — prototype log](world_store_prototype_log.md),
 [C — prior art](world_store_prior_art.md) (Part 1: tools; Part 2: convergence with the
 industry and NOAA).
-
-**Governing principle** (Roland, 2026-09-21): *a lot of the details of how the data should
-be processed are still to be determined as we experiment; decisions that result from
-processes that might change are revisable, and the stores must balance being usable with
-being flexible enough to support research.* Every decision here is therefore one of two
-kinds. **Structural** decisions — identity, the frame, the axes, the categories, views,
-revisions-as-records, the consumer contract — change rarely and by a new spine decision.
-**Process-derived** decisions — readers, schemas, QC rules, statistics, cache methods,
-container formats — are provisional by default; the store stays usable through their change
-because a changed process is a new fingerprint, never a migration.
 
 ## Direction as of 2026-10-01 — read this before the rest
 
@@ -811,6 +814,13 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **"About this document" rewritten** (Roland), block 1 of the check of the
+  older text against the goals. It now says which sections are current. The governing
+  principle moved up beside the goals, unchanged. "*Decided* sections are stable enough to
+  build against" is dropped while nothing is built until the design is finished. Whether
+  decision records are cut from this document is now an open question (Roland: "I'm still
+  undecided about how to handle ADRs").
 
 - 2026-11-24 — **"What every gridded type has" added, from the history review** (Roland):
   resolution follows the data (detail 11), self-describing bands and the meaning of an
