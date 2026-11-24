@@ -385,3 +385,12 @@ shown as a draft and written on his yes.
 - ALL SEVEN SECTIONS WRITTEN. Remaining from the agreed list: mark section 4 of rev 3 (reference frame) as a working choice.
   The document's top half (goals to open questions) now holds everything agreed; "About this document" and below is still
   the older text (direction note of 2026-10-01, rev 3), not yet checked against the goals.
+
+## Checking the older text against the goals (started 2026-11-24)
+Roland: "start it". One block of the older text at a time; each gets a verdict (keep, change, drop, or move) and is edited
+only on his yes. The blocks, in document order: (1) About this document; (2) Direction as of 2026-10-01; (3) Purpose;
+(4) rev 3 section 1, where the design stands; (5) section 2, categories; (6) section 3, source identity; (7) section 4,
+reference frame; (8) section 5, axes, states and views; (9) section 6, observations; (10) section 7, field quantity stores;
+(11) section 8, features and the shoreline; (12) section 9, fingerprints, regenerate, replicas; (13) Part 2, the consumer
+contract; (14) Part 3, processes; (15) Part 4, provisional and owed. The change log is kept as it is. Input: the audit of
+the direction note in RESUME_HERE.md section 2 (2026-10-01).
