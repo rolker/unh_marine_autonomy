@@ -421,3 +421,10 @@ the direction note in RESUME_HERE.md section 2 (2026-10-01).
   (a summary of Appendix C Part 2, framed by the build-from-existing-tools attempt); a dated note added at the top of
   Appendix C Part 2 saying it describes rev 3 and has not been redone; one sentence pointing to Appendix C added to
   "Established practice as the default". Later rev 3 sections keep their numbers.
+- Correction 2026-11-24: commit 2cca0dbf recorded block 4 as done but carried only this record (the edit script stopped
+  early); commit c64bdf44 carries the edits.
+- Block 5 (rev 3 section 2, categories) DONE 2026-11-24, Roland "yes to both": the seven-row table replaced by a short
+  current section "What the store holds" (six kinds of thing, the store's location as a setting), placed before "Live tiles
+  and rebuilt tiles"; the rev 3 table with its directory names and formats moved unedited to world_store_roadmap_notes.md.
+  Stored trajectories and observations STAY SET ASIDE; listed under Open questions, to revisit if rebuilds prove too slow.
+  This largely settles block 9 (what an observation may bake).

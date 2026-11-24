@@ -122,6 +122,19 @@ related sensors.
   software did not, and the survey software has no driver for the Garmin sidescan. Export
   works around a missing driver or nobody being available to run the survey side.
 
+## What the store holds
+
+- **Recordings and other material as received**: bag files, charts, datum grids, sound-speed
+  casts. Never changed.
+- **Records that change how that material is read**: corrections, exclusions and tags.
+- **Gridded types**: depths, backscatter and sidescan.
+- **Water measurements**: sound-speed profiles and water level.
+- **Features**: contacts, shorelines and boundaries, as vector data.
+- **Products made from other products**, such as a seafloor classification.
+
+The store's location is a setting, never fixed in code, so a test or a simulator uses its
+own.
+
 ## Live tiles and rebuilt tiles
 
 *Serves goals 1 and 2.*
@@ -308,6 +321,9 @@ technology will change.
   tile outright.
 - **Whether decision records (ADRs) are cut from this document**, or the document and its
   change log are the record.
+- **Whether intermediate results are stored**: the boat's position against time, and sensor
+  samples before a position is applied. Set aside on 2026-10-01 in favour of reading the
+  recordings directly; to revisit if rebuilds prove too slow.
 - **Source tracking.** Whether a build first checks that its source recordings are present,
   and how a host knows where they are.
 - **Tiles of the same recording built on different hosts.** Proposed: their accumulations
@@ -355,24 +371,6 @@ below.
 ---
 
 # Part 1 — The store model
-
-## 2. Categories
-
-Seven categories, of which the last three are *quantity stores*. Names are decided; each
-category's container is process-derived.
-
-| Category | Holds | Written by | Read by | Mutable |
-|---|---|---|---|---|
-| **`sources/`** | Material as received: ROS bag references, ENC editions, S-100 products, datum grids, third-party priors, sound-speed casts, operator bags. Immutable, content-identified (§3). Engineering data (the M3 `.all` files) sits beside them, indexed with `role: engineering`, never an input. | importers | builders; inspection tools (a point-cloud view of a bag) | never |
-| **`revisions/`** | Reviewed records that change how sources are read, applied at link time: per-bag corrections and decode revisions, dated platform-geometry revisions, datum records derived from RTCM plus a casters table, cleaning marks (automatic from gates, or a person's), surface sound-speed windows. Each a STAC Item with a hash. | reviewers, gates | the link step | append-only |
-| **`trajectories/`** | Pose vs time per platform per UTC survey day (a gap is a gap, never interpolated across > 2 s), Parquet with SBET-shaped columns; declares frame, height basis, attitude convention and the geometry revision it was built with. | trajectory builder | link | regenerated |
-| **`observations/`** | Sensor-frame samples per quantity with pose **deferred** (§6): Zarr with Kluster's variable names. | observation builder | link | regenerated |
-| **`depths/`, `backscatter/`, `sidescan/`, `water/`** | *Field* quantity stores: GGGS-tiled COG tiles with STAC Items (§5, §7). `water/` holds the water-column products: sound-speed profiles and surface series, water level. | link + regenerate | consumers | regenerated |
-| **`features/`** | *Object* quantity store (§8): vector records — contacts, shoreline, navigable boundaries — same axes and catalog as the fields, different container. | link, importers, people | consumers | append-only records; derived index regenerated |
-| **`derived/`** | Products of products (a merged acoustic product, seafloor classification, overview pyramids' summaries), with fingerprints over their inputs. | regenerate | consumers | regenerated |
-
-The store root is a **parameter**, defaulting to `~/data/world` and never a literal in code;
-the prototype builds under a different root so that any hard-coded path fails.
 
 ## 3. Source identity — *decided* (spine 1, 2026-09-21)
 
@@ -742,6 +740,13 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **rev 3 section 2, "Categories", replaced by "What the store holds"**
+  (Roland), block 5 of the check. The new section lists kinds of thing, without directory
+  names or file formats; the rev 3 table moved unedited to `world_store_roadmap_notes.md`.
+  Stored trajectories and observations stay set aside, now listed as an open question to
+  revisit if rebuilds prove too slow. Rev 3's "revisions" are the corrections, exclusions
+  and tags of the current sections.
 
 - 2026-11-24 — **rev 3 section 1, "Where the design stands against what exists", removed**
   (Roland), block 4 of the check. It summarised Appendix C Part 2, which holds the longer
