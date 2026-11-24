@@ -191,3 +191,25 @@ cube#106, camp#168/169/170, eb#484; open: camp#186/187/188, cube#112, eb#486). D
 delivery and host sync, two transports; (2) catalog = 'what I have' derived from per-tile records, so completeness is comparable;
 (3) a receiver prunes only what it got from that sender (protects base+additions local data); (4) tiles shippable in pieces
 bounded by the link. Recommended deciding (1) now, rest parked.
+
+## 2026-11-24 — resumed after a seven-week pause (new machine, session in a worktree of this branch)
+- Detail 8, context given again at Roland's request (how live delivery works today, what failed in the field, the question).
+  Issue states rechecked 2026-11-24: camp#186, camp#187, camp#188, cube#112, eb#486 all still OPEN.
+- Roland: "It depends, if an easy path is rsync for non-live data but what we have now for live data works, then that sounds
+  like two models to me. Can we use existing tools for either scenario? If so, does the same tool cover both?"
+  Agent's answer: non-live is covered by existing tools (rsync one-way; rclone bisync, prototype component 11, verdict keep;
+  Syncthing surveyed; git-annex is for the bags, a separate question). Live has no existing tool that beats the current
+  catalog scheme: the link is shared and metered by udp_bridge, live tiles are rewritten constantly, live view tiles are not
+  store files, and the field faults were configuration and implementation. No single tool fits both. The agent withdrew its
+  10-05 recommendation of one model.
+- Detail 8 RESULT (Roland 2026-11-24): "yes." TWO models: the current catalog scheme for live delivery; file sync with an
+  existing tool for stores. Two rules stated once because both need them: (1) each tile's record says what it was built from,
+  so either mechanism can tell which copy is newer or more complete; (2) a receiver never deletes a tile it did not get from
+  that sender. Add to the agreed-not-written list. The 10-05 follow-on points (catalog derived from per-tile records; tiles
+  shippable in link-sized pieces) stay parked.
+- Zenoh (Roland 2026-11-24): "we could conceivebly use it outside of the ros mw framework, so don't let that detail stop its
+  consideration." The agent had named Zenoh as the one existing tool that claims both jobs (publish/subscribe plus storages
+  that reconcile after a disconnect) and set it aside because adopting it as the ROS middleware is a large change. Corrected:
+  it can be considered as a standalone transport beside ROS. Its replication behaviour is NOT verified; needs a research
+  pass before it counts as an option. Queued in SIDE_THOUGHTS_QUEUE.md. Does not reopen the detail 8 result.
+- NEXT: detail 9 (time-sync faults).

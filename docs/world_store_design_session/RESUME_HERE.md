@@ -214,3 +214,15 @@ known-bad bags recorded as excluded, cancellable non-blocking reads, per-band me
 
 **Done 10-05 outside the doc:** filed mru_transform#48 (flat map frame; design session first) + comment on echoboats#473;
 posted design-session trial notes on agent_workspace#370 (follow-up on how it worked: posted at this stop).
+
+## Update 2026-11-24 (resumed on a new machine, in a worktree of this branch)
+- This folder is now tracked on the design branch; these files are the record. Paths above that name the old scratch folder
+  are historical.
+- Roland (2026-11-24): finish the design before building anything. No store builds or imports until then.
+- Detail 8 DONE: two sync models, two shared rules (history_review/DISCUSSION_2026-10-02.md, entry of 2026-11-24). Zenoh as a
+  standalone transport queued for research.
+- Resume at detail 9 (time-sync faults, eb#338). Remaining 10-16: backscatter never averaged across passes, resolution follows
+  the data, support data one home per host, whole-area GeoTIFF export, known-bad bags recorded as excluded, cancellable
+  non-blocking reads, per-band metadata. Then "purposes the goals leave out".
+- Tooling: workspace issue rolker/agent_workspace#596 (design-discussion stops for a multi-repository project) and a comment on
+  rolker/agent_workspace#370 (keep design progress in tracked files, not on GitHub).
