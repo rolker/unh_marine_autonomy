@@ -332,3 +332,11 @@ Presented 2026-11-24 as one table of five, with a proposal per row. sim#85 OPEN 
    (Roland later leaned towards pyramids first; not settled).
 - RESULT (Roland 2026-11-24): "Yes" to all five proposals. Rows 3 and 4 add to the agreed-not-written list.
 - HISTORY REVIEW COMPLETE (goal-level findings, contradictions, the RTK tension, details 1-16, left-out purposes).
+
+## Writing the agreed changes into the design document (started 2026-11-24)
+Order agreed implicitly by Roland asking for a recommendation and answering section 1: (1) goals wording; (2) what follows
+from the goals; (3) live tiles and rebuilt tiles; (4) new section, how tools read the store; (5) new section, writing and
+building; (6) new section, moving data between machines; (7) field stores, after deciding the parts split. Each section is
+shown as a draft and written on his yes.
+- Section 1 WRITTEN 2026-11-24. Roland chose "project" over "campaign" for goal 2's three kinds of data ("project sounds
+  better to me"). Goal 4: raw recordings kept with a verified second copy; product export as one file, not a deliverable.

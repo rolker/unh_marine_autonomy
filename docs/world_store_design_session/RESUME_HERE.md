@@ -232,7 +232,9 @@ posted design-session trial notes on agent_workspace#370 (follow-up on how it wo
   display thread); display of jobs left to each tool.
 - Detail 16 DONE (2026-11-24): self-describing bands. ALL 16 DETAIL FINDINGS DONE.
 - Left-out purposes DONE (2026-11-24). THE HISTORY REVIEW IS COMPLETE.
-- Resume at: writing the agreed changes into the design document (one section at a time, each with Roland's yes). The list is
+- Writing started 2026-11-24: section 1 (goals wording) WRITTEN. Next: section 2 (what follows from the goals). The order of
+  the seven sections is at the end of history_review/DISCUSSION_2026-10-02.md.
+- Background for that step: writing the agreed changes into the design document (one section at a time, each with Roland's yes). The list is
   the "in agreed list" rows of SIDE_THOUGHTS_QUEUE.md plus "Agreed but NOT YET WRITTEN" and the later RESULT lines in
   history_review/DISCUSSION_2026-10-02.md. Still parked after that: the pipeline section; checking rev 3's older sections
   against the goals; the decision-status table; the first-build choice; the shared-library discussion; a roadmap; whether

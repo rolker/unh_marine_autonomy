@@ -18,8 +18,10 @@ focus is marine robots; that does not mean it cannot be used in other domains.
    - Stores live on more than one machine, some linked by bandwidth-limited connections.
 2. **Show the operator useful data, live and between deployments.** This serves an operator
    planning the coverage, and equally an operator monitoring a boat that plans its own.
-   - Live: the operator can monitor coverage. Data from the current day or deployment shows
-     distinctly from earlier days' data, and both show distinctly from older reference data.
+   - Live: the operator can monitor coverage. Three kinds of data show distinctly: what is
+     being gathered now and is not yet in the processed data; what has been gathered so far
+     in the current project; and the reference data that existed before the project's
+     surveying started.
    - Between deployments: the combined data can be explored within the robot's turn-around
      time, quickly enough to plan the next deployment, which may be the next day or a few
      hours later.
@@ -35,11 +37,15 @@ focus is marine robots; that does not mean it cannot be used in other domains.
    - One common store for processing techniques, existing and new, that take advantage of
      multiple passes and multiple types of data.
 4. **Keep the data intact, and usable beyond the store.**
+   - The raw recordings are kept, and a second copy is verified.
    - The raw files are never rewritten. Corrections are kept apart from the raw data and
      applied when products are built.
    - The data can be exported to common hydrographic formats, such as GSF and XTF, so that
      traditional hydrographic processing stays possible when the robot's own recording is
      the only one.
+   - A store product can also be exported as a single file for sharing or for viewing in
+     other software. That is a copy of what the store holds, with its frame and build
+     record, and not a hydrographic deliverable.
 
 **Not goals:**
 
@@ -643,6 +649,14 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **goals wording, from the history review** (Roland; results logged in
+  `world_store_design_session/history_review/DISCUSSION_2026-10-02.md`). Goal 2's live item
+  names three kinds of data in place of "current day" and "earlier days": a calendar day was
+  tried as the unit and removed (contradiction 3), and "project" is used loosely, a selection
+  of recordings and not a label or a directory (detail 4). Goal 4 gains "the raw recordings
+  are kept, and a second copy is verified" (left-out purpose 4) and the export of a store
+  product as a single file, which is not a hydrographic deliverable (detail 13).
 
 - 2026-10-02 — **"Live tiles and rebuilt tiles" added** (Roland), the first detail section
   written against the goals. It replaces two open questions (the store's role on the boat;
