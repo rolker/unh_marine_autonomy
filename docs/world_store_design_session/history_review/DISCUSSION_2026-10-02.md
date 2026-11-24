@@ -410,7 +410,7 @@ the direction note in RESUME_HERE.md section 2 (2026-10-01).
   redesigning this using as many existing tools as possible, but that turned out to get too complicated." Then: it is
   "still OK to opt to do things the NOAA way when it doesn't matter otherwise in our case." RESULT: the purpose is DROPPED
   (reverses left-out purpose 1); a default rule replaces it. He chose the general wording, "I like the established practice
-  wording": where a choice makes no difference to the goals it follows established hydrographic practice, NOAA's in
+  working" (wording): where a choice makes no difference to the goals it follows established hydrographic practice, NOAA's in
   particular; where that works against a goal, the goal wins (last clause is the agent's, shown to him). He asked that the
   rule be stated without a reason that singles out any one source of support. Consequence for blocks 4 and 10: a pattern
   borrowed from NOAA practice has to not cost a goal; it does not have to be needed by one.
