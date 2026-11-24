@@ -223,8 +223,9 @@ posted design-session trial notes on agent_workspace#370 (follow-up on how it wo
   standalone transport queued for research.
 - Detail 9 DONE (2026-11-24): correction record + build-time clock check inside the store design, live detection outside.
 - Detail 10 DONE (2026-11-24): combining passes is stated per data type; Roland raised splitting per-type detail into parts.
-- Resume at detail 11. Remaining 11-16: resolution follows
-  the data, support data one home per host, whole-area GeoTIFF export, known-bad bags recorded as excluded, cancellable
-  non-blocking reads, per-band metadata. Then "purposes the goals leave out".
+- Detail 11 DONE (2026-11-24): three cross-type statements on resolution; formulas left to each type's design.
+- Standing yes to push session-record commits (Roland 2026-11-24); design-document edits still need their own yes.
+- Resume at detail 12. Remaining 12-16: support data one home per host, whole-area GeoTIFF export, known-bad bags recorded
+  as excluded, cancellable non-blocking reads, per-band metadata. Then "purposes the goals leave out".
 - Tooling: workspace issue rolker/agent_workspace#596 (design-discussion stops for a multi-repository project) and a comment on
   rolker/agent_workspace#370 (keep design progress in tracked files, not on GitHub).

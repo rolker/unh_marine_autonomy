@@ -242,3 +242,17 @@ building coarser levels.
   keeps what crosses data types, and each data type (depths, MBES backscatter, sidescan, ...) can be a part with its own
   design and roadmap, where rules like this one's specifics live. Queued; how to split is not decided.
 - NEXT: detail 11 (resolution follows the data).
+
+### Detail 11 — resolution follows the data
+Presented 2026-11-24, sorted by level as Roland's parts remark suggests. cube#143 CLOSED (import_bag writes depth-adaptive
+levels); uma#369 OPEN (may be stale-open after cube#143, not checked); uma#386 OPEN (finest-cell floor from horizontal
+positioning error); uma#383 OPEN (MBES backscatter store cannot hold mixed levels). Register R13 (0.05 x depth, clamp 8-14)
+deferred 09-16 to a dedicated look. The goals sections say nothing; rev 3 covers overview levels, not the native level.
+Proposed cut. Crosses data types, world-store design: (1) native resolution follows what the data supports, so a store holds
+tiles at mixed levels; (2) every reader and every type's store handles mixed levels, a requirement on the shared library;
+(3) each tile states the resolution it was built at and why it could not be finer. Per type, that type's own design: the
+depth formula and limits (R13, uma#386); what "supported resolution" means for sidescan and backscatter.
+- Detail 11 RESULT (Roland 2026-11-24): "yes, that cut is right." Add the three statements to the agreed-not-written list.
+- Roland 2026-11-24: "standing yes to push" — session-record commits on this branch are pushed as they are made. It does not
+  cover edits to the design document, which still need their own yes.
+- NEXT: detail 12 (support data has one home per host).
