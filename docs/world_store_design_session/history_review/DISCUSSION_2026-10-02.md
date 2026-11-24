@@ -224,3 +224,21 @@ other and flags a recording whose offset is outside a threshold (goal 2, quality
 boat is outside the store and stays with eb#338.
 - Detail 9 RESULT (Roland 2026-11-24): "yes, that split is right." Add (1) and (2) to the agreed-not-written list:
   corrections section and quality assessment. NEXT: detail 10 (backscatter never averaged across passes).
+
+### Detail 10 — backscatter never averaged across passes
+Presented 2026-11-24. No issue cited by the review; source is ADR-0006 (context, D5: mean within a pass, best-source across
+passes, quality = grazing-angle score peaking mid-swath) and ADR-0007 (angular response removed before combining; value
+re-derivable when bathymetry improves). ADR-0006 notes the live node mean-blends across passes. Related, different:
+cube#172 and cube#176 closed, cube#173 OPEN (normalisation, not combining). The design document says nothing; register Q14
+(pass-stacked sidescan tiles, zero cost when unused) is the nearest. Proposed: (1) how passes combine is a property of the
+data type, stated per type — depth combines statistically (CUBE), backscatter and sidescan do not average across passes by
+default; (2) a build combines only what has been corrected to be comparable; (3) one best sample versus several passes kept
+side by side (Q14) left open. Consequence for the shared library: a type's fold rule covers combining passes as well as
+building coarser levels.
+- Detail 10 RESULT (Roland 2026-11-24): "Yes". The general statement goes in the design, per-type rules are detail,
+  pass-stacking stays open. Add to the agreed-not-written list.
+- Roland, same reply: "I was thinking about the new ability in the workspace to support sub-roadmaps and designs, and I think
+  this is a good example that let's us not get stuck in the weeds." Agent's reading (not his words): the world-store design
+  keeps what crosses data types, and each data type (depths, MBES backscatter, sidescan, ...) can be a part with its own
+  design and roadmap, where rules like this one's specifics live. Queued; how to split is not decided.
+- NEXT: detail 11 (resolution follows the data).
