@@ -57,17 +57,41 @@ focus is marine robots; that does not mean it cannot be used in other domains.
 
 ## What follows from the goals
 
+- **Scope.** The store includes the data needed to support collecting and processing data
+  for the stores, such as charts, datum grids and earlier surveys. That is the line between
+  what goes in and what stays out.
 - **REP 156** defines coordinate frame conventions for marine robots. It is a proposal
   ([ros-infrastructure/rep#398](https://github.com/ros-infrastructure/rep/pull/398)), open
   since March 2024 and not accepted as of 2026-10-02.
+- **One frame.** Stored positions and heights are in one common frame, and heights are
+  ellipsoidal. ROS labels positions as WGS84 without saying which realization, and an RTK
+  position is really in its correction network's frame, so every source declares the frame
+  it is actually in. Each pipeline converts into the store frame and states the uncertainty
+  of doing so. RTK GPS is a detail of the current pipeline, not an assumption of the store.
+  Conversion to chart datum happens only at import and where a person reads a value, and
+  every interface names its vertical reference. The store frame is a working choice and can
+  change; because every source and tile declares its frame, a change is a rebuild and not a
+  migration.
 - **Uncertainty.** Safe navigation and coverage planning both need to know how good a value
   is, so values carry their uncertainty.
+- **Kinds of "no value".** A reader can tell apart: never surveyed; surveyed with nothing
+  found; data that is stale; and a store or tile that could not be read. What to do with
+  each is the consumer's choice. None of them may look like safe water, and none may look
+  like "nothing there".
+- **Level of detail.** The data is explored the way a globe is, so every gridded type has
+  coarser levels built the same way, and tools pick a level from what is on screen.
+- **Holding up in the field.** The store runs on the robot. Memory and message sizes are
+  bounded, a tile can be read while it is being written, and a power loss does not destroy a
+  good tile.
+- **A recording carries what reprocessing and export need.** What a recording lacks is
+  supplied as a record kept with the corrections. A correction for a recorder defect covers
+  the recordings made before the fix and nothing after.
 - **Vector data.** Robot decisions use objects as well as grids: contacts, shorelines,
   boundaries. Midwater targets fit here too.
 - **Moving data between machines** is described generically. In 2026 full bag files were
   trickled over a satellite link while the boat was deployed and copied over faster wifi at
   the dock; that technology will change.
-- **Export has three forms**: the data as recorded; as recorded with filters applied but no
+- **Export of recordings has three forms**: the data as recorded; as recorded with filters applied but no
   further corrections; and with corrections applied.
 - **Why export matters.** In 2026 the ROS side recorded on every deployment and the survey
   software did not, and the survey software has no driver for the Garmin sidescan. Export
@@ -649,6 +673,14 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **"What follows from the goals" extended, from the history review** (Roland).
+  New entries: scope (finding 4), one frame (the RTK tension, detail 1, and the frame
+  discussion of 2026-11-24), kinds of "no value" (finding 1; the list of four is the agent's
+  wording, accepted), level of detail (finding 2), holding up in the field (finding 3), and
+  what a recording carries (finding 5). "Export has three forms" now says "export of
+  recordings", apart from the product export in goal 4. The store frame (section 4) stands
+  as a working choice, open to revision if not using NAD83(2011) proves too costly.
 
 - 2026-11-24 — **goals wording, from the history review** (Roland; results logged in
   `world_store_design_session/history_review/DISCUSSION_2026-10-02.md`). Goal 2's live item

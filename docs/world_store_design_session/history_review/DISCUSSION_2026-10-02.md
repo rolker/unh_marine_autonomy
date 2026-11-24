@@ -351,3 +351,6 @@ shown as a draft and written on his yes.
   to not use NAD83 now?" Agent: yes. ITRF2020 at 2020.0 stands as the working choice, marked revisable. What keeps a change
   cheap: every source and every tile declares the frame it is in, so a different store frame is a rebuild, not a migration,
   and nothing before the next-season baseline needs backward compatibility. To mark in section 4 when it is next edited.
+- Section 2 WRITTEN 2026-11-24 on Roland's "yes": six new entries in "What follows from the goals" (scope, one frame, kinds of
+  "no value", level of detail, holding up in the field, what a recording carries) and "Export of recordings has three
+  forms". Still to do in section 4 of the document: mark the frame as a working choice.
