@@ -1,0 +1,40 @@
+# Component 5: regenerate walk. Native level-10 tiles are the leaves; each parent depends on its children's
+# content fingerprints (.fp), not their mtimes; STAC + GTI depend on every tile's fingerprint.
+import glob, os, re
+NATIVE = config["native"]; OUT = config["out"]; SCRIPTS = config["scripts"]; PY = config.get("python", "python3")
+leaves = sorted(os.path.basename(p)[:-4] for p in glob.glob(f"{NATIVE}/10_*.tif"))
+def key(n): return tuple(map(int, n.split("_")))
+children = {}                                          # parent name -> [child names], levels 9..0
+level = {10: leaves}
+for l in range(9, -1, -1):
+    level[l] = []
+    for ch in level[l + 1]:
+        _, r, c = key(ch); p = f"{l}_{r // 2}_{c // 2}"
+        if p not in children: children[p] = []; level[l].append(p)
+        children[p].append(ch)
+def tile(n): return f"{NATIVE}/{n}.tif" if key(n)[0] == 10 else f"{OUT}/overviews/{n}.tif"
+ALL = leaves + [p for l in range(9, -1, -1) for p in level[l]]
+
+rule all:
+    input: f"{OUT}/gti/depths_processed.gti"
+rule fingerprint_native:
+    input: f"{NATIVE}/{{name}}.tif"
+    output: f"{NATIVE}/{{name}}.tif.fp"
+    shell: "{PY} {SCRIPTS}/fp.py {input}"
+rule fingerprint_overview:
+    input: f"{OUT}/overviews/{{name}}.tif"
+    output: f"{OUT}/overviews/{{name}}.tif.fp"
+    shell: "{PY} {SCRIPTS}/fp.py {input}"
+rule fold:
+    input: lambda w: [tile(ch) + ".fp" for ch in children[w.name]]
+    output: f"{OUT}/overviews/{{name}}.tif"
+    params: kids=lambda w: " ".join(tile(ch) for ch in children[w.name])
+    shell: "{PY} {SCRIPTS}/fold.py {output} {params.kids}"
+rule stac:
+    input: [tile(n) + ".fp" for n in ALL]
+    output: f"{OUT}/stac/items.json"
+    shell: "{PY} {SCRIPTS}/04_stac.py {NATIVE} {OUT}/overviews {OUT}/stac > /dev/null"
+rule gti:
+    input: f"{OUT}/stac/items.json"
+    output: f"{OUT}/gti/depths_processed.gti"
+    shell: "{PY} {SCRIPTS}/04_stac_to_gti.py {input} {OUT}/gti > /dev/null"
