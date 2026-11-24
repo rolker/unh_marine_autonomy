@@ -107,10 +107,11 @@ A place surveyed today can be held as three kinds of tile:
 |---|---|---|---|---|
 | **Live tile** | the boat | full range | some may be missing | the live data stream, as the boat surveys |
 | **Live view tile** | the operator machine | reduced for display | some may be missing | live tiles, sent over the link for monitoring |
-| **Rebuilt tile** | any machine that holds the full recording | full range | all | the bag files |
+| **Rebuilt tile** | any machine that holds the full recording | full range | every ping that could be positioned | the bag files |
 
 The live builder can drop pings, so a live tile can show a gap that is not in the data.
-That is acceptable for watching. Live tiles are replaced by rebuilt tiles when practical.
+That is acceptable for watching. Where a rebuilt tile has data, it takes the place of the
+live data.
 
 - **Every tile says what it was built from**: the live stream, where pings may be missing,
   or the full recording. A robot planning its own coverage has to work from either, because
@@ -120,10 +121,20 @@ That is acceptable for watching. Live tiles are replaced by rebuilt tiles when p
   tool uses them, so they are kept in the store's format, read through the same reader as
   any other tile, and labelled as live. They persist, so the live builder can reload them
   after a restart. The store can replace or remove them once rebuilt tiles exist.
+- **A new live session is a normal operation, not a delete.** Live tiles from different
+  sessions can be told apart, on disk and in the display, which is what separates what is
+  being gathered now from an earlier outing's data that has not been processed yet. Earlier
+  sessions' live tiles stay readable, by the costmap among others, until rebuilt tiles
+  replace them.
+- **A rebuild is as complete as the recording allows.** A ping with no usable position is
+  left out, and the build record holds the counts: pings used, pings dropped, and why. The
+  reader looks across the boundary between one bag and the next for position data, so a
+  ping at the start of a bag is not dropped when the previous bag could place it.
 - **On the operator machine, live view tiles are not part of the store.** Their values are
   reduced for display and nothing is built from them. They are a display cache: it persists
   across a restart of the viewer, it can be shared by the tools on that machine that show
-  live coverage, and its tiles are thrown away once real tiles replace them.
+  live coverage, and its tiles are thrown away once real tiles replace them. Live view tiles
+  can have more than one consumer, such as the operator's map and a web view.
 - **Where a surface is built is a deployment choice.** When the link between machines is
   expensive, the boat and the operator station each build from the recording they hold.
   When it is not, one machine builds and the others copy the result. The same build runs in
@@ -145,6 +156,8 @@ messages.
 - **How big a unit a build record covers**: a tile, a bag, a survey day or a site.
 - **How a machine knows the full data for a live tile has arrived**, so that the live tile
   can be replaced.
+- **Whether live data survives in a rebuilt tile's holes**, or the rebuild replaces the live
+  tile outright.
 
 ## About this document
 
@@ -673,6 +686,15 @@ product and source frames a given import declares are still verified case by cas
 -0010, -0013 they imply (Appendix A lists the register rows).
 
 ## Change log
+
+- 2026-11-24 — **"Live tiles and rebuilt tiles" revised, from the history review** (Roland).
+  A rebuilt tile holds "every ping that could be positioned", not "all", with the counts in
+  the build record and the reader looking across bag boundaries (contradiction 1). "Replaced
+  by rebuilt tiles" no longer pre-decides what happens in a rebuild's holes, which is now an
+  open question (contradiction 2). Live view tiles can have more than one consumer (left-out
+  purpose 3). New: a live session is a normal operation and sessions can be told apart
+  (proposed by the agent on 2026-10-12 after the gabby 2026-08-27 workaround; agreed
+  2026-11-24).
 
 - 2026-11-24 — **"What follows from the goals" extended, from the history review** (Roland).
   New entries: scope (finding 4), one frame (the RTK tension, detail 1, and the frame

@@ -354,3 +354,9 @@ shown as a draft and written on his yes.
 - Section 2 WRITTEN 2026-11-24 on Roland's "yes": six new entries in "What follows from the goals" (scope, one frame, kinds of
   "no value", level of detail, holding up in the field, what a recording carries) and "Export of recordings has three
   forms". Still to do in section 4 of the document: mark the frame as a working choice.
+- Section 3 WRITTEN 2026-11-24 on Roland's "yes": the rebuilt tile's pings cell, the rebuild-completeness bullet, the
+  "takes the place of the live data" wording with a new open question on a rebuild's holes, more than one consumer of live
+  view tiles. Also put to him and agreed the same day: live session identity (agent's proposal of 2026-10-12, never ruled
+  until now; cube#167 CLOSED added the in-memory reset) — written as a bullet.
+- Correction of the agent's 2026-11-24 summary: "a writer never saves over a tile it could not load" was listed as agreed;
+  it is a PROPOSED row (details 5+6+7 together, 2026-10-12). To be put to Roland with section 5.
