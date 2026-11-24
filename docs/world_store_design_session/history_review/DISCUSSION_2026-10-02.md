@@ -340,3 +340,14 @@ building; (6) new section, moving data between machines; (7) field stores, after
 shown as a draft and written on his yes.
 - Section 1 WRITTEN 2026-11-24. Roland chose "project" over "campaign" for goal 2's three kinds of data ("project sounds
   better to me"). Goal 4: raw recordings kept with a verified second copy; product export as one file, not a deliverable.
+- Section 2 draft shown 2026-11-24 (six new entries in "What follows from the goals", one edit). Roland on the "One frame"
+  entry: "an earlier thought was to follow ROS convention for lat/lon which specifies WGS84, but the actual reference frame is
+  not specified, so we need to figure out how to deal with NAD83(2011) vs something else probably." Agent: rev 3 section 4
+  already decides ITRF2020 at coordinate epoch 2020.0 (EPSG:9989), kept on 10-01; current WGS84 is aligned with ITRF2020 at
+  the centimetre level (agent's knowledge, not checked), so the ROS convention holds for data that really is WGS84; the
+  NAD83(2011) problem is the pipeline's (RTK output in the correction network's frame, labelled WGS84, 1.19 m in height
+  here): a correction record for recorded data, conversion at the source for live data (mru_transform#47 OPEN).
+- FRAME RESULT (Roland 2026-11-24): "Can it kind of stand, but be open for revision if it turns out to be too much of a pain
+  to not use NAD83 now?" Agent: yes. ITRF2020 at 2020.0 stands as the working choice, marked revisable. What keeps a change
+  cheap: every source and every tile declares the frame it is in, so a different store frame is a rebuild, not a migration,
+  and nothing before the next-season baseline needs backward compatibility. To mark in section 4 when it is next edited.
