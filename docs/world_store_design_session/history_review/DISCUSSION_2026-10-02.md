@@ -278,3 +278,16 @@ hydrographic deliverable: it carries what the store holds with its frame and bui
 Nothing per type.
 - Detail 13 RESULT (Roland 2026-11-24): "That looks right". Add both to the agreed-not-written list.
 - NEXT: detail 14 (known-bad bags recorded as excluded).
+
+### Detail 14 — known-bad recordings recorded as excluded
+Presented 2026-11-24. eb#367 OPEN (retrofit skew correction fails on the 06-27 overnight bag, the reason it was skipped);
+eb#382 OPEN (script consolidation holding the skip list; a 2026-07-22 commit says it was done, possibly stale-open, not
+checked); eb#479 OPEN (season archive processing, 20 zero-sidescan bags without a marker). Evidence: a skip list hard-coded
+in the build script; 09-02 salmon rebuild had 1 skip-listed, 107 with no detections, 4 mid-rsync. The design allows a
+person's mark to be recorded and (agreed list) a build record with counts; whole-recording exclusion and a per-recording
+outcome are not named. Proposed: (1) excluding a recording is a record kept with the corrections (recording, reason, who
+decided), possibly for one data type only; (2) a build records an outcome for every recording it looked at, per data type:
+used, excluded, nothing to process, or incomplete. Same distinction as finding 1's kinds of no-value, one level up; tags
+(detail 4) describe a recording, exclusions and outcomes say what a build did with it.
+- Detail 14 RESULT (Roland 2026-11-24): "sounds good". Add both to the agreed-not-written list.
+- NEXT: detail 15 (cancellable, non-blocking reads).
