@@ -10,15 +10,15 @@ Repository containing the 'mission_manager_node.py' ROS node which uses SMACH fo
 
 ## Theory-of-Operation
 
-The node provides high-level control for a mobile vehicle.  It is designed to react to mission commands provided as std_msgs/String messages on topic `/project11/mission_manager/command`.  This is implemented by two objects, MissionManagerCore and a smach.StateMachine that capture and manage the "system-state", which consists of a queue of "tasks".  The MissionManagerCore interfaces with the user (often through the CAMP GUI) to build and modify the active queue of tasks.
+The node provides high-level control for a mobile vehicle.  It is designed to react to mission commands provided as std_msgs/String messages on topic `/marine/mission_manager/command`.  This is implemented by two objects, MissionManagerCore and a smach.StateMachine that capture and manage the "system-state", which consists of a queue of "tasks".  The MissionManagerCore interfaces with the user (often through the CAMP GUI) to build and modify the active queue of tasks.
 
 ### MissionManagerCore
 
-This singelton object receives command (`project11/mission_manager/command`), piloting_mode (`project11/piloting_mode`)  and heartbeat (`project11/heartbeat`)  messages from the system as a way for the operator to supervise and interact with system at a high level.
+This singelton object receives command (`marine/mission_manager/command`), piloting_mode (`piloting_mode`)  and heartbeat (`marine/heartbeat`)  messages from the system as a way for the operator to supervise and interact with system at a high level.
 
 The object also subscribes to the vehicle Odometry state on `odom` and stores it as an object attribute for use by the state-machine.
 
-The object published the status of the object as a Heartbeat message on `project11/status/mission_manager`.
+The object published the status of the object as a Heartbeat message on `marine/status/mission_manager`.
 
 The interface between MissionManagerCore and smach.StateMachine consists of...
 
@@ -57,7 +57,7 @@ Publications:
  * /path_planner_action/cancel [actionlib_msgs/GoalID]
  * /path_planner_action/goal [path_planner/path_plannerActionGoal]
      * path_plannier.action.goal : geographic_msgs/GeoPath path
- * /project11/status/mission_manager [project11_msgs/Heartbeat]
+ * /marine/status/mission_manager [marine_interfaces/Heartbeat]
  * /rosout [rosgraph_msgs/Log]
  * /survey_area_action/cancel [actionlib_msgs/GoalID]
  * /survey_area_action/goal [manda_coverage/manda_coverageActionGoal]
@@ -75,9 +75,9 @@ Subscriptions:
  * /path_planner_action/feedback [unknown type]
  * /path_planner_action/result [unknown type]
  * /path_planner_action/status [unknown type]
- * /project11/heartbeat [unknown type]
- * /project11/mission_manager/command [unknown type]
- * /project11/piloting_mode [unknown type]
+ * /marine/heartbeat [unknown type]
+ * /marine/mission_manager/command [unknown type]
+ * /piloting_mode [unknown type]
  * /survey_area_action/feedback [unknown type]
  * /survey_area_action/result [unknown type]
  * /survey_area_action/status [unknown type]

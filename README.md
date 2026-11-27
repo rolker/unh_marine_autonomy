@@ -19,6 +19,17 @@ This repository is a collection of packages that form the core of the autonomy s
 *   **`mission_manager`**: High-level mission execution and state machine.
 *   **`camp`** (External): The CCOM Autonomous Mission Planner (UI).
 
+## Documentation
+
+Start with the operator/new-engineer overview, then drill into the reference docs:
+
+*   **[How the stack works](./docs/how_the_stack_works.md)** — plain-language tour
+    of the framework: platform self-advertisement to CAMP, piloting modes, the
+    autonomous control chain, obstacle handling, and the comms link. **Start here.**
+*   **[Autonomy modes](./docs/autonomy_modes.md)** — the helm manager's piloting-mode state machine.
+*   **[Data flows](./docs/data_flows.md)** — command and telemetry data flows in detail.
+*   **[Interfaces](./docs/interfaces.md)** — ROS topics, services, and actions.
+
 ## Getting Started
 This repository is typically part of a layered workspace setup.
 

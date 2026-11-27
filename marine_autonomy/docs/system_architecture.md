@@ -34,9 +34,9 @@ sequenceDiagram
     participant HW as Hardware
 
     UI->>CB_S: "Execute Survey Plan"
-    CB_S->>UDP: Bridge (project11/command)
+    CB_S->>UDP: Bridge (marine/command)
     UDP->>CB_R: Receive Command
-    CB_R->>CB_S: Acknowledge (project11/response)
+    CB_R->>CB_S: Acknowledge (marine/response)
     CB_R->>MM: Request Mission Execution
     MM->>Nav: Send Task List (project11_nav_msgs/TaskInformation)
     Nav->>HM: Output Helm/Twist (autonomous/helm)
